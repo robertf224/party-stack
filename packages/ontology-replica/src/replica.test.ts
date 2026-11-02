@@ -927,7 +927,7 @@ test("one nonretryable subset cannot starve another subset or the outbox", async
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: true,
-                        pollIntervalMs: () => false,
+                        refresh: () => ({ pollIntervalMs: false }),
                         loadSubset: (subset) =>
                             Effect.suspend(() => {
                                 const key = JSON.stringify(subset.query).includes('"bad"') ? "bad" : "good";

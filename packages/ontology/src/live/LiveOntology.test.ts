@@ -166,9 +166,9 @@ describe("native LiveOntology construction", () => {
             const waiting = live.outbox.wait("offline", { signal: abort.signal });
             abort.abort();
             await expect(waiting).rejects.toBeDefined();
-            expect((await Effect.runPromise(live.storage!.pending)).map((a) => a.invocation.id)).toEqual([
-                "offline",
-            ]);
+            expect(
+                (await Effect.runPromise(live.storage!.outbox.entries)).map((a) => a.invocation.id)
+            ).toEqual(["offline"]);
             expect(applyAction).not.toHaveBeenCalled();
             runtime.connectivity.isConnected = true;
             await Effect.runPromise(live.storage!.syncOnce);
@@ -226,7 +226,7 @@ describe("native LiveOntology construction", () => {
                 retryable: true,
                 actionOutcome: "not-committed",
             });
-            expect(await Effect.runPromise(live.storage!.pending)).toEqual([]);
+            expect(await Effect.runPromise(live.storage!.outbox.entries)).toEqual([]);
             const confirmed = vi.fn();
             const applying = live.actions.save!({}, { mode: "outbox", idempotencyKey: "queued" }).then(
                 (result) => {
@@ -235,9 +235,9 @@ describe("native LiveOntology construction", () => {
                 }
             );
             await vi.waitFor(async () => {
-                expect(await Effect.runPromise(live.storage!.pending)).toHaveLength(1);
+                expect(await Effect.runPromise(live.storage!.outbox.entries)).toHaveLength(1);
             });
-            expect((await Effect.runPromise(live.storage!.pending))[0]?.invocation.id).toBe("queued");
+            expect((await Effect.runPromise(live.storage!.outbox.entries))[0]?.invocation.id).toBe("queued");
             expect(confirmed).not.toHaveBeenCalled();
             expect(applyAction).not.toHaveBeenCalled();
             runtime.connectivity.isConnected = true;
@@ -271,7 +271,7 @@ describe("native LiveOntology construction", () => {
                 actionOutcome: "not-committed",
                 issues: failure.issues,
             });
-            expect(await Effect.runPromise(live.storage!.pending)).toEqual([]);
+            expect(await Effect.runPromise(live.storage!.outbox.entries)).toEqual([]);
             expect(applyAction).toHaveBeenCalledOnce();
         } finally {
             await live.cleanup();

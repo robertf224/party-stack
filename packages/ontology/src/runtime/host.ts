@@ -19,13 +19,14 @@ import type { Runtime } from "@party-stack/runtime";
 import type { Scope, Stream } from "effect";
 interface ReplicaHostCommonOptions {
     readonly id?: string;
+    readonly live?: boolean;
     readonly ir: OntologyIR;
     readonly context: Record<string, unknown>;
     readonly writes?: LiveOntologyWrites;
     readonly connection?: ConnectionMonitor;
     readonly objectCacheGc?: ReplicaOptions["objectCacheGc"];
     readonly demand?: ReplicaOptions["demand"];
-    readonly clients?: ReplicaOptions["clients"];
+    readonly clientSessions?: ReplicaOptions["clientSessions"];
 }
 /** A native connection can additionally publish speculative parent state. */
 export type ReplicaHostOptions = ReplicaHostCommonOptions &
@@ -64,6 +65,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
     const backend = options.backend ?? (yield* options.backendAdapter!.open(options.context));
     const native = yield* openHost({
         id: options.id,
+        live: options.live,
         ir: options.ir,
         context: options.context,
         backend,
@@ -73,7 +75,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         connection: options.connection,
         objectCacheGc: options.objectCacheGc,
         demand: options.demand,
-        clients: options.clients,
+        clientSessions: options.clientSessions,
     });
     const captured = yield* Effect.context<never>();
     const scope = yield* Effect.scope;

@@ -152,7 +152,8 @@ Bounded result/session maintenance has its own scoped schedule, and row GC does
 not wait for network dispatch. Its storage transaction checks demand and pending
 action retention roots before deleting rows. The explicit `syncOnce` checkpoint
 composes maintenance, state refresh and outbox processing; ordinary workers do not
-use that combined checkpoint to drive one another.
+use that combined checkpoint to drive one another. See [Replica](/docs/replica)
+for the public service, one-shot mode and persistent query pins.
 
 ## Platform Runtime
 

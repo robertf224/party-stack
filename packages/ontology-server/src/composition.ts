@@ -1,6 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { executeQuery } from "@party-stack/ontology-backend/query";
-import { makeCachedProxy, replicaStateSource } from "@party-stack/ontology-replica";
+import { makeCachedProxy, replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { sliceByteSource } from "@party-stack/ontology-storage/blobs";
 import { Effect } from "effect";
 import { projectOntologyBackend } from "./authorization.js";
@@ -149,11 +149,11 @@ export const makeOntologyServer = Effect.fn("OntologyServer.make")(function* <R 
                                           }),
                             });
                     }
-                    yield* replica.enqueue(
+                    yield* replica.outbox.enqueue(
                         { ...invocation, attachmentUploads: undefined },
                         { optimistic: true }
                     );
-                    const receipt = yield* replica.awaitAction(invocation.id);
+                    const receipt = yield* replica.outbox.wait(invocation.id);
                     if (!receipt)
                         return yield* new BackendError({
                             operation: "applyAction",

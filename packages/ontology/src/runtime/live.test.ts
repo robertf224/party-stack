@@ -1,4 +1,5 @@
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { MemoryBlobBytesStore, Runtimes } from "@party-stack/runtime";
@@ -209,7 +210,7 @@ test("LiveOntology persists and restores offline projections, exposes local-only
             online = true;
             for (const cb of listeners) cb(true);
             await vi.waitFor(async () =>
-                expect(await Effect.runPromise(reopened.storage!.pending)).toEqual([])
+                expect(await Effect.runPromise(replicaController(reopened.storage!).pending)).toEqual([])
             );
             expect(
                 (await Effect.runPromise(backend.loadSubset({ objectType: "Note" }))).rows[0]?.value.title
@@ -261,7 +262,7 @@ test("closing the owning Effect scope closes DbClient collections and replica fi
         Object.values(ontology.persistedObjects!).every((collection) => collection.status === "cleaned-up")
     ).toBe(true);
     expect(ontology.outbox.collection.status).toBe("cleaned-up");
-    await expect(Effect.runPromise(ontology.storage!.pending)).rejects.toMatchObject({
+    await expect(Effect.runPromise(replicaController(ontology.storage!).pending)).rejects.toMatchObject({
         kind: "InvalidRequest",
     });
     expect(cleanupBackend).toHaveBeenCalledOnce();
@@ -308,10 +309,14 @@ test("a scoped replica host runs without application collections and outlives in
         const host = await managed.runPromise(
             Scope.provide(makeReplicaHost({ ir, context: {}, backendAdapter: adapter }), owner)
         );
-        await Effect.runPromise(Scope.provide(host.replica.retainLocal("Note"), firstSession));
-        await Effect.runPromise(Scope.provide(host.replica.retainLocal("Note"), secondSession));
+        await Effect.runPromise(
+            Scope.provide(replicaController(host.replica).retainLocal("Note"), firstSession)
+        );
+        await Effect.runPromise(
+            Scope.provide(replicaController(host.replica).retainLocal("Note"), secondSession)
+        );
         await Effect.runPromise(Scope.close(firstSession, Exit.void));
-        expect(await Effect.runPromise(host.replica.pending)).toEqual([]);
+        expect(await Effect.runPromise(replicaController(host.replica).pending)).toEqual([]);
         expect(released).not.toHaveBeenCalled();
         await Effect.runPromise(host.blobManager.stage("local-attachment", new Blob(["local bytes"])));
         await Effect.runPromise(host.blobManager.bindRemoteId("local-attachment", "remote-attachment"));
@@ -329,11 +334,11 @@ test("a scoped replica host runs without application collections and outlives in
         ).toBe("remote bytes");
         expect(readAttachment).toHaveBeenCalledWith({ id: "remote-attachment", source });
         await Effect.runPromise(Scope.close(secondSession, Exit.void));
-        expect(await Effect.runPromise(host.replica.pending)).toEqual([]);
+        expect(await Effect.runPromise(replicaController(host.replica).pending)).toEqual([]);
         await Effect.runPromise(Scope.close(owner, Exit.void));
         expect(released).toHaveBeenCalledOnce();
         await expect(Effect.runPromise(host.blobManager.read("local"))).rejects.toThrow("closed");
-        await expect(Effect.runPromise(host.replica.pending)).rejects.toMatchObject({
+        await expect(Effect.runPromise(replicaController(host.replica).pending)).rejects.toMatchObject({
             kind: "InvalidRequest",
         });
     } finally {

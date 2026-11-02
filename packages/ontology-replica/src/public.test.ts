@@ -57,14 +57,14 @@ test("logical demand waits for its snapshot, releases its scope and rejects unsu
                     namespace: "public-demand",
                     ir,
                     tables: yield* Memory.make(),
-                    startSync: false,
+                    live: false,
                     backend: {
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
                         applyAction: () => Effect.die("A read cannot submit actions"),
                         queryFunction: () => Effect.void,
-                        pollIntervalMs: () => false,
+                        refresh: () => ({ pollIntervalMs: false }),
                         loadSubset: (subset) =>
                             Effect.sync(() => {
                                 calls.push(subset);
@@ -136,13 +136,12 @@ test.each([true, false])(
                         ir,
                         tables: yield* Memory.make(),
                         connectivity,
-                        startSync: false,
                         backend: {
                             name: "fixture",
                             sourceId: "fixture",
                             supportsIdempotency: true,
                             queryFunction: () => Effect.void,
-                            pollIntervalMs: () => false,
+                            refresh: () => ({ pollIntervalMs: false }),
                             loadSubset: (subset) =>
                                 Effect.sync(() => {
                                     loads++;
@@ -170,7 +169,7 @@ test.each([true, false])(
                     yield* replica.demand.acquire({
                         from: { source: { objectType: "Item" }, binding: "item" },
                     });
-                    const entry = yield* replica.enqueue(
+                    const entry = yield* replica.outbox.enqueue(
                         { id: "create-1", name: "create", parameters: { count: 7 } },
                         { optimistic }
                     );
@@ -182,9 +181,9 @@ test.each([true, false])(
                     yield* connectivity.set(true);
                     yield* replica.syncOnce;
                     expect(submissions).toBe(1);
-                    expect(yield* replica.pending).toEqual([]);
+                    expect(yield* replica.outbox.entries).toEqual([]);
                     expect((yield* replica.confirmed.get("Item", id))?.count).toBe(7);
-                    expect((yield* replica.awaitAction("create-1"))?.operationId).toBe("create-1");
+                    expect((yield* replica.outbox.wait("create-1"))?.operationId).toBe("create-1");
                 })
             )
         );
@@ -192,7 +191,7 @@ test.each([true, false])(
 );
 
 test("the replica Layer acquires its platform resources from one Runtime bundle", async () => {
-    const app = Replica.layer({ ir, startSync: false }).pipe(
+    const app = Replica.layer({ ir, live: false }).pipe(
         Layer.provide(
             Layer.succeed(ReplicaUpstream)({
                 kind: "committed",
@@ -202,7 +201,7 @@ test("the replica Layer acquires its platform resources from one Runtime bundle"
                     supportsIdempotency: true,
                     queryFunction: () => Effect.void,
                     applyAction: () => Effect.die("Unexpected action"),
-                    pollIntervalMs: () => false,
+                    refresh: () => ({ pollIntervalMs: false }),
                     loadSubset: () =>
                         Effect.succeed({
                             complete: true,

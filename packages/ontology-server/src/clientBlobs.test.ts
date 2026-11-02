@@ -6,7 +6,8 @@ import {
     type OntologyIR,
     type OntologyMutatorRegistry,
 } from "@party-stack/ontology";
-import { replicaStateSource } from "@party-stack/ontology-replica";
+import { replicaController } from "@party-stack/ontology-replica/infrastructure";
+import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { byteSource, collectByteBlob, makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import { MemoryBlobBytesStore, Runtime } from "@party-stack/runtime";
 import { makeTestRuntime } from "@party-stack/runtime/testing";
@@ -221,7 +222,7 @@ test("a speculative client stages locally, transfers before acceptance, and stre
                     child.attachments.metadata({ id: "metadata-only" }, { select: ["size"] })
                 );
                 expect(metadata).toHaveBeenCalledOnce();
-                yield* child.storage!.retainLocal("Item");
+                yield* replicaController(child.storage!).retainLocal("Item");
                 const created = yield* Effect.promise(() =>
                     child.attachments.create(new Blob(["headtail"], { type: "text/plain" }))
                 );

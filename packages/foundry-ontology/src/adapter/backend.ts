@@ -201,8 +201,8 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
             } satisfies ActionReceipt;
         }),
         // Admin users have no ontology websocket feed; the Replica owns this polling lifetime.
-        pollIntervalMs: (subset: BackendSubset) =>
-            subset.objectType === options.users?.objectType ? 60_000 : undefined,
+        refresh: (subset: BackendSubset) =>
+            subset.objectType === options.users?.objectType ? { pollIntervalMs: 60_000 } : undefined,
         watchSubset: watcher
             ? (subset: BackendSubset) =>
                   subset.objectType === options.users?.objectType

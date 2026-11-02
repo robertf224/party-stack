@@ -1,5 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { replicaStateSource } from "@party-stack/ontology-replica";
+import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { Deferred, Effect, Exit, Fiber, Layer, Scope } from "effect";
 import { RpcClient, RpcServer } from "effect/rpc";
 import {

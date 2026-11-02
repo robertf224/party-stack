@@ -365,7 +365,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                     yield* options.ready ?? Effect.void;
                     if (!options.backend) return yield* missing("WatchSubset");
                     const watched = options.backend.watchSubset?.(subset);
-                    const interval = options.backend.pollIntervalMs?.(subset) ?? 5_000;
+                    const interval = options.backend.refresh?.(subset)?.pollIntervalMs ?? false;
                     if (!watched && interval !== false && (!Number.isFinite(interval) || interval < 100))
                         return yield* new BackendError({
                             operation: "WatchSubset",
@@ -373,7 +373,8 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                             retryable: false,
                             message: "Invalid subset poll interval.",
                         });
-                    const changes = watched ?? (interval === false ? Stream.never : Stream.tick(interval));
+                    if (!watched && interval === false) return yield* missing("WatchSubset");
+                    const changes = watched ?? Stream.tick(interval as number);
                     // A new subscription is also a repair boundary for missed invalidations.
                     return Stream.concat(
                         Stream.make("invalidate" as const),
@@ -633,7 +634,7 @@ export interface OntologyOperationsClient {
     ) => Effect.Effect<import("@party-stack/ontology-backend").ValidationReport, BackendError>;
     readonly attachments: LiveOntology["attachments"];
     readonly outbox: Pick<
-        import("@party-stack/ontology-replica").ReplicaService,
+        import("@party-stack/ontology-replica").ReplicaService["outbox"],
         "remove" | "retry" | "edit" | "reconcile"
     >;
     readonly traces: TraceStore;

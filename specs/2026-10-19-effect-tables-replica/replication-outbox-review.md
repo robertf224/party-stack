@@ -11,15 +11,15 @@ runtime and storage/transaction reviews.
 - [x] Remove parent-control bridge sync and verify ordinary delivery
 - [x] Wire finite server queries and batch simple child correlations
 - [x] Add exact SQL grouped windows and authorization/reference/domain oracle tests
-- [ ] Trace enqueue, optimistic replay and action dependencies
-- [ ] Trace dispatch, durable receipts, read-back and reconciliation
-- [ ] Check speculative-parent acceptance versus upstream confirmation
-- [ ] Check sync/demand/watch lifetimes, cancellation and publication gates
-- [ ] Check lost replies, restart, reconnect and expired-history recovery
-- [ ] Check row/blob GC, result/session/delivery expiry and capacity bounds
-- [ ] Implement persistent multi-root hierarchical offline query demand (explicit v0 scope)
-- [ ] Audit errors, diagnostics and actionable recovery controls
-- [ ] Run targeted regressions/property tests for findings and required checks
+- [x] Trace enqueue, optimistic replay and action dependencies
+- [x] Trace dispatch, durable receipts, read-back and reconciliation
+- [x] Check speculative-parent acceptance versus upstream confirmation
+- [x] Check sync/demand/watch lifetimes, cancellation and publication gates
+- [x] Check lost replies, restart, reconnect and expired-history recovery
+- [x] Check row/blob GC, result/session/delivery expiry and capacity bounds
+- [x] Implement persistent multi-root hierarchical offline query demand (explicit v0 scope)
+- [x] Audit errors, diagnostics and actionable recovery controls
+- [x] Run targeted regressions/property tests for findings and required checks
 
 ## 1. Public interface and responsibility
 
@@ -707,3 +707,57 @@ Issue rows while User rows need another refresh policy. Healthy live coverage st
 current independently of the original snapshot's age. Losing that maintenance
 requires catch-up/revalidation rather than granting an implicit infinite lifetime.
 Adapters may recommend defaults; caller configuration should take precedence.
+
+### Replica API, freshness and persistent demand checkpoint — November 2
+
+Implemented after the scheduler checkpoint. Earlier proposal sections are history;
+this section and the website Replica guide describe the current API.
+
+- The application service is an explicit facade, not a spread of the controller.
+  Local reads use logical ObjectSubset through readSubset/observeSubset; outbox
+  operations are grouped. Confirmed reads remain separate. Session, delivery,
+  index, cache and wake controls are under the trusted infrastructure entry point.
+- Replica.layer acquires Runtime and ReplicaUpstream. live:false suppresses owned
+  background fibers and demand watches, and rejects application outbox.enqueue.
+  Explicit reads/demand and syncOnce remain usable. Existing persisted work is
+  preserved. Trusted server/controller composition remains explicit infrastructure.
+- Refresh settings live under demand.refresh; completed result retention and retry
+  policy live under outbox; served-child limits live under clientSessions.
+  Polling is opt-in or adapter-recommended. Adapters recommend through refresh(subset).
+  maxCoverageAgeMs defaults to 60 seconds for unmaintained snapshots. Healthy live
+  coverage does not expire by snapshot age; losing a watch invalidates its proof.
+  Diagnostics distinguish reused snapshots from active watches/polls/journals.
+- Persistent demand owns one desired entity QueryDocument and its last complete
+  installed graph. Replacement, cancellation and clear reuse the same subset
+  acquisition and transactional row/blob roots. Membership is recomputed through
+  the finite executor; there is no query IVM. Only the newest desired definition
+  and last complete graph are retained. Inputs and entity selections are validated.
+  Offset acquisition loads the required prefix once; membership also preserves
+  prefix and expression-dependency rows for correct local evaluation after restart.
+- Native and speculative incremental delivery can provide provisional metadata;
+  pin readiness waits for completeness, including metadata-only updates. Snapshot
+  ClientState now carries equivalent optional coverage proofs, installed with rows
+  in the same transaction. Pins also contribute bounded batches of primary keys to
+  upstream selection so a replacement/reopen cannot drop the retained old graph.
+- Attachment downloads default to none. attachments:all downloads selected
+  attachments as streams. Candidate and installed byte roots use the existing blob
+  retention index; publication requires the bytes in the same membership commit.
+  Interrupted candidate roots are released, and startup clears the prior owner’s
+  candidate root. These are not an application lease API or a separate GC engine.
+- Candidate acquisition is serialized and coalesces row-change signals. Row arrivals
+  during acquisition do not cancel their own parent demand; replacing/clearing
+  intent interrupts obsolete work. Retryable failures have an explicit retry
+  deadline. Active installed demand scopes are replaced and closed, not accumulated.
+
+Verification includes finite entity-reference oracle runs, offline replacement,
+reopen, row/blob GC, streamed byte retention, cancellation, caller/adapter freshness
+precedence and healthy watch coverage. Membership updates are exercised through
+owned, speculative and snapshot sources. Existing receipt/replay/recovery and
+incremental-delivery oracle tests remain in the suite. Checkmarks above record this
+review and regression evidence, not a proof of every possible failure schedule.
+
+Future work remains: retained-batch resume after reconnect, hard memory/disk cache
+budgets, narrower publication locking, query IVM/scoped hierarchical query demand,
+selective/range attachment pinning and intermediate-replica Durable Object alarms.
+Installation extraction belongs to its own review. No further API policy feedback
+is required to proceed with the remaining subsystem reviews.

@@ -105,7 +105,7 @@ export function makeFoundryMetadataBackend(options: {
         supportsIdempotency: false,
         applyAction: () => unsupported("applyAction"),
         queryFunction: () => unsupported("queryFunction"),
-        pollIntervalMs: () => options.refetchInterval ?? false,
+        refresh: () => ({ pollIntervalMs: options.refetchInterval ?? false }),
         loadSubset: Effect.fn("FoundryMetadata.loadSubset")(function* (subset: BackendSubset) {
             const type = metaOntology.objectTypes.find((type) => type.name === subset.objectType);
             if (!type)

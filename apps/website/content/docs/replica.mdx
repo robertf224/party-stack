@@ -1,0 +1,172 @@
+---
+title: Replica
+description: Scoped demand, action recovery, freshness and persistent offline graphs.
+---
+
+A Replica owns installed base rows, inherited predictions from a speculative
+parent, its own outbox and computed optimistic overlay. The same engine works
+with memory or persistent platform storage. `@party-stack/ontology` adds typed
+application actions and TanStack collections over this service.
+
+## Construction
+
+`Replica.layer` requires a platform `Runtime` and an acquired `ReplicaUpstream`.
+Replay, blob metadata, attachment staging and worker lifetimes are composed
+internally. Applications supply ontology definitions and optional custom mutators.
+
+```ts
+import { Replica, ReplicaUpstream } from "@party-stack/ontology-replica";
+import { RuntimePartition } from "@party-stack/runtime";
+import * as WebRuntime from "@party-stack/web-runtime";
+import { Layer } from "effect";
+
+const replicaLayer = Replica.layer({
+    ir,
+    context: { userId },
+    demand: {
+        idleRetentionMs: 30_000,
+        maxSubsets: 1024,
+        refresh: { maxCoverageAgeMs: 60_000 },
+    },
+    outbox: {
+        retryPolicy: { maxRetries: 3, retryDelayMs: 1000 },
+        failureStrategy: "pause",
+        resultRetentionMs: 7 * 24 * 60 * 60 * 1000,
+    },
+    objectCacheGc: {
+        sweepIntervalMs: 60_000,
+        minUnusedAgeMs: 24 * 60 * 60 * 1000,
+        maxCandidates: 100,
+    },
+}).pipe(
+    Layer.provide(Layer.succeed(ReplicaUpstream)({ kind: "committed", backend })),
+    Layer.provide(WebRuntime.layer()),
+    Layer.provide(
+        Layer.succeed(RuntimePartition)({
+            owner: userId,
+            namespace: ontologyId,
+        })
+    )
+);
+```
+
+Use `kind: "speculative"` with both `backend` and `source` for an intermediate
+parent. The backend supplies attachment/provider capabilities; the source also
+publishes parent predictions and action acceptance. Each child keeps its own rows
+and bytes. The platform partition must identify the authenticated owner/tenant;
+a source ID identifies replication data and is not an authentication boundary.
+
+`clientSessions` configures children served by this replica. It is useful on a
+SharedWorker or replica server, not only an authoritative server. Session expiry
+never removes accepted pending actions. Its limits are `sessionIdleTimeoutMs`,
+`maxSessions` and `maxUnacknowledgedActions` per child.
+
+## One-shot use
+
+`live` defaults to `true`. Set `live: false` for a scoped script or request that
+should fetch explicitly and exit without background watches, polling, outbox
+processing or maintenance workers. New `outbox.enqueue` calls are rejected in
+this mode. Apply writes directly through the upstream backend.
+Existing persisted outbox entries and pins are preserved. `syncOnce` is an explicit
+checkpoint that can process existing actions and refresh saved pin demand.
+
+## Local reads and demand
+
+`get(objectType, key)`, `readSubset(subset)` and `observeSubset(subset)` read installed
+visible data. `confirmed.get` and `confirmed.readSubset` exclude inherited and local
+predictions. Local reads do not implicitly fetch from an upstream provider.
+
+`demand.acquire` takes an ontology `ObjectSubset`, using the shared expression IR.
+It acquires upstream interest and coordinates the initial load. Its Effect scope
+owns the lease. Offline completion can expose persisted data without proving a
+complete result. Use `{ localOnly: true }` to retain local rows without upstream IO;
+this is what persisted-data inspection uses.
+
+Subset observation emits an initial reset followed by row/removal batches. These
+feed TanStack collections incrementally. Full hierarchical query demand is
+currently exposed for persistent pins; ordinary scoped UI demand remains subsets.
+
+## Freshness and retention
+
+`demand.refresh.pollIntervalMs` opts into polling when a native watch is unavailable;
+`false` disables polling. Without a caller override, adapters can recommend a
+polling interval. Otherwise polling is off. Healthy native watches take precedence.
+
+`demand.refresh.maxCoverageAgeMs` bounds reuse of unmaintained snapshots. Its default
+is 60 seconds. `Infinity` explicitly permits indefinite quiet-cache reuse; zero
+requires revalidation on demand. Expiry does not delete rows or cause a background
+fetch. New demand revalidates expired coverage. Healthy watch/journal coverage can
+remain current regardless of the initial snapshot's age. Losing a watch invalidates
+its proof and requires revalidation.
+
+Adapters recommend these defaults through `refresh(subset)`; explicit Replica
+configuration wins. Demand idle retention controls how long unused interest stays
+alive, while `objectCacheGc` controls row eviction. Completed action result retention
+is separate from pending outbox intent. These policies do not share a scheduler.
+
+## Persistent query pins
+
+A pin is one replaceable, persisted multi-root entity query per replica partition.
+It uses the ordinary query executor and subset acquisition, rather than requiring
+server query IVM. Entity selections preserve object/property identity and reject
+computed aliases that cannot identify stored entity fields.
+
+```ts
+import * as q from "@party-stack/ontology-spec/query";
+import { Effect } from "effect";
+
+const pinProject = Effect.gen(function* () {
+    const replica = yield* Replica;
+    yield* replica.demand.setPin({
+        select: [
+            q.sub("projects", {
+                from: { source: { objectType: "Project" }, binding: "p" },
+                where: q.eq(q.field("p", "id"), q.literal(projectId)),
+                select: [
+                    q.selectField("id", q.field("p", "id")),
+                    q.sub("issues", {
+                        from: { source: { objectType: "Issue" }, binding: "i" },
+                        where: q.eq(q.field("i", "projectId"), q.field("p", "id")),
+                        select: [q.selectField("id", q.field("i", "id"))],
+                    }),
+                ],
+            }),
+        ],
+    });
+    return yield* replica.demand.pinStatus;
+});
+```
+
+`setPin` saves validated intent even when offline. In live mode acquisition runs in
+the replica's scope; `pinStatus` reports readiness and an actionable failure.
+Replacement retains the last complete graph until the new graph is complete.
+Membership and byte-retention roots switch in one local transaction. Repeated
+replacement retains only the last complete graph and the newest desired query.
+Graph membership follows relationship and row changes; pinning does not freeze
+replicated values. Saved intent and membership survive restart.
+Membership also retains the rows needed to evaluate the query locally, including
+the preceding rows of an offset window and rows read by correlated expressions.
+
+Attachment bytes are not downloaded automatically. Pass `{ attachments: "all" }`
+to download attachments selected in the graph. Byte roots are transactional with
+membership, and readiness waits for required bytes. Existing local copies are reused.
+`clearPin` releases persistent retention; ordinary age-based GC then applies.
+Neither replacement nor clear wipes the replica's unrelated cached data.
+
+## Actions and infrastructure
+
+`outbox.enqueue` persists intent and optional predictions. `outbox.wait(id)` waits
+for confirmation; `{ until: "accepted" }` observes immediate-parent acceptance.
+Interrupting a wait does not cancel the action. `outbox.get`, `entries` and `observe`
+inspect state. `entries` is a local snapshot; `observe` also owns scoped interest
+in parent action records. `edit`, `retry`, `remove` and `reconcile` provide explicit recovery.
+Unknown remote outcomes remain distinct from retryability.
+
+`status` and `statuses` expose diagnostics, including separate network/auth state
+and pin readiness. `collectGarbage` runs an explicit bounded row sweep. Normal
+scope cleanup stops acquired resources; Replica has no application `destroy` call.
+
+Trusted server construction uses `@party-stack/ontology-replica/infrastructure` for
+session/delivery controllers, `replicaStateSource` and cached-proxy composition.
+Those controls are not fields on the application-facing Replica service and are
+not an authorization boundary. Public servers still enforce their own policy.

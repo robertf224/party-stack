@@ -1,6 +1,7 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
+import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { TemporalTimestamp } from "@party-stack/ontology-spec/effect";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
@@ -79,14 +80,14 @@ const fixture = Effect.fnUntraced(function* (settings?: { keys?: boolean; owner?
         applyAction: () => Effect.die("unused"),
         queryFunction: () => Effect.die("unused"),
         encrypted: { decrypt: call },
-        pollIntervalMs: () => false as const,
+        refresh: () => ({ pollIntervalMs: false as const }),
     };
     const replica = yield* makeReplica({
         namespace: "private",
         ir,
         tables,
         backend,
-        startSync: false,
+        live: false,
     });
     // Load, then release demand so the row can later be collected.
     yield* Effect.scoped(
@@ -117,7 +118,7 @@ test("cache is an encrypted row property, survives reopening, stays out of repli
                 expect(row.secret.ciphertext).toBe(handle.ciphertext);
                 expect(row.secret.localCache?.ciphertext).toContain("party-stack:encrypted:v1:");
                 expect(JSON.stringify(row)).not.toContain(wire.token);
-                const exported = yield* replica.snapshotState;
+                const exported = yield* replicaController(replica).snapshotState;
                 expect(JSON.stringify(exported)).not.toContain("localCache");
                 expect(JSON.stringify(structuredClone(exported))).not.toContain("party-stack:encrypted:v1:");
                 const reopened = yield* open();
@@ -137,7 +138,7 @@ test("cache is an encrypted row property, survives reopening, stays out of repli
                 expect((yield* Effect.result(reopened.decrypt(handle)))._tag).toBe("Failure");
                 expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(1);
                 expect(yield* tables.get(raw, "1")).toBeUndefined();
-                expect(yield* replica.encryptedCache.get(handle)).toBeUndefined();
+                expect(yield* replicaController(replica).encryptedCache.get(handle)).toBeUndefined();
                 expect((yield* Effect.result(reopened.decrypt(handle, { cache: true })))._tag).toBe(
                     "Failure"
                 );
@@ -384,24 +385,24 @@ test("journal refresh preserves the device copy only while the authoritative cip
                     ir: definition,
                     tables,
                     backend: server,
-                    startSync: false,
+                    live: false,
                 });
                 yield* replica.syncOnce;
                 const local = { ciphertext: "device-encrypted-copy" };
-                yield* replica.encryptedCache.put(handle, local);
+                yield* replicaController(replica).encryptedCache.put(handle, local);
                 yield* server.storage.transaction((tx) =>
                     tx.put("Person", { id: "1", secret: handle, title: "updated" })
                 );
                 yield* replica.syncOnce;
                 expect((yield* replica.get("Person", "1"))?.title).toBe("updated");
-                expect(yield* replica.encryptedCache.get(handle)).toEqual(local);
+                expect(yield* replicaController(replica).encryptedCache.get(handle)).toEqual(local);
                 const rotated = { ...handle, ciphertext: "rotated" };
                 yield* server.storage.transaction((tx) =>
                     tx.put("Person", { id: "1", secret: rotated, title: "updated" })
                 );
                 yield* replica.syncOnce;
-                expect(yield* replica.encryptedCache.get(handle)).toBeUndefined();
-                expect(yield* replica.encryptedCache.get(rotated)).toBeUndefined();
+                expect(yield* replicaController(replica).encryptedCache.get(handle)).toBeUndefined();
+                expect(yield* replicaController(replica).encryptedCache.get(rotated)).toBeUndefined();
             })
         )
     );

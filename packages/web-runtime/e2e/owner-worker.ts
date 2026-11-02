@@ -1,6 +1,7 @@
 import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunner";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
-import { makeReplica, replicaStateSource } from "@party-stack/ontology-replica";
+import { makeReplica } from "@party-stack/ontology-replica";
+import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { serveOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
 import { Runtime, RuntimePartition } from "@party-stack/runtime";
 import { Effect, Fiber, Layer } from "effect";
@@ -25,7 +26,7 @@ Effect.runFork(
                 backend,
                 mutators: { increment },
                 connectivity: runtime.connectivity,
-                pollIntervalMs: 600_000,
+                demand: { refresh: { pollIntervalMs: 600_000 } },
             });
             const server = yield* serveOntologyWorker({
                 source: replicaStateSource(owner),

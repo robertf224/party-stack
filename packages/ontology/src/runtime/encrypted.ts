@@ -1,4 +1,5 @@
 import { BackendError, encryptedPropertyCodec, EncryptedValueSchema } from "@party-stack/ontology-backend";
+import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
 import { Runtime } from "@party-stack/runtime";
 import { Effect, Schema } from "effect";
@@ -29,7 +30,7 @@ const safe = <A, E>(effect: Effect.Effect<A, E>) =>
  */
 export const makeLiveDecryption = Effect.fnUntraced(function* (options: {
     readonly ir: OntologyIR;
-    readonly replica: Pick<ReplicaService, "encryptedCache">;
+    readonly replica: ReplicaService;
     readonly backend: Pick<OntologyBackendService, "sourceId" | "encrypted">;
 }) {
     const runtime = yield* Runtime;
@@ -58,7 +59,7 @@ export const makeLiveDecryption = Effect.fnUntraced(function* (options: {
                 "NotImplemented"
             );
         if (settings?.cache) {
-            const local = yield* safe(options.replica.encryptedCache.get(handle));
+            const local = yield* safe(replicaController(options.replica).encryptedCache.get(handle));
             if (local) {
                 const result = yield* Effect.result(
                     safe(values().decrypt(CachedPlaintext, local)).pipe(
@@ -96,7 +97,7 @@ export const makeLiveDecryption = Effect.fnUntraced(function* (options: {
                     value: result.value,
                 })
             );
-            yield* safe(options.replica.encryptedCache.put(handle, local));
+            yield* safe(replicaController(options.replica).encryptedCache.put(handle, local));
         }
         return decoded;
     });

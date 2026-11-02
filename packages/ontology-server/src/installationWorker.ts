@@ -1,7 +1,7 @@
 import { createConnectionMonitor, ConnectionError, type Connection } from "@party-stack/connect";
 import { BackendError, classifyBackendFailure, unauthenticated } from "@party-stack/ontology-backend";
 import { protocolValueCodec } from "@party-stack/ontology-backend/protocol";
-import { replicaStateSource } from "@party-stack/ontology-replica";
+import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { TraceRecording } from "@party-stack/runtime/tracing";
 import {
     Cause,

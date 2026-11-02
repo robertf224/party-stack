@@ -1,3 +1,4 @@
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import * as oq from "@party-stack/ontology-spec/query";
 import { evaluateQuery, eq as storageEq, field } from "@party-stack/ontology-storage";
 import { IR, compileSingleRowExpression, queryOnce, eq, gte } from "@tanstack/db";
@@ -324,16 +325,24 @@ test("a real TanStack query forwards its predicate and numeric window into Repli
                     syncOnce: Effect.void,
                     syncSubset: () => Effect.void,
                     subscribeChanges: Effect.succeed(Stream.never),
-                    observeRows: (_type: string, query: import("@party-stack/ontology-storage").Query) =>
-                        Stream.succeed({ reset: true, rows: evaluateQuery(rows, query), removed: [] }),
+                    observeSubset: (subset: ObjectSubset) =>
+                        Stream.fromEffect(
+                            Effect.map(compileObjectSubset(ir, subset), (scan) => ({
+                                reset: true,
+                                rows: evaluateQuery(rows, scan.query),
+                                removed: [],
+                            }))
+                        ),
                     demand: {
                         acquire: (subset: ObjectSubset) =>
                             Effect.sync(() => {
                                 requested.push(subset);
                             }),
                     },
-                    loadSubset: (_type: string, query: import("@party-stack/ontology-storage").Query) =>
-                        Effect.sync(() => evaluateQuery(rows, query)),
+                    readSubset: (subset: ObjectSubset) =>
+                        Effect.flatMap(compileObjectSubset(ir, subset), (scan) =>
+                            Effect.sync(() => evaluateQuery(rows, scan.query))
+                        ),
                 } as unknown as ReplicaService;
                 const collection = yield* makeReplicatedCollection<{ id: string; rank: number }>({
                     id: "numeric-window",
@@ -380,22 +389,25 @@ test("overlapping scoped subsets share materialized rows and unload without clob
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const events = yield* PubSub.unbounded<void>();
+                const eventsBus = yield* PubSub.unbounded<void>();
                 let releases = 0;
                 let local: readonly { key: string; value: Record<string, unknown> }[] = rows;
                 const replica = {
                     ir,
                     syncOnce: Effect.void,
                     syncSubset: () => Effect.void,
-                    subscribeChanges: PubSub.subscribe(events).pipe(Effect.map(Stream.fromSubscription)),
-                    observeRows: (_type: string, query: import("@party-stack/ontology-storage").Query) =>
+                    subscribeChanges: PubSub.subscribe(eventsBus).pipe(Effect.map(Stream.fromSubscription)),
+                    observeSubset: (subset: ObjectSubset) =>
                         Stream.unwrap(
                             Effect.gen(function* () {
-                                const events = yield* replica.subscribeChanges;
+                                const scan = yield* compileObjectSubset(ir, subset);
+                                const events = yield* PubSub.subscribe(eventsBus).pipe(
+                                    Effect.map(Stream.fromSubscription)
+                                );
                                 return Stream.concat(Stream.succeed(undefined), events).pipe(
                                     Stream.map(() => ({
                                         reset: true,
-                                        rows: evaluateQuery(local, query),
+                                        rows: evaluateQuery(local, scan.query),
                                         removed: [],
                                     }))
                                 );
@@ -409,8 +421,10 @@ test("overlapping scoped subsets share materialized rows and unload without clob
                                 })
                             ),
                     },
-                    loadSubset: (_type: string, query: import("@party-stack/ontology-storage").Query) =>
-                        Effect.sync(() => evaluateQuery(local, query)),
+                    readSubset: (subset: ObjectSubset) =>
+                        Effect.flatMap(compileObjectSubset(ir, subset), (scan) =>
+                            Effect.sync(() => evaluateQuery(local, scan.query))
+                        ),
                 } as unknown as ReplicaService;
                 const collection = yield* makeReplicatedCollection<{ id: string; rank: number }>({
                     id: "overlap",
@@ -435,14 +449,14 @@ test("overlapping scoped subsets share materialized rows and unload without clob
                 local = local.map((row) =>
                     row.key === "a" ? { ...row, value: { ...row.value, rank: 0 } } : row
                 );
-                yield* PubSub.publish(events, undefined);
+                yield* PubSub.publish(eventsBus, undefined);
                 yield* Effect.sleep(5);
                 expect([...collection.keys()]).toEqual(["c"]);
                 controller.abort();
                 yield* Effect.sleep(1);
                 expect(releases).toBe(2);
                 local = rows;
-                yield* PubSub.publish(events, undefined);
+                yield* PubSub.publish(eventsBus, undefined);
                 yield* Effect.sleep(5);
                 expect([...collection.keys()]).toEqual(["a", "c"]);
                 collection._sync.unloadSubset(duplicate);

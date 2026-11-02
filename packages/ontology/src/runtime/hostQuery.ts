@@ -5,7 +5,9 @@ import type { BackendSubset, BackendError } from "@party-stack/ontology-backend"
 import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { Row } from "@party-stack/ontology-storage";
 
-type QuerySource = Pick<ReplicaService, "observeRows" | "demand" | "retainLocal">;
+type QuerySource = Pick<ReplicaService, "observeSubset"> & {
+    readonly demand: Pick<ReplicaService["demand"], "acquire">;
+};
 
 /** Each observer owns a demand/read lease and composes atomic local row batches. */
 export function observeReplicaRows(
@@ -16,10 +18,10 @@ export function observeReplicaRows(
     return Stream.unwrap(
         Effect.gen(function* () {
             yield* options?.persistedOnly
-                ? replica.retainLocal(subset.objectType, subset.query)
+                ? replica.demand.acquire(objectSubset(subset.objectType, subset.query), { localOnly: true })
                 : replica.demand.acquire(objectSubset(subset.objectType, subset.query));
             const rows = new Map<string | number, Row<Record<string, unknown>>>();
-            return replica.observeRows(subset.objectType, subset.query).pipe(
+            return replica.observeSubset(objectSubset(subset.objectType, subset.query)).pipe(
                 Stream.map((batch) => {
                     if (batch.reset) rows.clear();
                     for (const key of batch.removed) rows.delete(key);

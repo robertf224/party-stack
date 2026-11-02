@@ -29,13 +29,11 @@ test("query streams do not miss a commit racing the initial snapshot and release
                                         })
                                 ),
                         },
-                        retainLocal: () => Effect.die("Remote query used inspection lease"),
-                        observeRows: (type, query) =>
+                        observeSubset: (query) =>
                             Stream.unwrap(
                                 Effect.gen(function* () {
                                     const changes = yield* PubSub.subscribe(events);
-                                    expect(type).toBe("Note");
-                                    expect(query).toEqual({ limit: 1 });
+                                    expect(query).toEqual(objectSubset("Note", { limit: 1 }));
                                     const value = revision;
                                     if (revision === 0) {
                                         revision++;
@@ -82,22 +80,23 @@ test("inspection streams hold only a local reader lease and cancellation release
                     observeReplicaRows(
                         {
                             demand: {
-                                acquire: () =>
-                                    Effect.sync(() => {
-                                        remote++;
-                                    }),
-                            },
-                            retainLocal: () =>
-                                Effect.acquireRelease(
-                                    Effect.sync(() => {
-                                        readers++;
-                                    }),
-                                    () =>
+                                acquire: (_subset, settings) => {
+                                    if (!settings?.localOnly)
+                                        return Effect.sync(() => {
+                                            remote++;
+                                        });
+                                    return Effect.acquireRelease(
                                         Effect.sync(() => {
-                                            readers--;
-                                        })
-                                ),
-                            observeRows: () =>
+                                            readers++;
+                                        }),
+                                        () =>
+                                            Effect.sync(() => {
+                                                readers--;
+                                            })
+                                    );
+                                },
+                            },
+                            observeSubset: () =>
                                 Stream.concat(
                                     Stream.succeed({
                                         reset: true,

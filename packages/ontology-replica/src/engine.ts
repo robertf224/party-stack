@@ -130,6 +130,7 @@ interface Coverage {
     barrierCursor?: string;
     rowKeys?: readonly Key[];
     updatedAt: number;
+    invalidated?: boolean;
 }
 interface Retention {
     objectType: string;
@@ -160,6 +161,18 @@ export interface ObjectCacheGcPolicy extends ObjectCacheSweepOptions {
     readonly sweepIntervalMs?: number;
 }
 export interface ReplicaService extends OwnedReadTransaction {
+    readonly localTransaction: <A>(
+        body: (
+            tx: Transaction,
+            read: OwnedReadTransaction
+        ) => Effect.Effect<A, BackendError | OntologyStorageError>
+    ) => Effect.Effect<A, BackendError>;
+    readonly visibleChanges: Effect.Effect<Stream.Stream<void>, BackendError, Scope.Scope>;
+    readonly hasCoverage: (
+        tx: ReadTransaction,
+        subset: BackendSubset
+    ) => Effect.Effect<boolean, OntologyStorageError>;
+
     readonly ir: OntologyIR;
     readonly mode: "adapter" | "protocol";
     readonly connectivity: NetworkConnectivity;
@@ -239,7 +252,8 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly parentState: Effect.Effect<ReplicaStateSnapshot | undefined, BackendError>;
     readonly receiveParentState: (
         snapshot: ReplicaStateSnapshot,
-        requestedActionIds?: readonly string[]
+        requestedActionIds?: readonly string[],
+        proofs?: ClientState["coverage"]
     ) => Effect.Effect<void, BackendError>;
     readonly refreshParent: (source: OntologySource) => Effect.Effect<void, BackendError>;
     /** Refresh observed state and forward only locally owned actions, in order. */
@@ -316,8 +330,9 @@ interface ReplicaCommonOptions {
     readonly onReceipt?: (receipt: ActionReceipt) => Effect.Effect<void, BackendError>;
     readonly connectivity?: NetworkConnectivity;
     readonly connection?: Pick<ConnectionMonitor, "state" | "changes">;
-    /** Multi-context deployments supply their existing leader lease here. */
+    /** Private controller scheduling switch for deterministic state-machine fixtures. */
     readonly startSync?: boolean;
+    readonly live?: boolean;
     readonly clients?: ClientPolicy;
     readonly resultRetentionMs?: number;
     readonly pollIntervalMs?: number;
@@ -372,6 +387,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const canSync = Effect.gen(function* () {
         return (yield* connectivity.online) && (!connection || connection.state.status === "active");
     });
+    const maxCoverageAge = options.demand?.refresh?.maxCoverageAgeMs ?? 60_000;
+    if (Number.isNaN(maxCoverageAge) || maxCoverageAge < 0)
+        return yield* fault("InvalidConfiguration", "Coverage age must be nonnegative or Infinity.");
     const maxRetries = options.outbox?.maxRetries ?? 3;
     const retryDelayMs = options.outbox?.retryDelayMs ?? 1_000;
     if (
@@ -589,6 +607,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             revision: number;
             installed: number;
             watchers: number;
+            watched?: boolean;
             loadFailure?: { readonly revision: number; readonly error: BackendError };
             watchFailure?: BackendError;
             coveredBy?: BackendSubset;
@@ -716,6 +735,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 const current = demands.get(key);
                                 if (current && current.count > 1) current.count--;
                                 else {
+                                    if (current?.watched) {
+                                        const previous = yield* tables.get(coverage, key);
+                                        if (previous)
+                                            yield* tables.put(coverage, key, {
+                                                ...previous,
+                                                invalidated: true,
+                                            });
+                                    }
                                     demands.delete(key);
                                     if (current) yield* Deferred.succeed(current.released, undefined);
                                 }
@@ -1108,7 +1135,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     ) {
         const backend = yield* backendEffect;
         yield* Effect.annotateCurrentSpan("objectType", subset.objectType);
-        const snapshot = yield* loadSubset(subset, reason);
+        // Local reads apply their own offset. Install the complete leading prefix
+        // so a pushed-down offset is not applied twice against a cold cache.
+        const snapshot = yield* loadSubset(
+            subset.query ? { ...subset, query: retentionQuery(subset.query) } : subset,
+            reason
+        );
         if (requireComplete && !snapshot.complete)
             return yield* fault("Unavailable", "Action read-back was incomplete.");
         const v = yield* view(subset.objectType);
@@ -1724,6 +1756,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             return;
         yield* pull();
         const head = yield* boundary(tables.read(position));
+        const now = yield* Clock.currentTimeMillis;
+
         const covered = Effect.fnUntraced(function* (subset: BackendSubset) {
             const records = yield* boundary(
                 tables.query(coverage, {
@@ -1735,10 +1769,23 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 key !== undefined &&
                 (yield* boundary(tables.get((yield* view(subset.objectType)).base, key))) !== undefined;
             for (const { value: record } of records) {
+                if (record.invalidated) continue;
                 const live = demands.get(subsetKey(record.subset));
+                const maxAge =
+                    options.demand?.refresh?.maxCoverageAgeMs ??
+                    backend.refresh?.(record.subset)?.maxCoverageAgeMs ??
+                    60_000;
+                const liveWatch =
+                    live &&
+                    live.watchers > 0 &&
+                    live.pollIntervalMs === undefined &&
+                    !live.watchFailure &&
+                    live.installed === live.revision;
                 const maintained = backend.changes
                     ? record.snapshotCursor !== undefined && record.barrierCursor === undefined
-                    : live && live.watchers > 0 && live.installed === live.revision;
+                    : liveWatch ||
+                      ((!live || live.installed === 0 || live.installed === live.revision) &&
+                          now - record.updatedAt < maxAge);
                 if (!maintained) continue;
                 const proof = (reason: "collection" | "query" | "primary-key") => ({
                     subset: record.subset,
@@ -1748,7 +1795,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                             ? ("journal" as const)
                             : live?.pollIntervalMs !== undefined
                               ? ("poll" as const)
-                              : ("watch" as const),
+                              : liveWatch
+                                ? ("watch" as const)
+                                : ("snapshot" as const),
                         pollIntervalMs: backend.changes ? undefined : live?.pollIntervalMs,
                     },
                 });
@@ -1792,7 +1841,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             demand.coveredBy = undefined;
             demand.coverageProof = undefined;
             if (
-                (demand.watchers || demand.pollDisabled) &&
+                demand.watchers > 0 &&
+                demand.pollIntervalMs === undefined &&
+                !demand.watchFailure &&
                 cached?.complete &&
                 demand.installed === demand.revision
             )
@@ -2089,6 +2140,27 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 ),
                             },
                         });
+                    const pinned = new Map<string, Key[]>();
+                    const flushPins = (objectType: string) => {
+                        const keys = pinned.get(objectType)!;
+                        if (keys.length)
+                            include({
+                                objectType,
+                                query: {
+                                    where: inArray(field(definitions.get(objectType)!.primaryKey), [...keys]),
+                                },
+                            });
+                        keys.length = 0;
+                    };
+                    yield* scanDeliveryRows(tx, pins, {}, (row) =>
+                        Effect.sync(() => {
+                            const keys = pinned.get(row.value.objectType) ?? [];
+                            pinned.set(row.value.objectType, keys);
+                            keys.push(row.value.key);
+                            if (keys.length === 128) flushPins(row.value.objectType);
+                        })
+                    );
+                    for (const objectType of pinned.keys()) flushPins(objectType);
                     const pending = [
                         ...(yield* pendingIn(tx)),
                         ...(yield* acceptedIn(tx)).map((row) => row.value),
@@ -2156,7 +2228,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                   current.parentViewIdentity
               )
             : undefined;
-        yield* service.receiveParentState(batch.state, selection?.actionIds);
+        yield* service.receiveParentState(batch.state, selection?.actionIds, batch.coverage);
         yield* source.acknowledge(
             session,
             batch.state.revision,
@@ -2606,9 +2678,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             yield* wakeState;
             return;
         }
+        if (options.live === false) return;
         const watched = adapter!.watchSubset?.(copy);
-        const configuredInterval = adapter!.pollIntervalMs?.(copy);
+        const configuredInterval =
+            options.demand?.refresh?.pollIntervalMs ?? adapter!.refresh?.(copy)?.pollIntervalMs ?? false;
         const demand = demands.get(key)!;
+        demand.watched = Boolean(watched);
         demand.pollDisabled = !watched && configuredInterval === false;
         const pollIntervalMs =
             watched || adapter!.changes || configuredInterval === false
@@ -2655,6 +2730,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     }),
                 onError: (error) =>
                     Effect.sync(() => {
+                        if (error || demand.watchFailure) demand.revision++;
                         demand.watchFailure = error;
                     }).pipe(
                         Effect.andThen(diagnostics.changed),
@@ -2692,6 +2768,17 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         })
     );
     const service: ReplicaService = {
+        localTransaction: (body) =>
+            access(tables.transaction((tx) => body(tx, reader(tx, false)))).pipe(Effect.tap(() => notify)),
+        visibleChanges: access(PubSub.subscribe(visibleEvents)).pipe(
+            Effect.map((subscription) => Stream.fromSubscription(subscription).pipe(Stream.as(undefined)))
+        ),
+        hasCoverage: (tx, subset) =>
+            Effect.gen(function* () {
+                const demand = demands.get(subsetKey(subset));
+                const proof = yield* tx.get(coverage, subsetKey(demand?.coveredBy ?? subset));
+                return proof?.complete === true && !proof.invalidated;
+            }),
         outboxWakeups: outboxWake,
         reportReplicationFailure: (error) =>
             Effect.gen(function* () {
@@ -2819,7 +2906,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 subset.objectType,
                                 yield* reader(tx, confirmed).loadSubset(subset.objectType, subset.query)
                             ),
-                            complete: proof?.complete === true,
+                            complete: proof?.complete === true && !proof.invalidated,
                             cursor: (yield* position(tx)).cursor,
                         };
                     })
@@ -2951,7 +3038,25 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         yield* clients.select(tx, session, view);
                         const state = yield* snapshotStateIn(tx, view);
                         const client = yield* clients.deliver(tx, session, state.revision);
-                        return { state, client };
+                        const proofs =
+                            view &&
+                            (yield* Effect.forEach(view.selection.subsets, (subset) =>
+                                Effect.gen(function* () {
+                                    const demanded = demands.get(subsetKey(subset));
+                                    const proof = yield* tx.get(
+                                        coverage,
+                                        subsetKey(demanded?.coveredBy ?? subset)
+                                    );
+                                    return {
+                                        subset,
+                                        complete:
+                                            proof?.complete === true &&
+                                            !proof.invalidated &&
+                                            (!demanded || demanded.installed === demanded.revision),
+                                    };
+                                })
+                            ));
+                        return { state, client, ...(proofs ? { coverage: proofs } : {}) };
                     })
                 )
             ),
@@ -3062,7 +3167,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         }),
         receiveParentState: Effect.fn("Replica.receiveParentState")(function* (
             snapshot: ReplicaStateSnapshot,
-            requestedActionIds?: readonly string[]
+            requestedActionIds?: readonly string[],
+            proofs?: ClientState["coverage"]
         ) {
             yield* open;
             if (!options.source)
@@ -3126,6 +3232,36 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             );
             if (!fresh) return;
 
+            const installCoverage = (tx: Transaction) =>
+                Effect.gen(function* () {
+                    let changed = false;
+                    for (const proof of proofs ?? []) {
+                        const matched = [
+                            proof.subset,
+                            ...[...demands.values()]
+                                .filter(
+                                    (demand) =>
+                                        subsetKey({
+                                            ...demand.subset,
+                                            query: retentionQuery(demand.subset.query),
+                                        }) === subsetKey(proof.subset)
+                                )
+                                .map((demand) => demand.subset),
+                        ];
+                        for (const subset of matched) {
+                            const key = subsetKey(subset);
+                            const previous = yield* tx.get(coverage, key);
+                            if (previous?.complete !== proof.complete || previous?.invalidated)
+                                changed = true;
+                            yield* tx.put(coverage, key, {
+                                subset,
+                                complete: proof.complete,
+                                updatedAt: yield* Clock.currentTimeMillis,
+                            });
+                        }
+                    }
+                    return changed;
+                });
             const changed = yield* boundary(
                 tables.transaction((tx) =>
                     Effect.gen(function* () {
@@ -3144,7 +3280,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 );
                             if (prior.resident !== false) {
                                 if (!prior.digest) yield* tx.put(imported, "head", { ...prior, digest });
-                                return false;
+                                return yield* installCoverage(tx);
                             }
                         }
                         const objectTypes = new Set(snapshot.objects.map((object) => object.objectType));
@@ -3248,6 +3384,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                             resident: true,
                             ...(snapshot.view ? { view: snapshot.view } : {}),
                         });
+                        yield* tx.clear(coverage);
+                        yield* installCoverage(tx);
                         yield* rebase(tx);
                         return true;
                     })
@@ -3859,7 +3997,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         syncRetry && syncRetry.at > now && replicationError?.recovery !== "stop"
                             ? Math.min(dataPollIntervalMs, Math.max(1, syncRetry.at - now))
                             : dataPollIntervalMs;
-                    yield* Effect.raceFirst(Queue.take(queue), Effect.sleep(delay));
+                    yield* options.pollIntervalMs !== undefined || (syncRetry && syncRetry.at > now)
+                        ? Effect.raceFirst(Queue.take(queue), Effect.sleep(delay))
+                        : Queue.take(queue);
                 })
             )
         );
@@ -3906,6 +4046,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                             changeWatchFailure = error;
                         }).pipe(
                             Effect.andThen(diagnostics.changed),
+                            Effect.andThen(wakeState),
                             Effect.andThen(
                                 error
                                     ? Effect.logWarning("Replica change subscription failed", {

@@ -17,7 +17,7 @@ describe("native metadata binding", () => {
                 Effect.scoped(
                     Effect.gen(function* () {
                         const backend = yield* binding.open({});
-                        expect(backend.pollIntervalMs?.({ objectType: "ObjectType" })).toBe(
+                        expect(backend.refresh?.({ objectType: "ObjectType" })?.pollIntervalMs).toBe(
                             refetchInterval ?? false
                         );
                         expect(

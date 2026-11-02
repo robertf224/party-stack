@@ -35,7 +35,7 @@ const quietBackend: OntologyBackendService = {
     loadSubset: () => Effect.succeed({ rows: [], complete: true }),
     applyAction: () => Effect.die("Unexpected action"),
     queryFunction: () => Effect.void,
-    pollIntervalMs: () => false,
+    refresh: () => ({ pollIntervalMs: false }),
 };
 const subsetFor = (key: string) => ({ objectType: "Item", query: { where: eq(field("id"), key) } });
 
@@ -145,7 +145,7 @@ test("cached proxy shares demand, forwards writes, and never enqueues them local
                 const backend = {
                     ...owned,
                     changes: undefined,
-                    pollIntervalMs: () => false as const,
+                    refresh: () => ({ pollIntervalMs: false as const }),
                     loadSubset: (subset: Parameters<typeof owned.loadSubset>[0]) =>
                         Effect.sync(() => loads++).pipe(Effect.andThen(owned.loadSubset(subset))),
                 };
@@ -227,7 +227,7 @@ test("cached proxy never promotes an incomplete source snapshot to complete cove
 });
 
 test.each(["unknown", "rejected", "interrupted"] as const)(
-    "ordinary fallback polling refreshes after a %s outcome without proxy write recovery",
+    "opt-in polling refreshes after a %s outcome without proxy write recovery",
     async (outcome) => {
         await Effect.runPromise(
             Effect.scoped(
@@ -238,7 +238,7 @@ test.each(["unknown", "rejected", "interrupted"] as const)(
                     const refreshed = yield* Deferred.make<void>();
                     const backend: OntologyBackendService = {
                         ...quietBackend,
-                        pollIntervalMs: () => undefined,
+                        refresh: () => ({ pollIntervalMs: undefined }),
                         loadSubset: () =>
                             Effect.gen(function* () {
                                 reads++;
@@ -269,7 +269,7 @@ test.each(["unknown", "rejected", "interrupted"] as const)(
                         backend,
                         execute: () => Effect.void,
                         objectCacheGc: false,
-                        demand: { idleRetentionMs: 60_000 },
+                        demand: { idleRetentionMs: 60_000, refresh: { pollIntervalMs: 5_000 } },
                     });
                     const proxy = yield* makeCachedProxy({ replica, backend });
                     expect((yield* proxy.loadSubset({ objectType: "Item" })).rows[0]?.value.count).toBe(0);
@@ -374,7 +374,7 @@ test.each(targetCases)(
                         tables: yield* Memory.make(),
                         execute: () => Effect.void,
                         startSync: false,
-                        demand: { idleRetentionMs: 60_000 },
+                        demand: { idleRetentionMs: 60_000, refresh: { pollIntervalMs: 5_000 } },
                     });
                     const proxy = yield* makeCachedProxy({ replica, backend });
                     const subsets = ["Item", "Other"].flatMap((objectType) =>
@@ -432,7 +432,7 @@ test("cache invalidation failures preserve the receipt, block stale reads and re
                     tables: yield* Memory.make(),
                     execute: () => Effect.void,
                     startSync: false,
-                    demand: { idleRetentionMs: 60_000 },
+                    demand: { idleRetentionMs: 60_000, refresh: { pollIntervalMs: 5_000 } },
                 });
                 const proxy = yield* makeCachedProxy({
                     replica: {

@@ -17,6 +17,10 @@
         "./host": {
             "types": "./lib/host.d.ts",
             "default": "./lib/host.js"
+        },
+        "./infrastructure": {
+            "types": "./lib/infrastructure.d.ts",
+            "default": "./lib/infrastructure.js"
         }
     },
     "dependencies": {

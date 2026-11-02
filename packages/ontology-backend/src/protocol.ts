@@ -65,6 +65,7 @@ export interface ClientView {
 }
 
 export interface ClientState {
+    readonly coverage?: readonly { readonly subset: BackendSubset; readonly complete: boolean }[];
     readonly state: ReplicaStateSnapshot;
     readonly client: ClientLease;
 }
@@ -198,7 +199,13 @@ export const ReplicaStateSnapshotSchema = Schema.Struct({
     pending: Schema.Array(PendingActionSchema),
     completed: Schema.Array(PendingActionSchema),
 });
-const ClientStateSchema = Schema.Struct({ state: ReplicaStateSnapshotSchema, client: ClientLeaseSchema });
+const ClientStateSchema = Schema.Struct({
+    state: ReplicaStateSnapshotSchema,
+    client: ClientLeaseSchema,
+    coverage: Schema.optional(
+        Schema.Array(Schema.Struct({ subset: BackendSubsetSchema, complete: Schema.Boolean }))
+    ),
+});
 const ClientSubmissionSchema = Schema.Struct({
     session: ClientSessionSchema,
     sequence: PositiveCounter,

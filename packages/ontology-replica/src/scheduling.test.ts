@@ -35,7 +35,7 @@ const quiet: OntologyBackendService = {
     sourceId: "fixture",
     supportsIdempotency: false,
     queryFunction: () => Effect.void,
-    pollIntervalMs: () => false,
+    refresh: () => ({ pollIntervalMs: false }),
     loadSubset: () => Effect.succeed({ complete: true, rows: [] }),
     applyAction: (request) => Effect.succeed({ operationId: request.id, outcome: "committed", affected: [] }),
 };
@@ -207,7 +207,7 @@ test("accepted work waits for evidence instead of waking on query polling or an 
                         }),
                     backend: {
                         ...quiet,
-                        pollIntervalMs: () => 100,
+                        refresh: () => ({ pollIntervalMs: 100 }),
                         loadSubset: () =>
                             Effect.sync(() => {
                                 reads++;
@@ -595,6 +595,96 @@ test("receipt catch-up and state refresh share a journal Retry-After deadline wi
                 // Neither path may issue a request before the shared deadline.
                 expect(pulls).toBeGreaterThan(attempts);
                 expect(writes).toBe(1);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
+});
+
+test("journal watch recovery catches up missed commits without a polling heartbeat or a new hint", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const drop = yield* Deferred.make<void>();
+                const missed = yield* Deferred.make<void>();
+                const caughtUp = yield* Deferred.make<void>();
+                let attempts = 0,
+                    pulls = 0,
+                    dropped = false,
+                    remote = false;
+                const replica = yield* makeReplica({
+                    namespace: "watch-recovery-no-poll",
+                    ir,
+                    tables: yield* Memory.make(),
+                    connectivity,
+                    objectCacheGc: false,
+                    execute: () => Effect.void,
+                    backend: {
+                        ...quiet,
+                        changes: {
+                            pull: (request) =>
+                                Effect.gen(function* () {
+                                    pulls++;
+                                    if (pulls >= 2 && dropped && !remote)
+                                        yield* Deferred.succeed(missed, undefined);
+                                    if (remote) yield* Deferred.succeed(caughtUp, undefined);
+                                    return {
+                                        cursor: remote ? "1" : "0",
+                                        hasMore: false,
+                                        commits:
+                                            remote && request.cursor !== "1"
+                                                ? [
+                                                      {
+                                                          cursor: "1",
+                                                          changes: [
+                                                              {
+                                                                  kind: "put" as const,
+                                                                  objectType: "Item",
+                                                                  key: "one",
+                                                                  value: { id: "one", count: 1 },
+                                                              },
+                                                          ],
+                                                      },
+                                                  ]
+                                                : [],
+                                    };
+                                }),
+                            watch: Stream.suspend(() =>
+                                ++attempts === 1
+                                    ? Stream.fromEffect(
+                                          Deferred.await(drop).pipe(
+                                              Effect.andThen(
+                                                  Effect.sync(() => {
+                                                      dropped = true;
+                                                  })
+                                              ),
+                                              Effect.andThen(
+                                                  Effect.fail(
+                                                      new BackendError({
+                                                          operation: "watch",
+                                                          kind: "Unavailable",
+                                                          retryable: true,
+                                                          message: "Disconnected.",
+                                                      })
+                                                  )
+                                              )
+                                          )
+                                      )
+                                    : Stream.never
+                            ),
+                        },
+                    },
+                });
+                yield* Deferred.succeed(drop, undefined);
+                yield* Deferred.await(missed);
+                remote = true;
+                yield* TestClock.adjust(1_000);
+                yield* Deferred.await(caughtUp);
+                // Waiting for publication must observe the row, not trigger another pull.
+                yield* replica.observeRows("Item").pipe(
+                    Stream.filter((batch) => batch.rows.some((row) => row.key === "one")),
+                    Stream.runHead
+                );
+                expect((yield* replica.get("Item", "one"))?.count).toBe(1);
             })
         ).pipe(Effect.provide(TestClock.layer()))
     );

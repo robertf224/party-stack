@@ -56,7 +56,7 @@ export const runProxyScenario = Effect.fnUntraced(function* (
         ...upstream,
         // A cache must invalidate after its own writes even without source notifications.
         changes: undefined,
-        pollIntervalMs: () => false as const,
+        refresh: () => ({ pollIntervalMs: false as const }),
         loadSubset: (subset: Parameters<typeof upstream.loadSubset>[0]) =>
             Effect.sync(() => loads++).pipe(Effect.andThen(upstream.loadSubset(subset))),
         applyAction: Effect.fnUntraced(function* (request: Parameters<typeof upstream.applyAction>[0]) {
@@ -83,7 +83,7 @@ export const runProxyScenario = Effect.fnUntraced(function* (
                       tables,
                       namespace: "cache",
                       backend,
-                      startSync: false,
+                      live: false,
                       objectCacheGc: false,
                       demand: { idleRetentionMs: 60_000 },
                   })
@@ -138,7 +138,7 @@ export const runProxyScenario = Effect.fnUntraced(function* (
                 forwardsBeforeRetry,
                 count: snapshot.rows[0]?.value.count,
                 sameReceipt: receipt.operationId === repeated.operationId,
-                pending: cache ? (yield* cache.pending).length : 0,
+                pending: cache ? (yield* cache.outbox.entries).length : 0,
             };
         })
     );
@@ -153,7 +153,7 @@ export const runProxyScenario = Effect.fnUntraced(function* (
             const snapshot = yield* client.backend.loadSubset({ objectType: "Item" });
             return {
                 count: snapshot.rows[0]?.value.count,
-                pending: cache ? (yield* cache.pending).length : 0,
+                pending: cache ? (yield* cache.outbox.entries).length : 0,
                 collected,
             };
         })

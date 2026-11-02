@@ -272,7 +272,9 @@ export function QueryPushdown({
                 ? "Refreshed through journal catch-up."
                 : refreshProof.maintainedBy === "poll"
                   ? `Refreshed by polling every ${formatInterval(refreshProof.pollIntervalMs)}.`
-                  : "Refreshed by source change notifications."}
+                  : refreshProof.maintainedBy === "snapshot"
+                    ? "Reused a recent snapshot."
+                    : "Refreshed by source change notifications."}
         </span>
     );
     const sourceDetails = (

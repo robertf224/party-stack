@@ -1,6 +1,8 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
-import { makeReplica, replicaStateSource } from "@party-stack/ontology-replica";
+import { makeReplica as makeNativeReplica } from "@party-stack/ontology-replica";
+import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
+import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Runtime } from "@party-stack/runtime";
@@ -13,6 +15,14 @@ import type { LiveOntology } from "../live/LiveOntology.js";
 import type { ActionRequest } from "@party-stack/ontology-backend";
 import type { OwnedTransaction } from "@party-stack/ontology-backend/owned";
 
+// Deterministic control fixtures exercise the private controller's manual outbox,
+// while the production one-shot facade deliberately rejects enqueue.
+const makeReplica = Effect.fnUntraced(function* (options: Parameters<typeof makeNativeReplica>[0]) {
+    const replica = yield* makeNativeReplica(options);
+    return options.live === false
+        ? { ...replica, outbox: { ...replica.outbox, enqueue: replicaController(replica).enqueue } }
+        : replica;
+});
 const ir: OntologyIR = {
     types: [],
     linkTypes: [],
@@ -74,10 +84,14 @@ test.each(["incremental", "snapshot"] as const)(
                             },
                         },
                         mutators: { rename },
-                        startSync: false,
+                        live: false,
                         objectCacheGc: false,
                     });
-                    yield* owner.enqueue({ id: "controlled", name: "rename", parameters: { title: "old" } });
+                    yield* replicaController(owner).enqueue({
+                        id: "controlled",
+                        name: "rename",
+                        parameters: { title: "old" },
+                    });
                     yield* Effect.result(owner.syncOnce);
                     const parent = replicaStateSource(owner);
                     const child = yield* makeReplica({
@@ -95,7 +109,7 @@ test.each(["incremental", "snapshot"] as const)(
                             ...child,
                             syncOnce: Effect.die("Outbox controls must not run a bridge sync pass."),
                         },
-                        parentOutbox: owner,
+                        parentOutbox: owner.outbox,
                         queryFunction: () => Effect.void,
                         attachments: {} as LiveOntology["attachments"],
                     }).pipe(Effect.provideService(Runtime, runtime));
@@ -120,16 +134,16 @@ test.each(["incremental", "snapshot"] as const)(
                                 "corrected"
                             )
                         );
-                        expect((await Effect.runPromise(owner.pending))[0]?.failureOutcome).toBe(
-                            "not-committed"
-                        );
+                        expect(
+                            (await Effect.runPromise(replicaController(owner).pending))[0]?.failureOutcome
+                        ).toBe("not-committed");
                         await view.outbox.remove("controlled");
                         await vi.waitFor(() =>
                             expect(view.outbox.collection.get("controlled")).toBeUndefined()
                         );
                     });
-                    expect(yield* owner.pendingActions).toEqual([]);
-                    expect(yield* child.pendingActions).toEqual([]);
+                    expect(yield* replicaController(owner).pendingActions).toEqual([]);
+                    expect(yield* replicaController(child).pendingActions).toEqual([]);
                     expect(dispatches).toBe(1);
                 })
             )
@@ -190,7 +204,7 @@ test.each(["pause", "discard-all"] as const)(
                                 }),
                         },
                         mutators: { rename },
-                        startSync: false,
+                        live: false,
                         objectCacheGc: false,
                         outbox: { failureStrategy },
                     });
@@ -200,18 +214,18 @@ test.each(["pause", "discard-all"] as const)(
                         tables: runtime.tables,
                         source: replicaStateSource(owner),
                         mutators: { rename },
-                        startSync: false,
+                        live: false,
                         objectCacheGc: false,
                     });
                     const view = yield* makeReplicaOntologyView({
                         ir,
                         context: {},
                         replica: child,
-                        parentOutbox: owner,
+                        parentOutbox: owner.outbox,
                         queryFunction: () => Effect.void,
                         attachments: {} as LiveOntology["attachments"],
                     }).pipe(Effect.provideService(Runtime, runtime));
-                    yield* child.retainActions();
+                    yield* replicaController(child).retainActions();
                     const enqueue = (id: string) =>
                         Effect.promise(() =>
                             view.outbox.enqueue({
@@ -234,9 +248,9 @@ test.each(["pause", "discard-all"] as const)(
                     });
                     if (failureStrategy === "discard-all") {
                         expect(view.outbox.collection.get("correct")).toBeUndefined();
-                        expect(yield* owner.pendingActions).toEqual([]);
-                        expect(yield* child.pendingActions).toEqual([]);
-                        const lateWait = yield* Effect.result(child.awaitAction("correct"));
+                        expect(yield* replicaController(owner).pendingActions).toEqual([]);
+                        expect(yield* replicaController(child).pendingActions).toEqual([]);
+                        const lateWait = yield* Effect.result(child.outbox.wait("correct"));
                         expect(lateWait).toMatchObject({
                             _tag: "Failure",
                             failure: { kind: "ValidationFailed", issues: [{ path: ["title"] }] },
@@ -258,7 +272,9 @@ test.each(["pause", "discard-all"] as const)(
                     );
                     // This fixture disables background replication and advances it explicitly.
                     yield* child.syncOnce;
-                    expect((yield* child.pendingActions)[0]?.invocation.parameters.title).toBe("corrected");
+                    expect(
+                        (yield* replicaController(child).pendingActions)[0]?.invocation.parameters.title
+                    ).toBe("corrected");
                     yield* Effect.result(owner.syncOnce);
                     yield* child.syncOnce;
                     yield* Effect.promise(() => view.outbox.wait("correct"));
@@ -273,9 +289,9 @@ test.each(["pause", "discard-all"] as const)(
                     yield* Effect.promise(() => view.outbox.remove("remove"));
                     yield* child.syncOnce;
                     yield* child.syncOnce;
-                    expect(yield* owner.pendingActions).toEqual([]);
-                    expect(yield* child.pendingActions).toEqual([]);
-                    expect(yield* child.receipt("remove")).toBeUndefined();
+                    expect(yield* replicaController(owner).pendingActions).toEqual([]);
+                    expect(yield* replicaController(child).pendingActions).toEqual([]);
+                    expect(yield* replicaController(child).receipt("remove")).toBeUndefined();
                     expect(invocations).toBe(3);
                 })
             )
@@ -310,7 +326,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                             ),
                     },
                     mutators: { rename },
-                    startSync: false,
+                    live: false,
                     objectCacheGc: false,
                 });
                 const parent = replicaStateSource(owner);
@@ -339,7 +355,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                                 tables: runtime.tables,
                                 source,
                                 mutators: { rename },
-                                startSync: false,
+                                live: false,
                                 objectCacheGc: false,
                             });
                             const view = yield* makeReplicaOntologyView({
@@ -359,8 +375,8 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                 });
                 const first = yield* open("first");
                 const second = yield* open("second");
-                yield* second.replica.retainActions();
-                yield* second.replica.retainLocal("Note");
+                yield* replicaController(second.replica).retainActions();
+                yield* replicaController(second.replica).retainLocal("Note");
                 let accepted = false;
                 const submitting = yield* Effect.forkChild(
                     Effect.promise(() =>
@@ -378,7 +394,9 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                 );
                 yield* Effect.promise(() =>
                     vi.waitFor(async () =>
-                        expect((await Effect.runPromise(first.replica.pending)).length).toBe(1)
+                        expect(
+                            (await Effect.runPromise(replicaController(first.replica).pending)).length
+                        ).toBe(1)
                     )
                 );
                 expect(accepted).toBe(false);
@@ -387,7 +405,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                 });
                 const forwardingFiber = yield* Effect.forkChild(first.replica.syncOnce);
                 yield* Deferred.await(forwarding);
-                expect((yield* first.replica.pendingActions)[0]).toMatchObject({
+                expect((yield* first.replica.outbox.entries)[0]).toMatchObject({
                     state: "sending",
                     forwarding: true,
                 });
@@ -403,8 +421,10 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                 yield* Fiber.join(forwardingFiber);
                 const queued = yield* Fiber.join(submitting);
                 expect(accepted).toBe(true);
-                expect((yield* owner.pending).map((entry) => entry.invocation.id)).toEqual(["rename"]);
-                expect((yield* first.replica.pendingActions)[0]).toMatchObject({
+                expect((yield* replicaController(owner).pending).map((entry) => entry.invocation.id)).toEqual(
+                    ["rename"]
+                );
+                expect((yield* first.replica.outbox.entries)[0]).toMatchObject({
                     state: "queued",
                     forwarding: false,
                     attempts: 0,
@@ -422,14 +442,14 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                 yield* Effect.promise(async () => {
                     await second.view.outbox.collection._sync.loadSubset({});
                 });
-                expect((yield* second.replica.pendingActions).map((entry) => entry.invocation.id)).toEqual([
+                expect((yield* second.replica.outbox.entries).map((entry) => entry.invocation.id)).toEqual([
                     "rename",
                 ]);
                 expect((yield* second.replica.get("Note", "one"))?.title).toBe("Pending");
                 // Closing the tab cancels its local completion waiter, while the accepted action remains owned.
                 void queued.completed.catch(() => undefined);
                 yield* Scope.close(first.scope, Exit.void);
-                expect((yield* owner.pending).length).toBe(1);
+                expect((yield* replicaController(owner).pending).length).toBe(1);
                 const dispatch = yield* Effect.forkChild(owner.syncOnce);
                 yield* Deferred.await(executing);
                 yield* second.replica.syncOnce;
@@ -443,7 +463,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                     )
                 );
                 yield* second.replica.syncOnce;
-                expect((yield* second.replica.pendingActions)[0]).toMatchObject({
+                expect((yield* second.replica.outbox.entries)[0]).toMatchObject({
                     state: "sending",
                     forwarding: false,
                     attempts: 1,
@@ -451,8 +471,10 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                 yield* Deferred.succeed(allowExecute, undefined);
                 yield* Fiber.join(dispatch);
                 yield* second.replica.syncOnce;
-                expect(yield* second.replica.pendingActions).toEqual([]);
-                expect((yield* second.replica.receipt("rename"))?.outcome).toBe("committed");
+                expect(yield* second.replica.outbox.entries).toEqual([]);
+                expect((yield* replicaController(second.replica).receipt("rename"))?.outcome).toBe(
+                    "committed"
+                );
                 expect((yield* second.replica.get("Note", "one"))?.title).toBe("Pending");
             })
         )

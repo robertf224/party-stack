@@ -507,7 +507,7 @@ test("HTTP cached-proxy views guard warm shared data independently for each prin
                     namespace: "shared-private-cache",
                     tables: yield* Memory.make(),
                     backend: upstream,
-                    startSync: false,
+                    live: false,
                 });
                 yield* cache.demand.acquire({ from: { source: { objectType: "Item" }, binding: "row" } });
                 yield* cache.syncOnce;
@@ -648,7 +648,7 @@ test("a token gateway replaces upstream context and policy, strips bindings and 
                     namespace: "token-gateway-cache",
                     tables: yield* Memory.make(),
                     backend: upstream,
-                    startSync: false,
+                    live: false,
                 });
                 for (const type of sourceIR.objectTypes)
                     yield* cache.demand.acquire({

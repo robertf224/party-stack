@@ -1,3 +1,9 @@
+import type {
+    ReplicaConfiguration,
+    ReplicaOptions,
+    DemandPolicy,
+    ReplicaMonitor,
+} from "@party-stack/ontology-replica";
 import type { OntologyDefinition } from "@party-stack/ontology-spec";
 import type { TraceStore, TraceRecordingMode } from "@party-stack/runtime/tracing";
 export type { OntologyDefinition } from "@party-stack/ontology-spec";
@@ -29,11 +35,7 @@ export type LiveOntologyWriteVisibility = "confirmed" | "optimistic";
 
 export type LiveOntologyOutboxFailureStrategy = "pause" | "discard-all";
 
-export interface LiveOntologyOutboxOptions {
-    failureStrategy?: LiveOntologyOutboxFailureStrategy;
-    maxRetries?: number;
-    retryDelayMs?: number;
-}
+export type LiveOntologyOutboxOptions = NonNullable<ReplicaConfiguration["outbox"]>;
 
 export interface LiveOntologyWrites {
     defaultMode?: LiveOntologyWriteMode;
@@ -75,7 +77,7 @@ export interface OntologyDiagnostics {
     readonly label?: string;
     readonly role?: "host" | "replica";
     readonly location?: string;
-    readonly replica: import("@party-stack/ontology-replica").ReplicaMonitor;
+    readonly replica: ReplicaMonitor;
     readonly traces?: TraceStore;
     readonly parent?: OntologyDiagnostics;
 }
@@ -126,13 +128,14 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
 
 export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> = Record<string, unknown>> {
     id?: string;
+    live?: boolean;
     ir: OntologyIR;
     backend: OntologyBackendAdapterProvider<NoInfer<Context>>;
     runtime?: RuntimeLayer;
     /** Opt-in devtools trace history or a live-only diagnostic feed. */
     traceRecording?: TraceRecordingMode;
-    demand?: import("@party-stack/ontology-replica").DemandPolicy;
-    objectCacheGc?: import("@party-stack/ontology-replica").ReplicaOptions["objectCacheGc"];
+    demand?: DemandPolicy;
+    objectCacheGc?: ReplicaOptions["objectCacheGc"];
     writes?: LiveOntologyWrites;
     context?: Context;
     connection?: ConnectionMonitor;
@@ -182,6 +185,7 @@ export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
                     context,
                     backendAdapter,
                     writes: opts.writes,
+                    live: opts.live,
                     demand: opts.demand,
                     objectCacheGc: opts.objectCacheGc,
                     connection: opts.connection,

@@ -319,6 +319,7 @@ test("replica snapshots and optimistic rows retain attachment identities and rel
                 expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(1);
                 expect(yield* blobs.metadata("cached")).toBeDefined();
                 rows = [];
+                yield* replica.invalidate(["Document"]);
                 yield* Scope.close(owner, Exit.void);
                 owner = yield* Scope.make();
                 yield* Scope.provide(replica.demand({ objectType: "Document" }), owner);

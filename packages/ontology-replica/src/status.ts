@@ -31,6 +31,13 @@ const DemandFailure = Schema.Struct({
     retryable: Schema.Boolean,
 });
 export const ReplicaStatusSchema = Schema.Struct({
+    pin: Schema.optional(
+        Schema.Struct({
+            ready: Schema.Boolean,
+            previousGraphRetained: Schema.Boolean,
+            error: Schema.optional(Failure),
+        })
+    ),
     sourceId: Schema.String,
     upstreamId: Schema.String,
     mode: Schema.Literals(["adapter", "protocol"]),
@@ -68,7 +75,7 @@ export const ReplicaStatusSchema = Schema.Struct({
             coverageProof: Schema.optional(
                 Schema.Struct({
                     reason: Schema.Literals(["collection", "query", "primary-key"]),
-                    maintainedBy: Schema.Literals(["journal", "watch", "poll"]),
+                    maintainedBy: Schema.Literals(["journal", "watch", "poll", "snapshot"]),
                     pollIntervalMs: Schema.optional(Schema.Number),
                 })
             ),

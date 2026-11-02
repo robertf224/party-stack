@@ -2,7 +2,15 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { Effect, MutableHashMap, Option, RcMap, Semaphore } from "effect";
 import type { Scope } from "effect";
 
+export interface DemandRefreshPolicy {
+    /** Background polling is opt-in unless the adapter recommends it. Native watches take precedence. */
+    readonly pollIntervalMs?: number | false;
+    /** Maximum reuse age without a healthy live feed. Default 60 seconds; Infinity permits a quiet cache. */
+    readonly maxCoverageAgeMs?: number;
+}
+
 export interface DemandPolicy {
+    readonly refresh?: DemandRefreshPolicy;
     /** Retain an unused subset's upstream demand for reuse. Zero releases immediately. */
     readonly idleRetentionMs?: number;
     /** Active plus idle distinct subsets; idle entries are evicted before rejecting new work. */

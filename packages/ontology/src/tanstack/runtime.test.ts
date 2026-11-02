@@ -56,16 +56,16 @@ test("persisted inspection queries never acquire remote demand", async () => {
     const { runtime } = runtimeFixtureContext(adapter);
     let demands = 0;
     const replica = {
-        loadSubset: () => Effect.succeed([{ key: "one", value: { id: "one" } }]),
-        observeRows: () =>
+        readSubset: () => Effect.succeed([{ key: "one", value: { id: "one" } }]),
+        observeSubset: () =>
             Stream.make({ reset: true, rows: [{ key: "one", value: { id: "one" } }], removed: [] }),
-        retainLocal: () => Effect.void,
-        demand: () =>
-            Effect.sync(() => {
-                demands++;
-            }),
-        changes: Stream.never,
-        subscribeChanges: Effect.succeed(Stream.never),
+        demand: {
+            acquire: (_subset: unknown, settings?: { localOnly?: boolean }) =>
+                Effect.sync(() => {
+                    expect(settings?.localOnly).toBe(true);
+                    if (!settings?.localOnly) demands++;
+                }),
+        },
     } as unknown as ReplicaService;
     try {
         await runtime.runPromise(

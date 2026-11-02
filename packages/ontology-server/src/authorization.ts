@@ -386,7 +386,7 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
                           })
                       )
                 : undefined,
-        pollIntervalMs: (subset) => backend.pollIntervalMs?.(subset),
+        refresh: (subset) => backend.refresh?.(subset),
     };
     const sourceRow = Effect.fnUntraced(function* (
         source: { objectType: string; primaryKey: string | number; property: string } | undefined

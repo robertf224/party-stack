@@ -94,7 +94,7 @@ test("network and connection state remain independent and either can pause remot
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: true,
-                        pollIntervalMs: () => false,
+                        refresh: () => ({ pollIntervalMs: false }),
                         queryFunction: () => Effect.void,
                         loadSubset: () =>
                             Effect.gen(function* () {
@@ -514,7 +514,7 @@ test("configured subset polling invalidates coverage on its interval and stops w
                         supportsIdempotency: false,
                         applyAction: () => Effect.die("Unexpected invocation"),
                         queryFunction: () => Effect.void,
-                        pollIntervalMs: () => 1000,
+                        refresh: () => ({ pollIntervalMs: 1000 }),
                         loadSubset: () =>
                             Effect.sync(() => {
                                 requests++;
@@ -548,7 +548,7 @@ test("configured subset polling invalidates coverage on its interval and stops w
     );
 });
 
-test("disabled polling retains its snapshot without claiming an active watcher", async () => {
+test("disabled polling revalidates expired coverage on demand without claiming an active watcher", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -566,7 +566,7 @@ test("disabled polling retains its snapshot without claiming an active watcher",
                         supportsIdempotency: false,
                         applyAction: () => Effect.die("Unexpected invocation"),
                         queryFunction: () => Effect.void,
-                        pollIntervalMs: () => false,
+                        refresh: () => ({ pollIntervalMs: false }),
                         loadSubset: () =>
                             Effect.sync(() => {
                                 requests++;
@@ -579,7 +579,7 @@ test("disabled polling retains its snapshot without claiming an active watcher",
                 yield* TestClock.adjust(60_000);
                 yield* replica.syncOnce;
                 const demand = (yield* replica.status).demands[0]!;
-                expect(requests).toBe(1);
+                expect(requests).toBe(2);
                 expect(demand.watchers).toBe(0);
                 expect(demand.coverageProof).toBeUndefined();
             })

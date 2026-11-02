@@ -1,8 +1,9 @@
 import { BackendError, encryptedPropertyCodec } from "@party-stack/ontology-backend";
 import { makeReplicaMonitor } from "@party-stack/ontology-replica";
+import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { Runtime } from "@party-stack/runtime";
 import { DbClient } from "@tanstack/db";
-import { Effect, Scope, Fiber } from "effect";
+import { Effect, Scope, Fiber, Stream } from "effect";
 import { createLiveOntologyAction } from "../live/actions/createLiveOntologyAction.js";
 import { makeReplicatedCollection, persistedCollectionOptions, scopedCollection } from "../tanstack/index.js";
 import { makeLiveDecryption } from "./encrypted.js";
@@ -75,7 +76,7 @@ export interface ReplicaViewOptions {
     readonly diagnosticLabel?: string;
     /** Memory children resolve enqueue only after their durable owner accepts the action. */
     readonly awaitParentAcceptance?: boolean;
-    readonly parentOutbox?: Pick<ReplicaService, "remove" | "retry" | "edit" | "reconcile">;
+    readonly parentOutbox?: Pick<ReplicaService["outbox"], "remove" | "retry" | "edit" | "reconcile">;
     readonly validate?: (
         name: string,
         parameters: Record<string, unknown>,
@@ -96,19 +97,21 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
     const services = yield* Runtime;
     const runtime = services;
     const { ir, context, replica } = options;
-    const visiblePending = replica.pendingActions;
+    const visiblePending = replica.outbox.entries;
     const replicaMonitor = yield* makeReplicaMonitor(replica.statuses);
     const outboxEntries = Effect.map(visiblePending, (entries) =>
         entries.map((entry) => toEntry(entry, entry.forwarding))
     );
     const control = (id: string) =>
-        Effect.map(replica.pending, (pending) =>
-            pending.some((entry) => entry.invocation.id === id) ? replica : (options.parentOutbox ?? replica)
+        Effect.map(replica.outbox.entries, (pending) =>
+            pending.some((entry) => entry.invocation.id === id && entry.forwarding)
+                ? replica.outbox
+                : (options.parentOutbox ?? replica.outbox)
         );
     const command = (
         id: string,
         work: (
-            target: Pick<ReplicaService, "remove" | "retry" | "edit" | "reconcile">
+            target: Pick<ReplicaService["outbox"], "remove" | "retry" | "edit" | "reconcile">
         ) => Effect.Effect<void, BackendError>
     ) => control(id).pipe(Effect.flatMap(work));
     const dbClient = yield* Effect.acquireRelease(
@@ -143,8 +146,18 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         yield* persistedCollectionOptions<OntologyOutboxEntry, string>({
             id: `${runtime.namespace}:outbox`,
             getKey: (entry) => entry.id,
-            changes: yield* replica.subscribeChanges,
-            acquireDemand: replica.retainActions(),
+            changes: Stream.empty,
+            observe: () =>
+                replica.outbox.observe().pipe(
+                    Stream.map((entries) => ({
+                        reset: true,
+                        rows: entries.map((entry) => ({
+                            key: entry.invocation.id,
+                            value: toEntry(entry, entry.forwarding),
+                        })),
+                        removed: [],
+                    }))
+                ),
             load: Effect.map(outboxEntries, (entries) =>
                 entries.map((entry) => ({ key: entry.id, value: entry }))
             ),
@@ -169,8 +182,8 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         },
     });
     const wait = (id: string, until: "accepted" | "confirmed" = "confirmed") =>
-        replica
-            .awaitAction(id, { until })
+        replica.outbox
+            .wait(id, { until })
             .pipe(Effect.map((receipt) => (receipt ? actionResult(receipt) : undefined)));
     const enqueue = async (
         request: Omit<OntologyActionRequest, "idempotencyKey"> & { idempotencyKey?: string },
@@ -183,7 +196,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
             replay: request.replay,
         };
         const entry = await run(
-            replica.enqueue(invocation, {
+            replica.outbox.enqueue(invocation, {
                 optimistic: (visibility ?? options.writes?.defaultVisibility) === "optimistic",
             })
         );
@@ -202,7 +215,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         });
         void completed.catch(() => undefined);
         if (options.awaitParentAcceptance) await accepted;
-        return { entry: toEntry(entry, replica.mode === "protocol"), accepted, completed };
+        return { entry: toEntry(entry, replica.upstreamKind === "speculative"), accepted, completed };
     };
     const outbox: OntologyOutbox = {
         collection: pendingCollection,
@@ -222,7 +235,9 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                             .remove(id, settings)
                             .pipe(
                                 Effect.andThen(
-                                    target === replica ? Effect.void : replica.acknowledgeParentRemoval(id)
+                                    target === replica.outbox
+                                        ? Effect.void
+                                        : replicaController(replica).acknowledgeParentRemoval(id)
                                 )
                             )
                     )
@@ -322,7 +337,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         traces: options.traces,
         diagnostics: {
             label: options.diagnosticLabel,
-            role: replica.mode === "adapter" ? "host" : "replica",
+            role: replica.upstreamKind === "committed" ? "host" : "replica",
             location: "In process",
             replica: replicaMonitor,
             traces: options.traces,

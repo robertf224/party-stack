@@ -317,7 +317,11 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                             watchChanges: Boolean(operationOptions.backend?.changes?.watch),
                             watchSubset: Boolean(
                                 operationOptions.backend?.watchSubset ||
-                                operationOptions.backend?.pollIntervalMs
+                                options.ir?.objectTypes.some(
+                                    (type) =>
+                                        typeof operationOptions.backend?.refresh?.({ objectType: type.name })
+                                            ?.pollIntervalMs === "number"
+                                )
                             ),
                             actionParameterResolution: Boolean(
                                 options.backend?.resolveActionParameters || options.ontology

@@ -3,7 +3,9 @@ import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunn
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
-import { makeReplica, replicaStateSource } from "@party-stack/ontology-replica";
+import { makeReplica } from "@party-stack/ontology-replica";
+import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
+import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Effect, Exit, Fiber, Scope } from "effect";
@@ -83,7 +85,7 @@ test("worker composition serves during delayed acquisition and releases its open
                     tables: yield* Memory.make(),
                     backend,
                     mutators: { increment },
-                    startSync: false,
+                    live: false,
                     objectCacheGc: false,
                 });
                 yield* owner.demand.acquire({ from: { source: { objectType: "Counter" }, binding: "row" } });
@@ -179,7 +181,7 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                     tables: yield* Memory.make(),
                     backend,
                     mutators: { increment },
-                    startSync: false,
+                    live: false,
                     objectCacheGc: false,
                 });
                 yield* owner.syncOnce;
@@ -193,19 +195,21 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                         source: speculativeSource(source),
                         mutators: { increment },
                         objectCacheGc: false,
-                        startSync: false,
+                        live: false,
                     });
-                    yield* tab.retainLocal("Counter");
+                    yield* replicaController(tab).retainLocal("Counter");
                     yield* tab.syncOnce;
                     tabs.push(tab);
                 }
                 const [first, second] = tabs;
-                yield* first!.enqueue({ id: "action", name: "increment", parameters: {} });
+                yield* replicaController(first!).enqueue({ id: "action", name: "increment", parameters: {} });
                 expect((yield* first!.get("Counter", "one"))?.count).toBe(2);
                 expect((yield* second!.get("Counter", "one"))?.count).toBe(1);
                 yield* first!.syncOnce;
                 yield* second!.syncOnce;
-                expect((yield* owner.pending).map((entry) => entry.invocation.id)).toEqual(["action"]);
+                expect((yield* replicaController(owner).pending).map((entry) => entry.invocation.id)).toEqual(
+                    ["action"]
+                );
                 expect((yield* second!.get("Counter", "one"))?.count).toBe(2);
                 expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(1);
                 yield* owner.syncOnce;
@@ -213,8 +217,8 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                     yield* tab.syncOnce;
                     expect((yield* tab.get("Counter", "one"))?.count).toBe(2);
                 }
-                expect((yield* first!.receipt("action"))?.outcome).toBe("committed");
-                expect(yield* owner.pending).toEqual([]);
+                expect((yield* replicaController(first!).receipt("action"))?.outcome).toBe("committed");
+                expect(yield* replicaController(owner).pending).toEqual([]);
             })
         )
     );

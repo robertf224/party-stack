@@ -2,6 +2,7 @@ import { o, type OntologyIR } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
+import { replicaController } from "@party-stack/ontology-replica/infrastructure";
 import * as q from "@party-stack/ontology-spec/query";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { eq, field } from "@party-stack/ontology-storage";
@@ -70,7 +71,7 @@ test.each(["owned", "proxy", "cached-proxy", "replica"] as const)(
                         tables: yield* Memory.make(),
                         backend: owned,
 
-                        startSync: false,
+                        live: false,
                         objectCacheGc: false,
                     });
                     const role =
@@ -565,7 +566,7 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                     tables: yield* Memory.make(),
                     backend: owned,
 
-                    startSync: false,
+                    live: false,
                     objectCacheGc: false,
                 });
                 const handler = yield* makeOntologyHttpHandler({
@@ -839,11 +840,11 @@ test("a replica server keeps its committed facet separate from speculative publi
                     ir,
                     backend: owned,
                     tables: yield* Memory.make(),
-                    startSync: false,
+                    live: false,
                     connectivity: { online: Effect.succeed(false), changes: Stream.never },
                     mutators: { increment: (tx) => tx.put("Counter", { id: "one", count: 1 }) },
                 });
-                yield* replica.enqueue({ id: "local", name: "increment", parameters: {} });
+                yield* replicaController(replica).enqueue({ id: "local", name: "increment", parameters: {} });
                 const { handleRequest } = yield* makeOntologyServer({
                     kind: "replica",
                     replica,
@@ -873,7 +874,7 @@ test("a replica server keeps its committed facet separate from speculative publi
                         handleRequest(new Request(input, init))
                     )
                 );
-                expect(yield* replica.pending).toHaveLength(1);
+                expect(yield* replicaController(replica).pending).toHaveLength(1);
                 expect((yield* owned.loadSubset({ objectType: "Counter" })).rows).toEqual([]);
             })
         )
@@ -934,7 +935,7 @@ test("only replica servers advertise speculative state; owned and proxy roles ex
                     ir,
                     tables: yield* Memory.make(),
                     backend: owned,
-                    startSync: false,
+                    live: false,
                 });
                 const roles: readonly import("./composition.js").OntologyServerOptions[] = [
                     { kind: "owned", backend: owned, authorize: () => Effect.void },
@@ -1002,7 +1003,7 @@ test("committed RPC subset watching preserves provider hints and releases its sc
                                                 })
                                         )
                                     ),
-                                pollIntervalMs: () => false,
+                                refresh: () => ({ pollIntervalMs: false }),
                             },
                             ir,
                             authorize: () => Effect.void,
@@ -1093,7 +1094,7 @@ test.each(
                         mutators: { increment: execute },
                         backend: owned,
                         tables: yield* Memory.make(),
-                        startSync: false,
+                        live: false,
                     });
                     const requests: string[] = [];
                     const common = {
@@ -1155,10 +1156,14 @@ test.each(
                         yield* owned.applyAction({ id: "external", name: "increment", parameters: {} });
                         if (kind !== "owned") yield* parent.syncOnce;
                         yield* wait(child.get("Counter", "one").pipe(Effect.map((row) => row?.count === 2)));
-                        yield* child.enqueue({ id: "http-write", name: "increment", parameters: {} });
+                        yield* replicaController(child).enqueue({
+                            id: "http-write",
+                            name: "increment",
+                            parameters: {},
+                        });
                         if (kind === "replica") {
                             yield* wait(
-                                parent.pending.pipe(
+                                replicaController(parent).pending.pipe(
                                     Effect.map((entries) =>
                                         entries.some((entry) => entry.invocation.id === "http-write")
                                     )
@@ -1167,8 +1172,8 @@ test.each(
                             yield* parent.syncOnce;
                         }
                         yield* wait(
-                            child
-                                .actionStatus("http-write")
+                            child.outbox
+                                .get("http-write")
                                 .pipe(Effect.map((status) => status.receipt?.outcome === "committed"))
                         );
                         expect((yield* child.get("Counter", "one"))?.count).toBe(3);

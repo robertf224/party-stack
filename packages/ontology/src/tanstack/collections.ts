@@ -356,23 +356,17 @@ export const replicatedCollectionOptions = Effect.fnUntraced(function* <A extend
         }),
         load: (subset) =>
             Effect.map(
-                options.replica.loadSubset(
-                    options.objectType,
-                    storageSubset(subset, options.replica.ir, options.objectType)
-                ),
+                options.replica.readSubset(ontologySubset(subset, options.replica.ir, options.objectType)),
                 (rows) =>
                     rows.map((row) => ({
                         key: row.key,
                         value: options.map ? options.map(row.value as A) : (row.value as A),
                     }))
             ),
-        changes: yield* options.replica.subscribeChanges,
+        changes: Stream.empty,
         observe: (subset) =>
             options.replica
-                .observeRows(
-                    options.objectType,
-                    storageSubset(subset, options.replica.ir, options.objectType)
-                )
+                .observeSubset(ontologySubset(subset, options.replica.ir, options.objectType))
                 .pipe(
                     Stream.map((batch) => ({
                         ...batch,
@@ -384,9 +378,9 @@ export const replicatedCollectionOptions = Effect.fnUntraced(function* <A extend
                 ),
         acquireDemand: (subset) =>
             options.persistedOnly
-                ? options.replica.retainLocal(
-                      options.objectType,
-                      storageSubset(subset, options.replica.ir, options.objectType)
+                ? options.replica.demand.acquire(
+                      ontologySubset(subset, options.replica.ir, options.objectType),
+                      { localOnly: true }
                   )
                 : options.replica.demand.acquire(
                       ontologySubset(subset, options.replica.ir, options.objectType)

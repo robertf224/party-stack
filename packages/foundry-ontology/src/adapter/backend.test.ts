@@ -73,8 +73,8 @@ test("native snapshots stay native with a users integration, and watcher resourc
         });
 
         expect(backend.watchSubset?.({ objectType: "User" })).toBeUndefined();
-        expect(backend.pollIntervalMs?.({ objectType: "User" })).toBe(60_000);
-        expect(backend.pollIntervalMs?.({ objectType: "Issue" })).toBeUndefined();
+        expect(backend.refresh?.({ objectType: "User" })?.pollIntervalMs).toBe(60_000);
+        expect(backend.refresh?.({ objectType: "Issue" })?.pollIntervalMs).toBeUndefined();
         expect(subscribe).not.toHaveBeenCalled();
         let invalidations = 0;
         await Effect.runPromise(

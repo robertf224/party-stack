@@ -229,11 +229,14 @@ export interface OntologyBackendService {
      * means this subset needs polling. Reconnect must invalidate to repair missed events.
      */
     readonly watchSubset?: (subset: BackendSubset) => Stream.Stream<void, BackendError> | undefined;
-    /** Demand-scoped polling when watchSubset is unavailable. Must be at least 100 ms.
-     * Without an override, unwatched subsets refresh on the Replica's sync polling interval.
-     * False keeps the installed snapshot until explicit invalidation or new demand.
-     */
-    readonly pollIntervalMs?: (subset: BackendSubset) => number | false | undefined;
+    /** Recommended demand refresh defaults. Caller configuration wins; healthy
+     * watches/journals keep coverage current independently of snapshot age. */
+    readonly refresh?: (subset: BackendSubset) =>
+        | {
+              readonly pollIntervalMs?: number | false;
+              readonly maxCoverageAgeMs?: number;
+          }
+        | undefined;
     readonly validateAction?: (
         name: string,
         parameters: Record<string, unknown>,

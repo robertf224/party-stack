@@ -16,6 +16,7 @@ export interface ConnectLiveOntologyOptions<R = never> {
     /** Acquired inside the client's scope so transport streams remain alive until cleanup. */
     readonly connection: Effect.Effect<OntologyConnection, BackendError, R | Scope.Scope>;
     readonly id?: string;
+    readonly live?: boolean;
     readonly context?: Record<string, unknown>;
     readonly writes?: LiveOntologyWrites;
     readonly label?: string;
@@ -89,6 +90,7 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
             connection.replication.kind === "speculative" ? connection.replication.source : undefined;
         const { replica, attachments } = yield* makeReplicaHost({
             id: options.id,
+            live: options.live,
             ir,
             context,
             writes: options.writes,
