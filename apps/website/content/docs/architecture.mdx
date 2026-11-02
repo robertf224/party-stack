@@ -47,6 +47,16 @@ An intermediate replica owns accepted writes across request or connection loss.
 Optimistic visibility is independent of that responsibility: disabling predictions
 does not turn durable write acceptance into request-only forwarding.
 
+Neither proxy role has a write-recovery outbox. It preserves the caller's operation
+ID; retry after a lost reply belongs to that caller and relies on upstream
+idempotency where available. Cached proxies invalidate affected read coverage
+after receiving a successful receipt.
+
+Both roles compose in Durable Objects through `makeOntologyServer`. The Alchemy
+`OntologyDurableObject` convenience resource currently constructs owned servers.
+A DO hosting a persistent read cache must schedule bounded `collectGarbage`
+passes from its alarm; Effect timers only run while that instance is alive.
+
 ## Receiving updates
 
 Provider adapters load subsets and, where available, committed change pages.
@@ -186,7 +196,9 @@ The replica lowers supported predicates and field ordering to provider/storage
 reads internally. Unsupported computations or hierarchical demand fail with
 `NotImplemented` rather than silently requesting a broader subset. Backend adapter
 hooks still use candidate subset scans. Full hierarchical persistent demand is
-not implemented by this scoped API.
+not implemented by this scoped API. Queries containing `select` are explicitly
+rejected until query-result demand is supported; nested selections are never
+silently discarded.
 
 A replica can keep unused subsets warm for reuse across requests or navigation:
 

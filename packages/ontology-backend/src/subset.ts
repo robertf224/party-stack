@@ -1,7 +1,7 @@
 import { QueryDocumentSchema } from "@party-stack/ontology-spec/effect";
 import * as q from "@party-stack/ontology-spec/query";
 import { QuerySchema } from "@party-stack/ontology-storage";
-import { Effect, Schema } from "effect";
+import { Effect, Predicate as EffectPredicate, Schema } from "effect";
 import { BackendError } from "./errors.js";
 import { queryExecutor } from "./query.js";
 import type { BackendSubset } from "./index.js";
@@ -50,6 +50,13 @@ export const compileObjectSubset = Effect.fnUntraced(function* (
     subset: ObjectSubset,
     context?: Record<string, unknown>
 ): Effect.fn.Return<BackendSubset, BackendError> {
+    if (EffectPredicate.isObject(subset) && Object.hasOwn(subset, "select"))
+        return yield* new BackendError({
+            operation: "demand.compile",
+            kind: "NotImplemented",
+            retryable: false,
+            message: "Query selections require query-result demand, which is not implemented yet.",
+        });
     const document = yield* Schema.decodeUnknownEffect(QueryDocumentSchema)({
         select: [q.sub("objects", { ...subset, select: [] })],
     }).pipe(

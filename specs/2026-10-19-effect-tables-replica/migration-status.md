@@ -127,6 +127,12 @@ durable delta history/resume, general untrusted replica-state projection and
 advertised/versioned idempotency windows remain future work. See
 [Gateway gates](./gateway-v0-parity.md).
 
+DO scope: owned, forwarding-proxy and cached-proxy deployments are in v0.
+Intermediate replica DOs with durable pending writes and speculative child state
+are future work, including alarm-driven outbox/refresh scheduling and eviction
+recovery. The current Alchemy OntologyDurableObject convenience factory is owned
+only; forwarding/cached roles compose through the ordinary server constructor.
+
 The [Query IR proposal](./query-ir-proposal.md) now grounds that final phase in
 Streamline admin/token scopes, authorized views, property checks, oracle tests
 and composable UI fragments. Delivery resume is recorded separately in

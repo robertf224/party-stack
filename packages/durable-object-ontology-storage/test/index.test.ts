@@ -15,6 +15,23 @@ function createStub() {
 }
 
 describe("Durable Object ontology", () => {
+    it.each(["proxy", "cached-proxy"] as const)(
+        "%s uses normal authenticated HTTP operations without accepting writes into a local outbox",
+        async (kind) => {
+            await expect(createStub().runProxy(kind)).resolves.toEqual({
+                denied: true,
+                committed: true,
+                initialLoads: kind === "cached-proxy" ? 1 : 2,
+                lostReplyUnknown: true,
+                forwardsBeforeRetry: 1,
+                count: 1,
+                sameReceipt: true,
+                pending: 0,
+                executions: 1,
+                reopened: { count: 1, pending: 0, collected: kind === "cached-proxy" ? 1 : 0 },
+            });
+        }
+    );
     for (const testCase of sqliteOntologyConformanceCases) {
         it(`${testCase.name}`, async () => {
             await runInDurableObject(createStub(), async (instance) => {

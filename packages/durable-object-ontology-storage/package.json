@@ -30,6 +30,8 @@
         "@cloudflare/vitest-plugin": "^1.4.0",
         "@cloudflare/workers-types": "^5.20260827.1",
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/ontology-replica": "workspace:*",
+        "@party-stack/ontology-spec": "workspace:*",
         "@tanstack/db": "0.14.0",
         "alchemy": "^2.0.0-beta.83",
         "esbuild": "^0.28.1",

@@ -105,6 +105,15 @@ test("logical demand waits for its snapshot, releases its scope and rejects unsu
                 );
                 expect(unsupported).toMatchObject({ _tag: "Failure", failure: { kind: "NotImplemented" } });
                 expect(calls).toHaveLength(before);
+                const fullQuery = {
+                    from: { source: { objectType: "Item" }, binding: "item" },
+                    select: [q.selectField("id", q.field("item", "id"))],
+                };
+                expect(yield* Effect.result(replica.demand.acquire(fullQuery))).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "NotImplemented" },
+                });
+                expect(calls).toHaveLength(before);
                 const malformed = yield* Effect.result(replica.demand.acquire({} as never));
                 expect(malformed).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidRequest" } });
             })

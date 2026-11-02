@@ -529,10 +529,43 @@ alarm-driven retry/refresh/object/blob collection and restoration of persistent
 demand before sweeping. Sleeping fibers are not a durable scheduler across DO
 eviction. Add eviction/restart/receipt tests before declaring that deployment
 supported; a generalized role/resource helper is a convenience, not a new storage
-algorithm. This remains future deployment work unless intermediate DO hosting is
-added to v0 acceptance.
+algorithm. Intermediate replica DO hosting is explicitly deferred beyond v0.
+Forwarding and cached-proxy DOs are v0 deployment scenarios; they use the normal
+committed backend/server contract and do not accept writes into a local outbox.
 
 This extraction does not complete the remaining transition, recovery and retention
 checklist above. Persistent multi-root hierarchical offline query demand remains
 an explicit v0 gate. The next subsystem after replica/demand review is backend
 contracts/adapters, then server/protocol; see subsystem-audit.md for the full order.
+
+### Follow-up: query compatibility and DO proxy acceptance
+
+Query is structurally an object-bound Subset plus select. Future hierarchical
+demand can widen acquire's input to Query/QueryDocument while preserving existing
+subset callers and its scoped lease semantics. Current demand explicitly rejects
+select rather than discarding nested selections. Query-result demand is not
+implemented merely because a Query variable is structurally assignable to a
+subset argument in TypeScript.
+
+Cached proxies have no durable write recovery, accepted-action record or private
+retry worker. They forward the caller's operation ID and return the upstream
+receipt/error. After a successful receipt, invalidation repairs their read cache;
+failed invalidation is retried on subsequent reads within that proxy's lifetime.
+Retry after a lost reply belongs to the caller; duplicate prevention depends on
+the upstream's idempotency contract, not new proxy receipt storage.
+
+DO proxy acceptance uses workerd SQL with authenticated ordinary HTTP requests:
+forwarding reads, cached read reuse, post-write cache repair without source watch
+hints, explicit caller retry after a lost reply, unchanged operation identity,
+empty cache outbox and reconstruction over persistent cache tables. The read cache
+still needs bounded collection driven by the DO host's alarm for unattended
+cleanup; instance-local Effect timers are not durable alarms. The Alchemy
+OntologyDurableObject convenience resource currently constructs owned servers;
+proxy roles compose through makeOntologyServer rather than a role flag on that
+resource. Intermediate acceptance/outbox scheduling is outside this v0 scenario.
+
+Remaining Replica review feedback should focus on persistent hierarchical demand:
+setPin/clearPin of one replaceable multi-root entity QueryDocument, old-versus-new
+graph retention while replacement is offline, and attachment-byte download policy.
+State-transition, recovery, cancellation and bounded-bookkeeping audits are
+implementation verification unless they expose a new user-visible policy choice.

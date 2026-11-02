@@ -17,6 +17,7 @@ import {
 } from "../src/index.js";
 import { r2Prefix } from "../src/r2Keys.js";
 import { testBucket, withTestRuntime } from "./bindings.js";
+import { runProxyScenario } from "./proxy.js";
 
 interface TestEnvironment {
     BLOBS: R2Bucket;
@@ -46,6 +47,11 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
     async runConformance(id: SQLiteOntologyConformanceCaseId): Promise<void> {
         await this.initialized;
         await runSQLiteOntologyConformanceCase(id, this.database);
+    }
+
+    async runProxy(kind: "proxy" | "cached-proxy") {
+        await this.initialized;
+        return Effect.runPromise(Effect.scoped(runProxyScenario(this.ctx.storage, kind)));
     }
 
     withOntology<A>(
