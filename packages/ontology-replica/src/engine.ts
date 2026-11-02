@@ -244,6 +244,10 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly refreshParent: (source: OntologySource) => Effect.Effect<void, BackendError>;
     /** Refresh observed state and forward only locally owned actions, in order. */
     readonly syncParent: (source: OntologySource) => Effect.Effect<void, BackendError>;
+    /** Internal outbox worker; parent reads are limited to handoff/outcome recovery. */
+    readonly forwardParentActions: (source: OntologySource) => Effect.Effect<void, BackendError>;
+    /** One internal action signal, consumed by either the adapter or parent outbox worker. */
+    readonly outboxWakeups: Queue.Queue<void>;
     readonly receipt: (id: string) => Effect.Effect<ActionReceipt | undefined, BackendError>;
     readonly actionStatus: (id: string) => Effect.Effect<
         {
@@ -333,6 +337,9 @@ export type ReplicaOptions = ReplicaCommonOptions &
     );
 const fault = (kind: BackendError["kind"], message: string, cause?: unknown) =>
     new BackendError({ operation: "replica", kind, message, retryable: kind === "Unavailable", cause });
+const stateRetryDelayMs = 5_000;
+const confirmationRetryDelayMs = 5_000;
+const maintenanceIntervalMs = 60_000;
 const boundary = <A, E, R>(work: Effect.Effect<A, E, R>) =>
     work.pipe(Effect.mapError((cause) => classifyBackendFailure("replica.storage", cause)));
 const identity = (type: string, key: Key) => JSON.stringify([type, key]);
@@ -647,14 +654,13 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         Effect.asVoid
     );
     const notify = options.publish ? localNotify.pipe(Effect.andThen(options.publish)) : localNotify;
-    const wake = Effect.suspend(() =>
-        closed
-            ? Effect.void
-            : Queue.offer(queue, undefined).pipe(
-                  Effect.andThen(Queue.offer(outboxWake, undefined)),
-                  Effect.asVoid
-              )
+    const wakeState = Effect.suspend(() =>
+        closed ? Effect.void : Queue.offer(queue, undefined).pipe(Effect.asVoid)
     );
+    const wakeOutbox = Effect.suspend(() =>
+        closed ? Effect.void : Queue.offer(outboxWake, undefined).pipe(Effect.asVoid)
+    );
+    const wake = wakeState.pipe(Effect.andThen(wakeOutbox));
     const access = <A, E, R>(work: Effect.Effect<A, E, R>) => open.pipe(Effect.andThen(boundary(work)));
     const retain = (objectType: string, kind: "remote" | "reader", key: string, subset?: BackendSubset) =>
         Effect.acquireRelease(
@@ -689,7 +695,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                     installed: 0,
                                     watchers: 0,
                                 });
-                            yield* wake;
+                            yield* wakeState;
                         }
                         yield* diagnostics.changed;
                         if (options.source || deliveryActive) yield* localNotify;
@@ -1315,6 +1321,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 )
             );
             yield* notify;
+            yield* wakeOutbox;
             if (!page.hasMore) break;
             if (page.cursor === before.cursor)
                 return yield* fault("InvalidResponse", "Backend returned a non-advancing change page.");
@@ -1379,32 +1386,33 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         for (const demand of demands.values()) demand.installed = 0;
         yield* notify;
     });
-    const pull = () =>
-        adapter?.changes && !deliveryActive
-            ? pullJournal().pipe(
-                  Effect.catch((error) =>
-                      error.kind === "HistoryExpired" ? recoverHistory() : Effect.fail(error)
-                  ),
-                  Effect.tapError((error) =>
-                      Effect.gen(function* () {
-                          if (error.retryable && syncRetry?.error !== error)
-                              syncRetry = {
-                                  error,
-                                  at:
-                                      (yield* Clock.currentTimeMillis) +
-                                      Math.max(options.pollIntervalMs ?? 5_000, error.retryAfterMs ?? 0),
-                              };
-                          yield* service.reportReplicationFailure(error);
-                      })
-                  ),
-                  Effect.tap(() =>
-                      Effect.gen(function* () {
-                          syncRetry = undefined;
-                          yield* service.reportReplicationFailure(undefined);
-                      })
-                  )
-              )
-            : Effect.void;
+    const pull = Effect.fnUntraced(function* () {
+        if (!adapter?.changes || deliveryActive) return;
+        if (syncRetry && syncRetry.at > (yield* Clock.currentTimeMillis)) return yield* syncRetry.error;
+        yield* pullJournal().pipe(
+            Effect.catch((error) =>
+                error.kind === "HistoryExpired" ? recoverHistory() : Effect.fail(error)
+            ),
+            Effect.tapError((error) =>
+                Effect.gen(function* () {
+                    if (error.retryable && syncRetry?.error !== error)
+                        syncRetry = {
+                            error,
+                            at:
+                                (yield* Clock.currentTimeMillis) +
+                                Math.max(stateRetryDelayMs, error.retryAfterMs ?? 0),
+                        };
+                    yield* service.reportReplicationFailure(error);
+                })
+            ),
+            Effect.tap(() =>
+                Effect.gen(function* () {
+                    syncRetry = undefined;
+                    yield* service.reportReplicationFailure(undefined);
+                })
+            )
+        );
+    });
     const confirmReceipt = Effect.fn("Replica.confirmReceipt")(function* (
         head: PendingAction,
         receipt: ActionReceipt
@@ -1479,7 +1487,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         tables.transaction((tx) =>
             Effect.gen(function* () {
                 const age = options.resultRetentionMs ?? 7 * 24 * 60 * 60 * 1000;
-                if (!Number.isFinite(age)) return;
+                if (!Number.isFinite(age)) return 0;
+                let removed = 0;
                 const now = yield* Clock.currentTimeMillis;
                 for (const row of yield* tx.query(completed, {
                     where: lte(field("completedAt"), now - age),
@@ -1488,24 +1497,36 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     // A child may still be awaiting the result. Its durable session/result window
                     // is finite; never remove the parent's own unresolved outbox.
                     yield* tx.delete(completed, row.key);
+                    removed++;
                 }
                 const protectedHints = (yield* tx.query(outbox)).length;
                 for (const row of yield* tx.query(journalReceipts, {
                     where: lte(field("observedAt"), now - age),
                     limit: 100 + protectedHints,
                 }))
-                    if (!(yield* tx.get(outbox, row.value.operationId)))
+                    if (!(yield* tx.get(outbox, row.value.operationId))) {
                         yield* tx.delete(journalReceipts, row.key);
+                        removed++;
+                    }
                 for (const row of yield* tx.query(coverage, {
                     where: lte(field("updatedAt"), now - age),
                     // Active coverage may be old when auto-refresh is disabled. Scan past
                     // at most one protected record per active demand to avoid starving eviction.
                     limit: 100 + demands.size,
                 }))
-                    if (!demands.has(subsetKey(row.value.subset))) yield* tx.delete(coverage, row.key);
+                    if (!demands.has(subsetKey(row.value.subset))) {
+                        yield* tx.delete(coverage, row.key);
+                        removed++;
+                    }
+                return removed;
             })
         )
     );
+    const maintain = Effect.fn("Replica.maintenance")(function* () {
+        const clients = yield* service.collectClientGarbage;
+        const records = yield* collectResults;
+        if (clients || records) yield* notify;
+    });
     const saveReceipt = (entry: PendingAction, receipt: ActionReceipt, bindings: boolean) =>
         tables.transaction((tx) =>
             Effect.gen(function* () {
@@ -1679,7 +1700,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         })
                     )
                 );
-                if (remains) return; // The journal has not published this receipt yet.
+                if (remains) return { confirmationPending: true }; // Retry this receipt's catch-up, not submission.
                 yield* notify;
             } else if (receipt.outcome === "committed") {
                 yield* confirmReceipt(head, receipt);
@@ -1691,8 +1712,6 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         if (replicationError?.recovery === "stop")
             return yield* fault(replicationError.kind, replicationError.message);
         if (syncRetry && syncRetry.at > (yield* Clock.currentTimeMillis)) return yield* syncRetry.error;
-        yield* service.collectClientGarbage;
-        yield* collectResults;
         const backend = yield* backendEffect;
         if (!(yield* canSync)) return;
         // A committed receipt must settle its overlay before a new source snapshot.
@@ -1798,7 +1817,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 ) {
                     demand.loadFailure = undefined;
                     if (demand.revision === revision) demand.revision++;
-                    yield* wake;
+                    yield* wakeState;
                 } else demand.loadFailure = { revision, error: installed.failure };
                 if (relevant) demandFailure ??= installed.failure;
             } else if (installed.success) {
@@ -1955,18 +1974,21 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         return resolved;
     });
     const runStateSync = (requested?: string) => gate.withPermit(diagnostics.sync(sync(requested)));
-    const syncOnce = options.source
-        ? Effect.suspend(() => service.syncParent(options.source!))
-        : gate.withPermit(
-              diagnostics.sync(
-                  Effect.gen(function* () {
-                      yield* recoverOutbox();
-                      const state = yield* Effect.result(sync());
-                      yield* drainOutbox(false);
-                      if (state._tag === "Failure") return yield* state.failure;
-                  })
+    const syncOnce = Effect.andThen(
+        maintain(),
+        options.source
+            ? Effect.suspend(() => service.syncParent(options.source!))
+            : gate.withPermit(
+                  diagnostics.sync(
+                      Effect.gen(function* () {
+                          yield* recoverOutbox();
+                          const state = yield* Effect.result(sync());
+                          yield* drainOutbox(false);
+                          if (state._tag === "Failure") return yield* state.failure;
+                      })
+                  )
               )
-          );
+    );
     const ownSourceId = (yield* boundary(tables.get(stateHead, "head")))!.sourceId;
     const clients = clientRegistry(options.namespace, ownSourceId, options.clients);
     yield* boundary(options.tables.transaction(clients.initialize));
@@ -2581,7 +2603,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 copy.query ? { ...copy, query: retentionQuery(copy.query) } : copy
             );
         if (deliveryActive) {
-            yield* wake;
+            yield* wakeState;
             return;
         }
         const watched = adapter!.watchSubset?.(copy);
@@ -2629,12 +2651,15 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     Effect.gen(function* () {
                         if (!demand.loadFailure || demand.loadFailure.error.retryable) demand.revision++;
                         yield* diagnostics.changed;
-                        yield* wake;
+                        yield* wakeState;
                     }),
                 onError: (error) =>
                     Effect.sync(() => {
                         demand.watchFailure = error;
-                    }).pipe(Effect.andThen(diagnostics.changed), Effect.andThen(error ? wake : Effect.void)),
+                    }).pipe(
+                        Effect.andThen(diagnostics.changed),
+                        Effect.andThen(error ? wakeState : Effect.void)
+                    ),
             }).pipe(
                 Effect.withSpan("Replica.watchSubset", {
                     root: true,
@@ -2667,6 +2692,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         })
     );
     const service: ReplicaService = {
+        outboxWakeups: outboxWake,
         reportReplicationFailure: (error) =>
             Effect.gen(function* () {
                 const recovery = error && deliveryRecovery(error);
@@ -3227,17 +3253,36 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     })
                 )
             );
-            if (changed) yield* notify;
+            if (changed) {
+                yield* notify;
+                yield* wakeOutbox;
+            }
         }),
-        syncParent: Effect.fn("Replica.syncParent", { root: true })(
+        syncParent: (source) =>
+            (deliveryActive ? Effect.void : service.refreshParent(source)).pipe(
+                Effect.andThen(service.forwardParentActions(source))
+            ),
+        forwardParentActions: Effect.fn("Replica.forwardParentActions", { root: true })(
             function* (source: OntologySource) {
                 yield* open;
                 if (replicationError?.recovery === "stop")
                     return yield* fault(replicationError.kind, replicationError.message);
-                yield* service.collectClientGarbage;
-                yield* collectResults;
-                // Validates source identity before any invocation can be submitted.
-                if (!deliveryActive) yield* service.refreshParent(source);
+                const initialSession = yield* sessionFor(source);
+                const first = (yield* access(tables.read(pendingIn)))[0];
+                if (
+                    first?.nextAttemptAt !== undefined &&
+                    first.nextAttemptAt > (yield* Clock.currentTimeMillis)
+                )
+                    return;
+                // A lost reply/restart can leave a submission already accepted by the
+                // parent. Recover that evidence before retrying; new writes need no prefetch.
+                if (
+                    first?.submission &&
+                    (first.state === "sending" ||
+                        first.failureOutcome === "unknown" ||
+                        initialSession.acceptedThrough >= first.submission.sequence)
+                )
+                    yield* service.refreshParent(source);
                 const session = yield* sessionFor(source);
                 for (;;) {
                     const entry = yield* access(
@@ -3456,12 +3501,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 )
             ).pipe(
                 Effect.tap(() => notify),
-                Effect.tap(() => wake)
+                Effect.tap(() => wakeOutbox)
             ),
         wake,
         syncSubset: (subset) =>
             deliveryActive
-                ? wake.pipe(Effect.andThen(waitForDelivery))
+                ? wakeState.pipe(Effect.andThen(waitForDelivery))
                 : options.source
                   ? service.refreshParent(options.source)
                   : runStateSync(subsetKey(subset)),
@@ -3479,7 +3524,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 );
             const entry = yield* access(tables.transaction((tx) => enqueueIn(tx, invocation, settings)));
             yield* notify;
-            yield* wake;
+            yield* wakeOutbox;
             return entry;
         }),
         acknowledgeParentRemoval: (id) =>
@@ -3569,7 +3614,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 )
             ).pipe(
                 Effect.tap(() => notify),
-                Effect.tap(() => wake)
+                Effect.tap(() => wakeOutbox)
             ),
         retry: (id, settings) =>
             Effect.suspend(() =>
@@ -3604,7 +3649,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 )
             ).pipe(
                 Effect.tap(() => notify),
-                Effect.tap(() => wake)
+                Effect.tap(() => wakeOutbox)
             ),
         invalidate: (objectTypes) =>
             access(
@@ -3618,7 +3663,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 demand.revision++;
                     })
                 )
-            ).pipe(Effect.andThen(wake)),
+            ).pipe(Effect.andThen(wakeState)),
         demand: Effect.fnUntraced(function* (subset) {
             const key = yield* Effect.try({
                 try: () => subsetKey(subset),
@@ -3802,34 +3847,49 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             : connectReplicaParent(service, options.source);
     } else if (options.startSync !== false) {
         if (adapter?.subscribeSelection) yield* connectReplicaDelivery(service);
-        const poll = options.pollIntervalMs ?? 5000;
-        if (!Number.isFinite(poll) || poll < 100)
+        const dataPollIntervalMs = options.pollIntervalMs ?? 5000;
+        if (!Number.isFinite(dataPollIntervalMs) || dataPollIntervalMs < 100)
             return yield* fault("InvalidConfiguration", "Sync poll interval must be at least 100 ms.");
         yield* Effect.forkScoped(
             Effect.forever(
                 Effect.gen(function* () {
                     yield* runStateSync().pipe(Effect.catch(() => Effect.void));
-                    yield* Effect.raceFirst(Queue.take(queue), Effect.sleep(poll));
+                    const now = yield* Clock.currentTimeMillis;
+                    const delay =
+                        syncRetry && syncRetry.at > now && replicationError?.recovery !== "stop"
+                            ? Math.min(dataPollIntervalMs, Math.max(1, syncRetry.at - now))
+                            : dataPollIntervalMs;
+                    yield* Effect.raceFirst(Queue.take(queue), Effect.sleep(delay));
                 })
             )
         );
         yield* Effect.forkScoped(
             Effect.forever(
                 Effect.gen(function* () {
-                    yield* gate.withPermit(drainOutbox()).pipe(
-                        Effect.catch((error) =>
-                            Effect.logWarning("Outbox processing failed", {
-                                kind: error.kind,
-                                retryable: error.retryable,
-                            })
-                        )
-                    );
+                    yield* Queue.clear(outboxWake);
+                    const result = yield* Effect.result(gate.withPermit(drainOutbox()));
+                    if (result._tag === "Failure")
+                        yield* Effect.logWarning("Outbox processing failed", {
+                            kind: result.failure.kind,
+                            retryable: result.failure.retryable,
+                        });
                     const first = (yield* boundary(tables.read(pendingIn)))[0];
+                    if (!first || first.state === "blocked" || !(yield* canSync)) {
+                        return yield* Queue.take(outboxWake);
+                    }
                     const now = yield* Clock.currentTimeMillis;
-                    const delay =
-                        first?.state === "queued" && first.nextAttemptAt !== undefined
-                            ? Math.min(poll, Math.max(1, first.nextAttemptAt - now))
-                            : poll;
+                    const retryAt =
+                        first.state === "queued" && first.nextAttemptAt !== undefined
+                            ? first.nextAttemptAt
+                            : result._tag === "Failure" && result.failure.retryable
+                              ? syncRetry?.error === result.failure
+                                  ? syncRetry.at
+                                  : now + Math.max(confirmationRetryDelayMs, result.failure.retryAfterMs ?? 0)
+                              : result._tag === "Success" && result.success?.confirmationPending
+                                ? now + confirmationRetryDelayMs
+                                : undefined;
+                    if (retryAt === undefined) return yield* Queue.take(outboxWake);
+                    const delay = Math.max(1, retryAt - now);
                     yield* Effect.raceFirst(Queue.take(outboxWake), Effect.sleep(delay));
                 })
             )
@@ -3840,7 +3900,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     stream: () => adapter.changes!.watch!,
                     canRun: canSync,
                     authentication,
-                    onValue: () => wake,
+                    onValue: () => wakeState,
                     onError: (error) =>
                         Effect.sync(() => {
                             changeWatchFailure = error;
@@ -3863,6 +3923,17 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 )
             );
     }
+    if (options.startSync !== false)
+        yield* Effect.forkScoped(
+            Effect.forever(
+                maintain().pipe(
+                    Effect.catch((error) =>
+                        Effect.logWarning("Replica maintenance failed", { kind: error.kind })
+                    ),
+                    Effect.andThen(Effect.sleep(maintenanceIntervalMs))
+                )
+            )
+        );
     yield* Stream.runForEach(connectivity.changes, () => diagnostics.changed.pipe(Effect.andThen(wake))).pipe(
         Effect.forkScoped
     );
@@ -3893,11 +3964,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         ).pipe(Effect.forkScoped);
     if (options.startSync !== false && objectCacheGc) {
         const collect = service.collectGarbage(objectCacheGc).pipe(Effect.asVoid);
-        const owned = gate.withPermits(1)(collect);
         yield* Effect.forkScoped(
             Effect.forever(
                 Effect.sleep(objectCacheGc.sweepIntervalMs).pipe(
-                    Effect.andThen(owned),
+                    Effect.andThen(collect),
                     Effect.catch((error) => Effect.logWarning("Replica GC pass failed", { kind: error.kind }))
                 )
             )

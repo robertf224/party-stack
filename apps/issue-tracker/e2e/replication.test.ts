@@ -548,6 +548,13 @@ test.skipIf(!url)(
             await expect
                 .poll(() => second.getByRole("button", { name: project, exact: true }).count())
                 .toBe(0);
+            await second.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
+            await second.getByRole("tab", { name: /^Outbox/ }).click();
+            // Sidebar removal is optimistic. Establish authoritative deletion
+            // before testing a stale reference submitted from the other tab.
+            await expect
+                .poll(() => second.getByText("Queue is clear", { exact: true }).isVisible())
+                .toBe(true);
             await form.getByRole("button", { name: "Create issue", exact: true }).click();
             await expect.poll(() => form.count()).toBe(0);
             await expect
@@ -555,8 +562,6 @@ test.skipIf(!url)(
                 .toContain("Couldn’t create issue");
             expect(await first.locator(".app-toast").innerText()).toContain("Project: Choose a valid value.");
             await first.locator(".app-toast-close").click();
-            await second.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
-            await second.getByRole("tab", { name: /^Outbox/ }).click();
             await expect
                 .poll(() => second.getByText("Queue is clear", { exact: true }).isVisible())
                 .toBe(true);

@@ -384,8 +384,8 @@ Review direction, not yet implemented:
   connection startup and automatic row GC. Per-demand watches are acquired
   independently. Replace that ambiguous switch with explicit continuous/manual
   lifecycle semantics; define scheduled sync passes separately from read readiness.
-- The global five-second `pollIntervalMs` currently controls source fallback
-  polling, main-loop wakeups and some retry delays. Adapters already expose
+- Before the November 2 scheduler cleanup, global `pollIntervalMs` controlled source
+  polling, outbox wakeups and some retry delays. Adapters already expose
   per-subset polling configuration. Put source refresh choices with the source;
   use explicit retry/maintenance deadlines for engine work rather than a shared
   provider-poll knob. Journal catch-up/repair scheduling still needs a deliberate
@@ -598,7 +598,7 @@ polling; Foundry metadata currently defaults to false. Explicit false without
 another refresh source currently permits a quiet snapshot.
 
 Follow-up proposal, not implemented: permit quiet caches with finite coverage
-freshness, independently of polling. A staleTimeMs/max-coverage-age policy would
+freshness, independently of polling. The agreed name is refresh.maxCoverageAgeMs. It would
 bound reuse since actual upstream validation, not since the last local cache hit.
 Expiry would make coverage stale without deleting rows or requiring background
 fetching; the next demand/read requiring fresh source data would reacquire it.
@@ -640,3 +640,70 @@ partitioned Runtime/Replica acquisitions and their lifetimes; ontology would wra
 those bindings with its typing/Promise/TanStack view. Installation transport stays
 in ontology-server, provider authentication stays in Connect, and ontology-aware
 acquisition must not move into the platform Runtime package.
+
+### Independent scheduling checkpoint
+
+The earlier split established separate fibers/scopes and cancellation ownership;
+it did not finish separating schedules. The global data poll interval was still
+used as the outbox's periodic check interval, confirmation retry delay and journal
+error backoff. Result/session maintenance also piggybacked on sync passes.
+
+Implemented in this checkpoint:
+
+- State polling/hints wake only the state worker. Outbox commands wake action
+  processing; connectivity/authentication changes can wake both. Actual journal
+  progress wakes action processing so a settled head can unblock its tail.
+- Outbox processing waits for new work, commands, availability/commit evidence or
+  retry deadlines. Dispatch retries use persisted nextAttemptAt. A retryable
+  confirmation/read-back failure schedules a confirmation retry, and an explicit
+  journal-not-yet-published result schedules catch-up. Idle/blocked/accepted work
+  does not get a generic periodic outbox tick. Receipt confirmation never submits
+  the successful action again.
+- Journal retry backoff no longer uses the data poll interval. Receipt catch-up
+  and state refresh honor the same journal failure deadline, including Retry-After,
+  so one path cannot bypass or extend the other's deadline on every wakeup.
+- Bounded result/session/obsolete-coverage cleanup has its own maintenance fiber.
+  Explicit syncOnce composes maintenance plus state/outbox work for manual callers.
+  Data and parent-action workers no longer invoke maintenance as part of each pass.
+- Row GC no longer takes the dispatch/publication semaphore across network IO.
+  Its existing storage transaction and precise pending-action/demand roots provide
+  the deletion coordination. A regression collects an unrelated row while a submit
+  is blocked in network IO and retains the action's needed base/overlay data.
+- Both parent connection paths use a forwarding-only action worker, independent
+  of read heartbeats. Full syncParent remains an explicit composition. Before
+  retrying a lost/accepted submission, forwarding can read parent state to recover
+  its handoff evidence; ordinary new writes do not unconditionally prefetch.
+  The forwarding method stays on the private controller, outside public Replica.
+
+Coordination intentionally retained: atomic installation/settlement/rebase,
+transactional row/blob roots, publication gating while source snapshots might
+already include a pending action, and evidence-driven action wakeups. The current
+publication semaphore still spans full adapter dispatch/read IO and is broader
+than strictly necessary. Narrowing it is a performance refinement, not a reason
+to couple the worker lifetimes again. Parent connections consume the same dedicated
+action signal as adapter-backed outboxes. Generic data-change notifications do not
+wake forwarding; installed parent evidence does.
+
+Browser acceptance exposed a platform observation gap: Chromium SharedWorkers
+update navigator.onLine during emulated offline/reconnect without dispatching
+native online/offline events. The previous outbox check timer masked this. The
+web runtime now samples that local flag in workers and publishes actual changes
+through NetworkConnectivity. Reading online also records a briefly observed
+offline period, so reconnect is detected even between samples. This does not make
+network requests or restore a periodic outbox worker. Its sampler and native
+listeners are owned by the platform scope.
+
+Virtual-clock tests compare 100 ms and ten-minute data cadence, persisted dispatch
+retry deadlines, confirmation recovery, idle maintenance, availability recovery,
+shared journal throttling, accepted-action inactivity, GC during submission and
+parent handoff recovery both within the process and after reopening.
+Worker connectivity tests cover missed events and a real browser offline action
+with ten-minute data polling, verifying that platform recovery wakes dispatch.
+
+Freshness policy remains a separate pending implementation. Use maxCoverageAgeMs,
+with a finite proposed default for coverage that is not maintained. Live status is
+per subset/coverage entry, not a replica-wide flag: one Foundry replica can watch
+Issue rows while User rows need another refresh policy. Healthy live coverage stays
+current independently of the original snapshot's age. Losing that maintenance
+requires catch-up/revalidation rather than granting an implicit infinite lifetime.
+Adapters may recommend defaults; caller configuration should take precedence.

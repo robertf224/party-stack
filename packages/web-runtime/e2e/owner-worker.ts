@@ -24,6 +24,8 @@ Effect.runFork(
                 tables: runtime.tables,
                 backend,
                 mutators: { increment },
+                connectivity: runtime.connectivity,
+                pollIntervalMs: 600_000,
             });
             const server = yield* serveOntologyWorker({
                 source: replicaStateSource(owner),

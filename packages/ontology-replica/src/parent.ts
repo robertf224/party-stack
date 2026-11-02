@@ -4,6 +4,37 @@ import { deliveryRecovery } from "./recovery.js";
 import type { ReplicaService } from "./engine.js";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 
+/** Parent forwarding owns action events/deadlines, independently of read heartbeats. */
+const runParentActions = Effect.fnUntraced(function* (options: {
+    readonly child: ReplicaService;
+    readonly queue: Queue.Queue<void>;
+    readonly run: Effect.Effect<void, BackendError>;
+    readonly onError: (error: BackendError) => Effect.Effect<void>;
+    readonly retryIntervalMs: number;
+}) {
+    for (;;) {
+        yield* Queue.clear(options.queue);
+        const first = (yield* options.child.pending)[0];
+        const result =
+            first && (first.state === "queued" || first.state === "sending")
+                ? yield* Effect.result(options.run)
+                : undefined;
+        if (result?._tag === "Failure") yield* options.onError(result.failure);
+        const head = (yield* options.child.pending)[0];
+        const now = yield* Clock.currentTimeMillis;
+        const retryAt =
+            !head || head.state === "blocked" || head.state === "acknowledged"
+                ? undefined
+                : head.nextAttemptAt !== undefined
+                  ? head.nextAttemptAt
+                  : result?._tag === "Failure" && result.failure.retryable
+                    ? now + Math.max(options.retryIntervalMs, result.failure.retryAfterMs ?? 0)
+                    : undefined;
+        if (retryAt === undefined) yield* Queue.take(options.queue);
+        else yield* Effect.raceFirst(Queue.take(options.queue), Effect.sleep(Math.max(1, retryAt - now)));
+    }
+});
+
 /** The parent's storage determines whether acceptance survives process exit.
  * A memory parent's acceptance is not a persistent durability guarantee.
  */
@@ -27,17 +58,13 @@ export const replicaStateSource = (parent: ReplicaService): OntologySource => ({
 export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(function* (
     child: ReplicaService,
     source?: OntologySource,
-    options?: { readonly retryIntervalMs?: number; readonly heartbeatIntervalMs?: number }
+    options?: { readonly retryIntervalMs?: number }
 ) {
     const retry = options?.retryIntervalMs ?? 1_000;
-    const heartbeat = options?.heartbeatIntervalMs ?? 60_000;
     const error = yield* Ref.make<BackendError | undefined>(undefined);
     const selectionWake = yield* Queue.sliding<void>(1);
-    const actionWake = yield* Queue.sliding<void>(1);
     const changes = yield* child.subscribeChanges;
-    yield* Stream.runForEach(changes, () =>
-        Queue.offer(selectionWake, undefined).pipe(Effect.andThen(Queue.offer(actionWake, undefined)))
-    ).pipe(Effect.forkScoped);
+    yield* Stream.runForEach(changes, () => Queue.offer(selectionWake, undefined)).pipe(Effect.forkScoped);
     yield* Effect.forkScoped(
         Effect.gen(function* () {
             const span = yield* Effect.currentSpan;
@@ -118,18 +145,12 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
     const syncOnce = source ? child.syncParent(source) : child.syncOnce;
     if (source)
         yield* Effect.forkScoped(
-            Effect.gen(function* () {
-                for (;;) {
-                    if ((yield* child.pending).length)
-                        yield* syncOnce.pipe(Effect.catch((failure) => Ref.set(error, failure)));
-                    const head = (yield* child.pending)[0];
-                    const now = yield* Clock.currentTimeMillis;
-                    const delay =
-                        head?.state === "queued" && head.nextAttemptAt !== undefined
-                            ? Math.min(heartbeat, Math.max(1, head.nextAttemptAt - now))
-                            : heartbeat;
-                    yield* Effect.raceFirst(Queue.take(actionWake), Effect.sleep(delay));
-                }
+            runParentActions({
+                child,
+                queue: child.outboxWakeups,
+                run: child.forwardParentActions(source),
+                onError: (failure) => Ref.set(error, failure),
+                retryIntervalMs: retry,
             }),
             { startImmediately: true }
         );
@@ -177,12 +198,11 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
         yield* Ref.set(error, initial.failure);
     }
     const queue = yield* Queue.sliding<void>(1);
-    const actionQueue = yield* Queue.sliding<void>(1);
     let closed = false;
     yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
             closed = true;
-        }).pipe(Effect.andThen(Queue.shutdown(queue)), Effect.andThen(Queue.shutdown(actionQueue)))
+        }).pipe(Effect.andThen(Queue.shutdown(queue)))
     );
     const wake = Queue.offer(queue, undefined).pipe(Effect.asVoid);
     const syncOnce = Effect.suspend(() =>
@@ -246,7 +266,7 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
         { startImmediately: true }
     );
     yield* Effect.forkScoped(
-        Stream.runForEach(childChanges, () => wake.pipe(Effect.andThen(Queue.offer(actionQueue, undefined)))),
+        Stream.runForEach(childChanges, () => wake),
         { startImmediately: true }
     );
     yield* Effect.forkScoped(
@@ -266,26 +286,21 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
         { startImmediately: true }
     );
     yield* Effect.forkScoped(
-        Effect.gen(function* () {
-            for (;;) {
-                const head = (yield* child.pending)[0];
-                const now = yield* Clock.currentTimeMillis;
-                const delay =
-                    head?.state === "queued" && head.nextAttemptAt !== undefined
-                        ? Math.min(heartbeatIntervalMs, Math.max(1, head.nextAttemptAt - now))
-                        : heartbeatIntervalMs;
-                yield* Effect.raceFirst(Queue.take(actionQueue), Effect.sleep(delay));
-                if (!(yield* child.pending).length) continue;
-                const result = yield* Effect.result(syncOnce);
-                if (result._tag === "Failure" && result.failure.retryable) {
-                    yield* Effect.sleep(retryIntervalMs);
-                    yield* Queue.offer(actionQueue, undefined);
-                }
-            }
+        runParentActions({
+            child,
+            queue: child.outboxWakeups,
+            run: child.forwardParentActions(source).pipe(
+                Effect.tap(() =>
+                    Effect.gen(function* () {
+                        if (!(yield* child.pending)[0]?.failure) yield* Ref.set(error, undefined);
+                    })
+                )
+            ),
+            onError: (failure) => Ref.set(error, failure),
+            retryIntervalMs,
         }),
         { startImmediately: true }
     );
-    yield* Queue.offer(actionQueue, undefined);
     yield* wake;
     return { syncOnce, lastError: Ref.get(error) } satisfies ParentConnection;
 });

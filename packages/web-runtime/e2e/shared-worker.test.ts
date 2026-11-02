@@ -56,10 +56,20 @@ test("a SharedWorker owns persisted state while memory tabs and TanStack collect
         await expect
             .poll(() => run(second, "receipt", "second-action"))
             .toMatchObject({ outcome: "committed" });
+        // Worker navigator.onLine changes can arrive without native events. The
+        // platform monitor must wake the outbox, not the ten-minute data poll.
+        await context.setOffline(true);
+        await run(second, "enqueue", "offline-action");
+        await expect.poll(() => run(second, "rows")).toEqual([{ id: "one", count: 3 }]);
+        expect(await run(second, "receipt", "offline-action")).toBeUndefined();
+        await context.setOffline(false);
+        await expect
+            .poll(() => run(second, "receipt", "offline-action"))
+            .toMatchObject({ outcome: "committed" });
         await second.reload();
         await second.waitForFunction(() => Reflect.has(window, "replicaTest"), null, { timeout: 20_000 });
         expect(await run(second, "sourceId")).toBe(sourceId);
-        await expect.poll(() => run(second, "rows")).toEqual([{ id: "one", count: 2 }]);
+        await expect.poll(() => run(second, "rows")).toEqual([{ id: "one", count: 3 }]);
         expect(errors).toEqual([]);
     } finally {
         if (!second.isClosed()) await run(second, "cleanup").catch(() => undefined);

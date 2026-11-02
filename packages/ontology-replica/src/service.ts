@@ -13,7 +13,10 @@ export type ReplicaOptions = Configuration<KernelOptions> & {
     readonly context?: Record<string, unknown>;
     readonly mutators?: ActionMutatorRegistry;
 };
-export interface ReplicaService extends Omit<KernelService, "demand" | "syncSubset"> {
+export interface ReplicaService extends Omit<
+    KernelService,
+    "demand" | "syncSubset" | "forwardParentActions" | "outboxWakeups"
+> {
     readonly [kernel]: KernelService;
     readonly demand: {
         readonly acquire: (subset: ObjectSubset) => Effect.Effect<void, BackendError, Scope.Scope>;

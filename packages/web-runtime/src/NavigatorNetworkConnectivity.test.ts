@@ -4,11 +4,15 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import { makeNavigatorNetworkConnectivity } from "./NavigatorNetworkConnectivity.js";
 
 afterEach(() => vi.unstubAllGlobals());
-const setup = Effect.fnUntraced(function* (initiallyOnline = false) {
+const setup = Effect.fnUntraced(function* (initiallyOnline = false, worker = false) {
     let online = initiallyOnline;
     const target = new EventTarget();
     const remove = vi.spyOn(target, "removeEventListener");
-    vi.stubGlobal("window", target);
+    vi.stubGlobal("window", worker ? undefined : target);
+    if (worker) {
+        vi.stubGlobal("addEventListener", target.addEventListener.bind(target));
+        vi.stubGlobal("removeEventListener", target.removeEventListener.bind(target));
+    }
     vi.stubGlobal("navigator", {
         get onLine() {
             return online;
@@ -26,11 +30,33 @@ const setup = Effect.fnUntraced(function* (initiallyOnline = false) {
         connectivity,
         values,
         remove,
-        setOnline: (value: boolean) => {
+        setOnline: (value: boolean, dispatch = true) => {
             online = value;
-            target.dispatchEvent(new Event(value ? "online" : "offline"));
+            if (dispatch) target.dispatchEvent(new Event(value ? "online" : "offline"));
         },
     };
+});
+test("workers detect connectivity changes without native events, including briefly observed offline periods", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { connectivity, setOnline, values } = yield* setup(true, true);
+                setOnline(false, false);
+                // An outbox can observe offline before the platform's next sample.
+                expect(yield* connectivity.online).toBe(false);
+                yield* TestClock.adjust(100);
+                setOnline(true, false);
+                yield* TestClock.adjust(1_899);
+                expect(values).toEqual([true, false]);
+                yield* TestClock.adjust(1);
+                expect(values).toEqual([true, false, true]);
+                expect(yield* connectivity.online).toBe(true);
+                setOnline(false, false);
+                yield* TestClock.adjust(1_000);
+                expect(values).toEqual([true, false, true, false]);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
 });
 test("connectivity emits its initial state and waits for an online connection to stabilize", async () => {
     await Effect.runPromise(

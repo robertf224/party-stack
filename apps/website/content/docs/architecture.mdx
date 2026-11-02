@@ -137,6 +137,23 @@ children settle their duplicate predictions as part of installing parent batches
 State refresh and outbox processing have independent scoped lifetimes. Canceling
 UI demand never owns or cancels the background action worker.
 
+Their scheduling is separate as well. Query/watch polling wakes state refresh;
+outbox processing wakes for new work, commands, availability changes, commit
+evidence or an action/confirmation retry deadline. An idle, blocked or accepted
+outbox has no periodic check timer. Parent forwarding follows the same rule and
+only rereads parent state when recovering uncertain handoff evidence.
+
+The web runtime listens for browser connectivity events. In workers it also
+samples `navigator.onLine`, because the flag can change without a native event.
+This observes local browser state without making network requests and emits the
+same connectivity changes used by the outbox; it does not poll actions.
+
+Bounded result/session maintenance has its own scoped schedule, and row GC does
+not wait for network dispatch. Its storage transaction checks demand and pending
+action retention roots before deleting rows. The explicit `syncOnce` checkpoint
+composes maintenance, state refresh and outbox processing; ordinary workers do not
+use that combined checkpoint to drive one another.
+
 ## Platform Runtime
 
 `Runtime` is the Effect service identifier. `RuntimeService` is its acquired
