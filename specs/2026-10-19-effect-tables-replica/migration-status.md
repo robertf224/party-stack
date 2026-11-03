@@ -1,4 +1,4 @@
-# Migration status — November 2, 2026
+# Migration status — November 3, 2026
 
 Current inventory. The [execution log](./implementation.md) records historical
 checkpoints; this file describes the current implementation. The overall
@@ -762,3 +762,28 @@ platform runtimes optionally expose scoped
 capacity estimates. DO SQL usage is measured directly, while unavailable free heap
 stays unknown. See replication-outbox-review.md for semantics, tests and remaining
 aggregate/physical resource-budget work.
+
+## Native acquisition and Connect action results — November 3
+
+- Public `makeReplica` now requires Runtime and Scope, returning Replica directly;
+  the separate `ontology-replica/host` export is removed. Storage-injection kernels
+  remain private implementation/test seams.
+- `ontology-backend/meta` owns native metadata pull and the local metadata backend.
+  SDK metadata pull delegates to it. The provider/CLI installation selection
+  plumbing has not yet been removed.
+- Actions support optional `returnType` in IR, runtime/generated codecs, inference,
+  metadata and codegen. Owned results are validated and JSON-encoded before the
+  atomic edits/receipt commit, survive retries/reopening, and pass through server
+  projection/RPC. SDK actions expose decoded `result` alongside their receipt.
+- Connect's private store now commits through owned ontology storage and its
+  journal. `makeConnectBackend` exposes normal ontology actions and subset reads;
+  egress token access uses ordinary reads, the refresh action and property decryption.
+  OAuth actions preserve the durable claim/exchange/finish sequence and do not
+  advertise general action-ID idempotency. They must be called directly through
+  backend/protocol, without persisting authorization codes in a replica outbox.
+- Foundry user augmentation preserves an existing declared context and partition.
+- Account-to-local-partition inventory and installation teardown remain under
+  design. Retain the existing inventory until replacement account/forget wiring
+  is ready; do not introduce a general runtime catalogue or another host manager.
+  A future durable workflow/result facility could improve Connect action recovery;
+  it cannot provide exactly-once remote exchange without provider support.

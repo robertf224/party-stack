@@ -413,6 +413,7 @@ function renderActionType(actionType: ActionTypeDef, ctx?: RenderContext): strin
             name: "description",
             value: actionType.description ? renderPlainValue(actionType.description) : undefined,
         },
+        { name: "returnType", value: actionType.returnType ? renderType(actionType.returnType) : undefined },
         { name: "deprecated", value: renderDeprecation(actionType.deprecated) },
     ]);
 }

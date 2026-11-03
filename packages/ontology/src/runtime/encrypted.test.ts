@@ -1,6 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
-import { makeReplica } from "@party-stack/ontology-replica";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { TemporalTimestamp } from "@party-stack/ontology-spec/effect";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
@@ -16,6 +15,7 @@ import { Temporal } from "temporal-polyfill";
 import { expect, test, vi } from "vite-plus/test";
 import { makeReplicaDecryption } from "../../../ontology-replica/lib/decrypt.js";
 import { replicaController } from "../../../ontology-replica/lib/internal.js";
+import { makeReplica } from "../../../ontology-replica/lib/service.js";
 import { createLiveOntology } from "../live/LiveOntology.js";
 import { makeStorageOntologyBackend } from "../live/storageBackend.js";
 import type { Encrypted } from "@party-stack/ontology-spec/values";

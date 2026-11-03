@@ -1167,6 +1167,13 @@ export default {
                         description: "The action type's parametero.",
                     },
                     {
+                        name: "returnType",
+                        displayName: "Return type",
+                        type: o.optional({ type: o.ref({ name: "TypeDef" }) }),
+                        description:
+                            "Authoritative action result. Omission means void; optimistic execution has no result.",
+                    },
+                    {
                         name: "logic",
                         displayName: "Logic",
                         type: o.list({ elementType: o.ref({ name: "ActionLogicStep" }) }),

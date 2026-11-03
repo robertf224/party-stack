@@ -7,6 +7,7 @@ export interface OntologyDefinition {
         string,
         {
             parameters: Record<string, unknown>;
+            returnType?: unknown;
         }
     >;
     queryFunctionTypes: Record<

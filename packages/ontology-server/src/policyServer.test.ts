@@ -3,7 +3,6 @@ import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { CurrentExecutionContext } from "@party-stack/ontology-backend/policy";
 import { makeStorageBackend } from "@party-stack/ontology-backend/storage";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
-import { makeReplica } from "@party-stack/ontology-replica";
 import { o } from "@party-stack/ontology-spec";
 import {
     and,
@@ -25,6 +24,7 @@ import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { RpcTest } from "effect/rpc";
 import { expect, test } from "vite-plus/test";
+import { makeReplica } from "../../ontology-replica/lib/service.js";
 import { projectOntologyBackend } from "./authorization.js";
 import { makeOntologyServer } from "./composition.js";
 import { OntologyRpcs, ontologyRpcHandlers } from "./rpc.js";
@@ -141,6 +141,43 @@ function definition(): OntologyIR {
     };
 }
 const principal = { user: "alice", tenant: "org", role: "member" };
+
+test("policy projection and RPC preserve authoritative action results", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const ir = definition();
+                ir.actionTypes[0]!.returnType = o.string({});
+                const backend = yield* makeOwnedBackend({
+                    ir,
+                    namespace: "projected-result",
+                    tables: yield* Memory.make(),
+                    mutators: { edit: () => Effect.succeed("saved") },
+                });
+                yield* backend.storage.transaction((tx) =>
+                    tx.put("Item", { id: "a", owner: "alice", title: "A" })
+                );
+                const view = yield* projectOntologyBackend({ ir, backend, context: principal }, "owned");
+                const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                    Effect.provide(ontologyRpcHandlers(view))
+                );
+                const receipt = yield* client.ApplyAction({
+                    id: "result",
+                    name: "edit",
+                    parameters: { item: "a", title: "New" },
+                });
+                expect(receipt.result).toBe("saved");
+                expect(
+                    (yield* client.ApplyAction({
+                        id: "result",
+                        name: "edit",
+                        parameters: { item: "a", title: "New" },
+                    })).result
+                ).toBe("saved");
+            })
+        )
+    );
+});
 
 test("draft checks preserve unknown parameters without permitting an unknown action check", async () => {
     await Effect.runPromise(

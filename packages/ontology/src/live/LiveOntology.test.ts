@@ -4,6 +4,7 @@ import { OntologyStorageError, ConfigurationError } from "@party-stack/ontology-
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
 import { asRuntimeLayer } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
+import { Temporal } from "temporal-polyfill";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createLiveOntology, waitForLiveOntologyReady } from "./LiveOntology.js";
 import type { OntologyBackendAdapter } from "./OntologyBackendAdapter.js";
@@ -41,6 +42,32 @@ const platform = (online = true) => {
 };
 
 describe("native LiveOntology construction", () => {
+    it("decodes authoritative action results after confirmation", async () => {
+        const live = await createLiveOntology({
+            ir: { ...ir, actionTypes: [{ ...ir.actionTypes[0]!, returnType: o.timestamp({}) }] },
+            runtime: asRuntimeLayer(() => platform()),
+            backend: () =>
+                adapter(
+                    native({
+                        applyAction: (request) =>
+                            Effect.succeed({
+                                operationId: request.id,
+                                outcome: "committed",
+                                affected: [],
+                                result: "2026-11-03T12:00:00Z",
+                            }),
+                    })
+                ),
+        });
+        try {
+            const result = await live.actions.save!({});
+            expect(result.result).toBeInstanceOf(Temporal.Instant);
+            expect(String(result.result)).toBe("2026-11-03T12:00:00Z");
+            expect(result.receipt?.result).toBe("2026-11-03T12:00:00Z");
+        } finally {
+            await live.cleanup();
+        }
+    });
     it("keeps action.resolveParameters on the native backend path without submitting", async () => {
         const resolve = vi.fn((name: string, parameters: Record<string, unknown>) =>
             Effect.succeed({ ...parameters, title: `prefill-${name}` })

@@ -347,7 +347,7 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                 context: options.context,
                 mutators: options.mutators,
                 resolveOnly: settings?.optimistic === false,
-            }),
+            }).pipe(Effect.map((execution) => execution.parameters)),
     });
     const decryption = makeReplicaDecryption({
         ir: options.ir,

@@ -31,7 +31,7 @@ export type ActionMutator = (
     tx: ActionTransaction,
     request: ActionRequest,
     context: Record<string, unknown>
-) => Effect.Effect<void, BackendError>;
+) => Effect.Effect<unknown, BackendError>;
 export interface ActionTransaction extends OwnedTransaction {
     readonly query: (
         document: QueryDocument,
@@ -334,7 +334,7 @@ export const executeAction = Effect.fn("Action.execute")(function* (options: Act
     if (!action) return yield* failure("Action is unavailable.", "NotFound");
     const expressions = actionExpressions(options);
     const parameters = yield* expressions.resolve;
-    if (options.resolveOnly) return parameters;
+    if (options.resolveOnly) return { parameters, result: undefined };
     for (const [index, step] of action.logic.entries()) {
         let type: ObjectTypeDef | undefined;
         let key: Key | undefined;
@@ -386,25 +386,26 @@ export const executeAction = Effect.fn("Action.execute")(function* (options: Act
         }
     }
     const mutator = options.mutators?.[request.name];
-    if (mutator)
-        yield* mutator(
-            {
-                get: (type, key) => tx.get(type, key),
-                loadSubset: (type, scan) => tx.loadSubset(type, scan),
-                put: (type, value) => tx.put(type, value),
-                patch: (type, key, changes) => tx.patch(type, key, changes),
-                delete: (type, key) => tx.delete(type, key),
-                query: (document, settings) =>
-                    executeQuery(document, {
-                        reader: { ir, loadSubset: (type, scan) => tx.loadSubset(type, scan) },
-                        context: options.context,
-                        inputs: settings?.inputs,
-                    }).pipe(Effect.map((result) => result.value)),
-            },
-            { ...request, parameters },
-            options.context ?? {}
-        );
-    return parameters;
+    const result = mutator
+        ? yield* mutator(
+              {
+                  get: (type, key) => tx.get(type, key),
+                  loadSubset: (type, scan) => tx.loadSubset(type, scan),
+                  put: (type, value) => tx.put(type, value),
+                  patch: (type, key, changes) => tx.patch(type, key, changes),
+                  delete: (type, key) => tx.delete(type, key),
+                  query: (document, settings) =>
+                      executeQuery(document, {
+                          reader: { ir, loadSubset: (type, scan) => tx.loadSubset(type, scan) },
+                          context: options.context,
+                          inputs: settings?.inputs,
+                      }).pipe(Effect.map((result) => result.value)),
+              },
+              { ...request, parameters },
+              options.context ?? {}
+          )
+        : undefined;
+    return { parameters, result };
 }, Effect.catchDefect(defect));
 
 /** Resolve defaults against an authorized transaction-consistent native reader. */

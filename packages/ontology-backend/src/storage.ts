@@ -11,12 +11,7 @@ import { executeAction, resolveReadActionParameters } from "./actions.js";
 import { maintenanceInterval, scheduleMaintenance } from "./maintenance.js";
 import { makeOwnedBackend } from "./owned.js";
 import { CurrentExecutionContext } from "./policy.js";
-import {
-    BackendError,
-    classifyBackendFailure,
-    encryptedPropertyCodec,
-    EncryptedValueSchema,
-} from "./index.js";
+import { BackendError, classifyBackendFailure, makePropertyDecryption } from "./index.js";
 import type { ActionRequest, AttachmentUpload } from "./index.js";
 import type { OwnedBackendOptions, OwnedBackendService, OwnedTransaction } from "./owned.js";
 import type { attachment } from "@party-stack/ontology-spec/values";
@@ -91,69 +86,24 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
         tables,
         blobs,
         encrypted: options.encryptionKeyring
-            ? {
-                  decrypt: Effect.fn("StorageOntology.decrypt")(function* (value) {
-                      const checked = yield* Effect.try({
-                          try: () => {
-                              const handle = Schema.decodeUnknownSync(EncryptedValueSchema)(value);
-                              return { handle, codec: encryptedPropertyCodec(options.ir, handle) };
-                          },
-                          catch: () =>
-                              new BackendError({
-                                  operation: "decrypt",
-                                  kind: "InvalidRequest",
-                                  message: "Invalid encrypted property handle.",
-                                  retryable: false,
-                              }),
-                      });
-                      const source = checked.handle.source!;
-                      const row = yield* backend.storage.read((tx) =>
-                          tx.get(source.objectType, source.primaryKey)
-                      );
-                      const current = row?.[source.property];
-                      if (
-                          !current ||
-                          typeof current !== "object" ||
-                          !("ciphertext" in current) ||
-                          current.ciphertext !== value.ciphertext
-                      )
-                          return yield* new BackendError({
-                              operation: "decrypt",
-                              kind: "Conflict",
-                              message: "The encrypted property changed or is unavailable.",
-                              retryable: false,
-                          });
-                      const plaintext = yield* makeEncryptedValues(
-                          options.namespace,
-                          options.encryptionKeyring!
-                      )
-                          .decrypt(Schema.Unknown, checked.handle)
+            ? makePropertyDecryption({
+                  ir: options.ir,
+                  get: (type, key) => backend.storage.read((tx) => tx.get(type, key)),
+                  decrypt: (handle) =>
+                      makeEncryptedValues(options.namespace, options.encryptionKeyring!)
+                          .decrypt(Schema.Unknown, handle)
                           .pipe(
                               Effect.mapError(
                                   () =>
                                       new BackendError({
                                           operation: "decrypt",
                                           kind: "Unavailable",
-                                          message: "Encrypted value is unavailable.",
                                           retryable: false,
+                                          message: "Encrypted value is unavailable.",
                                       })
                               )
-                          );
-                      return yield* Effect.try({
-                          try: () => {
-                              checked.codec.decode(plaintext);
-                              return { value: plaintext, ciphertext: value.ciphertext };
-                          },
-                          catch: () =>
-                              new BackendError({
-                                  operation: "decrypt",
-                                  kind: "Internal",
-                                  message: "Invalid decrypted plaintext.",
-                                  retryable: false,
-                              }),
-                      });
-                  }),
-              }
+                          ),
+              })
             : undefined,
         actionScope,
         mutators: {
@@ -169,7 +119,7 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
                                     tx,
                                     request: invocation,
                                     context: context ?? options.context,
-                                })
+                                }).pipe(Effect.map((execution) => execution.result))
                             ),
                     ])
             ),

@@ -55,11 +55,12 @@ export function nestedEncryptedIssues(ir: OntologyIR): ValidationIssue[] {
             visit(property.type, ["objectTypes", index, "properties", propertyIndex, "type"])
         )
     );
-    ir.actionTypes.forEach((action, index) =>
+    ir.actionTypes.forEach((action, index) => {
+        if (action.returnType) visit(action.returnType, ["actionTypes", index, "returnType"]);
         action.parameters.forEach((parameter, parameterIndex) =>
             visit(parameter.type, ["actionTypes", index, "parameters", parameterIndex, "type"])
-        )
-    );
+        );
+    });
     ir.queryFunctionTypes.forEach((query, index) => {
         query.parameters.forEach((parameter, parameterIndex) =>
             visit(parameter.type, ["queryFunctionTypes", index, "parameters", parameterIndex, "type"])

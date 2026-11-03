@@ -9,7 +9,7 @@ import {
     policyIndexes,
     actionReferenceIssues,
 } from "@party-stack/ontology-backend/policy";
-import { queryExecutor, executeQuery } from "@party-stack/ontology-backend/query";
+import { queryExecutor, executeQuery, backendQueryReader } from "@party-stack/ontology-backend/query";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { validatePolicy } from "@party-stack/ontology-spec/query";
@@ -20,7 +20,6 @@ import { Effect, Schema, Stream } from "effect";
 import { projectOntologyDefinition } from "./definitionProjection.js";
 import { errorContext, projectValidationReport } from "./errorProjection.js";
 import { projectPolicyDefinition, validateContext } from "./policyDefinition.js";
-import { backendQueryReader } from "./query.js";
 import type {
     ActionRequest,
     ErrorProjection,
@@ -256,6 +255,7 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
                     return {
                         operationId: receipt.operationId,
                         outcome: receipt.outcome,
+                        result: receipt.result,
                         attachmentIdMappings: receipt.attachmentIdMappings,
                         affected: receipt.affected
                             ?.filter((target) =>

@@ -12,6 +12,7 @@ export interface CompiledEffectSchemas {
     readonly objectSchemas: Readonly<Record<string, ObjectCodec>>;
     readonly actionParameterSchemas: Readonly<Record<string, ObjectCodec>>;
     readonly queryParameterSchemas: Readonly<Record<string, ObjectCodec>>;
+    readonly actionReturnSchemas: Readonly<Record<string, ValueCodec>>;
     readonly queryReturnSchemas: Readonly<Record<string, ValueCodec>>;
 }
 
@@ -195,6 +196,11 @@ export function compileEffectSchemas(source: OntologyIR): CompiledEffectSchemas 
                         ),
                     ] as const
             )
+        ),
+        actionReturnSchemas: uniqueRegistry(
+            ir.actionTypes
+                .filter((action) => action.returnType !== undefined)
+                .map((action) => [action.name, render(action.returnType!)] as const)
         ),
         queryParameterSchemas: uniqueRegistry(
             ir.queryFunctionTypes.map((query) => [query.name, struct(query.parameters)] as const)

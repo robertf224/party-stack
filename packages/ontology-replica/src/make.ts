@@ -2,13 +2,13 @@ import { classifyBackendFailure } from "@party-stack/ontology-backend";
 import { makeBlobStorage, exclusiveOwnerLiveness } from "@party-stack/ontology-storage/blobs";
 import { Runtime } from "@party-stack/runtime";
 import { Effect } from "effect";
-import { makeReplica } from "./service.js";
-import type { ReplicaOptions } from "./service.js";
+import { makeReplica as makeReplicaFromStorage } from "./service.js";
+import type { ReplicaOptions as StorageReplicaOptions } from "./service.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 
-export interface ReplicaHostOptions extends Omit<
-    ReplicaOptions,
+export interface ReplicaOptions extends Omit<
+    StorageReplicaOptions,
     | "namespace"
     | "tables"
     | "blobs"
@@ -25,7 +25,7 @@ export interface ReplicaHostOptions extends Omit<
     readonly source?: OntologySource;
 }
 /** Platform composition only. Native operations and their lifecycle belong to Replica. */
-export const makeReplicaHost = Effect.fn("ReplicaHost.open")(function* (options: ReplicaHostOptions) {
+export const makeReplica = Effect.fn("Replica.open")(function* (options: ReplicaOptions) {
     const runtime = yield* Runtime;
     const blobs = yield* makeBlobStorage({
         namespace: JSON.stringify([runtime.owner, runtime.namespace]),
@@ -33,7 +33,7 @@ export const makeReplicaHost = Effect.fn("ReplicaHost.open")(function* (options:
         bytes: runtime.bytes,
         ...exclusiveOwnerLiveness(runtime.tables),
     }).pipe(Effect.mapError((cause) => classifyBackendFailure("attachment.storage", cause)));
-    const replica = yield* makeReplica({
+    return yield* makeReplicaFromStorage({
         ...options,
         namespace: options.id ?? runtime.namespace,
         tables: runtime.tables,
@@ -44,5 +44,4 @@ export const makeReplicaHost = Effect.fn("ReplicaHost.open")(function* (options:
         encryptionKeyring: runtime.encryptionKeyring,
         clientSessions: options.clientSessions ?? { sessionIdleTimeoutMs: 10 * 60_000 },
     });
-    return { replica, backend: options.backend };
 });

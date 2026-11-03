@@ -162,6 +162,9 @@ export function generateEffectSchemas(ir: OntologyIR, opts: GenerateEffectSchema
             )
         );
     }
+    for (const action of ir.actionTypes) {
+        if (action.returnType) add(`${pascalCase(action.name)}Return`, render(action.returnType));
+    }
     for (const query of ir.queryFunctionTypes) {
         add(
             `${pascalCase(query.name)}Parameters`,
@@ -193,6 +196,12 @@ export function generateEffectSchemas(ir: OntologyIR, opts: GenerateEffectSchema
                 name: action.name,
                 type: `${pascalCase(action.name)}Parameters`,
             }))
+        ),
+        registry(
+            "actionReturnSchemas",
+            ir.actionTypes
+                .filter((action) => action.returnType)
+                .map((action) => ({ name: action.name, type: `${pascalCase(action.name)}Return` }))
         ),
         registry(
             "queryParameterSchemas",

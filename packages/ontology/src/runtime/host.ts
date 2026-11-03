@@ -1,4 +1,4 @@
-import { makeReplicaHost as openHost } from "@party-stack/ontology-replica/host";
+import { makeReplica } from "@party-stack/ontology-replica";
 import { Effect, Fiber } from "effect";
 import { createLiveOntologyAttachments } from "../live/attachments/createLiveOntologyAttachments.js";
 import { observeReplicaRows } from "./hostQuery.js";
@@ -54,7 +54,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
     options: ReplicaHostOptions
 ): Effect.fn.Return<ReplicaHostService, BackendError, Runtime | Scope.Scope> {
     const backend = options.backend ?? (yield* options.backendAdapter!.open(options.context));
-    const native = yield* openHost({
+    const replica = yield* makeReplica({
         id: options.id,
         live: options.live,
         ir: options.ir,
@@ -78,8 +78,9 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
             { signal }
         );
     return {
-        ...native,
-        attachments: createLiveOntologyAttachments({ attachments: native.replica.attachments, run, scope }),
-        observe: (subset, settings) => observeReplicaRows(native.replica, subset, settings),
+        replica,
+        backend,
+        attachments: createLiveOntologyAttachments({ attachments: replica.attachments, run, scope }),
+        observe: (subset, settings) => observeReplicaRows(replica, subset, settings),
     };
 });

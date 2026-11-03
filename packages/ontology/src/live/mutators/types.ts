@@ -36,7 +36,7 @@ export type OntologyMutator = (options: {
     tx: OntologyMutatorTx;
     args: Record<string, unknown>;
     context: Record<string, unknown>;
-}) => void | Promise<void>;
+}) => unknown;
 
 export type OntologyMutatorRegistry = Record<string, OntologyMutator>;
 

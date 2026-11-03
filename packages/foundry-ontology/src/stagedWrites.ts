@@ -161,13 +161,13 @@ export async function runFoundryOntologyMutator(options: {
     args: Record<string, unknown>;
     context?: Record<string, unknown>;
     objectTypes?: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<unknown> {
     const tx = createFoundryStagedWriteMutatorTx({
         ir: options.ir,
         client: options.client,
         objectTypes: options.objectTypes,
     });
-    await options.mutator({
+    return options.mutator({
         tx,
         args: options.args,
         context: options.context ?? {},

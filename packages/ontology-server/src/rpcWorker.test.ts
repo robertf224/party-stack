@@ -3,7 +3,6 @@ import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunn
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
-import { makeReplica } from "@party-stack/ontology-replica";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
@@ -11,6 +10,7 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { replicaController } from "../../ontology-replica/lib/internal.js";
+import { makeReplica } from "../../ontology-replica/lib/service.js";
 import { connectOntologyWorker, serveOntologyWorker, serveOpenedOntologyWorker } from "./rpcWorker.js";
 import type { OntologyConnection } from "./rpc.js";
 import type { OwnedTransaction } from "@party-stack/ontology-backend/owned";

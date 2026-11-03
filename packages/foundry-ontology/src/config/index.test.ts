@@ -193,4 +193,21 @@ describe("createFoundryOntologyPullSource", () => {
                 : undefined
         ).toEqual(o.Expression.contextReference({ name: "user" }));
     });
+    it("preserves a declared context and partition when adding users", async () => {
+        const ir: OntologyIR = {
+            types: [],
+            objectTypes: [],
+            linkTypes: [],
+            actionTypes: [],
+            queryFunctionTypes: [],
+            context: {
+                type: o.struct({ fields: [{ name: "tenant", displayName: "Tenant", type: o.string({}) }] }),
+                partition: [["tenant"]],
+            },
+        };
+        const result = await createSource({
+            users: { objectType: "User", lens: { operations: [o.LensOp.select({ properties: ["id"] })] } },
+        }).transformPulledOntology!(ir);
+        expect(result.context).toEqual(ir.context);
+    });
 });

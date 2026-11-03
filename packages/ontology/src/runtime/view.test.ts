@@ -1,6 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
-import { makeReplica as makeNativeReplica } from "@party-stack/ontology-replica";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -10,6 +9,7 @@ import { memoryRuntimeFixture } from "@party-stack/runtime/testing";
 import { Effect, Exit, Scope, Fiber, Deferred } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { replicaController } from "../../../ontology-replica/lib/internal.js";
+import { makeReplica as makeNativeReplica } from "../../../ontology-replica/lib/service.js";
 import { makeReplicaOntologyView } from "./view.js";
 import type { LiveOntology } from "../live/LiveOntology.js";
 import type { ActionRequest } from "@party-stack/ontology-backend";

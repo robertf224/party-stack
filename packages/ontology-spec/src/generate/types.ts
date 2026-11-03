@@ -252,6 +252,10 @@ function addOntologyAggregateType(
                                       name: "parameters",
                                       type: `${pascalCase(action.name)}Parameters`,
                                   },
+                                  {
+                                      name: "returnType",
+                                      type: action.returnType ? `${pascalCase(action.name)}Return` : "void",
+                                  },
                               ],
                           }),
                       })),
@@ -309,6 +313,12 @@ function addOntologyContextType(
 function addActionParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: OntologyIR): void {
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
     for (const actionType of ir.actionTypes) {
+        if (actionType.returnType)
+            sourceFile.addTypeAlias({
+                name: `${pascalCase(actionType.name)}Return`,
+                isExported: true,
+                type: generateForTypeDef(actionType.returnType, { objectTypes }),
+            });
         sourceFile.addTypeAlias({
             name: `${pascalCase(actionType.name)}Parameters`,
             isExported: true,

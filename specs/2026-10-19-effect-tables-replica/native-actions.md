@@ -12,8 +12,9 @@ durable journal. Provider bindings no longer construct private TanStack
 collections to implement those operations. Metadata bindings also load snapshots
 directly from their SDKs, then apply residual predicates and pagination.
 
-`makeReplicaHost` composes the backend, storage, attachment facade and Replica in
-an Effect Scope. Closing that Scope releases subscriptions and owned resources.
+Public `makeReplica` acquires storage, bytes and platform capabilities from Runtime
+and returns Replica in an Effect Scope. There is no separate native host wrapper.
+Closing that Scope releases subscriptions and owned resources.
 TanStack collections are demand/materialization facades over the resulting
 Replica, with a separate persisted-only facade for inspection and replay. The
 first demand attempts synchronization before declaring its initial view ready;
@@ -25,6 +26,19 @@ mean private connection/installation ownership or all platform acquisition has
 finished migrating.
 
 ## Action lifetime and waits
+
+Actions may declare `returnType`; omission means void. An owned mutator's return
+value is validated and JSON-encoded before committing edits and its receipt in the
+same transaction. Invalid results roll the transaction back. Idempotent retries
+recover the stored result. Results are carried by receipts, not row-journal
+entries. The typed SDK exposes the decoded output as `result` alongside `receipt`.
+
+`ontology-backend/meta` supplies native `pull(backend, options)` and
+`makeMetadataBackend(ir)`. Pull recursively includes named types referenced by
+properties, parameters, action/query results and the context descriptor. It
+requires complete snapshots and reports invalid metadata through BackendError;
+it does not create a replica or TanStack collections. The SDK pull function is a
+Promise facade over that implementation.
 
 The durable queue distinguishes queued, sending, acknowledged, blocked and
 uncertain work. Forwarding to a parent and executing against an upstream adapter

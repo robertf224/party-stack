@@ -1,6 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
-import { makeReplica } from "@party-stack/ontology-replica";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, field, literal, selectField, sub } from "@party-stack/ontology-spec/query";
@@ -10,6 +9,7 @@ import { Deferred, Effect, Fiber } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { Temporal } from "temporal-polyfill";
 import { expect, test, vi } from "vite-plus/test";
+import { makeReplica } from "../../ontology-replica/lib/service.js";
 import { makeOntologyServer } from "./composition.js";
 import { connectOntologyHttp, makeOntologyHttpHandler } from "./rpcHttp.js";
 

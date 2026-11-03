@@ -10,6 +10,32 @@ application actions and TanStack collections over this service.
 
 ## Construction
 
+`makeReplica({ ir, context, backend })` requires `Runtime` and `Scope`, and returns
+the native replica directly. It acquires blob metadata, byte access, connectivity,
+capacity reporting and the encryption keyring from that Runtime. There is no
+separate replica-host constructor.
+
+```ts
+import { makeReplica } from "@party-stack/ontology-replica";
+import { Runtime, Runtimes } from "@party-stack/runtime";
+import { contextPartition } from "@party-stack/ontology-spec/utils";
+import { Effect } from "effect";
+
+const open = Effect.gen(function* () {
+    const runtimes = yield* Runtimes;
+    const runtime = yield* runtimes.acquire({
+        owner: contextPartition(ir, context),
+        namespace: "my-app:issues",
+    });
+    const backend = yield* adapter.open(context);
+    return yield* makeReplica({ ir, context, backend }).pipe(Effect.provideService(Runtime, runtime));
+});
+```
+
+Provide `Runtimes.layer(platformLayer)` and run `open` in the consumer's Scope.
+Closing that scope releases the replica. For a fixed application graph, the Layer
+form below shares one acquisition through Effect's ordinary Layer composition.
+
 `Replica.layer` requires a platform `Runtime` and an acquired `ReplicaUpstream`.
 Replay, blob metadata, attachment staging and worker lifetimes are composed
 internally. Applications supply ontology definitions and optional custom mutators.

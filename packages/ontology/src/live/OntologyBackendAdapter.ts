@@ -20,11 +20,11 @@ export interface OntologyAttachmentIdMapping {
     remoteId: string;
 }
 
-export interface OntologyApplyActionResult {
+export type OntologyApplyActionResult<Return = unknown> = {
     receipt?: import("@party-stack/ontology-backend").ActionReceipt;
     /**
      * Mappings for uploaded attachments whose canonical backend IDs differ from
      * the local IDs supplied in `ActionRequest.attachmentUploads`.
      */
     attachmentIdMappings?: OntologyAttachmentIdMapping[];
-}
+} & (undefined extends Return ? { result?: Return } : { result: Return });

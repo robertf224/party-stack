@@ -103,7 +103,83 @@ export const connectOntology = defineOntology({
         },
     ],
     linkTypes: [],
-    actionTypes: [],
+    actionTypes: [
+        {
+            name: "beginAuthorization",
+            displayName: "Begin authorization",
+            logic: [],
+            parameters: [
+                { name: "connectorId", displayName: "Connector", type: reference("OAuthConnector") },
+                { name: "principalId", displayName: "Principal", type: text },
+                { name: "redirectUrl", displayName: "Redirect URL", type: text },
+                { name: "returnUrl", displayName: "Return URL", type: optionalText },
+                {
+                    name: "connectionId",
+                    displayName: "Connection",
+                    type: o.optional({ type: reference("OAuthConnection") }),
+                },
+            ],
+            returnType: o.struct({
+                fields: [
+                    { name: "id", displayName: "Attempt", type: text },
+                    { name: "authorizationUrl", displayName: "Authorization URL", type: text },
+                ],
+            }),
+        },
+        {
+            name: "completeAuthorization",
+            displayName: "Complete authorization",
+            logic: [],
+            parameters: [
+                { name: "callbackUrl", displayName: "Callback URL", type: text },
+                { name: "principalId", displayName: "Principal", type: text },
+            ],
+            returnType: o.struct({
+                fields: [
+                    { name: "connectionId", displayName: "Connection", type: reference("OAuthConnection") },
+                ],
+            }),
+        },
+        {
+            name: "connectClientCredentials",
+            displayName: "Connect client credentials",
+            logic: [],
+            parameters: [
+                { name: "connectorId", displayName: "Connector", type: reference("OAuthConnector") },
+                {
+                    name: "connectionId",
+                    displayName: "Connection",
+                    type: o.optional({ type: reference("OAuthConnection") }),
+                },
+            ],
+            returnType: o.struct({
+                fields: [
+                    { name: "connectionId", displayName: "Connection", type: reference("OAuthConnection") },
+                ],
+            }),
+        },
+        {
+            name: "refreshConnection",
+            displayName: "Refresh connection",
+            logic: [],
+            parameters: [
+                { name: "connectionId", displayName: "Connection", type: reference("OAuthConnection") },
+            ],
+            returnType: o.struct({
+                fields: [
+                    { name: "connectionId", displayName: "Connection", type: reference("OAuthConnection") },
+                ],
+            }),
+        },
+        {
+            name: "disconnectConnection",
+            displayName: "Disconnect connection",
+            logic: [],
+            parameters: [
+                { name: "connectionId", displayName: "Connection", type: reference("OAuthConnection") },
+            ],
+        },
+    ],
     queryFunctionTypes: [],
 });
 export type ConnectOntology = Infer<typeof connectOntology>;

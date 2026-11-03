@@ -14,10 +14,6 @@
             "types": "./lib/attachments/index.d.ts",
             "default": "./lib/attachments/index.js"
         },
-        "./host": {
-            "types": "./lib/host.d.ts",
-            "default": "./lib/host.js"
-        },
         "./infrastructure": {
             "types": "./lib/infrastructure.d.ts",
             "default": "./lib/infrastructure.js"

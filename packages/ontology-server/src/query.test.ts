@@ -1,3 +1,4 @@
+import { backendQueryReader } from "@party-stack/ontology-backend/query";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
@@ -6,7 +7,6 @@ import { Effect } from "effect";
 import { RpcTest } from "effect/rpc";
 import { expect, test } from "vite-plus/test";
 import { projectOntologyBackend } from "./authorization.js";
-import { backendQueryReader } from "./query.js";
 import { OntologyRpcs, ontologyRpcHandlers } from "./rpc.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";

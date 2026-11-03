@@ -50,7 +50,7 @@ export const makeStorageOntologyBackend = Effect.fn("StorageOntology.make")(func
                                 context: context ?? options.context,
                                 mutators: options.mutators,
                             })
-                        ).pipe(Effect.asVoid),
+                        ),
                 ])
         ),
         queryFunctions: Object.fromEntries(

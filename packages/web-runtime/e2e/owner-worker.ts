@@ -20,12 +20,10 @@ Effect.runFork(
                 mutators: { increment },
             });
             const owner = yield* makeReplica({
-                namespace: "owner",
+                id: "owner",
                 ir,
-                tables: runtime.tables,
                 backend,
                 mutators: { increment },
-                network: runtime.connectivity,
                 demand: { refresh: { pollIntervalMs: 600_000 } },
             });
             const server = yield* serveOntologyWorker({

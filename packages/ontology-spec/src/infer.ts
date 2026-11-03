@@ -363,6 +363,9 @@ export type InferOntology<Ontology> = {
     actionTypes: {
         [Name in ActionTypeName<Ontology>]: {
             parameters: InferActionParameters<ActionParameters<ActionTypeByName<Ontology, Name>>, Ontology>;
+            returnType: ActionTypeByName<Ontology, Name> extends { readonly returnType: infer Return }
+                ? InferType<Return, Ontology>
+                : void;
         };
     };
     queryFunctionTypes: {

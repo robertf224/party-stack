@@ -1,6 +1,7 @@
+import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
-import { makeOntologyStorage, makeStorageModel, field } from "@party-stack/ontology-storage";
-import { Effect } from "effect";
+import { field } from "@party-stack/ontology-storage";
+import { Context, Effect } from "effect";
 import { connectOntology } from "../spec/index.js";
 import { connectError, type ConnectError } from "./errors.js";
 import type {
@@ -9,8 +10,9 @@ import type {
     InstallationRecord,
     OAuthAuthorizationAttemptRecord,
 } from "../spec/index.js";
+import type { OwnedReadTransaction, OwnedStorageTransaction } from "@party-stack/ontology-backend/owned";
 import type { OntologyIR } from "@party-stack/ontology-spec";
-import type { ObjectStore, Query } from "@party-stack/ontology-storage";
+import type { Query } from "@party-stack/ontology-storage";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
 
 type Records = {
@@ -31,16 +33,12 @@ export interface ConnectStore {
 }
 
 /** Additional application properties are validated and preserved by the compiled ontology. */
-export const makeConnectStore = Effect.fn("Connect.store")(function* (options: {
+export const makeConnectPersistence = Effect.fn("Connect.persistence")(function* (options: {
     tables: TablesService;
     namespace: string;
     ir?: OntologyIR;
 }) {
     const ir = options.ir ?? connectOntology;
-    const model = yield* makeStorageModel({ namespace: options.namespace, ir });
-    const storage = makeOntologyStorage(model, options.tables);
-    const object = <N extends keyof Records>(name: N) =>
-        model.objects[name] as ObjectStore<Records[N], string>;
     const protect = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         effect.pipe(
             Effect.mapError(() => connectError("Storage", "Connect storage operation failed.", true))
@@ -67,6 +65,42 @@ export const makeConnectStore = Effect.fn("Connect.store")(function* (options: {
                 "Connect definitions must retain their standard properties and primary keys."
             ),
     });
+    const backend = yield* makeOwnedBackend({ ...options, ir, mutators: {} });
+    // Each persistence instance has its own transaction binding. Nested calls compose;
+    // concurrent effects and different Connect authorities never share a transaction.
+    const CurrentTransaction = Context.Service<OwnedStorageTransaction>(
+        `Connect.transaction:${crypto.randomUUID()}`
+    );
+    const inTransaction = <A, E, R>(body: (tx: OwnedStorageTransaction) => Effect.Effect<A, E, R>) =>
+        Effect.serviceOption(CurrentTransaction).pipe(
+            Effect.flatMap((current) =>
+                current._tag === "Some" ? body(current.value) : backend.storage.transaction(body)
+            )
+        );
+    const read = <A, E, R>(body: (tx: OwnedReadTransaction) => Effect.Effect<A, E, R>) =>
+        Effect.serviceOption(CurrentTransaction).pipe(
+            Effect.flatMap((current) =>
+                current._tag === "Some" ? body(current.value) : backend.storage.read(body)
+            )
+        );
+    const store: ConnectStore = {
+        get: (name, id) =>
+            protect(read((tx) => tx.get(name, id))).pipe(
+                Effect.map((value) => value as Records[typeof name] | undefined)
+            ),
+        put: (name, value) => protect(inTransaction((tx) => tx.put(name, value))),
+        delete: (name, id) => protect(inTransaction((tx) => tx.delete(name, id))),
+        load: (name, query) =>
+            protect(read((tx) => tx.loadSubset(name, query))).pipe(
+                Effect.map((rows) => rows.map((row) => row.value as Records[typeof name]))
+            ),
+        transaction: (body) =>
+            inTransaction((tx) => body.pipe(Effect.provideService(CurrentTransaction, tx))).pipe(
+                Effect.catchTag("BackendError", () =>
+                    Effect.fail(connectError("Storage", "Connect transaction failed.", true))
+                )
+            ),
+    };
     for (const [name, fields] of Object.entries({
         OAuthConnector: ["installation"],
         OAuthConnection: ["connector", "accessTokenExpiresAt", "refreshTokenExpiresAt", "operationExpiresAt"],
@@ -74,26 +108,15 @@ export const makeConnectStore = Effect.fn("Connect.store")(function* (options: {
     }))
         for (const property of fields)
             yield* protect(
-                storage.ensureIndex(object(name as keyof Records), {
-                    name: property,
-                    field: field(property),
-                })
+                backend.storage.transaction((tx) =>
+                    tx.ensureIndex(name, { name: property, field: field(property) })
+                )
             );
-    return {
-        get: (name, id) => protect(storage.get(object(name), id)),
-        put: (name, value) => protect(storage.put(object(name), value)),
-        delete: (name, id) => protect(storage.delete(object(name), id)),
-        load: (name, query) =>
-            protect(storage.query(object(name), query)).pipe(
-                Effect.map((rows) => rows.map((row) => row.value))
-            ),
-        transaction: (body) =>
-            storage
-                .withTransaction(body)
-                .pipe(
-                    Effect.catchTag("OntologyStorageError", () =>
-                        Effect.fail(connectError("Storage", "Connect transaction failed.", true))
-                    )
-                ),
-    } satisfies ConnectStore;
+    return { store, backend };
+});
+
+export const makeConnectStore = Effect.fn("Connect.store")(function* (
+    options: Parameters<typeof makeConnectPersistence>[0]
+) {
+    return (yield* makeConnectPersistence(options)).store;
 });

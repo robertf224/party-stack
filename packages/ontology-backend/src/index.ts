@@ -112,6 +112,8 @@ export interface ActionReceipt {
     readonly operationId: string;
     /** Provider commitment is recorded before local read-back/reconciliation. Parent acceptance is separate. */
     readonly outcome: "committed";
+    /** Encoded authoritative return value, interpreted using the action returnType. Never a journal payload. */
+    readonly result?: unknown;
     readonly cursor?: string;
     /** Optional upstream execution ID. Never substitutes for our stable retry identity. */
     readonly providerOperationId?: string;
@@ -143,6 +145,7 @@ export const ObjectChangeSchema = Schema.Union([
 export const ActionReceiptSchema = Schema.Struct({
     operationId: Schema.String,
     outcome: Schema.Literal("committed"),
+    result: Schema.optional(Schema.Unknown),
     cursor: Schema.optional(Schema.String),
     providerOperationId: Schema.optional(Schema.String),
     affected: Schema.optional(
@@ -201,7 +204,12 @@ export interface BackendAttachments {
         BackendError
     >;
 }
-export { EncryptedValueSchema, DecryptedValueSchema, encryptedPropertyCodec } from "./encrypted.js";
+export {
+    EncryptedValueSchema,
+    DecryptedValueSchema,
+    encryptedPropertyCodec,
+    makePropertyDecryption,
+} from "./encrypted.js";
 export type { DecryptedValue } from "./encrypted.js";
 
 export interface BackendEncryptedValues {

@@ -1,20 +1,24 @@
 import { unauthenticated } from "@party-stack/ontology-backend";
+import { backendQueryReader } from "@party-stack/ontology-backend/query";
 import { and, eq, field, ne } from "@party-stack/ontology-storage";
 import { Runtime } from "@party-stack/runtime";
-import { Clock, Effect, Exit, Fiber, Scope, Result, Schema } from "effect";
-import { makeConnect } from "../core/Connect.js";
+import { Clock, Effect, Exit, Fiber, Scope, Result } from "effect";
+import { connectionAccessToken } from "../core/accessToken.js";
+import { makeConnectBackend } from "../core/backend.js";
 import { connectError, ConnectError } from "../core/errors.js";
 import { maintainConnect } from "../core/maintenance.js";
 import { makeOAuthProvider } from "../core/oauth.js";
-import { makeConnectStore } from "../core/store.js";
+import { connectOntology } from "../spec/index.js";
 import { runtimeCredentialValues } from "./storage.js";
-import type { OAuthConnectionRecord } from "../spec/index.js";
+import type { ConnectOntology, OAuthConnectionRecord } from "../spec/index.js";
 import type {
     CreatePublicOAuthClientOptions,
     PublicOAuthClientOptions,
     OAuthSession,
     PublicOAuthClient,
 } from "./types.js";
+import type { BackendError } from "@party-stack/ontology-backend";
+import type { Query } from "@party-stack/ontology-storage";
 
 const session = (record: OAuthConnectionRecord): OAuthSession => ({
     userId: record.providerSubjectId!,
@@ -45,7 +49,25 @@ export const makePublicOAuthClient = Effect.fn("PublicOAuthClient.make")(functio
                 options.clientId,
             ]);
             const values = yield* runtimeCredentialValues(runtime, namespace);
-            const store = yield* makeConnectStore({ tables: runtime.tables, namespace });
+            const provider = makeOAuthProvider({
+                ...options.authorizationServer,
+                clientId: options.clientId,
+                clientAuthentication: { method: "none" },
+                scopes: options.scopes,
+                fetch: options.fetch,
+                resolveSubject: (token) =>
+                    Effect.tryPromise({
+                        try: () => Promise.resolve(options.resolveUserId(token)),
+                        catch: () => connectError("Provider", "Could not determine the provider identity."),
+                    }),
+            });
+            const { backend, connect, store } = yield* makeConnectBackend({
+                tables: runtime.tables,
+                namespace,
+                values,
+                provider: () => Effect.succeed(provider),
+            });
+
             const installationId = options.authorizationServer.issuer;
             const connectorId = options.clientId;
             yield* store.transaction(
@@ -67,24 +89,7 @@ export const makePublicOAuthClient = Effect.fn("PublicOAuthClient.make")(functio
                         });
                 })
             );
-            const provider = makeOAuthProvider({
-                ...options.authorizationServer,
-                clientId: options.clientId,
-                clientAuthentication: { method: "none" },
-                scopes: options.scopes,
-                fetch: options.fetch,
-                resolveSubject: (token) =>
-                    Effect.tryPromise({
-                        try: () => Promise.resolve(options.resolveUserId(token)),
-                        catch: () => connectError("Provider", "Could not determine the provider identity."),
-                    }),
-            });
-            const connect = yield* makeConnect({
-                store,
-                values,
-                provider: () => Effect.succeed(provider),
-            });
-            const run = <A>(effect: Effect.Effect<A, ConnectError>) =>
+            const run = <A>(effect: Effect.Effect<A, ConnectError | BackendError>) =>
                 managed.runPromise(
                     Effect.flatMap(Effect.forkIn(effect, owner, { startImmediately: true }), Fiber.join).pipe(
                         Effect.catchTag("ConnectError", (error) =>
@@ -94,15 +99,37 @@ export const makePublicOAuthClient = Effect.fn("PublicOAuthClient.make")(functio
                         )
                     )
                 );
+            const reader = backendQueryReader(connectOntology, backend);
+            const load = <N extends keyof ConnectOntology["objectTypes"]>(name: N, query: Query) =>
+                reader
+                    .loadSubset(name, query)
+                    .pipe(
+                        Effect.map((rows) =>
+                            rows.map((row) => row.value as ConnectOntology["objectTypes"][N])
+                        )
+                    );
+            const get = <N extends keyof ConnectOntology["objectTypes"]>(name: N, id: string) =>
+                load(name, { where: eq(field("id"), id) }).pipe(Effect.map((rows) => rows[0]));
+            const apply = <N extends keyof ConnectOntology["actionTypes"]>(
+                name: N,
+                parameters: ConnectOntology["actionTypes"][N]["parameters"]
+            ) =>
+                backend
+                    .applyAction({ id: crypto.randomUUID(), name, parameters })
+                    .pipe(
+                        Effect.map(
+                            (receipt) => receipt.result as ConnectOntology["actionTypes"][N]["returnType"]
+                        )
+                    );
             const find = Effect.fnUntraced(function* (userId: string) {
-                const records = yield* store.load("OAuthConnection", {
+                const records = yield* load("OAuthConnection", {
                     where: and(
                         eq(field("connector"), connectorId),
                         eq(field("providerSubjectId"), userId),
                         ne(field("status"), "inactive")
                     ),
                 });
-                const currentConnector = yield* store.get("OAuthConnector", connectorId);
+                const currentConnector = yield* get("OAuthConnector", connectorId);
                 const record =
                     records.find((candidate) => candidate.id === currentConnector?.connection) ?? records[0];
                 if (!record)
@@ -111,26 +138,31 @@ export const makePublicOAuthClient = Effect.fn("PublicOAuthClient.make")(functio
             });
             const complete = Effect.fn("Connect.browser.complete")(function* (url: string) {
                 const state = new URL(url).searchParams.get("state");
-                if (!state || !(yield* store.get("OAuthAuthorizationAttempt", state))) return;
-                return session(yield* connect.complete({ callbackUrl: url, principalId: runtime.owner }));
+                if (!state || !(yield* get("OAuthAuthorizationAttempt", state))) return;
+                const completed = yield* apply("completeAuthorization", {
+                    callbackUrl: url,
+                    principalId: runtime.owner,
+                });
+                const connection = yield* get("OAuthConnection", completed.connectionId);
+                if (!connection)
+                    return yield* connectError("NotFound", "Completed connection is unavailable.");
+                return session(connection);
             });
             yield* maintainConnect(connect).pipe(Effect.provideService(Scope.Scope, owner));
             const browser = runtime.browserAuthentication;
             return {
                 beginAuthorization: () =>
                     run(
-                        connect
-                            .begin({
-                                connectorId,
-                                principalId: runtime.owner,
+                        apply("beginAuthorization", {
+                            connectorId,
+                            principalId: runtime.owner,
+                            redirectUrl: options.redirectUrl,
+                        }).pipe(
+                            Effect.map((started) => ({
+                                authorizationUrl: started.authorizationUrl,
                                 redirectUrl: options.redirectUrl,
-                            })
-                            .pipe(
-                                Effect.map((started) => ({
-                                    authorizationUrl: started.authorizationUrl,
-                                    redirectUrl: options.redirectUrl,
-                                }))
-                            )
+                            }))
+                        )
                     ),
                 signIn: (signInOptions) =>
                     run(
@@ -156,7 +188,7 @@ export const makePublicOAuthClient = Effect.fn("PublicOAuthClient.make")(functio
                                         )
                                     )
                                 );
-                            const started = yield* connect.begin({
+                            const started = yield* apply("beginAuthorization", {
                                 connectorId,
                                 principalId: runtime.owner,
                                 redirectUrl: options.redirectUrl,
@@ -184,7 +216,7 @@ export const makePublicOAuthClient = Effect.fn("PublicOAuthClient.make")(functio
                 restoreSessions: () =>
                     run(
                         Effect.gen(function* () {
-                            const records = yield* store.load("OAuthConnection", {
+                            const records = yield* load("OAuthConnection", {
                                 where: and(
                                     eq(field("connector"), connectorId),
                                     ne(field("status"), "inactive")
@@ -203,7 +235,16 @@ export const makePublicOAuthClient = Effect.fn("PublicOAuthClient.make")(functio
                                     continue;
                                 const handle = record.refreshToken ?? record.accessToken;
                                 if (!handle) continue;
-                                const available = yield* Effect.result(values.decrypt(Schema.String, handle));
+                                const available = yield* Effect.result(
+                                    backend.encrypted!.decrypt({
+                                        ...handle,
+                                        source: {
+                                            objectType: "OAuthConnection",
+                                            primaryKey: record.id,
+                                            property: record.refreshToken ? "refreshToken" : "accessToken",
+                                        },
+                                    })
+                                );
                                 if (Result.isSuccess(available))
                                     restored.set(record.providerSubjectId, session(record));
                             }
@@ -223,25 +264,30 @@ export const makePublicOAuthClient = Effect.fn("PublicOAuthClient.make")(functio
                                     (yield* Clock.currentTimeMillis) + options.ifExpiringWithinMs
                             )
                                 return session(record);
-                            return session(yield* connect.refresh(record.id));
+                            yield* apply("refreshConnection", { connectionId: record.id });
+                            const updated = yield* get("OAuthConnection", record.id);
+                            if (!updated)
+                                return yield* connectError("NotFound", "Connection is unavailable.");
+                            return session(updated);
                         })
                     ),
                 getAccessToken: (userId) =>
                     run(
                         Effect.gen(function* () {
-                            return yield* connect.accessToken((yield* find(userId)).id);
+                            return yield* connectionAccessToken(backend, (yield* find(userId)).id);
                         })
                     ),
                 revoke: (userId) =>
                     run(
                         Effect.gen(function* () {
-                            const records = yield* store.load("OAuthConnection", {
+                            const records = yield* load("OAuthConnection", {
                                 where: and(
                                     eq(field("connector"), connectorId),
                                     eq(field("providerSubjectId"), userId)
                                 ),
                             });
-                            for (const record of records) yield* connect.disconnect(record.id);
+                            for (const record of records)
+                                yield* apply("disconnectConnection", { connectionId: record.id });
                         })
                     ),
                 cleanup: close,

@@ -151,6 +151,7 @@ describe("Effect schema generation", () => {
                     name: "updateEntry",
                     displayName: "Update Entry",
                     logic: [],
+                    returnType: o.timestamp({}),
                     parameters: [
                         field("at", o.optional({ type: o.timestamp({}) })),
                         { ...field("id", o.string({})), defaultValue: o.Expression.uuid({}) },
@@ -229,6 +230,9 @@ describe("Effect schema generation", () => {
             assert.deepEqual(Schema.decodeUnknownSync(Schema.toType(s.SearchReturnSchema))([value]), [parsed]);
             assert.equal(s.objectSchemas.Entry, s.EntrySchema);
             assert.equal(s.actionParameterSchemas.updateEntry, s.UpdateEntryParametersSchema);
+            assert.equal(s.actionReturnSchemas.updateEntry, s.UpdateEntryReturnSchema);
+            assert.equal(Schema.encodeSync(Schema.toCodecJson(s.UpdateEntryReturnSchema))(value.createdAt), value.createdAt.toString());
+            assert(Schema.decodeUnknownSync(Schema.toCodecJson(s.UpdateEntryReturnSchema))(value.createdAt.toString()) instanceof Temporal.Instant);
             assert.equal(s.queryParameterSchemas.search, s.SearchParametersSchema);
             assert.equal(s.queryReturnSchemas.search, s.SearchReturnSchema);
             assert.equal(s.namedSchemas.Node, s.NodeSchema);

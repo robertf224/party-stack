@@ -102,7 +102,10 @@ export interface OwnedBackendOptions {
      */
     readonly maintenance?: false | { readonly intervalMs?: number };
     readonly mutators: Readonly<
-        Record<string, (tx: OwnedTransaction, invocation: ActionRequest) => Effect.Effect<void, BackendError>>
+        Record<
+            string,
+            (tx: OwnedTransaction, invocation: ActionRequest) => Effect.Effect<unknown, BackendError>
+        >
     >;
     readonly queryFunctions?: Readonly<
         Record<
@@ -553,7 +556,23 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 issues,
             });
         const { tx, changes } = mutation(native);
-        yield* mutator({ ...tx, ...permittedRead }, { ...invocation, parameters });
+        const returned = yield* mutator({ ...tx, ...permittedRead }, { ...invocation, parameters });
+        const resultSchema = schemas.actionReturnSchemas[invocation.name];
+        const result = resultSchema
+            ? yield* Schema.encodeEffect(Schema.toCodecJson(resultSchema))(returned).pipe(
+                  Effect.mapError(
+                      (cause) =>
+                          new BackendError({
+                              operation: "applyAction.result",
+                              kind: "InvalidResponse",
+                              retryable: false,
+                              actionOutcome: "not-committed",
+                              message: "Action result does not match its definition.",
+                              cause: Redacted.make(cause),
+                          })
+                  )
+              )
+            : undefined;
         yield* commitUploads;
         const affected = new Map<string, Set<Key>>();
         for (const change of changes.values()) {
@@ -566,6 +585,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             affectedComplete: true,
             operationId: invocation.id,
             outcome: "committed",
+            ...(resultSchema ? { result } : {}),
             cursor: yield* append(native, changes, invocation.id),
         };
         yield* tables.put(receipts, prepared.receiptKey, {

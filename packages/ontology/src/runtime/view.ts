@@ -1,7 +1,9 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeReplicaMonitor } from "@party-stack/ontology-replica";
+import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { Runtime } from "@party-stack/runtime";
 import { DbClient } from "@tanstack/db";
+import { Schema } from "effect";
 import { Effect, Scope, Fiber, Stream } from "effect";
 import { createLiveOntologyAction } from "../live/actions/createLiveOntologyAction.js";
 import { makeReplicatedCollection, persistedCollectionOptions, scopedCollection } from "../tanstack/index.js";
@@ -67,6 +69,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
     const services = yield* Runtime;
     const runtime = services;
     const { ir, context, replica } = options;
+    const actionReturns = compileEffectSchemas(ir).actionReturnSchemas;
     const visiblePending = replica.outbox.entries;
     const replicaMonitor = yield* makeReplicaMonitor(replica.status.changes);
     const outboxEntries = Effect.map(visiblePending, (entries) =>
@@ -211,7 +214,25 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
                             { mode, optimistic: visibility === "optimistic" }
                         )
                     );
-                    return actionResult(receipt);
+                    const schema = actionReturns[action.name];
+                    const result = schema
+                        ? await run(
+                              Schema.decodeUnknownEffect(Schema.toCodecJson(schema))(receipt.result).pipe(
+                                  Effect.mapError(
+                                      (cause) =>
+                                          new BackendError({
+                                              operation: "applyAction.result",
+                                              kind: "InvalidResponse",
+                                              retryable: false,
+                                              message:
+                                                  "Committed action result does not match its definition.",
+                                              cause,
+                                          })
+                                  )
+                              )
+                          )
+                        : undefined;
+                    return { ...actionResult(receipt), result };
                 },
                 validate: (name, parameters) => run(replica.actions.validate(name, parameters)),
                 validateDraft: (name, parameters, settings) =>

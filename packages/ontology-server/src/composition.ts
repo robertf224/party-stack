@@ -1,10 +1,9 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { executeQuery } from "@party-stack/ontology-backend/query";
+import { executeQuery, backendQueryReader } from "@party-stack/ontology-backend/query";
 import { makeCachedProxy, replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { sliceByteSource } from "@party-stack/ontology-storage/blobs";
 import { Effect, Layer } from "effect";
 import { projectOntologyBackend } from "./authorization.js";
-import { backendQueryReader } from "./query.js";
 import { ontologyRpcHandlers } from "./rpc.js";
 import { makeOntologyHttpHandler } from "./rpcHttp.js";
 import type { OntologyRpcServerOptions } from "./rpc.js";

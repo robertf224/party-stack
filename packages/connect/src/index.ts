@@ -44,3 +44,7 @@ export * from "./oauth/index.js";
 
 export { ConnectionError, connectionOperation } from "./ConnectionError.js";
 export type { ConnectionManagerService } from "./types.js";
+
+export { makeConnectBackend } from "./core/backend.js";
+
+export { connectionAccessToken } from "./core/accessToken.js";

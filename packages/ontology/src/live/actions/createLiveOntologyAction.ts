@@ -22,9 +22,12 @@ export interface LiveOntologyActionDraftValidationOptions<Parameters extends Rec
     knownParameters?: readonly (keyof Parameters)[];
 }
 
-export type LiveOntologyAction<Parameters extends Record<string, unknown> = Record<string, unknown>> = {
+export type LiveOntologyAction<
+    Parameters extends Record<string, unknown> = Record<string, unknown>,
+    Return = unknown,
+> = {
     /** Optimistic visibility is independent of waiting: the Promise resolves after confirmation. */
-    (parameters: Parameters, options?: LiveOntologyActionOptions): Promise<OntologyApplyActionResult>;
+    (parameters: Parameters, options?: LiveOntologyActionOptions): Promise<OntologyApplyActionResult<Return>>;
     resolveParameters(parameters: Partial<Parameters>): Promise<Partial<Parameters>>;
     validate(parameters: Parameters): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>>;
     validateDraft(

@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect";
-import { makeReplicaHost } from "./host.js";
+import { makeReplica } from "./make.js";
 import { ReplicaUpstream } from "./upstream.js";
 import type { ReplicaService } from "./service.js";
 export type {
@@ -7,17 +7,17 @@ export type {
     AttachmentCreateOptions,
     AttachmentCreation,
 } from "./attachments/service.js";
-export { makeReplica } from "./service.js";
+export { makeReplica } from "./make.js";
+export type { ReplicaOptions } from "./make.js";
 export type {
     ReplicaService,
-    ReplicaOptions,
     ReplicaConfiguration,
     ReplicaReads,
     ReplicaOutbox,
     ReplicaActionStatus,
     ReplicaOutboxPolicy,
 } from "./service.js";
-import type { ReplicaHostOptions } from "./host.js";
+import type { ReplicaOptions } from "./make.js";
 export { ReplicaStatusSchema, makeReplicaMonitor } from "./status.js";
 export type { ReplicaStatus, ReplicaLoad, ReplicaMonitor } from "./status.js";
 export type { PinOptions, PinStatus } from "./pins.js";
@@ -34,18 +34,17 @@ export type { PendingAction } from "@party-stack/ontology-backend/protocol";
 export class Replica extends Context.Service<Replica, ReplicaService>()(
     "@party-stack/ontology-replica/Replica"
 ) {
-    static readonly layer = (options: Omit<ReplicaHostOptions, "backend" | "source" | "authentication">) =>
+    static readonly layer = (options: Omit<ReplicaOptions, "backend" | "source" | "authentication">) =>
         Layer.effect(
             Replica,
             Effect.gen(function* () {
                 const upstream = yield* ReplicaUpstream;
-                const host = yield* makeReplicaHost({
+                return yield* makeReplica({
                     ...options,
                     backend: upstream.backend,
                     source: upstream.kind === "speculative" ? upstream.source : undefined,
                     authentication: upstream.authentication,
                 });
-                return host.replica;
             })
         );
 }

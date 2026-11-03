@@ -717,6 +717,8 @@ export type ActionTypeDef = {
     color?: string;
     /** The action type's parametero. */
     parameters: Array<ActionParameterDef>;
+    /** Authoritative action result. Omission means void; optimistic execution has no result. */
+    returnType?: TypeDef;
     /** The action type's local logic stepo. */
     logic: Array<ActionLogicStep>;
     /** Optional description. */

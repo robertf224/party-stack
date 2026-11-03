@@ -1,9 +1,9 @@
 import { o } from "@party-stack/ontology-spec";
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect, Schema } from "effect";
+import { Effect, Schema, Scope, Exit } from "effect";
 import { Temporal } from "temporal-polyfill";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi, afterEach } from "vite-plus/test";
 import { makeConnectServer } from "../server/index.js";
 import { connectOntology } from "../spec/index.js";
 import { makeConnect, type ConnectOAuthProvider } from "./Connect.js";
@@ -11,6 +11,10 @@ import { connectError } from "./errors.js";
 import { makeConnectStore } from "./store.js";
 
 const run = Effect.runPromise;
+const scopes: Scope.Closeable[] = [];
+afterEach(async () => {
+    for (const scope of scopes.splice(0)) await run(Scope.close(scope, Exit.void));
+});
 const time = (delta: number) => Temporal.Instant.fromEpochMilliseconds(Date.now() + delta);
 async function fixture(extended = false) {
     const tables = await run(Memory.make());
@@ -27,12 +31,14 @@ async function fixture(extended = false) {
     if (extended) {
         ir.objectTypes
             .find((object) => object.name === "OAuthConnection")!
-            .properties.push({ name: "project", type: o.string({}) } as never);
+            .properties.push({ name: "project", displayName: "Project", type: o.string({}) } as never);
         ir.objectTypes
             .find((object) => object.name === "OAuthAuthorizationAttempt")!
-            .properties.push({ name: "project", type: o.string({}) } as never);
+            .properties.push({ name: "project", displayName: "Project", type: o.string({}) } as never);
     }
-    const store = await run(makeConnectStore({ tables, namespace: "connect", ir }));
+    const scope = Effect.runSync(Scope.make());
+    scopes.push(scope);
+    const store = await run(Scope.provide(makeConnectStore({ tables, namespace: "connect", ir }), scope));
     await run(
         store.put("Installation", {
             id: "installation",
@@ -112,7 +118,14 @@ describe("Connect authority", () => {
         const attempt = (await run(f.store.get("OAuthAuthorizationAttempt", started.id)))!;
         expect(await run(f.values.decrypt(Schema.String, attempt.codeVerifier))).not.toBe("");
         const connection = await f.complete(started.id);
-        expect(await run(f.connect.accessToken(connection.id))).toBe("access");
+        expect(
+            await run(
+                f.values.decrypt(
+                    Schema.String,
+                    (await run(f.store.get("OAuthConnection", connection.id)))!.accessToken!
+                )
+            )
+        ).toBe("access");
         expect(connection.accessToken?.ciphertext).not.toContain("access");
         expect((await f.complete(started.id)).id).toBe(connection.id);
         expect(f.exchange).toHaveBeenCalledTimes(1);
@@ -164,13 +177,20 @@ describe("Connect authority", () => {
                 callbackUrl: `https://app.example/connect/callback?state=${id}&code=code`,
             })
         );
-        expect(await run(next.accessToken(connection.id))).toBe("access");
+        expect(await run(f.values.decrypt(Schema.String, connection.accessToken!))).toBe("access");
     });
     it("rotates credentials atomically and replaces embedded ciphertext", async () => {
         const f = await fixture();
         const connection = await f.complete((await f.begin()).id);
         const next = await run(f.connect.refresh(connection.id));
-        expect(await run(f.connect.accessToken(connection.id))).toBe("new-access");
+        expect(
+            await run(
+                f.values.decrypt(
+                    Schema.String,
+                    (await run(f.store.get("OAuthConnection", connection.id)))!.accessToken!
+                )
+            )
+        ).toBe("new-access");
         expect(await run(f.values.decrypt(Schema.String, next.refreshToken!))).toBe("rotated");
         expect(next.operationId).toBeUndefined();
     });
@@ -183,7 +203,14 @@ describe("Connect authority", () => {
         expect(next.status).toBe("needs-auth");
         expect(next.refreshToken).toBeUndefined();
         expect(next.operationId).toBeUndefined();
-        expect(await run(f.connect.accessToken(connection.id))).toBe("access");
+        expect(
+            await run(
+                f.values.decrypt(
+                    Schema.String,
+                    (await run(f.store.get("OAuthConnection", connection.id)))!.accessToken!
+                )
+            )
+        ).toBe("access");
     });
     it("keeps credentials after a definite transient provider failure", async () => {
         const f = await fixture();
@@ -244,7 +271,14 @@ describe("Connect authority", () => {
         expect(await run(f.connect.collectExpired({ limit: 1 }))).toEqual({ attempts: 1, refreshTokens: 1 });
         expect(await run(f.store.get("OAuthAuthorizationAttempt", started.id))).toBeUndefined();
         expect((await run(f.store.get("OAuthConnection", connection.id)))?.status).toBe("needs-auth");
-        expect(await run(f.connect.accessToken(connection.id))).toBe("access");
+        expect(
+            await run(
+                f.values.decrypt(
+                    Schema.String,
+                    (await run(f.store.get("OAuthConnection", connection.id)))!.accessToken!
+                )
+            )
+        ).toBe("access");
     });
     it("preserves application properties on connection writes", async () => {
         const f = await fixture(true);
@@ -270,7 +304,14 @@ describe("Connect authority", () => {
             })
         );
         const connection = await run(f.connect.clientCredentials({ connectorId: "service" }));
-        expect(await run(f.connect.accessToken(connection.id))).toBe("service-access");
+        expect(
+            await run(
+                f.values.decrypt(
+                    Schema.String,
+                    (await run(f.store.get("OAuthConnection", connection.id)))!.accessToken!
+                )
+            )
+        ).toBe("service-access");
         await expect(
             run(
                 f.connect.begin({

@@ -45,6 +45,10 @@
         "./storage": {
             "types": "./lib/storage.d.ts",
             "default": "./lib/storage.js"
+        },
+        "./meta": {
+            "types": "./lib/meta.d.ts",
+            "default": "./lib/meta.js"
         }
     },
     "dependencies": {

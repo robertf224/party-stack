@@ -4,7 +4,8 @@ import { byteSource } from "@party-stack/ontology-storage/blobs";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect, Result, Deferred, Fiber } from "effect";
+import { Effect, Result, Deferred, Fiber, Scope, Exit } from "effect";
+import { Temporal } from "temporal-polyfill";
 import { expect, test } from "vitest";
 import { makeOwnedBackend, type OwnedTransaction } from "./owned.js";
 import { objectSubset } from "./subset.js";
@@ -420,5 +421,70 @@ test("unknown names are invalid requests, while declared capabilities without ha
             ]);
             expect((yield* backend.changes!.pull({})).commits).toEqual([]);
         }).pipe(Effect.scoped)
+    );
+});
+
+test("action results commit with edits and survive receipt recovery without reexecution", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                let executions = 0;
+                const definition: OntologyIR = {
+                    ...ir,
+                    actionTypes: [
+                        {
+                            name: "result",
+                            displayName: "Result",
+                            parameters: [],
+                            logic: [],
+                            returnType: o.timestamp({}),
+                        },
+                        {
+                            name: "invalidResult",
+                            displayName: "Invalid result",
+                            parameters: [],
+                            logic: [],
+                            returnType: o.integer({}),
+                        },
+                    ],
+                };
+                const options = {
+                    namespace: "action-results",
+                    tables,
+                    ir: definition,
+                    mutators: {
+                        result: (tx: OwnedTransaction) =>
+                            Effect.gen(function* () {
+                                executions++;
+                                yield* tx.put("Counter", { id: "one", count: 1 });
+                                return Temporal.Instant.from("2026-11-03T12:00:00Z");
+                            }),
+                        invalidResult: (tx: OwnedTransaction) =>
+                            tx.put("Counter", { id: "bad", count: 9 }).pipe(Effect.as("wrong type")),
+                    },
+                };
+                const request = { id: "result-1", name: "result", parameters: {} };
+                const scope = yield* Scope.make();
+                const first = yield* Scope.provide(makeOwnedBackend(options), scope);
+                const receipt = yield* first.applyAction(request);
+                expect(receipt.result).toBe("2026-11-03T12:00:00Z");
+                expect((yield* first.changes!.pull({})).commits[0]).not.toHaveProperty("result");
+                yield* Scope.close(scope, Exit.void);
+                const reopened = yield* makeOwnedBackend(options);
+                expect(yield* reopened.applyAction(request)).toEqual(receipt);
+                expect(executions).toBe(1);
+                const failed = yield* Effect.result(
+                    reopened.applyAction({ id: "bad-1", name: "invalidResult", parameters: {} })
+                );
+                expect(failed).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "InvalidResponse", actionOutcome: "not-committed" },
+                });
+                expect(
+                    (yield* reopened.loadSubset(objectSubset("Counter"))).rows.map((row) => row.key)
+                ).toEqual(["one"]);
+            })
+        )
     );
 });

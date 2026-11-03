@@ -1,12 +1,12 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
-import { makeReplica } from "@party-stack/ontology-replica";
 import { makeOntologyServer } from "@party-stack/ontology-server";
 import { connectOntologyHttp } from "@party-stack/ontology-server/rpc/http";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
+import { makeReplica } from "../../ontology-replica/lib/service.js";
 import { makeDurableObjectOntologyStorage } from "../src/index.js";
 import type { DurableObjectSQLiteStorage } from "../src/index.js";
 

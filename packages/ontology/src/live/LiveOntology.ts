@@ -62,7 +62,10 @@ export type LiveOntologyObjects<
 };
 
 export type LiveOntologyActions<ActionTypes extends OntologyDefinition["actionTypes"]> = {
-    [ActionTypeName in keyof ActionTypes]: LiveOntologyAction<ActionTypes[ActionTypeName]["parameters"]>;
+    [ActionTypeName in keyof ActionTypes]: LiveOntologyAction<
+        ActionTypes[ActionTypeName]["parameters"],
+        ActionTypes[ActionTypeName] extends { returnType: infer Return } ? Return : unknown
+    >;
 };
 
 export type LiveOntologyQueryFunctions<QueryFunctionTypes extends OntologyDefinition["queryFunctionTypes"]> =

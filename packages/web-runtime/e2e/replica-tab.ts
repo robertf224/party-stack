@@ -2,7 +2,7 @@ import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
 import { makeReplica } from "@party-stack/ontology-replica";
 import { connectOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
 import { makeReplicatedCollection } from "@party-stack/ontology/tanstack";
-import { Runtime, RuntimePartition } from "@party-stack/runtime";
+import { RuntimePartition } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
 import { Context, Effect, Layer, ManagedRuntime } from "effect";
 import * as WebRuntime from "../src/WebRuntime.js";
@@ -12,7 +12,6 @@ const namespace = new URL(window.location.href).searchParams.get("scope")!;
 const workerUrl = new URL("./owner-worker.ts", import.meta.url);
 workerUrl.searchParams.set("scope", namespace);
 const makeTab = Effect.gen(function* () {
-    const runtime = yield* Runtime;
     const worker = yield* Effect.acquireRelease(
         Effect.sync(() => new SharedWorker(workerUrl, { name: namespace, type: "module" })),
         (worker) => Effect.sync(() => worker.port.close())
@@ -23,9 +22,9 @@ const makeTab = Effect.gen(function* () {
     if (connection.replication.kind !== "speculative") throw new Error("Expected a replica host.");
     const source = connection.replication.source;
     const replica = yield* makeReplica({
-        namespace: "tab",
+        id: "tab",
         ir,
-        tables: runtime.tables,
+        backend: connection.backend,
         source,
         mutators: { increment },
     });

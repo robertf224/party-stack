@@ -284,7 +284,7 @@ export const actionMutators = (
                                 },
                             }
                         ) as OntologyMutatorTx["mutate"];
-                        yield* Effect.tryPromise({
+                        return yield* Effect.tryPromise({
                             try: () =>
                                 Promise.resolve(
                                     handler({ tx: { ...read, mutate }, args: request.parameters, context })
@@ -319,5 +319,5 @@ export const executeTransactionMutator = Effect.fn("Ontology.executeMutator")(fu
         context: options.context,
         resolveOnly: options.resolveOnly,
         mutators: actionMutators(options.ir, options.mutators),
-    });
+    }).pipe(Effect.map((execution) => execution.result));
 });

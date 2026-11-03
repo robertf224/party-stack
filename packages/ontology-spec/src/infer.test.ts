@@ -61,6 +61,7 @@ describe("Infer", () => {
             {
                 name: "createTask",
                 displayName: "Create Task",
+                returnType: o.string({}),
                 parameters: [
                     {
                         name: "owner",
@@ -124,6 +125,7 @@ describe("Infer", () => {
             notes?: string | null;
             createdAt?: timestamp;
         }>();
+        expectTypeOf<InferredOntology["actionTypes"]["createTask"]["returnType"]>().toEqualTypeOf<string>();
         expectTypeOf<InferredOntology["queryFunctionTypes"]["searchTasks"]["parameters"]>().toEqualTypeOf<{
             query: string;
             limit?: number;

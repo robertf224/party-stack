@@ -1,7 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
-import { makeReplica } from "@party-stack/ontology-replica";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
@@ -15,6 +14,7 @@ import { RpcTest } from "effect/rpc";
 import { Temporal } from "temporal-polyfill";
 import { expect, test, vi } from "vite-plus/test";
 import { replicaController } from "../../ontology-replica/lib/internal.js";
+import { makeReplica } from "../../ontology-replica/lib/service.js";
 import { makeOntologyServer } from "./composition.js";
 import { makeOntologyProtocolClient, ontologyRpcHandlers, OntologyRpcs } from "./rpc.js";
 import { connectOntologyBackendHttp, connectOntologyHttp, makeOntologyHttpHandler } from "./rpcHttp.js";

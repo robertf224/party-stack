@@ -811,6 +811,15 @@ export function validate(ontology: OntologyIR): ValidationResult {
             });
         }
         actionNames.add(action.name);
+        if (action.returnType)
+            errors.push(
+                ...validateTypeDef(
+                    action.returnType,
+                    [...actionPath, "returnType"],
+                    new Set(valueTypes.keys()),
+                    new Set(objectTypes.keys())
+                )
+            );
 
         errors.push(
             ...validateAction(

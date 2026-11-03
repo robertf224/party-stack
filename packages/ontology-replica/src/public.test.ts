@@ -6,7 +6,8 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { makeNetworkConnectivity, MemoryRuntime, RuntimePartition } from "@party-stack/runtime";
 import { Effect, Exit, Scope, Layer, Stream } from "effect";
 import { expect, test } from "vitest";
-import { makeReplica, Replica, ReplicaUpstream } from "./index.js";
+import { makeReplica } from "./service.js";
+import { Replica, ReplicaUpstream } from "./index.js";
 import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 
 const ir: OntologyIR = {

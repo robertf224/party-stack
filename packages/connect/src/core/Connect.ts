@@ -59,7 +59,6 @@ export interface ConnectService {
         connectionId?: string;
         properties?: Record<string, unknown>;
     }): Effect.Effect<OAuthConnectionRecord, ConnectError>;
-    accessToken(connectionId: string): Effect.Effect<string, ConnectError>;
     refresh(connectionId: string): Effect.Effect<OAuthConnectionRecord, ConnectError>;
     disconnect(connectionId: string): Effect.Effect<void, ConnectError>;
     /** Indexed, bounded maintenance. Does not delete connection identities. */
@@ -466,21 +465,6 @@ export const makeConnect = (options: ConnectOptions): Effect.Effect<ConnectServi
                     })
                 );
                 return yield* refresh(connectionId);
-            }),
-            accessToken: Effect.fn("Connect.accessToken")(function* (id: string) {
-                let current = yield* read(id);
-                const now = yield* Clock.currentTimeMillis;
-                // An expired refresh token need not invalidate a still-valid access token.
-                if (
-                    current.accessToken &&
-                    !expired(current.accessTokenExpiresAt, now + 5_000) &&
-                    current.status !== "inactive"
-                )
-                    return Redacted.value(yield* decrypt(current.accessToken));
-                current = yield* refresh(id);
-                if (!current.accessToken)
-                    return yield* connectError("NeedsAuthentication", "Access credentials are unavailable.");
-                return Redacted.value(yield* decrypt(current.accessToken));
             }),
             refresh,
             disconnect: Effect.fn("Connect.disconnect")(function* (id: string) {
