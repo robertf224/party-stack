@@ -5,7 +5,7 @@ import { eq, field } from "@party-stack/ontology-storage";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Runtime, Runtimes } from "@party-stack/runtime";
 import { Context, Effect, Exit, Fiber, Layer, RcMap, Scope, ScopedCache, Semaphore } from "effect";
-import { makeLiveOntology } from "../live/LiveOntology.js";
+import { makeOntologyResource } from "../runtime/resource.js";
 import { createMetaOntologyConfiguration } from "./createMetaOntologyConfiguration.js";
 import type { LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type {
@@ -116,7 +116,11 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
             runtime.tables
                 .put(partitions, row.id, row)
                 .pipe(Effect.mapError((cause) => failure("installation.partition", cause)));
-        const cache = yield* ScopedCache.makeWith<string, LiveOntology, BackendError>({
+        const cache = yield* ScopedCache.makeWith<
+            string,
+            Effect.Success<ReturnType<typeof makeOntologyResource>>,
+            BackendError
+        >({
             capacity: Number.MAX_SAFE_INTEGER,
             // Failed acquisitions must be retryable; successful resources live until explicit close or scope closure.
             timeToLive: (exit) => (Exit.isSuccess(exit) ? Infinity : 0),
@@ -177,12 +181,7 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                     writes: configured.writes,
                     connection: createConnectionMonitor(connectionManager, userId),
                 };
-                if (!meta && options.openOntology)
-                    return yield* Effect.acquireRelease(
-                        boundary("installation.open", () => options.openOntology!(settings)),
-                        (ontology) => Effect.promise(() => ontology.cleanup())
-                    );
-                return yield* makeLiveOntology(settings).pipe(
+                return yield* makeOntologyResource(settings).pipe(
                     Effect.provideService(Runtimes, runtimes),
                     Effect.mapError((cause) => failure("installation.open", cause))
                 );
@@ -190,13 +189,13 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
         });
         const keyFor = (userId: string, ontologyId: string, meta: boolean) =>
             JSON.stringify([userId, ontologyId, meta]);
-        const open = <T extends OntologyDefinition>(userId: string, ontologyId: string, meta: boolean) =>
+        const open = (userId: string, ontologyId: string, meta: boolean) =>
             owned(
                 locked(
                     userId,
                     Effect.andThen(ensureOpen, ScopedCache.get(cache, keyFor(userId, ontologyId, meta)))
                 )
-            ) as Effect.Effect<LiveOntology<T>, BackendError>;
+            );
         const close = (
             userId: string,
             ontologyId: string,
@@ -210,7 +209,7 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                         ? ScopedCache.invalidateWhen(
                               cache,
                               keyFor(userId, ontologyId, meta),
-                              (live) => live.storage === ifReplica
+                              (host) => host.replica === ifReplica
                           ).pipe(Effect.asVoid)
                         : ScopedCache.invalidate(cache, keyFor(userId, ontologyId, meta))
                 )
@@ -261,15 +260,29 @@ export const makeOntologyBackendInstallation = Effect.fn("OntologyInstallation.m
                         .pipe(Effect.mapError((cause) => failure("installation.connections", cause)))
                 ),
             connectionMonitor: (userId: string) => createConnectionMonitor(connectionManager, userId),
+            openReplica: ({
+                userId,
+                ontologyId,
+                meta,
+            }: {
+                userId: string;
+                ontologyId: string;
+                meta?: boolean;
+            }) => open(userId, ontologyId, Boolean(meta)),
             openOntology: <T extends OntologyDefinition>({
                 userId,
                 ontologyId,
             }: {
                 userId: string;
                 ontologyId: string;
-            }) => open<T>(userId, ontologyId, false),
+            }) =>
+                open(userId, ontologyId, false).pipe(
+                    Effect.flatMap((resource) => resource.view)
+                ) as Effect.Effect<LiveOntology<T>, BackendError>,
             openMetaOntology: ({ userId, ontologyId }: { userId: string; ontologyId: string }) =>
-                open<MetaOntology>(userId, ontologyId, true),
+                open(userId, ontologyId, true).pipe(
+                    Effect.flatMap((resource) => resource.view)
+                ) as unknown as Effect.Effect<LiveOntology<MetaOntology>, BackendError>,
             closeOntology: ({
                 userId,
                 ontologyId,

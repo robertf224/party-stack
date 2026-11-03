@@ -1,6 +1,6 @@
 import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
 import { BackendError } from "@party-stack/ontology-backend";
-import { connectInstallationWorker } from "@party-stack/ontology-server/installation/worker";
+import { connectInstallationWorker } from "@party-stack/ontology/installation/worker";
 import * as WebRuntime from "@party-stack/web-runtime";
 import { Effect, Exit, Scope } from "effect";
 import { TRACKER_CACHE_EPOCH, trackerWrites } from "./trackerConfig";

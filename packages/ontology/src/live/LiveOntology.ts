@@ -1,3 +1,4 @@
+import type { ReplicaService } from "@party-stack/ontology-replica";
 import type {
     ReplicaConfiguration,
     ReplicaOptions,
@@ -5,14 +6,13 @@ import type {
     ReplicaMonitor,
 } from "@party-stack/ontology-replica";
 import type { OntologyDefinition } from "@party-stack/ontology-spec";
+import type { Encrypted } from "@party-stack/ontology-spec/values";
 import type { TraceStore, TraceRecordingMode } from "@party-stack/runtime/tracing";
+import type { DbClient } from "@tanstack/db";
 export type { OntologyDefinition } from "@party-stack/ontology-spec";
-import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
-import { contextPartition } from "@party-stack/ontology-spec/utils";
-import { Runtime, MemoryRuntime, Runtimes, type RuntimeLayer } from "@party-stack/runtime";
+import { MemoryRuntime, Runtimes, type RuntimeLayer } from "@party-stack/runtime";
 import { Effect, Exit, Scope, Layer } from "effect";
-import { makeReplicaLiveOntology } from "../runtime/live.js";
-import { provide } from "../utils/provide.js";
+import { makeOntologyResource } from "../runtime/resource.js";
 import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
 import type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
 import type { OntologyMutatorRegistry } from "./mutators/types.js";
@@ -90,16 +90,13 @@ export interface DecryptOptions {
     readonly cache?: boolean;
     readonly signal?: AbortSignal;
 }
-export type LiveOntologyDecrypt = <A>(
-    value: import("@party-stack/ontology-spec/values").Encrypted<A>,
-    options?: DecryptOptions
-) => Promise<A>;
+export type LiveOntologyDecrypt = <A>(value: Encrypted<A>, options?: DecryptOptions) => Promise<A>;
 
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
     /** Scoped source-collection and query-identity owner. Supply to React's DbProvider or query options.
      * The current TanStack release does not register browser hook queries for client cleanup.
      */
-    readonly dbClient: import("@tanstack/db").DbClient;
+    readonly dbClient: DbClient;
     readonly ir: OntologyIR;
     readonly context: OntologyContext<Ontology>;
     /**
@@ -112,7 +109,7 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
     persistedObjects?: LiveOntologyObjects<Ontology["objectTypes"]>;
     traces?: TraceStore;
     diagnostics?: OntologyDiagnostics;
-    storage?: import("@party-stack/ontology-replica").ReplicaService;
+    storage?: ReplicaService;
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
     queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
     attachments: LiveOntologyAttachments<Ontology>;
@@ -148,65 +145,13 @@ export async function waitForLiveOntologyReady(ontology: LiveOntology): Promise<
     await ontology.ready;
 }
 
-/** Native acquisition. Runtime, backend, collections and replica fibers share the caller's Scope. */
+/** SDK acquisition materializes collections only for callers requesting a view. */
 export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
     Ontology extends OntologyDefinition = OntologyDefinition,
     Context extends Record<string, unknown> = Record<string, unknown>,
 >(opts: Omit<CreateLiveOntologyOpts<Context>, "runtime">) {
-    const scope = yield* Scope.fork(yield* Effect.scope);
-    const opened = Effect.gen(function* () {
-        const ontologyId = opts.id ?? "default";
-        const context = (opts.context ?? {}) as Context;
-        const owner = yield* Effect.try({
-            try: () => contextPartition(opts.ir, context),
-            catch: (cause) =>
-                new BackendError({
-                    operation: "runtime.partition",
-                    kind: "InvalidConfiguration",
-                    message: "Invalid context partition.",
-                    retryable: false,
-                    cause,
-                }),
-        });
-        const runtime = yield* Effect.flatMap(Runtimes, (runtimes) =>
-            runtimes.acquire({ owner, namespace: ontologyId })
-        );
-        const platform = runtime;
-        const resources = yield* Scope.fork(yield* Effect.scope);
-        return yield* Scope.provide(
-            Effect.gen(function* () {
-                const backendAdapter = yield* Effect.tryPromise({
-                    try: () => provide(opts.backend, opts.ir, context),
-                    catch: (cause) => classifyBackendFailure("backend.configure", cause),
-                });
-                const live = yield* makeReplicaLiveOntology({
-                    ir: opts.ir,
-                    traceRecording: opts.traceRecording,
-                    context,
-                    backendAdapter,
-                    writes: opts.writes,
-                    live: opts.live,
-                    demand: opts.demand,
-                    cache: opts.cache,
-                    connection: opts.connection,
-                }).pipe(Effect.provideService(Runtime, runtime));
-                let closing: Promise<void> | undefined;
-                const cleanup = () => (closing ??= Effect.runPromise(Scope.close(scope, Exit.void)));
-                return {
-                    ...live,
-                    cleanup,
-                    destroy: async () => {
-                        await cleanup();
-                        await Effect.runPromise(platform.destroy);
-                    },
-                } as LiveOntology<Ontology>;
-            }),
-            resources
-        );
-    });
-    return yield* Scope.provide(opened, scope).pipe(
-        Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void))
-    );
+    const resource = yield* makeOntologyResource<Ontology, Context>(opts);
+    return yield* resource.view;
 });
 
 /** UI/SDK boundary; the native service above owns all implementation and cleanup. */

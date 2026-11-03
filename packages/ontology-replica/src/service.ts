@@ -1,40 +1,42 @@
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
-import { executeAction } from "@party-stack/ontology-backend/actions";
+import { executeAction, resolveReadActionParameters } from "@party-stack/ontology-backend/actions";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
-import { Effect, Stream } from "effect";
+import { eq, field } from "@party-stack/ontology-storage";
+import { Effect, Stream, Scope } from "effect";
+import { makeBlobManagerFromStorage } from "./attachments/manager.js";
+import { prepareActionParameters } from "./attachments/prepare.js";
+import { makeReplicaAttachments } from "./attachments/service.js";
 import { makeReplicaDecryption } from "./decrypt.js";
 import { makeReplicaKernel } from "./engine.js";
 import { kernel } from "./internal.js";
 import { makeQueryPin } from "./pins.js";
+import type { ReplicaAttachments } from "./attachments/service.js";
 import type { DemandPolicy } from "./demandCache.js";
-import type {
-    ReplicaService as KernelService,
-    ObjectCacheGcPolicy,
-    ObjectCacheSweepOptions,
-} from "./engine.js";
+import type { ReplicaService as KernelService } from "./engine.js";
 import type { PinOptions, PinStatus } from "./pins.js";
+import type { ObjectCacheGcPolicy, ObjectCacheSweepOptions } from "./policies.js";
 import type { ReplicaStatus } from "./status.js";
 import type { ReplicaRowsBatch } from "./visible.js";
 import type { ConnectionMonitor } from "@party-stack/connect";
 import type {
     ActionReceipt,
+    ValidationReport,
     ActionRequest,
     OntologyBackendService,
     BackendAttachments,
 } from "@party-stack/ontology-backend";
 import type { ActionMutatorRegistry } from "@party-stack/ontology-backend/actions";
 import type { ClientPolicy } from "@party-stack/ontology-backend/clients";
-import type { OntologySource, PendingAction } from "@party-stack/ontology-backend/protocol";
+import type { OntologySource, PendingAction, ClientSubmission } from "@party-stack/ontology-backend/protocol";
 import type { QueryDocument } from "@party-stack/ontology-spec";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
-import type { Encrypted } from "@party-stack/ontology-spec/values";
-import type { Key, Row } from "@party-stack/ontology-storage";
+import type { Encrypted, attachment } from "@party-stack/ontology-spec/values";
+import type { Key, Row, Query } from "@party-stack/ontology-storage";
 import type { BlobStorageService } from "@party-stack/ontology-storage/blobs";
 import type { EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
 import type { NetworkConnectivity, ResourceCapacity } from "@party-stack/runtime";
-import type { Scope } from "effect";
 
 export interface ReplicaConfiguration {
     readonly ir: OntologyIR;
@@ -67,7 +69,7 @@ export type ReplicaOutboxPolicy = NonNullable<ReplicaConfiguration["outbox"]>;
 export type ReplicaOptions = ReplicaConfiguration & {
     readonly namespace: string;
     readonly tables: TablesService;
-    readonly attachments?: Pick<BackendAttachments, "read">;
+    readonly attachments?: Pick<BackendAttachments, "read"> & Partial<Omit<BackendAttachments, "read">>;
     readonly blobs?: BlobStorageService;
     readonly encrypted?: OntologyBackendService["encrypted"];
     readonly encryptionKeyring?: EncryptionKeyringService;
@@ -76,7 +78,7 @@ export type ReplicaOptions = ReplicaConfiguration & {
     readonly authentication?: Pick<ConnectionMonitor, "state" | "changes">;
 } & (
         | { readonly backend: OntologyBackendService; readonly source?: never }
-        | { readonly source: OntologySource; readonly backend?: never }
+        | { readonly source: OntologySource; readonly backend?: OntologyBackendService }
     );
 export interface ReplicaReads {
     readonly get: (
@@ -123,6 +125,7 @@ export interface ReplicaOutbox {
 }
 export interface ReplicaService extends ReplicaReads {
     readonly ir: OntologyIR;
+    readonly context: Record<string, unknown>;
     readonly sourceId: string;
     readonly upstreamKind: "committed" | "speculative";
     readonly network: NetworkConnectivity;
@@ -131,6 +134,23 @@ export interface ReplicaService extends ReplicaReads {
         value: Encrypted,
         options?: { readonly cache?: boolean }
     ) => Effect.Effect<{ readonly value: unknown; readonly ciphertext?: string }, BackendError>;
+    readonly attachments: ReplicaAttachments;
+    readonly actions: {
+        readonly resolveParameters: (
+            name: string,
+            parameters: Record<string, unknown>
+        ) => Effect.Effect<Record<string, unknown>, BackendError>;
+        readonly validate: (
+            name: string,
+            parameters: Record<string, unknown>,
+            options?: { readonly knownParameters?: readonly string[] }
+        ) => Effect.Effect<ValidationReport, BackendError>;
+        /** Defaults to direct admission; both modes await authoritative confirmation and local reconciliation. */
+        readonly apply: (
+            request: ActionRequest,
+            options?: { readonly mode?: "direct" | "outbox"; readonly optimistic?: boolean }
+        ) => Effect.Effect<ActionReceipt, BackendError>;
+    };
     readonly confirmed: ReplicaReads;
     readonly observeSubset: (subset: ObjectSubset) => Stream.Stream<ReplicaRowsBatch, BackendError>;
     readonly demand: {
@@ -199,8 +219,117 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
             retryable: false,
             message: "Demand polling must be false or at least 100 milliseconds.",
         });
+    const remoteAttachments = options.attachments ?? options.backend?.attachments;
+    const manager = options.blobs
+        ? yield* makeBlobManagerFromStorage({
+              storage: options.blobs,
+              gcTime:
+                  options.cache?.attachments === false
+                      ? Infinity
+                      : (options.cache?.attachments?.minUnusedAgeMs ?? 5 * 60_000),
+              budget: options.cache?.attachments === false ? undefined : options.cache?.attachments,
+              sweepIntervalMs:
+                  options.cache?.attachments === false
+                      ? undefined
+                      : options.cache?.attachments?.sweepIntervalMs,
+              remote: {
+                  read: (id, settings) =>
+                      remoteAttachments
+                          ? remoteAttachments.read({
+                                ...(settings?.meta?.attachment as attachment | undefined),
+                                id,
+                            })
+                          : Effect.fail(
+                                new BackendError({
+                                    operation: "attachment.read",
+                                    kind: "NotImplemented",
+                                    retryable: false,
+                                    message: "Attachment reads are unavailable.",
+                                })
+                            ),
+                  metadata: remoteAttachments?.metadata
+                      ? (id, settings) =>
+                            remoteAttachments.metadata!(
+                                {
+                                    ...(settings?.meta?.attachment as attachment | undefined),
+                                    id,
+                                },
+                                { select: settings?.select }
+                            )
+                      : undefined,
+              },
+          })
+        : undefined;
+    const attachments = yield* makeReplicaAttachments({
+        ir: options.ir,
+        manager,
+        stage: remoteAttachments?.stage,
+    });
+    const prepare = (request: ActionRequest) =>
+        prepareActionParameters({
+            ir: options.ir,
+            actionTypeName: request.name,
+            parameters: request.parameters,
+            blobManager: manager,
+        });
+    const transfer =
+        <A>(submit: (request: ClientSubmission) => Effect.Effect<A, BackendError>) =>
+        (request: ClientSubmission) =>
+            Effect.gen(function* () {
+                const prepared = yield* prepare(request.invocation);
+                const submission = {
+                    ...request,
+                    stagedAttachments: prepared.attachmentUploads.map((upload) => upload.attachment.id),
+                };
+                const result = yield* Effect.result(submit(submission));
+                if (result._tag === "Success") return result.success;
+                if (
+                    result.failure.kind !== "NotFound" ||
+                    result.failure.operation !== "replica.submit.attachments"
+                )
+                    return yield* result.failure;
+                if (!remoteAttachments?.stage) return yield* result.failure;
+                for (const upload of prepared.attachmentUploads) {
+                    const staged = yield* remoteAttachments.stage(upload.attachment, upload.blob, {
+                        target: upload.target,
+                    });
+                    if (staged.id !== upload.attachment.id)
+                        return yield* new BackendError({
+                            operation: "attachment.handoff",
+                            kind: "Conflict",
+                            retryable: false,
+                            actionOutcome: "not-committed",
+                            message: "A speculative parent must preserve staged attachment IDs.",
+                        });
+                }
+                return yield* submit(submission);
+            });
     const engine = yield* makeReplicaKernel({
         ...options,
+        ...(options.source
+            ? {
+                  source: {
+                      ...options.source,
+                      submit: transfer(options.source.submit),
+                      accept: options.source.accept ? transfer(options.source.accept) : undefined,
+                  },
+                  backend: undefined,
+              }
+            : {
+                  source: undefined,
+                  backend: {
+                      ...options.backend!,
+                      applyAction: (request: ActionRequest) =>
+                          Effect.gen(function* () {
+                              const prepared = yield* prepare(request);
+                              return yield* options.backend!.applyAction({
+                                  ...request,
+                                  parameters: prepared.parameters,
+                                  attachmentUploads: prepared.attachmentUploads,
+                              });
+                          }),
+                  },
+              }),
         startSync: options.live !== false,
         objectCacheGc: options.cache?.objects,
         connectivity: options.network,
@@ -232,7 +361,7 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         ...options,
         engine,
         live: options.live !== false,
-        attachments: options.attachments ?? options.backend?.attachments,
+        attachments: remoteAttachments,
     });
     const status = Effect.gen(function* () {
         const current = yield* engine.status;
@@ -289,15 +418,89 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                     : (options.source?.outbox ?? engine)
             )
         );
-    const service = {
+    const resolveLocally = Effect.fn("Replica.resolveParameters")(function* (
+        name: string,
+        parameters: Record<string, unknown>
+    ) {
+        return yield* Effect.scoped(
+            Effect.gen(function* () {
+                const scope = yield* Effect.scope;
+                const loadSubset = (type: string, query?: Query) =>
+                    Scope.provide(
+                        Effect.gen(function* () {
+                            const subset = { objectType: type, query };
+                            yield* engine.demand(subset);
+                            yield* engine.syncSubset(subset);
+                            return yield* engine.confirmed.loadSubset(type, query);
+                        }),
+                        scope
+                    );
+                return yield* resolveReadActionParameters({
+                    ir: options.ir,
+                    name,
+                    parameters,
+                    context: options.context,
+                    read: {
+                        loadSubset,
+                        get: (type, key) => {
+                            const object = options.ir.objectTypes.find((object) => object.name === type);
+                            return object
+                                ? Effect.map(
+                                      loadSubset(type, {
+                                          where: eq(field(object.primaryKey), key),
+                                          limit: 1,
+                                      }),
+                                      (rows) => rows[0]?.value
+                                  )
+                                : engine.confirmed.get(type, key);
+                        },
+                    },
+                });
+            })
+        );
+    });
+    const service: ReplicaService & { readonly [kernel]: KernelService } = {
         [kernel]: engine,
         ...reads(false),
         ir: engine.ir,
+        context: options.context ?? {},
         sourceId: engine.sourceId,
         upstreamKind: options.source ? "speculative" : "committed",
         network: engine.connectivity,
         authentication: engine.connection,
         decrypt: decryption.decrypt,
+        attachments,
+        actions: {
+            resolveParameters: (name, parameters) =>
+                options.backend?.resolveActionParameters
+                    ? options.backend.resolveActionParameters(name, parameters)
+                    : resolveLocally(name, parameters),
+            validate: (name, parameters, settings) =>
+                options.backend?.validateAction
+                    ? options.backend.validateAction(name, parameters, settings)
+                    : Effect.succeed({ certain: false as const }),
+            apply: Effect.fn("Replica.applyAction")(function* (request, settings) {
+                if ((settings?.mode ?? "direct") === "direct" && !(yield* engine.connectivity.online))
+                    return yield* new BackendError({
+                        operation: "applyAction",
+                        kind: "Unavailable",
+                        message: "Direct actions require connectivity. Use outbox mode to queue offline.",
+                        retryable: true,
+                        actionOutcome: "not-committed",
+                    });
+                yield* service.outbox.enqueue(request, { optimistic: settings?.optimistic });
+                const receipt = yield* service.outbox.wait(request.id);
+                if (!receipt)
+                    return yield* new BackendError({
+                        operation: "applyAction",
+                        kind: "ResultExpired",
+                        message: "Action result is unavailable.",
+                        retryable: false,
+                        actionOutcome: "unknown",
+                    });
+                return receipt;
+            }),
+        },
         confirmed: reads(true),
         observeSubset: (subset) =>
             Stream.unwrap(

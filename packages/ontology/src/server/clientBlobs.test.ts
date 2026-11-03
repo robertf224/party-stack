@@ -1,21 +1,24 @@
 import {
-    makeReplicaLiveOntology,
     makeStorageOntologyBackend,
     o,
-    type LiveOntology,
     type OntologyIR,
     type OntologyMutatorRegistry,
 } from "@party-stack/ontology";
-import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
+import { ontologyServerHandlers } from "@party-stack/ontology-server";
+import {
+    makeOntologyProtocolClient,
+    ontologyRpcHandlers,
+    OntologyRpcs,
+} from "@party-stack/ontology-server/rpc";
 import { byteSource, collectByteBlob, makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import { MemoryBlobBytesStore, Runtime } from "@party-stack/runtime";
 import { makeTestRuntime } from "@party-stack/runtime/testing";
 import { Deferred, Effect, Fiber, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
 import { expect, test, vi } from "vite-plus/test";
-import { replicaController } from "../../ontology-replica/lib/internal.js";
-import { connectLiveOntology } from "./liveClient.js";
-import { makeOntologyProtocolClient, ontologyRpcHandlers, OntologyRpcs } from "./rpc.js";
+import { replicaController } from "../../../ontology-replica/lib/internal.js";
+import { makeReplicaLiveOntology } from "../runtime/live.js";
+import { connectLiveOntology } from "./client.js";
 
 const ir: OntologyIR = {
     types: [],
@@ -177,17 +180,13 @@ test("a speculative client stages locally, transfers before acceptance, and stre
                     backendAdapter: { name: "authority", open: () => Effect.succeed(backend) },
                     writes: { defaultMode: "outbox", defaultVisibility: "optimistic", mutators },
                 }).pipe(Effect.provideService(Runtime, parentRuntime));
-                const parentView = {
-                    ...parent,
-                    cleanup: async () => {},
-                    destroy: async () => {},
-                } as LiveOntology;
                 const rpc = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
-                        ontologyRpcHandlers({
+                        ontologyServerHandlers({
+                            kind: "replica",
                             ir,
-                            source: replicaStateSource(parent.storage!),
-                            ontology: parentView,
+                            replica: parent.storage!,
+                            backend,
                             authorize: () => Effect.void,
                             errors: "forward",
                         })

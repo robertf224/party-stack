@@ -36,7 +36,6 @@ export interface CreateFoundryBackendInstallationOptions<
     connections: FoundryConnectionOptions | BackendConnectionAdapterProvider<AuthenticationClient>;
     routes: readonly FoundryOntologyRoute[];
     createContext?: (userId: string, ontologyId: string) => Record<string, unknown>;
-    openOntology?: CreateOntologyBackendInstallationOptions["openOntology"];
 }
 
 function createConnectionOntologyClient(baseUrl: string, ontologyId: string, egress: ConnectionEgress) {
@@ -122,14 +121,13 @@ export function createFoundryBackendInstallation<
         runtime: options.runtime,
         routes: options.routes.map((route) => route(options.baseUrl)),
         createContext: options.createContext,
-        openOntology: options.openOntology,
     });
 }
 
 /** Native construction; platform partitions are supplied through the Runtimes Layer. */
 export function makeFoundryBackendInstallation<
     AuthenticationClient extends object = FoundryAuthenticationClient,
->(options: Omit<CreateFoundryBackendInstallationOptions<AuthenticationClient>, "runtime" | "openOntology">) {
+>(options: Omit<CreateFoundryBackendInstallationOptions<AuthenticationClient>, "runtime">) {
     const connections =
         typeof options.connections === "function"
             ? options.connections

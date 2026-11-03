@@ -2,9 +2,9 @@ import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunn
 import { makeOntologyBackendInstallation } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
-import { serveInstallationWorker } from "@party-stack/ontology-server/installation/worker";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
+import { serveInstallationWorker } from "@party-stack/ontology/installation/worker";
 import { Runtimes, Runtime } from "@party-stack/runtime";
 import { Effect, Fiber, Layer } from "effect";
 import * as WebRuntime from "../src/WebRuntime.js";

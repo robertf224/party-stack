@@ -1,7 +1,7 @@
-import { o, type OntologyIR } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
+import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { eq, field } from "@party-stack/ontology-storage";
@@ -525,42 +525,58 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
         },
     };
     const bytes = new Map<string, Blob>();
-    const draft = vi.fn(async () => ({ certain: false as const }));
+    const draft = vi.fn(
+        (_parameters: Record<string, unknown>, _settings: { knownParameters?: readonly string[] }) =>
+            Effect.succeed({ certain: false as const })
+    );
     const operations: string[] = [];
     // Focus this fixture on the real HTTP helper boundary; replica transfer has its own conformance tests.
-    const ontology = {
-        queryFunctions: { echo: async (parameters: Record<string, unknown>) => parameters },
-        actions: {
-            action: {
-                validate: async () => ({
-                    certain: true as const,
-                    value: { kind: "ok" as const, value: undefined },
-                }),
-                validateDraft: draft,
-            },
-        },
-        attachments: {
-            create: async (input: ByteInput, opts?: { id?: string }) => {
-                const blob = await Effect.runPromise(collectByteBlob(input));
-                const id = opts?.id ?? "blob";
-                bytes.set(id, blob);
-                return { attachment: { id, type: blob.type } };
-            },
-            blob: async (attachment: { id: string }) => bytes.get(attachment.id)!,
-            source: async (attachment: { id: string }) => bytes.get(attachment.id)!,
-            metadata: async (attachment: { id: string }) => ({
-                ...attachment,
-                size: bytes.get(attachment.id)!.size,
-                type: bytes.get(attachment.id)!.type,
-            }),
-        },
-        traces,
-    } as unknown as import("@party-stack/ontology").LiveOntology;
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const owned = yield* setup();
-                ontology.storage = yield* makeReplica({
+                const backend = {
+                    ...owned,
+                    queryFunction: (_name: string, parameters: Record<string, unknown>) =>
+                        Effect.succeed(parameters),
+                    validateAction: (
+                        _name: string,
+                        parameters: Record<string, unknown>,
+                        settings?: { knownParameters?: readonly string[] }
+                    ) =>
+                        settings?.knownParameters
+                            ? draft(parameters, settings)
+                            : Effect.succeed({
+                                  certain: true as const,
+                                  value: { kind: "ok" as const, value: undefined },
+                              }),
+                    attachments: {
+                        stage: (handle: { id: string }, input: ByteInput) =>
+                            collectByteBlob(input).pipe(
+                                Effect.map((blob) => {
+                                    bytes.set(handle.id, blob);
+                                    return { ...handle, type: blob.type };
+                                }),
+                                Effect.mapError(
+                                    (cause) =>
+                                        new BackendError({
+                                            operation: "attachment.stage",
+                                            kind: "Internal",
+                                            message: "Failed upload",
+                                            retryable: false,
+                                            cause,
+                                        })
+                                )
+                            ),
+                        read: (handle: { id: string }) => Effect.succeed(bytes.get(handle.id)!),
+                        metadata: (handle: { id: string }) =>
+                            Effect.succeed({
+                                size: bytes.get(handle.id)!.size,
+                                type: bytes.get(handle.id)!.type,
+                            }),
+                    },
+                };
+                const replica = yield* makeReplica({
                     namespace: "inspect-owner",
                     ir,
                     tables: yield* Memory.make(),
@@ -571,7 +587,9 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                 });
                 const handler = yield* makeOntologyHttpHandler({
                     source: owned.protocol,
-                    ontology,
+                    replica,
+                    backend,
+                    traces,
                     authorize: (request) =>
                         Effect.sync(() => {
                             operations.push(request.operation);
@@ -597,18 +615,17 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                     certain: false,
                 });
                 expect(draft).toHaveBeenCalledWith({}, { knownParameters: [] });
-                const { attachment } = yield* Effect.promise(() =>
-                    client.operations.attachments.create(
-                        new Blob([new Uint8Array([0, 255, 127])], { type: "application/octet-stream" })
-                    )
+                const { attachment } = yield* client.operations.attachments.create(
+                    new Blob([new Uint8Array([0, 255, 127])], { type: "application/octet-stream" })
                 );
-                const received = yield* Effect.promise(() => client.operations.attachments.blob(attachment));
+                const received = yield* client.operations.attachments.blob(attachment);
                 expect(new Uint8Array(yield* Effect.promise(() => received.arrayBuffer()))).toEqual(
                     new Uint8Array([0, 255, 127])
                 );
-                expect(
-                    yield* Effect.promise(() => client.operations.attachments.metadata(attachment))
-                ).toMatchObject({ size: 3, type: "application/octet-stream" });
+                expect(yield* client.operations.attachments.metadata(attachment)).toMatchObject({
+                    size: 3,
+                    type: "application/octet-stream",
+                });
                 // The facade reads upload streams, including a source emitting a single large chunk.
                 const data = new Uint8Array(150_000).map((_, index) => index % 251);
                 const large = new Blob([data], { type: "application/octet-stream" });
@@ -623,27 +640,19 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                             },
                         }),
                 });
-                const big = yield* Effect.promise(() =>
-                    client.operations.attachments.create(large, { id: "large" })
-                );
+                const big = yield* client.operations.attachments.create(large, { id: "large" });
                 expect(materialize).not.toHaveBeenCalled();
-                const downloaded = yield* Effect.promise(() =>
-                    client.operations.attachments.blob(big.attachment)
-                );
+                const downloaded = yield* client.operations.attachments.blob(big.attachment);
                 expect(new Uint8Array(yield* Effect.promise(() => downloaded.arrayBuffer()))).toEqual(data);
-                const empty = yield* Effect.promise(() =>
-                    client.operations.attachments.create(new Blob([]), { id: "empty" })
-                );
-                expect(
-                    (yield* Effect.promise(() => client.operations.attachments.blob(empty.attachment))).size
-                ).toBe(0);
+                const empty = yield* client.operations.attachments.create(new Blob([]), { id: "empty" });
+                expect((yield* client.operations.attachments.blob(empty.attachment)).size).toBe(0);
                 expect(operations).not.toContain("ReplicaStatus");
                 const stopMonitoring = client.operations.replicaMonitor.subscribe(() => undefined);
                 yield* Effect.addFinalizer(() => Effect.sync(stopMonitoring));
                 yield* Effect.promise(() =>
                     vi.waitFor(() =>
                         expect(client.operations.replicaMonitor.getSnapshot().status).toMatchObject({
-                            sourceId: ontology.storage!.sourceId,
+                            sourceId: replica.sourceId,
                             mode: "adapter",
                             demands: [],
                             loadCount: 0,
@@ -651,7 +660,7 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                     )
                 );
                 // Inspecting the owner does not acquire demand or call the backend.
-                expect((yield* ontology.storage.status.get).loadCount).toBe(0);
+                expect((yield* replica.status.get).loadCount).toBe(0);
                 const unsubscribe = client.operations.traces.subscribe(() => undefined);
                 yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
                 yield* Deferred.await(subscribed);

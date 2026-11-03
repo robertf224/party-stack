@@ -10,10 +10,6 @@
             "types": "./lib/index.d.ts",
             "default": "./lib/index.js"
         },
-        "./client": {
-            "types": "./lib/client.d.ts",
-            "default": "./lib/client.js"
-        },
         "./rpc": {
             "types": "./lib/rpc.d.ts",
             "default": "./lib/rpc.js"
@@ -25,15 +21,9 @@
         "./rpc/worker": {
             "types": "./lib/rpcWorker.d.ts",
             "default": "./lib/rpcWorker.js"
-        },
-        "./installation/worker": {
-            "types": "./lib/installationWorker.d.ts",
-            "default": "./lib/installationWorker.js"
         }
     },
     "dependencies": {
-        "@party-stack/connect": "workspace:*",
-        "@party-stack/ontology": "workspace:*",
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-replica": "workspace:*",
         "@party-stack/ontology-spec": "workspace:*",
@@ -44,14 +34,10 @@
     "devDependencies": {
         "@effect/platform-browser": "^4.0.5",
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.14.0",
         "@types/node": "^24.10.1",
         "temporal-polyfill": "^0.3.0",
         "typescript": "~7.0.2",
         "vite": "catalog:",
         "vite-plus": "catalog:"
-    },
-    "peerDependencies": {
-        "@tanstack/db": "0.14.0"
     }
 }

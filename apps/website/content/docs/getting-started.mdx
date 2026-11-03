@@ -36,7 +36,7 @@ a shared client at module scope during SSR or share one between server requests.
 ### A memory tab connected to an ontology server
 
 ```ts title="src/open-ontology.ts"
-import { createConnectedLiveOntology } from "@party-stack/ontology-server/client";
+import { createConnectedLiveOntology } from "@party-stack/ontology/client";
 import { connectOntologyHttp } from "@party-stack/ontology-server/rpc/http";
 import * as WebRuntime from "@party-stack/web-runtime";
 import { Effect } from "effect";
@@ -72,7 +72,7 @@ that installation. A page connects once, then opens memory views of its ontologi
 
 ```ts title="src/installation.ts"
 import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
-import { connectInstallationWorker } from "@party-stack/ontology-server/installation/worker";
+import { connectInstallationWorker } from "@party-stack/ontology/installation/worker";
 import { Effect, Exit, Scope } from "effect";
 
 const scope = Effect.runSync(Scope.make());
@@ -108,7 +108,7 @@ is not proof of authorization. This control plane is for trusted same-origin tab
 ```ts title="src/installation.worker.ts"
 import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunner";
 import { makeOntologyBackendInstallation } from "@party-stack/ontology";
-import { serveInstallationWorker } from "@party-stack/ontology-server/installation/worker";
+import { serveInstallationWorker } from "@party-stack/ontology/installation/worker";
 import { Runtimes } from "@party-stack/runtime";
 import * as WebRuntime from "@party-stack/web-runtime";
 import { Effect, Fiber, Layer } from "effect";
@@ -193,7 +193,7 @@ Use `connectLiveOntology` in a service Layer and provide a platform Layer. Keep
 the Layer's scope alive while the ontology is used:
 
 ```ts
-import { connectLiveOntology } from "@party-stack/ontology-server/client";
+import { connectLiveOntology } from "@party-stack/ontology/client";
 import { Context, Layer } from "effect";
 import type { LiveOntology } from "@party-stack/ontology";
 

@@ -1,10 +1,25 @@
-import { describe, expect, expectTypeOf, it, vi } from "vite-plus/test";
+import { Effect, Exit, Scope } from "effect";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vite-plus/test";
+import { makeReplicaAttachments } from "../../../../ontology-replica/lib/attachments/service.js";
 import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
-import type { BlobManager } from "../../runtime/blobs/types.js";
+import type { BlobManagerService } from "../../../../ontology-replica/lib/attachments/manager.js";
 import type { LiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
 import type { AttachmentMetadataField } from "./types.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type * as v from "@party-stack/ontology-spec/values";
+
+const scopes: Scope.Closeable[] = [];
+afterEach(async () => {
+    for (const scope of scopes.splice(0)) await Effect.runPromise(Scope.close(scope, Exit.void));
+});
+const testAttachments = async (options: { ir: OntologyIR; blobManager: BlobManagerService }) => {
+    const scope = Effect.runSync(Scope.make());
+    scopes.push(scope);
+    const attachments = await Effect.runPromise(
+        Scope.provide(makeReplicaAttachments({ ir: options.ir, manager: options.blobManager }), scope)
+    );
+    return createLiveOntologyAttachments({ attachments, run: (work) => Effect.runPromise(work) });
+};
 
 describe("attachment metadata", () => {
     it("only exposes dimensions for image selections", () => {
@@ -69,13 +84,13 @@ describe("attachment metadata", () => {
 
     it("delegates missing selected fields to the blob manager", async () => {
         const metadata = vi.fn(() =>
-            Promise.resolve({
+            Effect.succeed({
                 id: "image-1",
                 size: 10,
                 dimensions: { width: 800, height: 600 },
             })
         );
-        const attachments = createLiveOntologyAttachments({
+        const attachments = await testAttachments({
             ir: {
                 types: [],
                 objectTypes: [],
@@ -83,7 +98,7 @@ describe("attachment metadata", () => {
                 actionTypes: [],
                 queryFunctionTypes: [],
             } satisfies OntologyIR,
-            blobManager: { metadata } as unknown as BlobManager,
+            blobManager: { metadata } as unknown as BlobManagerService,
         });
         const attachment = {
             id: "image-1",

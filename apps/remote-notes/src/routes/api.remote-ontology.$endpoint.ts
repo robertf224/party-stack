@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
-import { makeStorageOntologyBackend } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
+import { makeStorageBackend } from "@party-stack/ontology-backend/storage";
 import { makeOntologyServer } from "@party-stack/ontology-server";
 import { byteSource } from "@party-stack/ontology-storage/blobs";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
@@ -43,7 +43,7 @@ const makePrincipal = Effect.fnUntraced(function* (
     native: Effect.Success<typeof storage>,
     context: { user: string }
 ) {
-    const owned = yield* makeStorageOntologyBackend({
+    const owned = yield* makeStorageBackend({
         ir: notesOntology,
         namespace,
         context,

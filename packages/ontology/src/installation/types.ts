@@ -1,5 +1,6 @@
 import type { CreateLiveOntologyOpts, LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 import type { OntologyBackendAdapterProvider } from "../live/OntologyBackendAdapter.js";
+import type { OntologyResource } from "../runtime/resource.js";
 import type {
     BackendConnectionAdapterProvider,
     Connection,
@@ -41,10 +42,6 @@ export interface OntologyBackendInstallationOptions<AuthenticationClient extends
     connections: BackendConnectionAdapterProvider<AuthenticationClient>;
     routes: readonly OntologyRoute[];
     createContext?: (userId: string, ontologyId: string) => Record<string, unknown>;
-    /** Application placement boundary. Metadata keeps its normal local construction. */
-    openOntology?: (
-        options: CreateLiveOntologyOpts & { installationId: string; userId: string; ontologyId: string }
-    ) => Promise<LiveOntology>;
 }
 
 /** Framework composition supplies a configured platform Layer, never a callback factory. */
@@ -111,6 +108,14 @@ export interface OntologyBackendInstallationService<A extends object = object> {
     readonly connections: ReadonlyMap<string, Connection>;
     readonly connectionChanges: Stream.Stream<readonly Connection[]>;
     connectionMonitor(userId: string): ConnectionMonitor;
+    openReplica(options: {
+        userId: string;
+        ontologyId: string;
+        meta?: boolean;
+    }): Effect.Effect<
+        Pick<OntologyResource, "ir" | "context" | "replica" | "backend" | "traces">,
+        BackendError
+    >;
     openOntology<T extends OntologyDefinition = OntologyDefinition>(options: {
         userId: string;
         ontologyId: string;

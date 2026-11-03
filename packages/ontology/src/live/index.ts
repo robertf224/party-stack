@@ -3,7 +3,6 @@ export * from "./LiveOntology.js";
 export type { AttachmentMetadata, PartialAttachmentMetadata } from "./attachments/types.js";
 export * from "./mutators/types.js";
 export { createReadTx } from "./mutators/createReadTx.js";
-export { resolveActionParameters } from "./expression.js";
 export * from "./outbox/types.js";
 
 export * from "./storageBackend.js";

@@ -15,6 +15,7 @@ import {
 } from "@party-stack/ontology-backend/protocol";
 import { ReplicaStatusSchema, makeReplicaMonitor } from "@party-stack/ontology-replica";
 import { QueryDocumentSchema } from "@party-stack/ontology-spec/effect";
+import { getTargetValueType } from "@party-stack/ontology-spec/utils";
 import { withObjectSources } from "@party-stack/ontology-storage";
 import {
     attachmentByteSource,
@@ -22,7 +23,6 @@ import {
     collectByteBlob,
     type ByteSource,
 } from "@party-stack/ontology-storage/blobs";
-import { getTargetValueType } from "@party-stack/ontology/utils";
 import { Effect, Exit, Option, Queue, Schema, Sink, Stream, Fiber, Scope, Layer } from "effect";
 import { Rpc, RpcGroup, RpcClient } from "effect/rpc";
 import {
@@ -34,7 +34,10 @@ import {
 } from "./attachmentTransfers.js";
 import { projectValidationReport, type ErrorProjectionOptions } from "./errorProjection.js";
 import type { AttachmentTransferPolicy } from "./attachmentTransfers.js";
-import type { LiveOntology } from "@party-stack/ontology";
+import type { ReplicaService } from "@party-stack/ontology-replica";
+import type { AttachmentCreateOptions } from "@party-stack/ontology-replica";
+import type { attachment } from "@party-stack/ontology-spec/values";
+import type { ByteInput, ReadableByteInput } from "@party-stack/ontology-storage/blobs";
 import type { TraceStore, TraceRecord } from "@party-stack/runtime/tracing";
 import type { Headers } from "effect/http/Headers";
 const Validation = ValidationReportSchema;
@@ -179,7 +182,7 @@ export type OntologyOperationRequest =
       }
     | {
           readonly operation: "Decrypt";
-          readonly value: import("@party-stack/ontology/values").Encrypted;
+          readonly value: import("@party-stack/ontology-spec/values").Encrypted;
           readonly cache?: boolean;
       }
     | {
@@ -225,8 +228,6 @@ const decryptFailure = (cause: unknown) =>
         retryable: cause instanceof BackendError ? cause.retryable : true,
         message: "Decryption failed.",
     });
-const attempt = <A>(run: (signal: AbortSignal) => Promise<A>) =>
-    Effect.tryPromise({ try: run, catch: failure });
 const missing = (name: string) =>
     new BackendError({
         operation: name,
@@ -241,7 +242,8 @@ export type OntologyOperationOptions<R = never> = ErrorProjectionOptions & {
         inputs?: Record<string, unknown>
     ) => Effect.Effect<Record<string, unknown>, BackendError, R>;
     readonly attachmentTransfers?: AttachmentTransferPolicy<R>;
-    readonly ontology?: LiveOntology;
+    readonly replica?: ReplicaService;
+    readonly traces?: TraceStore;
     readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
     readonly ready?: Effect.Effect<void, BackendError, R>;
     readonly deleteLocalData?: Effect.Effect<void, BackendError, R>;
@@ -262,7 +264,7 @@ export const ontologyAttachmentHandlers = <R>(options: OntologyOperationOptions<
             yield* options.ready ?? Effect.void;
             if (options.backend) {
                 if (!options.backend.attachments?.stage) return yield* missing("CreateAttachment");
-                const ir = options.ir ?? options.ontology?.ir;
+                const ir = options.ir ?? options.replica?.ir;
                 const type =
                     request.target && ir
                         ? yield* Effect.try({
@@ -289,15 +291,9 @@ export const ontologyAttachmentHandlers = <R>(options: OntologyOperationOptions<
                     { target: type?.kind === "attachment" ? type.value : undefined }
                 );
             }
-            if (!options.ontology) return yield* missing("CreateAttachment");
-            const created = yield* attempt(() =>
-                options.ontology!.attachments.create(blob, {
-                    id: request.id,
-                    target: request.target,
-                    eager: request.eager,
-                })
-            );
-            if (created.isMaterialized) yield* attempt(() => created.isMaterialized!);
+            if (!options.replica) return yield* missing("CreateAttachment");
+            const created = yield* options.replica.attachments.create(blob, request);
+            if (created.isMaterialized) yield* created.isMaterialized;
             return created.attachment;
         }),
     read: (attachment: import("./attachmentTransfers.js").AttachmentValue, headers: Headers) =>
@@ -308,18 +304,12 @@ export const ontologyAttachmentHandlers = <R>(options: OntologyOperationOptions<
                 if (!options.backend.attachments?.read) return yield* missing("ReadAttachment");
                 return yield* options.backend.attachments.read(attachment);
             }
-            if (!options.ontology) return yield* missing("ReadAttachment");
-            return yield* attempt((signal) => options.ontology!.attachments.source(attachment, { signal }));
+            if (!options.replica) return yield* missing("ReadAttachment");
+            return yield* options.replica.attachments.source(attachment);
         }),
 });
 
 export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R>) => {
-    const live = () =>
-        (options.ready ?? Effect.void).pipe(
-            Effect.andThen(() =>
-                options.ontology ? Effect.succeed(options.ontology) : Effect.fail(missing("helpers"))
-            )
-        );
     return HelperRpcs.toLayer({
         Query: (request, context) =>
             Effect.gen(function* () {
@@ -334,7 +324,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                 yield* options.ready ?? Effect.void;
                 if (!options.backend) return yield* missing("LoadSubset");
                 const snapshot = yield* options.backend.loadSubset(subset);
-                const ir = options.ir ?? options.ontology?.ir;
+                const ir = options.ir ?? options.replica?.ir;
                 const objectType = ir?.objectTypes.find((type) => type.name === subset.objectType);
                 return !ir || !objectType
                     ? snapshot
@@ -412,28 +402,12 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                         });
                     return result;
                 }
-                const ontology = yield* live();
-                if (ontology.storage) {
-                    const result = yield* ontology.storage.decrypt(request.value, { cache: request.cache });
-                    return {
-                        ...result,
-                        value: encryptedPropertyCodec(ontology.ir, request.value).encode(result.value),
-                    };
-                }
-                const value = yield* Effect.tryPromise({
-                    try: (signal) => ontology.decrypt(request.value, { cache: request.cache, signal }),
-                    catch: decryptFailure,
-                });
-                return yield* Effect.try({
-                    try: () => ({ value: encryptedPropertyCodec(ontology.ir, request.value).encode(value) }),
-                    catch: () =>
-                        new BackendError({
-                            operation: "decrypt",
-                            kind: "InvalidResponse",
-                            message: "Invalid decrypted value.",
-                            retryable: false,
-                        }),
-                });
+                if (!options.replica) return yield* missing("Decrypt");
+                const result = yield* options.replica.decrypt(request.value, { cache: request.cache });
+                return {
+                    ...result,
+                    value: encryptedPropertyCodec(options.replica.ir, request.value).encode(result.value),
+                };
             }).pipe(Effect.mapError(decryptFailure)),
         ResolveActionParameters: (request, context) =>
             Effect.gen(function* () {
@@ -447,12 +421,8 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                         return yield* missing("ResolveActionParameters");
                     return yield* options.backend.resolveActionParameters(request.name, request.parameters);
                 }
-                const ontology = yield* live();
-                const action = Object.hasOwn(ontology.actions, request.name)
-                    ? ontology.actions[request.name]
-                    : undefined;
-                if (!action) return yield* missing("ResolveActionParameters");
-                return yield* attempt(() => action.resolveParameters(request.parameters));
+                if (!options.replica) return yield* missing("ResolveActionParameters");
+                return yield* options.replica.actions.resolveParameters(request.name, request.parameters);
             }),
         QueryFunction: (request, context) =>
             Effect.gen(function* () {
@@ -462,12 +432,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                     if (!options.backend.queryFunction) return yield* missing(request.name);
                     return yield* options.backend.queryFunction(request.name, request.parameters);
                 }
-                const ontology = yield* live();
-                const query = Object.hasOwn(ontology.queryFunctions, request.name)
-                    ? ontology.queryFunctions[request.name]
-                    : undefined;
-                if (!query) return yield* missing(request.name);
-                return yield* attempt(() => query(request.parameters));
+                return yield* missing(request.name);
             }),
         ValidateAction: (request, context) =>
             Effect.gen(function* () {
@@ -478,18 +443,12 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                             knownParameters: request.knownParameters,
                         })
                         .pipe(Effect.map((report) => projectValidationReport(report, options, request.name)));
-                const ontology = yield* live();
-                const action = Object.hasOwn(ontology.actions, request.name)
-                    ? ontology.actions[request.name]
-                    : undefined;
-                if (!action) return yield* missing(request.name);
-                return yield* attempt(() =>
-                    request.knownParameters
-                        ? action.validateDraft(request.parameters, {
-                              knownParameters: request.knownParameters,
-                          })
-                        : action.validate(request.parameters)
-                ).pipe(Effect.map((report) => projectValidationReport(report, options, request.name)));
+                const report = options.replica
+                    ? yield* options.replica.actions.validate(request.name, request.parameters, {
+                          knownParameters: request.knownParameters,
+                      })
+                    : { certain: false as const };
+                return projectValidationReport(report, options, request.name);
             }),
         AttachmentMetadata: (request, context) =>
             Effect.gen(function* () {
@@ -501,16 +460,16 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                         select: request.select,
                     });
                 }
-                const ontology = yield* live();
-                return yield* attempt(() =>
-                    ontology.attachments.metadata(request.attachment, {
-                        select: (request.select as readonly ("size" | "type" | "name")[]) ?? [
-                            "size",
-                            "type",
-                            "name",
-                        ],
-                    })
-                );
+                if (!options.replica) return yield* missing("AttachmentMetadata");
+                return yield* options.replica.attachments
+                    .metadata(request.attachment, { select: request.select })
+                    .pipe(
+                        Effect.map(({ name, dimensions, ...rest }) => ({
+                            ...rest,
+                            name: name ?? undefined,
+                            dimensions: dimensions ?? undefined,
+                        }))
+                    );
             }),
         ControlOutbox: (request, context) =>
             Effect.gen(function* () {
@@ -523,37 +482,24 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                     },
                     context.headers
                 );
-                const ontology = yield* live();
+                const outbox = options.replica?.outbox;
+                if (!outbox) return yield* missing("ControlOutbox");
                 if (request.operation === "edit") {
-                    const invocation = request.invocation;
-                    if (!invocation || invocation.id !== request.id) return yield* missing("edit invocation");
-                    yield* attempt(() =>
-                        ontology.outbox.edit(request.id, (draft) => {
-                            draft.actionTypeName = invocation.name;
-                            draft.parameters = invocation.parameters;
-                        })
-                    );
+                    if (!request.invocation || request.invocation.id !== request.id)
+                        return yield* missing("edit invocation");
+                    yield* outbox.edit(request.id, request.invocation);
                 } else if (request.operation === "remove")
-                    yield* attempt(() =>
-                        ontology.outbox.remove(request.id, {
-                            allowUnknownOutcome: request.allowUnknownOutcome,
-                        })
-                    );
-                else
-                    yield* attempt(() =>
-                        ontology.outbox.retry(request.id, {
-                            allowUnknownOutcome: request.allowUnknownOutcome,
-                        })
-                    );
+                    yield* outbox.remove(request.id, { allowUnknownOutcome: request.allowUnknownOutcome });
+                else yield* outbox.retry(request.id, { allowUnknownOutcome: request.allowUnknownOutcome });
             }),
         ReplicaStatus: (_, context) =>
             Stream.unwrap(
                 Effect.gen(function* () {
                     yield* Effect.annotateCurrentSpan("activity", "subscription");
                     yield* options.authorize({ operation: "ReplicaStatus" }, context.headers);
-                    const ontology = yield* live();
-                    if (!ontology.storage) return yield* missing("ReplicaStatus");
-                    return ontology.storage.status.changes;
+                    yield* options.ready ?? Effect.void;
+                    if (!options.replica) return yield* missing("ReplicaStatus");
+                    return options.replica.status.changes;
                 })
             ),
         Traces: (_, context) =>
@@ -561,8 +507,8 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                 Effect.gen(function* () {
                     yield* Effect.annotateCurrentSpan("activity", "subscription");
                     yield* options.authorize({ operation: "Traces" }, context.headers);
-                    const ontology = yield* live();
-                    const traces = ontology.traces;
+                    yield* options.ready ?? Effect.void;
+                    const traces = options.traces;
                     if (!traces) return Stream.succeed([]);
                     return Stream.callback<readonly Schema.Schema.Type<typeof Trace>[]>(
                         (queue) =>
@@ -612,6 +558,18 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
 type OperationsRpcClient = Effect.Success<
     ReturnType<typeof RpcClient.make<RpcGroup.Rpcs<typeof OntologyOperationRpcs>>>
 >;
+export interface ProtocolAttachments {
+    readonly create: (
+        input: ByteInput | ReadableByteInput,
+        options?: AttachmentCreateOptions
+    ) => Effect.Effect<{ readonly attachment: attachment }, BackendError>;
+    readonly source: (attachment: attachment) => Effect.Effect<ByteSource, BackendError>;
+    readonly blob: (attachment: attachment) => Effect.Effect<Blob, BackendError>;
+    readonly metadata: (
+        attachment: attachment,
+        options?: { readonly select?: readonly ("size" | "type" | "name" | "dimensions")[] }
+    ) => Effect.Effect<Schema.Schema.Type<typeof Metadata>, BackendError>;
+}
 export interface OntologyOperationsClient {
     readonly query: (
         document: import("@party-stack/ontology-spec").QueryDocument,
@@ -619,7 +577,7 @@ export interface OntologyOperationsClient {
     ) => Effect.Effect<Record<string, unknown>, BackendError>;
     /** Portable plaintext; the view decodes it against its ontology definition. Cache policy runs at the owner. */
     readonly decrypt: (
-        value: import("@party-stack/ontology/values").Encrypted,
+        value: import("@party-stack/ontology-spec/values").Encrypted,
         options?: { cache?: boolean }
     ) => Effect.Effect<unknown, BackendError>;
     readonly queryFunction: (
@@ -635,7 +593,7 @@ export interface OntologyOperationsClient {
         parameters: Record<string, unknown>,
         knownParameters?: readonly string[]
     ) => Effect.Effect<import("@party-stack/ontology-backend").ValidationReport, BackendError>;
-    readonly attachments: LiveOntology["attachments"];
+    readonly attachments: ProtocolAttachments;
     readonly outbox: Pick<
         import("@party-stack/ontology-replica").ReplicaService["outbox"],
         "remove" | "retry" | "edit"
@@ -652,11 +610,6 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
     const replicaMonitor = yield* makeReplicaMonitor(client.ReplicaStatus().pipe(Stream.mapError(failure)));
     const scope = yield* Effect.scope;
     const context = yield* Effect.context<never>();
-    const run = <A, E>(work: Effect.Effect<A, E>, signal?: AbortSignal) =>
-        Effect.runPromiseWith(context)(
-            Effect.acquireUseRelease(Effect.forkIn(work, scope), Fiber.join, Fiber.interrupt),
-            { signal }
-        );
     const listeners = new Set<() => void>();
     let spans: readonly TraceRecord[] = [];
     let watcher: Fiber.Fiber<void> | undefined;
@@ -702,11 +655,11 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
         },
     };
     yield* Effect.addFinalizer(() => (watcher ? Fiber.interrupt(watcher).pipe(Effect.asVoid) : Effect.void));
-    const attachments: LiveOntology["attachments"] = {
-        create: async (input, opts) => {
-            const blob = attachmentByteSource(input);
-            const attachment = await run(
-                Effect.gen(function* () {
+    const attachments: ProtocolAttachments = {
+        create: (input, opts) =>
+            Effect.gen(function* () {
+                const blob = attachmentByteSource(input);
+                const attachment = yield* Effect.gen(function* () {
                     let result: Schema.Schema.Type<typeof Attachment> | undefined;
                     yield* Stream.runForEach(
                         client.CreateAttachment({
@@ -747,81 +700,69 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
                     );
                     if (!result) return yield* missing("completed attachment transfer");
                     return result;
-                })
-            );
-            return { attachment } as Awaited<ReturnType<LiveOntology["attachments"]["create"]>>;
-        },
-        source: async (attachment, options): Promise<ByteSource> => {
-            const readScope = await run(Scope.fork(scope), options?.signal);
-            try {
-                // Read the stream's own header. A separate metadata request can
-                // otherwise download the whole body to derive unknown size/name.
-                const [header, tail] = await run(
-                    Scope.provide(
+                });
+                return { attachment };
+            }).pipe(Effect.mapError(failure)),
+        source: (attachment) =>
+            Effect.gen(function* () {
+                const readScope = yield* Scope.fork(scope);
+                return yield* Effect.gen(function* () {
+                    // Read the stream's own header. A separate metadata request can
+                    // otherwise download the whole body to derive unknown size/name.
+                    const [header, tail] = yield* Scope.provide(
                         Stream.peel(
                             client.ReadAttachment(attachment),
                             Sink.head<Stream.Success<ReturnType<OperationsRpcClient["ReadAttachment"]>>>()
                         ),
                         readScope
-                    ),
-                    options?.signal
-                );
-                if (Option.isNone(header) || header.value.kind !== "metadata")
-                    throw failure(new Error("Missing attachment metadata."));
-                const { kind: _kind, ...metadata } = header.value;
-                let consumed = false;
-                return {
-                    ...metadata,
-                    stream: Stream.suspend(() => {
-                        if (consumed)
-                            return Stream.unwrap(
-                                Effect.tryPromise({
-                                    try: () => attachments.source(attachment, options),
-                                    catch: failure,
-                                }).pipe(Effect.map((source) => source.stream))
-                            );
-                        consumed = true;
-                        let received = 0;
-                        return Stream.concat(
-                            tail.pipe(
-                                Stream.mapEffect((event) =>
+                    );
+                    if (Option.isNone(header) || header.value.kind !== "metadata")
+                        return yield* failure(new Error("Missing attachment metadata."));
+                    const { kind: _kind, ...metadata } = header.value;
+                    let consumed = false;
+                    return {
+                        ...metadata,
+                        stream: Stream.suspend(() => {
+                            if (consumed)
+                                return Stream.unwrap(
+                                    attachments.source(attachment).pipe(Effect.map((source) => source.stream))
+                                );
+                            consumed = true;
+                            let received = 0;
+                            return Stream.concat(
+                                tail.pipe(
+                                    Stream.mapEffect((event) =>
+                                        Effect.gen(function* () {
+                                            if (event.kind !== "bytes")
+                                                return yield* failure(
+                                                    new Error("Duplicate attachment metadata.")
+                                                );
+                                            received += event.bytes.length;
+                                            if (metadata.size !== undefined && received > metadata.size)
+                                                return yield* failure(
+                                                    new Error("Attachment exceeds its declared size.")
+                                                );
+                                            return event.bytes;
+                                        })
+                                    )
+                                ),
+                                Stream.fromEffect(
                                     Effect.gen(function* () {
-                                        if (event.kind !== "bytes")
+                                        if (metadata.size !== undefined && received !== metadata.size)
                                             return yield* failure(
-                                                new Error("Duplicate attachment metadata.")
+                                                new Error("Incomplete attachment download.")
                                             );
-                                        received += event.bytes.length;
-                                        if (metadata.size !== undefined && received > metadata.size)
-                                            return yield* failure(
-                                                new Error("Attachment exceeds its declared size.")
-                                            );
-                                        return event.bytes;
                                     })
-                                )
-                            ),
-                            Stream.fromEffect(
-                                Effect.gen(function* () {
-                                    if (metadata.size !== undefined && received !== metadata.size)
-                                        return yield* failure(new Error("Incomplete attachment download."));
-                                })
-                            ).pipe(Stream.drain)
-                        ).pipe(Stream.ensuring(Scope.close(readScope, Exit.void)));
-                    }).pipe(Stream.provideContext(context)),
-                };
-            } catch (cause) {
-                await Effect.runPromise(Scope.close(readScope, Exit.void));
-                throw failure(cause);
-            }
-        },
-        blob: async (attachment) => run(collectByteBlob(await attachments.source(attachment))),
-        metadata: async (
-            attachment: import("@party-stack/ontology/values").attachment,
-            opts?: { select: readonly ("size" | "type" | "name" | "dimensions")[] }
-        ) =>
-            ({
-                ...attachment,
-                ...(await run(client.AttachmentMetadata({ attachment, select: opts?.select }))),
-            }) as Awaited<ReturnType<LiveOntology["attachments"]["metadata"]>>,
+                                ).pipe(Stream.drain)
+                            ).pipe(Stream.ensuring(Scope.close(readScope, Exit.void)));
+                        }).pipe(Stream.provideContext(context)),
+                    };
+                }).pipe(Effect.onError(() => Scope.close(readScope, Exit.void)));
+            }).pipe(Effect.mapError(failure)),
+        blob: (attachment) =>
+            attachments.source(attachment).pipe(Effect.flatMap(collectByteBlob), Effect.mapError(failure)),
+        metadata: (attachment, opts) =>
+            client.AttachmentMetadata({ attachment, select: opts?.select }).pipe(Effect.mapError(failure)),
     };
     return {
         query: (document, inputs) => client.Query({ document, inputs }).pipe(Effect.mapError(failure)),

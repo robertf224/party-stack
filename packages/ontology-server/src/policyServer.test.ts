@@ -1,8 +1,9 @@
-import { o, executeTransactionMutator, makeStorageOntologyBackend } from "@party-stack/ontology";
+import { executeAction } from "@party-stack/ontology-backend/actions";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { CurrentExecutionContext } from "@party-stack/ontology-backend/policy";
+import { makeStorageBackend } from "@party-stack/ontology-backend/storage";
 import { makeReplica } from "@party-stack/ontology-replica";
-import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
-import * as Memory from "@party-stack/ontology-storage/memory/tables";
+import { o } from "@party-stack/ontology-spec";
 import {
     and,
     context,
@@ -15,8 +16,10 @@ import {
     selectField,
     sub,
     validatePolicy,
-} from "@party-stack/ontology/query";
-import { contextPartition } from "@party-stack/ontology/utils";
+} from "@party-stack/ontology-spec/query";
+import { contextPartition } from "@party-stack/ontology-spec/utils";
+import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
+import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { RpcTest } from "effect/rpc";
@@ -25,13 +28,13 @@ import { projectOntologyBackend } from "./authorization.js";
 import { makeOntologyServer } from "./composition.js";
 import { OntologyRpcs, ontologyRpcHandlers } from "./rpc.js";
 import { connectOntologyHttp } from "./rpcHttp.js";
-import type { OntologyIR, TypeDef } from "@party-stack/ontology";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type {
     OwnedReadTransaction,
     OwnedStorageService,
     OwnedBackendService,
 } from "@party-stack/ontology-backend/owned";
+import type { OntologyIR, TypeDef } from "@party-stack/ontology-spec";
 
 const property = (name: string, type: TypeDef = o.string({})) => ({ name, displayName: name, type });
 function definition(): OntologyIR {
@@ -269,12 +272,10 @@ test("generated action updates preserve unread properties and untouched nested f
                 tables: yield* Memory.make(),
                 mutators: {
                     edit: (tx, request) =>
-                        executeTransactionMutator({
+                        executeAction({
                             ir,
                             tx,
-                            name: request.name,
-                            operationId: request.id,
-                            parameters: request.parameters,
+                            request,
                             context: principal,
                         }).pipe(Effect.asVoid),
                 },
@@ -340,13 +341,15 @@ test("a shared native backend uses each invocation's trusted context without ret
                     delete: () => Effect.void,
                 },
             });
-            const owned = yield* makeStorageOntologyBackend({
+            const owned = yield* makeStorageBackend({
                 ir,
                 namespace: "shared-context",
                 tables,
                 blobs,
                 context: { user: "service", tenant: "org", role: "service" },
-                queryFunctions: { actor: ({ context }) => context.user },
+                queryFunctions: {
+                    actor: () => Effect.map(CurrentExecutionContext, (context) => context?.user ?? "service"),
+                },
             });
             yield* owned.storage.transaction((tx) =>
                 Effect.gen(function* () {

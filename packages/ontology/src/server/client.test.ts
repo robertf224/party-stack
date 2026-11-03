@@ -1,6 +1,11 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import {
+    makeOntologyProtocolClient,
+    ontologyRpcHandlers,
+    OntologyRpcs,
+} from "@party-stack/ontology-server/rpc";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { MemoryBlobBytesStore, Runtime } from "@party-stack/runtime";
 import { makeTestRuntime } from "@party-stack/runtime/testing";
@@ -8,9 +13,8 @@ import { queryOnce } from "@tanstack/db";
 import { Effect, Layer } from "effect";
 import { RpcTest } from "effect/rpc";
 import { expect, test } from "vite-plus/test";
-import { createConnectedLiveOntology } from "./liveClient.js";
-import { makeOntologyProtocolClient, ontologyRpcHandlers, OntologyRpcs } from "./rpc.js";
-import type { OntologyConnection } from "./rpc.js";
+import { createConnectedLiveOntology } from "./client.js";
+import type { OntologyConnection } from "@party-stack/ontology-server/rpc";
 
 const ir: OntologyIR = {
     types: [],

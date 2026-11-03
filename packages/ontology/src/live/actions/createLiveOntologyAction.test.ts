@@ -1,23 +1,10 @@
+import { resolveReadActionParameters } from "@party-stack/ontology-backend/actions";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
-import { queryOnce, createCollection, localOnlyCollectionOptions } from "@tanstack/db";
+import { Effect } from "effect";
 import { Temporal } from "temporal-polyfill";
-import { afterAll, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { createLiveOntologyAction } from "./createLiveOntologyAction.js";
 import type { OntologyActionRequest } from "../outbox/types.js";
-import type { OntologyObject } from "@party-stack/ontology-spec";
-
-const users = createCollection(
-    localOnlyCollectionOptions<OntologyObject, string | number>({
-        id: "resolve-action-parameters-users",
-        getKey: (user) => user.id as string | number,
-        initialData: [
-            {
-                id: "user-1",
-                profile: { name: "Ada" },
-            },
-        ],
-    })
-);
 
 const action: OntologyIR["actionTypes"][number] = {
     name: "resolveDefaults",
@@ -168,23 +155,27 @@ const ir: OntologyIR = {
 };
 
 const liveAction = createLiveOntologyAction({
-    ir,
     action,
-    context: { actor: "user-1" },
-    objects: { User: users },
+    resolveParameters: (name, parameters) =>
+        Effect.runPromise(
+            resolveReadActionParameters({
+                ir,
+                name,
+                parameters,
+                context: { actor: "user-1" },
+                read: {
+                    get: () => Effect.succeed({ id: "user-1", profile: { name: "Ada" } }),
+                    loadSubset: () => Effect.succeed([]),
+                },
+            })
+        ),
     submit: vi.fn(),
     validate: vi.fn(),
     validateDraft: vi.fn(),
 });
 
 describe("LiveOntologyAction.resolveParameters", () => {
-    afterAll(async () => {
-        await users.cleanup();
-    });
-
     it("resolves defaults from partial parameters", async () => {
-        await queryOnce((q) => q.from({ row: users }));
-
         const resolved = await liveAction.resolveParameters({
             entries: [{ code: "alpha" }],
             user: "user-1",
@@ -228,10 +219,8 @@ describe("LiveOntologyAction submission", () => {
             return Promise.resolve({});
         });
         const actionWithDefaults = createLiveOntologyAction({
-            ir,
             action,
-            context: { actor: "user-1" },
-            objects: { User: users },
+            resolveParameters: vi.fn(),
             submit,
             validate: vi.fn(),
             validateDraft: vi.fn(),

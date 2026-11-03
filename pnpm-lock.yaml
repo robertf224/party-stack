@@ -973,15 +973,15 @@ importers:
 
   packages/durable-object-ontology-storage:
     dependencies:
-      '@party-stack/ontology':
-        specifier: workspace:*
-        version: link:../ontology
       '@party-stack/ontology-backend':
         specifier: workspace:*
         version: link:../ontology-backend
       '@party-stack/ontology-server':
         specifier: workspace:*
         version: link:../ontology-server
+      '@party-stack/ontology-spec':
+        specifier: workspace:*
+        version: link:../ontology-spec
       '@party-stack/ontology-storage':
         specifier: workspace:*
         version: link:../ontology-storage
@@ -1004,12 +1004,12 @@ importers:
       '@party-stack/build-config':
         specifier: workspace:*
         version: link:../build-config
+      '@party-stack/ontology':
+        specifier: workspace:*
+        version: link:../ontology
       '@party-stack/ontology-replica':
         specifier: workspace:*
         version: link:../ontology-replica
-      '@party-stack/ontology-spec':
-        specifier: workspace:*
-        version: link:../ontology-spec
       '@tanstack/db':
         specifier: 0.14.0
         version: 0.14.0(typescript@7.0.2)
@@ -1516,6 +1516,9 @@ importers:
       '@party-stack/ontology-replica':
         specifier: workspace:*
         version: link:../ontology-replica
+      '@party-stack/ontology-server':
+        specifier: workspace:*
+        version: link:../ontology-server
       '@party-stack/ontology-spec':
         specifier: workspace:*
         version: link:../ontology-spec
@@ -1547,12 +1550,18 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@effect/platform-browser':
+        specifier: ^4.0.5
+        version: 4.0.5(effect@4.0.5)
       '@party-stack/build-config':
         specifier: workspace:*
         version: link:../build-config
       '@tanstack/db':
         specifier: 0.14.0
         version: 0.14.0(typescript@7.0.2)
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.1
       better-sqlite3:
         specifier: ^12.9.0
         version: 12.9.0
@@ -1748,12 +1757,6 @@ importers:
 
   packages/ontology-server:
     dependencies:
-      '@party-stack/connect':
-        specifier: workspace:*
-        version: link:../connect
-      '@party-stack/ontology':
-        specifier: workspace:*
-        version: link:../ontology
       '@party-stack/ontology-backend':
         specifier: workspace:*
         version: link:../ontology-backend
@@ -1779,9 +1782,6 @@ importers:
       '@party-stack/build-config':
         specifier: workspace:*
         version: link:../build-config
-      '@tanstack/db':
-        specifier: 0.14.0
-        version: 0.14.0(typescript@7.0.2)
       '@types/node':
         specifier: ^24.10.1
         version: 24.10.1

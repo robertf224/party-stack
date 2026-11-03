@@ -39,6 +39,14 @@
         "./query": {
             "types": "./lib/query.d.ts",
             "default": "./lib/query.js"
+        },
+        "./client": {
+            "types": "./lib/server/client.d.ts",
+            "default": "./lib/server/client.js"
+        },
+        "./installation/worker": {
+            "types": "./lib/installation/worker.d.ts",
+            "default": "./lib/installation/worker.js"
         }
     },
     "scripts": {
@@ -54,6 +62,7 @@
         "@party-stack/node-runtime": "workspace:*",
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-replica": "workspace:*",
+        "@party-stack/ontology-server": "workspace:*",
         "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
@@ -66,8 +75,10 @@
         "zod": "^4.4.3"
     },
     "devDependencies": {
+        "@effect/platform-browser": "^4.0.5",
         "@party-stack/build-config": "workspace:*",
         "@tanstack/db": "0.14.0",
+        "@types/node": "^24.10.1",
         "better-sqlite3": "^12.9.0",
         "tsx": "^4.20.6",
         "typescript": "~7.0.2",

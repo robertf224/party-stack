@@ -197,12 +197,8 @@ export const runOntologyResource: (
             message: "A repeated action did not recover its receipt.",
             retryable: false,
         });
-    const orphan = yield* Effect.promise(() =>
-        client.operations.attachments.create(new Blob(["orphan"]), { id: "orphan" })
-    );
-    const retained = yield* Effect.promise(() =>
-        client.operations.attachments.create(new Blob(["retained"]), { id: "retained" })
-    );
+    const orphan = yield* client.operations.attachments.create(new Blob(["orphan"]), { id: "orphan" });
+    const retained = yield* client.operations.attachments.create(new Blob(["retained"]), { id: "retained" });
     yield* client.backend.applyAction({
         id: "asset",
         name: "createAsset",
@@ -210,12 +206,9 @@ export const runOntologyResource: (
     });
     if (shape.alarm) yield* withTestRuntime(shape.alarm(), bucket);
     const afterAlarm = yield* Effect.promise(() => state.storage.getAlarm());
-    const readOrphan = yield* Effect.result(
-        Effect.tryPromise(() => client.operations.attachments.blob(orphan.attachment))
-    );
-    const content = yield* Effect.promise(async () =>
-        (await client.operations.attachments.blob(retained.attachment)).text()
-    );
+    const readOrphan = yield* Effect.result(client.operations.attachments.blob(orphan.attachment));
+    const blob = yield* client.operations.attachments.blob(retained.attachment);
+    const content = yield* Effect.promise(() => blob.text());
     // A second activation must reuse durable rows and leave a scheduled alarm untouched.
     const reopened = yield* withTestRuntime(
         (yield* construct).pipe(Effect.provideService(DurableObjectState, fromDurableObjectState(state))),

@@ -3,14 +3,11 @@ import {
     byteSource,
     byteChunks,
     collectByteBlob,
-    makeBlobStorage,
-    exclusiveOwnerLiveness,
     type BlobStorageService,
     type BlobRecord,
     type ByteInput,
     type ByteSource,
 } from "@party-stack/ontology-storage/blobs";
-import { Runtime } from "@party-stack/runtime";
 import { Effect, Exit, Fiber, RcMap, Scope, Semaphore, Stream, Queue } from "effect";
 import { measureBlobDimensions } from "./dimensions.js";
 import type { BlobReadOptions, BlobMetadataOptions, PartialBlobMetadata } from "./types.js";
@@ -63,10 +60,9 @@ const abortable = (stream: Stream.Stream<Uint8Array, unknown>, signal?: AbortSig
 /** Native acquisition and IO. The host scope joins all reads, writes and maintenance;
  * only the outer application client converts these Effects to Promises.
  */
-export const makeBlobManager = Effect.fn("BlobManager.make")(function* (
-    options: BlobManagerOptions
-): Effect.fn.Return<BlobManagerService, BackendError, Runtime | Scope.Scope> {
-    const runtime = yield* Runtime;
+export const makeBlobManagerFromStorage = Effect.fn("BlobManager.make")(function* (
+    options: BlobManagerOptions & { readonly storage: BlobStorageService }
+): Effect.fn.Return<BlobManagerService, BackendError, Scope.Scope> {
     const context = yield* Effect.context<never>();
     const owner = yield* Scope.fork(yield* Effect.scope);
     const gcTime = options.gcTime ?? Infinity;
@@ -87,14 +83,7 @@ export const makeBlobManager = Effect.fn("BlobManager.make")(function* (
             );
             const cachePressure = yield* Queue.sliding<void>(1);
             yield* Effect.addFinalizer(() => Queue.shutdown(cachePressure));
-            const nativeStorage = yield* boundary(
-                makeBlobStorage({
-                    namespace: JSON.stringify([runtime.owner, runtime.namespace]),
-                    tables: runtime.tables,
-                    bytes: runtime.bytes,
-                    ...exclusiveOwnerLiveness(runtime.tables),
-                })
-            );
+            const nativeStorage = options.storage;
             const wakePressure =
                 options.budget?.maxBytes === undefined
                     ? Effect.void

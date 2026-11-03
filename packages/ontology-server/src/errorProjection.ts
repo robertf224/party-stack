@@ -1,13 +1,13 @@
 import { BackendError, projectBackendError } from "@party-stack/ontology-backend";
 import { Effect, Layer } from "effect";
 import { RpcMiddleware } from "effect/rpc";
-import type { OntologyIR } from "@party-stack/ontology";
 import type {
     ErrorProjection,
     ErrorProjectionContext,
     ValidationReport,
 } from "@party-stack/ontology-backend";
 import type { ReplicaStateSnapshot } from "@party-stack/ontology-backend/protocol";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 
 export interface ErrorProjectionOptions {
     readonly errors?: ErrorProjection;

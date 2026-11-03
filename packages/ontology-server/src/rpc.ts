@@ -35,10 +35,11 @@ import {
 import { RpcActivity } from "./rpcActivity.js";
 import { makeRpcBackend } from "./rpcBackend.js";
 import type { AttachmentTransferPolicy } from "./attachmentTransfers.js";
-import type { LiveOntology } from "@party-stack/ontology";
 import type { BackendSubset } from "@party-stack/ontology-backend";
 import type { ClientSession, ClientToken } from "@party-stack/ontology-backend/clients";
 import type { ClientSubmission, ClientView, OntologySource } from "@party-stack/ontology-backend/protocol";
+import type { ReplicaService } from "@party-stack/ontology-replica";
+import type { TraceStore } from "@party-stack/runtime/tracing";
 import type { Headers } from "effect/http/Headers";
 
 const Counter = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }));
@@ -189,7 +190,8 @@ export interface OntologyRpcServerOptions<R = never> extends ErrorProjectionOpti
     /** Server-controlled selected-delivery capacity, frame and acknowledgment bounds. */
     readonly delivery?: import("@party-stack/ontology-backend/delivery").DeliveryPolicy;
     readonly source?: OntologySource;
-    readonly ontology?: LiveOntology;
+    readonly replica?: ReplicaService;
+    readonly traces?: TraceStore;
     readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
     /** Worker bootstrap may run while transport starts accepting requests. */
     readonly ready?: Effect.Effect<void, BackendError, R>;
@@ -210,8 +212,8 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
     const operationOptions = snapshots
         ? {
               ...options,
-              get ontology() {
-                  return options.ontology;
+              get replica() {
+                  return options.replica;
               },
               get backend() {
                   const backend = options.backend;
@@ -328,7 +330,7 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                                 )
                             ),
                             actionParameterResolution: Boolean(
-                                options.backend?.resolveActionParameters || options.ontology
+                                options.backend?.resolveActionParameters || options.replica
                             ),
                             queries: Boolean(options.query),
                         };
@@ -580,3 +582,5 @@ export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(f
     };
     return { ...common, replication: { kind: "speculative", source } };
 });
+
+export { errorProjectionLayer } from "./errorProjection.js";

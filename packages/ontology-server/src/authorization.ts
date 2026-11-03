@@ -1,5 +1,5 @@
-import { resolveReadActionParameters } from "@party-stack/ontology";
 import { BackendError, projectBackendError, schemaValidationIssues } from "@party-stack/ontology-backend";
+import { resolveReadActionParameters } from "@party-stack/ontology-backend/actions";
 import {
     authorizeAction,
     CurrentActionAuthorization,

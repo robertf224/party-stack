@@ -1,4 +1,4 @@
-import { makeStorageOntologyBackend } from "@party-stack/ontology";
+import { makeStorageBackend } from "@party-stack/ontology-backend/storage";
 import { makeOntologyServer } from "@party-stack/ontology-server";
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
@@ -23,7 +23,7 @@ async function handleRequest(request: Request): Promise<Response> {
         return HttpEffect.toWebHandler(
             Effect.gen(function* () {
                 const context = { user: selected.user.id };
-                const backend = yield* makeStorageOntologyBackend({
+                const backend = yield* makeStorageBackend({
                     ir: serverOntology,
                     namespace: serverStorage.namespace,
                     context,

@@ -400,9 +400,14 @@ it("a scoped installation releases its live ontologies and connections with its 
     );
     try {
         const connection = await installation.authentication.signIn();
-        await Effect.runPromise(
-            installation.openOntology({ userId: connection.userId, ontologyId: "ontology" })
-        );
+        const selection = { userId: connection.userId, ontologyId: "ontology" };
+        const host = await Effect.runPromise(installation.openReplica(selection));
+        expect(host.replica.context).toEqual({ user: connection.userId });
+        expect(host).not.toHaveProperty("objects");
+        expect(host).not.toHaveProperty("dbClient");
+        const view = await Effect.runPromise(installation.openOntology(selection));
+        expect(view.storage).toBe(host.replica);
+        expect(await Effect.runPromise(installation.openOntology(selection))).toBe(view);
         await Effect.runPromise(Scope.close(scope, Exit.void));
         expect(installation.connections.size).toBe(0);
         expect(cleanup).toHaveBeenCalledOnce();

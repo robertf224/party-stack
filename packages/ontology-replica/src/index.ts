@@ -2,6 +2,11 @@ import { Context, Effect, Layer } from "effect";
 import { makeReplicaHost } from "./host.js";
 import { ReplicaUpstream } from "./upstream.js";
 import type { ReplicaService } from "./service.js";
+export type {
+    ReplicaAttachments,
+    AttachmentCreateOptions,
+    AttachmentCreation,
+} from "./attachments/service.js";
 export { makeReplica } from "./service.js";
 export type {
     ReplicaService,
@@ -19,7 +24,7 @@ export type { PinOptions, PinStatus } from "./pins.js";
 export type { DemandPolicy, DemandRefreshPolicy } from "./demandCache.js";
 export { ReplicaUpstream } from "./upstream.js";
 export type { ReplicaUpstreamService } from "./upstream.js";
-export type { ActionWaitOptions, ObjectCacheSweepOptions, ObjectCacheGcPolicy } from "./engine.js";
+export type { ActionWaitOptions, ObjectCacheSweepOptions, ObjectCacheGcPolicy } from "./policies.js";
 export type { PendingAction } from "@party-stack/ontology-backend/protocol";
 export class Replica extends Context.Service<Replica, ReplicaService>()(
     "@party-stack/ontology-replica/Replica"

@@ -1,5 +1,5 @@
-import { o, type OntologyIR } from "@party-stack/ontology";
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
+import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { byteChunks, collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { Deferred, Effect, Fiber, Stream } from "effect";
 import { FetchHttpClient } from "effect/http";

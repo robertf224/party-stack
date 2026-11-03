@@ -1,9 +1,9 @@
-import { o, type OntologyIR, type LiveOntology } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
+import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import { eq, field, literal, selectField, sub } from "@party-stack/ontology-spec/query";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { eq, field, literal, selectField, sub } from "@party-stack/ontology/query";
 import { makeMemoryEncryptionKeyring } from "@party-stack/runtime";
 import { Deferred, Effect, Fiber } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -112,11 +112,20 @@ test("memory clients forward cache policy to their persistent ontology owner", a
         Effect.scoped(
             Effect.gen(function* () {
                 const { owned } = yield* setup();
-                const decrypt = vi.fn(async () => Temporal.Instant.from(plaintext));
-                const ontology = { ir, decrypt } as unknown as LiveOntology;
+                const decrypt = vi.fn(() =>
+                    Effect.succeed({ value: Temporal.Instant.from(plaintext), ciphertext: value.ciphertext })
+                );
+                const owner = yield* makeReplica({
+                    namespace: "cache-owner",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend: owned,
+                    live: false,
+                });
+                const replica = { ...owner, decrypt };
                 const handler = yield* makeOntologyHttpHandler({
                     source: owned.protocol,
-                    ontology,
+                    replica,
                     authorize: () => Effect.void,
                 });
                 const client = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" }).pipe(
@@ -126,10 +135,7 @@ test("memory clients forward cache policy to their persistent ontology owner", a
                     )
                 );
                 expect(yield* client.operations.decrypt(value, { cache: true })).toBe(plaintext);
-                expect(decrypt).toHaveBeenCalledWith(
-                    value,
-                    expect.objectContaining({ cache: true, signal: expect.any(AbortSignal) })
-                );
+                expect(decrypt).toHaveBeenCalledWith(value, { cache: true });
             })
         )
     );
@@ -196,24 +202,28 @@ test("cancelling decrypt RPC aborts the persistent owner's operation", async () 
                 const { owned } = yield* setup();
                 const started = yield* Deferred.make<void>();
                 let aborted = false;
-                const ontology = {
+                const owner = yield* makeReplica({
+                    namespace: "abort-owner",
                     ir,
-                    decrypt: (_value: unknown, settings?: { signal?: AbortSignal }) =>
-                        new Promise<never>((_resolve, reject) => {
-                            settings?.signal?.addEventListener(
-                                "abort",
-                                () => {
+                    tables: yield* Memory.make(),
+                    backend: owned,
+                    live: false,
+                });
+                const replica = {
+                    ...owner,
+                    decrypt: () =>
+                        Deferred.succeed(started, undefined).pipe(
+                            Effect.andThen(Effect.never),
+                            Effect.onInterrupt(() =>
+                                Effect.sync(() => {
                                     aborted = true;
-                                    reject(new Error("aborted"));
-                                },
-                                { once: true }
-                            );
-                            Effect.runSync(Deferred.succeed(started, undefined));
-                        }),
-                } as unknown as LiveOntology;
+                                })
+                            )
+                        ),
+                };
                 const handler = yield* makeOntologyHttpHandler({
                     source: owned.protocol,
-                    ontology,
+                    replica,
                     authorize: () => Effect.void,
                 });
                 const client = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" }).pipe(

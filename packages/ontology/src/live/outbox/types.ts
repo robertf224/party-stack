@@ -1,3 +1,4 @@
+import type { ActionRequest } from "@party-stack/ontology-backend";
 import type { Collection } from "@tanstack/db";
 
 export type OntologyOutboxStatus = import("@party-stack/ontology-backend/protocol").PendingAction["state"];
@@ -13,7 +14,7 @@ export interface OntologyActionRequest {
     actionTypeName: string;
     parameters: Record<string, unknown>;
     idempotencyKey: string;
-    replay?: import("../expression.js").ExpressionReplay;
+    replay?: NonNullable<ActionRequest["replay"]>;
 }
 
 export interface OntologyOutboxEntry {

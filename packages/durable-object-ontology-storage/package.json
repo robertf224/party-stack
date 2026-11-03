@@ -19,9 +19,9 @@
         "dev:fixture": "WRANGLER_WRITE_LOGS=0 wrangler dev --config wrangler.fixture.jsonc --local --persist-to ../../temp/durable-object-ontology-storage-fixture"
     },
     "dependencies": {
-        "@party-stack/ontology": "workspace:*",
         "@party-stack/ontology-backend": "workspace:*",
         "@party-stack/ontology-server": "workspace:*",
+        "@party-stack/ontology-spec": "workspace:*",
         "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "@party-stack/sql-ontology-storage": "workspace:*",
@@ -31,8 +31,8 @@
         "@cloudflare/vitest-plugin": "^1.4.0",
         "@cloudflare/workers-types": "^5.20260827.1",
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/ontology": "workspace:*",
         "@party-stack/ontology-replica": "workspace:*",
-        "@party-stack/ontology-spec": "workspace:*",
         "@tanstack/db": "0.14.0",
         "alchemy": "^2.0.0-beta.83",
         "esbuild": "^0.28.1",
@@ -43,7 +43,6 @@
         "wrangler": "^4.127.0"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.14.0",
         "alchemy": "2.0.0-beta.83"
     }
 }

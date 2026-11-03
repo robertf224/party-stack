@@ -21,7 +21,7 @@ import { Headers, HttpClient, HttpClientRequest, Multipart } from "effect/http";
 import { Attachment, AttachmentUploadSchema } from "./attachmentTransfers.js";
 import { errorContext } from "./errorProjection.js";
 import { ontologyAttachmentHandlers, type OntologyOperationOptions } from "./operations.js";
-import type { LiveOntology } from "@party-stack/ontology";
+import type { ProtocolAttachments } from "./operations.js";
 import type { Scope } from "effect";
 
 const uploadParameter = "attachment-upload";
@@ -116,7 +116,7 @@ export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
             return Response.json(Schema.encodeSync(Attachment)(attachment));
         }
         const backend = options.backend;
-        const ir = options.ir ?? options.ontology?.ir;
+        const ir = options.ir ?? options.replica?.ir;
         if (!backend || !ir)
             return yield* new BackendError({
                 operation: "applyAction",
@@ -294,7 +294,7 @@ export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
 /** The HTTP transport shares its configured Effect HttpClient (credentials, tracing, cancellation). */
 export const makeHttpAttachmentClient = Effect.fnUntraced(function* (url: string): Effect.fn.Return<
     {
-        readonly create: LiveOntology["attachments"]["create"];
+        readonly create: ProtocolAttachments["create"];
         readonly applyAction: (
             request: ActionRequest
         ) => Effect.Effect<import("@party-stack/ontology-backend").ActionReceipt, BackendError>;
@@ -303,8 +303,6 @@ export const makeHttpAttachmentClient = Effect.fnUntraced(function* (url: string
     HttpClient.HttpClient | Scope.Scope
 > {
     const http = yield* HttpClient.HttpClient;
-    const captured = yield* Effect.context<never>();
-    const scope = yield* Effect.scope;
     const execute = Effect.fnUntraced(function* <A, I>(
         request: HttpClientRequest.HttpClientRequest,
         schema: Schema.Codec<A, I>
@@ -319,25 +317,21 @@ export const makeHttpAttachmentClient = Effect.fnUntraced(function* (url: string
         }
         return yield* Schema.decodeUnknownEffect(schema)(data).pipe(Effect.mapError(failure));
     });
-    const run = <A>(effect: Effect.Effect<A, BackendError>) =>
-        Effect.runPromiseWith(captured)(
-            Effect.acquireUseRelease(Effect.forkIn(effect, scope), Fiber.join, Fiber.interrupt)
-        );
-    const create: LiveOntology["attachments"]["create"] = async (input, options) => {
-        const source = attachmentByteSource(input);
-        const request = HttpClientRequest.post(url).pipe(
-            HttpClientRequest.setUrlParam(
-                uploadParameter,
-                JSON.stringify({ size: source.size, type: source.type, name: source.name, ...options })
-            ),
-            HttpClientRequest.bodyStream(byteChunks(source), {
-                contentType: "application/octet-stream",
-                contentLength: source.size,
-            })
-        );
-        const attachment = await run(execute(request, Attachment));
-        return { attachment } as Awaited<ReturnType<LiveOntology["attachments"]["create"]>>;
-    };
+    const create: ProtocolAttachments["create"] = (input, options) =>
+        Effect.gen(function* () {
+            const source = attachmentByteSource(input);
+            const request = HttpClientRequest.post(url).pipe(
+                HttpClientRequest.setUrlParam(
+                    uploadParameter,
+                    JSON.stringify({ size: source.size, type: source.type, name: source.name, ...options })
+                ),
+                HttpClientRequest.bodyStream(byteChunks(source), {
+                    contentType: "application/octet-stream",
+                    contentLength: source.size,
+                })
+            );
+            return { attachment: yield* execute(request, Attachment) };
+        });
     const applyAction = Effect.fnUntraced(function* (invocation: ActionRequest) {
         const uploads = invocation.attachmentUploads ?? [];
         const files = uploads.map((upload) => ({

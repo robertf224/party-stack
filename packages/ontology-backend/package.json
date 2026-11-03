@@ -41,6 +41,10 @@
         "./subset": {
             "types": "./lib/subset.d.ts",
             "default": "./lib/subset.js"
+        },
+        "./storage": {
+            "types": "./lib/storage.d.ts",
+            "default": "./lib/storage.js"
         }
     },
     "dependencies": {

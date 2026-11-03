@@ -1,10 +1,10 @@
 import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
 import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunner";
-import { o, type OntologyIR } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
+import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
@@ -12,7 +12,6 @@ import { expect, test, vi } from "vite-plus/test";
 import { replicaController } from "../../ontology-replica/lib/internal.js";
 import { connectOntologyWorker, serveOntologyWorker, serveOpenedOntologyWorker } from "./rpcWorker.js";
 import type { OntologyConnection } from "./rpc.js";
-import type { LiveOntology } from "@party-stack/ontology";
 import type { OwnedTransaction } from "@party-stack/ontology-backend/owned";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 
@@ -181,7 +180,8 @@ test("worker composition serves during delayed acquisition and releases its open
                     open: Effect.gen(function* () {
                         yield* Deferred.succeed(started, undefined);
                         yield* Deferred.await(gate);
-                        return { storage: owner, cleanup, destroy: cleanup } as unknown as LiveOntology;
+                        yield* Effect.addFinalizer(() => Effect.promise(cleanup));
+                        return { replica: owner, backend };
                     }),
                     errors: "forward",
                     authorize: () => Effect.void,
@@ -474,16 +474,18 @@ test("streams attachment transfers over MessagePorts into a source-only backend"
                 };
                 const connection = yield* openPort(owned.protocol, backend);
                 const data = new Uint8Array(170_000).map((_, index) => index % 251);
-                const { attachment } = yield* Effect.promise(() =>
-                    connection.operations.attachments.create(new Blob([data], { type: "image/png" }), {
+                const { attachment } = yield* connection.operations.attachments.create(
+                    new Blob([data], { type: "image/png" }),
+                    {
                         id: "port-file",
-                    })
+                    }
                 );
-                const blob = yield* Effect.promise(() => connection.operations.attachments.blob(attachment));
+                const blob = yield* connection.operations.attachments.blob(attachment);
                 expect(new Uint8Array(yield* Effect.promise(() => blob.arrayBuffer()))).toEqual(data);
-                expect(
-                    yield* Effect.promise(() => connection.operations.attachments.metadata(attachment))
-                ).toMatchObject({ size: data.length, type: "image/png" });
+                expect(yield* connection.operations.attachments.metadata(attachment)).toMatchObject({
+                    size: data.length,
+                    type: "image/png",
+                });
             })
         )
     );

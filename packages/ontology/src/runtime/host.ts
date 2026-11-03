@@ -1,7 +1,6 @@
 import { makeReplicaHost as openHost } from "@party-stack/ontology-replica/host";
 import { Effect, Fiber } from "effect";
 import { createLiveOntologyAttachments } from "../live/attachments/createLiveOntologyAttachments.js";
-import { blobManagerClient } from "./blobs/createBlobManager.js";
 import { observeReplicaRows } from "./hostQuery.js";
 import { actionMutators } from "./transactions.js";
 import type { LiveOntology, LiveOntologyWrites } from "../live/LiveOntology.js";
@@ -10,11 +9,8 @@ import type { ConnectionMonitor } from "@party-stack/connect";
 import type { BackendError, BackendSubset, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { ReplicaOptions, ReplicaService } from "@party-stack/ontology-replica";
-import type { BlobManagerService } from "@party-stack/ontology-replica/attachments";
-import type { AttachmentTypeDef, OntologyIR } from "@party-stack/ontology-spec";
-import type { attachment } from "@party-stack/ontology-spec/values";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { Row } from "@party-stack/ontology-storage";
-import type { ByteInput } from "@party-stack/ontology-storage/blobs";
 import type { Runtime } from "@party-stack/runtime";
 import type { Scope, Stream } from "effect";
 interface ReplicaHostCommonOptions {
@@ -45,13 +41,7 @@ export type ReplicaHostOptions = ReplicaHostCommonOptions &
 export interface ReplicaHostService {
     readonly replica: ReplicaService;
     readonly backend: OntologyBackendService;
-    readonly blobManager: BlobManagerService;
     readonly attachments: LiveOntology["attachments"];
-    readonly stageAttachment?: (
-        value: attachment,
-        bytes: ByteInput,
-        target?: AttachmentTypeDef
-    ) => Promise<attachment>;
     readonly observe: (
         subset: BackendSubset,
         options?: { readonly persistedOnly?: boolean }
@@ -86,18 +76,9 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
             ),
             { signal }
         );
-    const stageAttachment = native.stageAttachment
-        ? (value: attachment, bytes: ByteInput, target?: AttachmentTypeDef) =>
-              run(native.stageAttachment!(value, bytes, target))
-        : undefined;
     return {
         ...native,
-        stageAttachment,
-        attachments: createLiveOntologyAttachments({
-            ir: options.ir,
-            blobManager: blobManagerClient(native.blobManager, run),
-            stageAttachment,
-        }),
+        attachments: createLiveOntologyAttachments({ attachments: native.replica.attachments, run }),
         observe: (subset, settings) => observeReplicaRows(native.replica, subset, settings),
     };
 });

@@ -2,6 +2,7 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { Deferred, Effect, Exit, Fiber, Layer, Scope } from "effect";
 import { RpcClient, RpcServer } from "effect/rpc";
+import { replicaServerBackend } from "./composition.js";
 import {
     makeOntologyProtocolClient,
     ontologyRpcHandlers,
@@ -9,8 +10,10 @@ import {
     makeOntologyRpcClient,
 } from "./rpc.js";
 import type { OntologyRpcServerOptions, OntologyConnection } from "./rpc.js";
-import type { LiveOntology } from "@party-stack/ontology";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
+import type { ReplicaService } from "@party-stack/ontology-replica";
+import type { TraceStore } from "@party-stack/runtime/tracing";
 import type { Worker, WorkerRunner } from "effect/workers";
 import type { WorkerError } from "effect/workers/WorkerError";
 
@@ -89,10 +92,20 @@ export const connectOntologyWorker = Effect.fn("OntologyServer.connectWorker")(f
 
 export interface ServeOpenedOntologyWorkerOptions<R = never> extends Omit<
     OntologyRpcServerOptions<R>,
-    "source" | "ontology" | "backend" | "ready" | "deleteLocalData" | "releaseOwner"
+    "source" | "replica" | "backend" | "traces" | "ready" | "deleteLocalData" | "releaseOwner"
 > {
-    /** Domain-specific acquisition. The host also releases the returned facade on shutdown. */
-    readonly open: Effect.Effect<LiveOntology, BackendError, R | Scope.Scope>;
+    /** Resources acquired here belong to the worker's Scope. */
+    readonly open: Effect.Effect<
+        {
+            readonly replica: ReplicaService;
+            readonly backend?: OntologyBackendService;
+            readonly context?: Record<string, unknown>;
+            readonly traces?: TraceStore;
+            readonly deleteLocalData?: Effect.Effect<void, BackendError>;
+        },
+        BackendError,
+        R | Scope.Scope
+    >;
 }
 
 /** Start serving before restoring private state. Describe waits for readiness and
@@ -103,8 +116,9 @@ export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(
 ) {
     const ready = yield* Deferred.make<OntologySource, BackendError>();
     const released = yield* Deferred.make<void>();
-    let ontology: LiveOntology | undefined;
+    let opened: Effect.Success<typeof options.open> | undefined;
     let source: OntologySource | undefined;
+    let backend: OntologyBackendService | undefined;
     const current = Deferred.await(ready);
     const startupScope = yield* Scope.fork(yield* Effect.scope);
     const proxy: OntologySource = {
@@ -118,8 +132,8 @@ export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(
         read: (session, view) => Effect.flatMap(current, (value) => value.read(session, view)),
         submit: (request) => Effect.flatMap(current, (value) => value.submit(request)),
         accept: (request) => Effect.flatMap(current, (value) => value.accept!(request)),
-        subscribe: (session, view, policy) =>
-            Effect.flatMap(current, (value) => value.subscribe!(session, view, policy)),
+        subscribe: (session, view, policy, resume) =>
+            Effect.flatMap(current, (value) => value.subscribe!(session, view, policy, resume)),
         acknowledgeDelivery: (position) =>
             Effect.flatMap(current, (value) => value.acknowledgeDelivery!(position)),
         acknowledge: (...args) => Effect.flatMap(current, (value) => value.acknowledge(...args)),
@@ -128,18 +142,9 @@ export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(
     };
     yield* Effect.forkScoped(
         Effect.gen(function* () {
-            const live = yield* Effect.acquireRelease(options.open, (value) =>
-                Effect.promise(() => value.cleanup())
-            );
-            if (!live.storage)
-                return yield* new BackendError({
-                    operation: "worker.open",
-                    kind: "NotImplemented",
-                    message: "A worker ontology host requires a replica.",
-                    retryable: false,
-                });
-            ontology = live;
-            source = replicaStateSource(live.storage);
+            opened = yield* options.open;
+            source = replicaStateSource(opened.replica);
+            if (opened.backend) backend = replicaServerBackend(opened.replica, opened.backend);
             yield* Deferred.succeed(ready, source);
         }).pipe(
             Scope.provide(startupScope),
@@ -150,22 +155,34 @@ export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(
     const server = yield* serveOntologyWorker({
         ...options,
         source: proxy,
-        get ontology() {
-            return ontology;
+        get replica() {
+            return opened?.replica;
+        },
+        get backend() {
+            return backend;
+        },
+        get ir() {
+            return opened?.replica.ir;
+        },
+        get context() {
+            return opened?.context ?? opened?.replica.context;
+        },
+        get traces() {
+            return opened?.traces;
         },
         ready: Effect.asVoid(current),
-        deleteLocalData: Effect.flatMap(current, () =>
-            Effect.tryPromise({
-                try: () => ontology!.destroy(),
-                catch: (cause) =>
+        deleteLocalData: Effect.flatMap(
+            current,
+            () =>
+                opened?.deleteLocalData ??
+                Effect.fail(
                     new BackendError({
                         operation: "worker.deleteLocalData",
-                        kind: "Unavailable",
-                        retryable: true,
-                        message: "Could not delete the local partition.",
-                        cause,
-                    }),
-            })
+                        kind: "NotImplemented",
+                        message: "Local partition deletion is unavailable.",
+                        retryable: false,
+                    })
+                )
         ),
         releaseOwner: Deferred.succeed(released, undefined).pipe(Effect.asVoid),
     });

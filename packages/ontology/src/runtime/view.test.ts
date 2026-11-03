@@ -224,14 +224,27 @@ test.each(["pause", "discard-all"] as const)(
                         attachments: {} as LiveOntology["attachments"],
                     }).pipe(Effect.provideService(Runtime, runtime));
                     yield* replicaController(child).retainActions();
-                    const enqueue = (id: string) =>
-                        Effect.promise(() =>
+                    const enqueue = Effect.fnUntraced(function* (id: string) {
+                        const pending = yield* Effect.promise(() =>
                             view.outbox.enqueue({
                                 idempotencyKey: id,
                                 actionTypeName: "rename",
                                 parameters: { title: "invalid" },
                             })
+                        ).pipe(Effect.forkScoped({ startImmediately: true }));
+                        yield* Effect.promise(() =>
+                            vi.waitFor(async () => {
+                                expect(
+                                    (await Effect.runPromise(replicaController(child).pendingActions)).some(
+                                        (entry) => entry.invocation.id === id
+                                    )
+                                ).toBe(true);
+                            })
                         );
+                        // This manual fixture advances forwarding before awaiting durable acceptance.
+                        yield* child.syncOnce;
+                        return yield* Fiber.join(pending);
+                    });
                     const first = yield* enqueue("correct");
                     yield* child.syncOnce;
                     yield* Effect.result(owner.syncOnce);
@@ -361,7 +374,6 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                                 context: {},
                                 replica,
                                 writes: { defaultMode: "outbox", defaultVisibility: "optimistic" },
-                                awaitParentAcceptance: true,
                                 queryFunction: () => Effect.void,
                                 attachments: {} as LiveOntology["attachments"],
                             }).pipe(Effect.provideService(Runtime, runtime));

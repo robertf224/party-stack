@@ -1,4 +1,3 @@
-import { classifyBackendFailure } from "@party-stack/ontology-backend";
 import { BackendError } from "@party-stack/ontology-backend";
 import { Effect, Layer } from "effect";
 import { HttpEffect } from "effect/http";
@@ -86,16 +85,9 @@ export const connectOntologyHttp = Effect.fn("RemoteOntology.connectHttp")(funct
             attachments: {
                 ...connection.backend.attachments!,
                 stage: (value, bytes) =>
-                    Effect.tryPromise({
-                        try: async () =>
-                            (
-                                await uploads.create(bytes, {
-                                    id: value.id,
-                                    eager: connection.replication.kind === "committed",
-                                })
-                            ).attachment,
-                        catch: (cause) => classifyBackendFailure("remote.attachment", cause),
-                    }),
+                    uploads
+                        .create(bytes, { id: value.id, eager: connection.replication.kind === "committed" })
+                        .pipe(Effect.map((created) => created.attachment)),
             },
             applyAction: (invocation) =>
                 invocation.attachmentUploads?.length

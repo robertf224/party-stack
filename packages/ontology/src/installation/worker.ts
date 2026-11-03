@@ -1,7 +1,13 @@
 import { createConnectionMonitor, ConnectionError, type Connection } from "@party-stack/connect";
 import { BackendError, classifyBackendFailure, unauthenticated } from "@party-stack/ontology-backend";
 import { protocolValueCodec } from "@party-stack/ontology-backend/protocol";
-import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
+import { ontologyServerHandlers } from "@party-stack/ontology-server";
+import { errorProjectionLayer } from "@party-stack/ontology-server/rpc";
+import {
+    makeOntologyProtocolClient,
+    makeTracedRpcClient,
+    OntologyRpcs,
+} from "@party-stack/ontology-server/rpc";
 import { TraceRecording } from "@party-stack/runtime/tracing";
 import {
     Cause,
@@ -20,17 +26,15 @@ import {
     Schedule,
 } from "effect";
 import { Rpc, RpcClient, RpcGroup, RpcSchema, RpcServer } from "effect/rpc";
-import { errorProjectionLayer } from "./errorProjection.js";
-import { createConnectedLiveOntology } from "./liveClient.js";
-import { makeOntologyProtocolClient, makeTracedRpcClient, ontologyRpcHandlers, OntologyRpcs } from "./rpc.js";
-import type { makeOntologyRpcClient } from "./rpc.js";
+import { createConnectedLiveOntology } from "../server/client.js";
 import type {
     LiveOntology,
     OntologyBackendInstallation,
     OntologyBackendInstallationService,
     OntologyDefinition,
     LiveOntologyWrites,
-} from "@party-stack/ontology";
+} from "../index.js";
+import type { makeOntologyRpcClient } from "@party-stack/ontology-server/rpc";
 import type { MetaOntology } from "@party-stack/ontology-spec/meta";
 import type { RuntimeLayer, BrowserAuthentication } from "@party-stack/runtime";
 import type { Worker, WorkerRunner } from "effect/workers";
@@ -151,35 +155,20 @@ export const serveInstallationWorker = Effect.fn("OntologyInstallation.serveWork
                                 })
                         )
                     );
-                    const live = yield* Effect.acquireRelease(
+                    const host = yield* Effect.acquireRelease(installation.openReplica(selection), (host) =>
                         (selection.meta
-                            ? installation.openMetaOntology(selection)
-                            : installation.openOntology(selection)) as Effect.Effect<
-                            LiveOntology,
-                            BackendError
-                        >,
-                        (live) =>
-                            (selection.meta
-                                ? installation.closeMetaOntology({ ...selection, ifReplica: live.storage })
-                                : installation.closeOntology({ ...selection, ifReplica: live.storage })
-                            ).pipe(
-                                Effect.catch((error) =>
-                                    Effect.logError("Ontology host cleanup failed", error)
-                                )
-                            )
+                            ? installation.closeMetaOntology({ ...selection, ifReplica: host.replica })
+                            : installation.closeOntology({ ...selection, ifReplica: host.replica })
+                        ).pipe(
+                            Effect.catch((error) => Effect.logError("Ontology host cleanup failed", error))
+                        )
                     );
-                    if (!live.storage)
-                        return yield* new BackendError({
-                            operation: "installation.open",
-                            kind: "InvalidConfiguration",
-                            retryable: false,
-                            message: "An installation worker requires an ontology replica.",
-                        });
-                    return ontologyRpcHandlers({
-                        ontology: live,
-                        source: replicaStateSource(live.storage),
-                        ir: live.ir,
-                        context: live.context,
+                    return ontologyServerHandlers({
+                        kind: "replica",
+                        replica: host.replica,
+                        traces: host.traces,
+                        backend: host.backend,
+                        ir: host.ir,
                         errors: "forward",
                         authorize: () => Effect.void,
                     });

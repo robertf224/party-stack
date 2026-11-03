@@ -1,4 +1,4 @@
-import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/ontology/utils";
+import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/ontology-spec/utils";
 import type {
     ActionLogicStep,
     ActionTypeDef,
@@ -8,7 +8,7 @@ import type {
     PropertyAssignment,
     TypeDef,
     InputReferenceExpression,
-} from "@party-stack/ontology";
+} from "@party-stack/ontology-spec";
 
 export type FixedActionParameterValue = Expression;
 

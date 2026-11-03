@@ -65,7 +65,7 @@ presentation remains in the page. Neither storage broadcasts nor shared-table
 access from tabs are needed.
 
 `serveInstallationWorker` and `connectInstallationWorker` are in
-`@party-stack/ontology-server/installation/worker`. They multiplex ontology RPC
+`@party-stack/ontology/installation/worker`. They multiplex ontology RPC
 alongside trusted same-origin installation controls. Pass an `open` Effect to
 start the transport before installation acquisition; clients receive typed startup
 failures. An already acquired installation is also accepted. They are not public server

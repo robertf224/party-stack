@@ -1,4 +1,4 @@
-import { o, type OntologyIR } from "@party-stack/ontology";
+import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { describe, expect, it } from "vite-plus/test";
 import { projectOntologyDefinition } from "./definitionProjection.js";
 

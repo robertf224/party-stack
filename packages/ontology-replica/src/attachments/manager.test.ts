@@ -1,13 +1,149 @@
+import { classifyBackendFailure } from "@party-stack/ontology-backend";
 import { BackendError } from "@party-stack/ontology-backend";
+import { makeBlobStorage, exclusiveOwnerLiveness } from "@party-stack/ontology-storage/blobs";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
+import { Runtime } from "@party-stack/runtime";
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
 import { runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { closeRuntimeFixture } from "@party-stack/runtime/testing";
+import { Context, Exit, Fiber, Scope } from "effect";
 import { Deferred, Effect, Stream } from "effect";
 import { expect, test, vi } from "vite-plus/test";
-import { createBlobManager } from "./createBlobManager.js";
+import {
+    makeBlobManagerFromStorage,
+    type BlobManagerService,
+    type BlobManagerOptions as NativeBlobManagerOptions,
+} from "./manager.js";
+import type {
+    PartialBlobMetadata,
+    BlobReadOptions,
+    BlobMetadataOptions,
+} from "@party-stack/ontology-replica/attachments";
+import type { BlobStorageService, ByteInput, ByteSource } from "@party-stack/ontology-storage/blobs";
+import type { RuntimeService } from "@party-stack/runtime";
 import type { RuntimeFixtureOptions } from "@party-stack/runtime/testing";
+
+const makeBlobManager = Effect.fnUntraced(function* (options: NativeBlobManagerOptions) {
+    const runtime = yield* Runtime;
+    const storage = yield* makeBlobStorage({
+        namespace: JSON.stringify([runtime.owner, runtime.namespace]),
+        tables: runtime.tables,
+        bytes: runtime.bytes,
+        ...exclusiveOwnerLiveness(runtime.tables),
+    }).pipe(Effect.mapError((cause) => classifyBackendFailure("attachment.storage", cause)));
+    return yield* makeBlobManagerFromStorage({ ...options, storage });
+});
+
+export interface BlobRemoteSource {
+    metadata?: (id: string, opts?: BlobMetadataOptions) => Promise<PartialBlobMetadata>;
+    read: (id: string, opts?: BlobReadOptions) => Promise<ByteInput>;
+}
+
+export interface BlobManager {
+    /** Native transactional storage for composition with a replica outbox. */
+    readonly storage: Promise<BlobStorageService>;
+    /** Resolves once blob metadata persistence has finished starting. */
+    readonly ready: Promise<void>;
+    stage: (id: string, blob: ByteInput) => Promise<void>;
+    metadata: (id: string, opts?: BlobMetadataOptions) => Promise<PartialBlobMetadata & { id: string }>;
+    source: (id: string, opts?: BlobReadOptions) => Promise<ByteSource>;
+    read: (id: string, opts?: BlobReadOptions) => Promise<Blob>;
+    bindRemoteId: (localId: string, remoteId: string) => Promise<void>;
+    cleanup: () => Promise<void>;
+}
+
+export interface BlobManagerOptions {
+    runtime: RuntimeService;
+    scope: Scope.Scope;
+    remote: BlobRemoteSource;
+    gcTime?: number;
+}
+
+/** Test-only Promise runner over the native manager and its Scope. */
+function blobManagerClient(
+    service: BlobManagerService,
+    run: <A>(effect: Effect.Effect<A, BackendError>, signal?: AbortSignal) => Promise<A>,
+    cleanup: () => Promise<void> = () => Promise.resolve()
+): BlobManager {
+    return {
+        storage: Promise.resolve(service.storage),
+        ready: Promise.resolve(),
+        stage: (id, input) => run(service.stage(id, input)),
+        bindRemoteId: (id, remoteId) => run(service.bindRemoteId(id, remoteId)),
+        source: (id, options) => run(service.source(id, options), options?.signal),
+        read: (id, options) => run(service.read(id, options), options?.signal),
+        metadata: (id, options) => run(service.metadata(id, options), options?.signal),
+        cleanup,
+    };
+}
+
+function createBlobManager(options: BlobManagerOptions): BlobManager {
+    const runtime = options.runtime;
+    const owner = Effect.runSync(Scope.fork(options.scope));
+    const run = Effect.runPromiseWith(Context.make(Runtime, runtime));
+    const initialized = run(
+        Effect.flatMap(
+            Effect.forkIn(
+                Scope.provide(
+                    makeBlobManager({
+                        gcTime: options.gcTime,
+                        remote: {
+                            read: (id, settings) =>
+                                Effect.tryPromise({
+                                    try: (signal) =>
+                                        options.remote.read(id, {
+                                            ...settings,
+                                            signal: settings?.signal
+                                                ? AbortSignal.any([settings.signal, signal])
+                                                : signal,
+                                        }),
+                                    catch: (cause) => classifyBackendFailure("attachment.read", cause),
+                                }),
+                            metadata: options.remote.metadata
+                                ? (id, settings) =>
+                                      Effect.tryPromise({
+                                          try: (signal) =>
+                                              options.remote.metadata!(id, {
+                                                  ...settings,
+                                                  signal: settings?.signal
+                                                      ? AbortSignal.any([settings.signal, signal])
+                                                      : signal,
+                                              }),
+                                          catch: (cause) =>
+                                              classifyBackendFailure("attachment.metadata", cause),
+                                      })
+                                : undefined,
+                        },
+                    }),
+                    owner
+                ),
+                owner
+            ),
+            Fiber.join
+        )
+    );
+    let closing: Promise<void> | undefined;
+    const cleanup = () => (closing ??= Effect.runPromise(Scope.close(owner, Exit.void)));
+    const client = initialized.then((service) =>
+        blobManagerClient(service, (effect, signal) => run(effect, { signal }), cleanup)
+    );
+    const storage = initialized.then((service) => service.storage);
+    const ready = initialized.then(() => undefined);
+    void client.catch(() => undefined);
+    void storage.catch(() => undefined);
+    void ready.catch(() => undefined);
+    return {
+        storage,
+        ready,
+        cleanup,
+        stage: async (id, input) => (await client).stage(id, input),
+        bindRemoteId: async (id, remoteId) => (await client).bindRemoteId(id, remoteId),
+        source: async (id, settings) => (await client).source(id, settings),
+        read: async (id, settings) => (await client).read(id, settings),
+        metadata: async (id, settings) => (await client).metadata(id, settings),
+    };
+}
 
 test("native blob facade loads metadata on demand and preserves remote aliases after eviction", async () => {
     const tables = await Effect.runPromise(Memory.make());

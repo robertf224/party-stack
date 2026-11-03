@@ -1,6 +1,6 @@
 import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunner";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
-import { serveInstallationWorker } from "@party-stack/ontology-server/installation/worker";
+import { serveInstallationWorker } from "@party-stack/ontology/installation/worker";
 import { Runtimes } from "@party-stack/runtime";
 import { Effect, Fiber, Layer, Schema } from "effect";
 import { TRACKER_CACHE_EPOCH } from "./trackerConfig";

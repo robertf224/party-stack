@@ -2,11 +2,12 @@ import { o } from "@party-stack/ontology-spec";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
 import { asRuntimeLayer } from "@party-stack/runtime/testing";
-import { Effect } from "effect";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { Effect, Exit, Scope } from "effect";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { makeReplicaAttachments } from "../../../../ontology-replica/lib/attachments/service.js";
 import { createLiveOntology } from "../LiveOntology.js";
 import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
-import type { BlobManager } from "../../runtime/blobs/types.js";
+import type { BlobManagerService } from "../../../../ontology-replica/lib/attachments/manager.js";
 import type { OntologyBackendAdapter } from "../index.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
@@ -47,12 +48,25 @@ const actionIr: OntologyIR = {
     ],
 };
 
+const scopes: Scope.Closeable[] = [];
+afterEach(async () => {
+    for (const scope of scopes.splice(0)) await Effect.runPromise(Scope.close(scope, Exit.void));
+});
+const testAttachments = async (options: { ir: OntologyIR; blobManager: BlobManagerService }) => {
+    const scope = Effect.runSync(Scope.make());
+    scopes.push(scope);
+    const attachments = await Effect.runPromise(
+        Scope.provide(makeReplicaAttachments({ ir: options.ir, manager: options.blobManager }), scope)
+    );
+    return createLiveOntologyAttachments({ attachments, run: (work) => Effect.runPromise(work) });
+};
+
 describe("createLiveOntologyAttachments", () => {
     it("creates attachments with an existing opaque id", async () => {
-        const stage = vi.fn(() => Promise.resolve());
-        const attachments = createLiveOntologyAttachments({
+        const stage = vi.fn(() => Effect.void);
+        const attachments = await testAttachments({
             ir,
-            blobManager: { stage } as unknown as BlobManager,
+            blobManager: { stage } as unknown as BlobManagerService,
         });
         const file = new File(["hello"], "evidence.txt", {
             type: "text/plain",
@@ -99,9 +113,9 @@ describe("createLiveOntologyAttachments", () => {
             ],
         };
         const stage = vi.fn();
-        const attachments = createLiveOntologyAttachments({
+        const attachments = await testAttachments({
             ir: constrainedIr,
-            blobManager: { stage } as unknown as BlobManager,
+            blobManager: { stage } as unknown as BlobManagerService,
         });
 
         await expect(
@@ -142,10 +156,10 @@ describe("createLiveOntologyAttachments", () => {
                 },
             ],
         };
-        const stage = vi.fn(() => Promise.resolve());
-        const attachments = createLiveOntologyAttachments({
+        const stage = vi.fn(() => Effect.void);
+        const attachments = await testAttachments({
             ir: constrainedIr,
-            blobManager: { stage } as unknown as BlobManager,
+            blobManager: { stage } as unknown as BlobManagerService,
         });
 
         await expect(

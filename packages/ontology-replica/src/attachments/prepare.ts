@@ -27,14 +27,8 @@ export const prepareActionParameters = Effect.fn("Ontology.prepareActionParamete
     const attachments = collectActionAttachments(opts.ir, opts.actionTypeName, opts.parameters);
     if (!attachments.length) return { parameters: opts.parameters, attachmentUploads: [] };
     const manager = opts.blobManager;
-    if (!manager)
-        return yield* new BackendError({
-            operation: "attachment.prepare",
-            kind: "NotImplemented",
-            message: "Attachment storage is unavailable.",
-            retryable: false,
-            actionOutcome: "not-committed",
-        });
+    // Without local byte storage this replica can only reuse remote handles.
+    if (!manager) return { parameters: opts.parameters, attachmentUploads: [] };
     const storage = manager.storage;
     const uploads: OntologyAttachmentUpload[] = [];
     for (const entry of attachments) {

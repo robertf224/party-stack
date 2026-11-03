@@ -1,4 +1,3 @@
-import { makeReplicaHost, makeReplicaOntologyView } from "@party-stack/ontology";
 import { BackendError } from "@party-stack/ontology-backend";
 import { equalValues } from "@party-stack/ontology-spec/query";
 import { contextPartition } from "@party-stack/ontology-spec/utils";
@@ -7,8 +6,10 @@ import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Runtime, RuntimePartition } from "@party-stack/runtime";
 import { makeTraceCapture, type TraceRecordingMode } from "@party-stack/runtime/tracing";
 import { Context, Effect, Exit, Layer, ManagedRuntime, Scope, Stream, Tracer } from "effect";
-import type { OntologyConnection } from "./rpc.js";
-import type { LiveOntology, LiveOntologyWrites, OntologyIR } from "@party-stack/ontology";
+import { makeReplicaHost } from "../runtime/host.js";
+import { makeReplicaOntologyView } from "../runtime/view.js";
+import type { LiveOntology, LiveOntologyWrites, OntologyIR } from "../index.js";
+import type { OntologyConnection } from "@party-stack/ontology-server/rpc";
 
 export interface ConnectLiveOntologyOptions<R = never> {
     /** Defaults to the authenticated server definition returned by Describe. */
@@ -105,7 +106,6 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
             writes: options.writes,
             attachments,
             queryFunction: operations.queryFunction,
-            resolveActionParameters: operations.resolveActionParameters,
             traces,
             diagnosticLabel: options.label,
             parentDiagnostics: speculative
@@ -117,9 +117,6 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
                       traces: operations.traces,
                   }
                 : undefined,
-            awaitParentAcceptance: Boolean(speculative),
-            validate: (name, parameters) => operations.validate(name, parameters),
-            validateDraft: (name, parameters, known) => operations.validate(name, parameters, known),
         });
         const captured = yield* Effect.context<never>();
         let closing: Promise<void> | undefined;
@@ -153,7 +150,7 @@ export const connectLiveOntology = Effect.fn("OntologyClient.connect")(function*
 export async function createConnectedLiveOntology<E>(
     options: ConnectLiveOntologyOptions & { readonly runtime: Layer.Layer<Runtime, E, RuntimePartition> }
 ): Promise<LiveOntology> {
-    class Client extends Context.Service<Client, LiveOntology>()("@party-stack/ontology-server/Client") {}
+    class Client extends Context.Service<Client, LiveOntology>()("@party-stack/ontology/Client") {}
     const app = ManagedRuntime.make(
         Layer.unwrap(
             Effect.gen(function* () {

@@ -9,12 +9,7 @@ import type { LiveOntologyAttachments } from "../live/attachments/createLiveOnto
 import type { LiveOntology, LiveOntologyWrites } from "../live/LiveOntology.js";
 import type { OntologyApplyActionResult } from "../live/OntologyBackendAdapter.js";
 import type { OntologyOutbox, OntologyOutboxEntry, OntologyActionRequest } from "../live/outbox/types.js";
-import type {
-    ValidationReport,
-    OntologyBackendService,
-    ActionRequest,
-    ActionReceipt,
-} from "@party-stack/ontology-backend";
+import type { OntologyBackendService, ActionRequest, ActionReceipt } from "@party-stack/ontology-backend";
 import type { PendingAction, ReplicaService } from "@party-stack/ontology-replica";
 import type { OntologyIR, OntologyObject } from "@party-stack/ontology-spec";
 import type { TraceStore } from "@party-stack/runtime/tracing";
@@ -60,23 +55,9 @@ export interface ReplicaViewOptions {
     readonly replica: ReplicaService;
     readonly attachments: LiveOntologyAttachments;
     readonly queryFunction: OntologyBackendService["queryFunction"];
-    readonly resolveActionParameters?: OntologyBackendService["resolveActionParameters"];
     readonly traces?: TraceStore;
     readonly parentDiagnostics?: LiveOntology["diagnostics"];
     readonly diagnosticLabel?: string;
-    /** Memory children resolve enqueue only after their durable owner accepts the action. */
-    readonly awaitParentAcceptance?: boolean;
-    readonly validate?: (
-        name: string,
-        parameters: Record<string, unknown>,
-        objects: LiveOntology["objects"]
-    ) => Effect.Effect<ValidationReport, BackendError>;
-    readonly validateDraft?: (
-        name: string,
-        parameters: Record<string, unknown>,
-        knownParameters: readonly string[],
-        objects: LiveOntology["objects"]
-    ) => Effect.Effect<ValidationReport, BackendError>;
 }
 
 /** Materialize a scoped UI view over an existing replica; engine ownership is independent. */
@@ -183,7 +164,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
             return result;
         });
         void completed.catch(() => undefined);
-        if (options.awaitParentAcceptance) await accepted;
+        if (replica.upstreamKind === "speculative") await accepted;
         return { entry: toEntry(entry, replica.upstreamKind === "speculative"), accepted, completed };
     };
     const outbox: OntologyOutbox = {
@@ -212,42 +193,33 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         ir.actionTypes.map((action) => [
             action.name,
             createLiveOntologyAction({
-                ir,
                 action,
-                context,
-                objects,
-                resolveParameters: options.resolveActionParameters
-                    ? (name, parameters) => run(options.resolveActionParameters!(name, parameters))
-                    : undefined,
+                resolveParameters: (name, parameters) =>
+                    run(replica.actions.resolveParameters(name, parameters)),
                 submit: async (request, settings) => {
                     const visibility =
                         settings?.visibility ?? options.writes?.defaultVisibility ?? "confirmed";
                     const mode = settings?.mode ?? options.writes?.defaultMode ?? "direct";
-                    if (mode === "direct" && !(await run(services.connectivity.online)))
-                        throw new BackendError({
-                            operation: "applyAction",
-                            kind: "Unavailable",
-                            message: "Direct actions require connectivity. Use outbox mode to queue offline.",
-                            retryable: true,
-                            actionOutcome: "not-committed",
-                        });
-                    const queued = await enqueue(request, visibility);
-                    return queued.completed;
+                    const receipt = await run(
+                        replica.actions.apply(
+                            {
+                                id: request.idempotencyKey ?? crypto.randomUUID(),
+                                name: request.actionTypeName,
+                                parameters: request.parameters,
+                                replay: request.replay,
+                            },
+                            { mode, optimistic: visibility === "optimistic" }
+                        )
+                    );
+                    return actionResult(receipt);
                 },
-                validate: options.validate
-                    ? (name, parameters) => run(options.validate!(name, parameters, persistedObjects))
-                    : async () => ({ certain: false as const }),
-                validateDraft: options.validateDraft
-                    ? (name, parameters, settings) =>
-                          run(
-                              options.validateDraft!(
-                                  name,
-                                  parameters,
-                                  settings?.knownParameters ?? [],
-                                  persistedObjects
-                              )
-                          )
-                    : async () => ({ certain: false as const }),
+                validate: (name, parameters) => run(replica.actions.validate(name, parameters)),
+                validateDraft: (name, parameters, settings) =>
+                    run(
+                        replica.actions.validate(name, parameters, {
+                            knownParameters: settings?.knownParameters ?? [],
+                        })
+                    ),
             }),
         ])
     );

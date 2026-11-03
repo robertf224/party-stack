@@ -343,3 +343,19 @@ export const executeAction = Effect.fn("Action.execute")(function* (options: Act
         );
     return parameters;
 }, Effect.catchDefect(defect));
+
+/** Resolve defaults against an authorized transaction-consistent native reader. */
+export const resolveReadActionParameters = Effect.fn("Action.resolveParameters")(function* (options: {
+    readonly ir: OntologyIR;
+    readonly read: OwnedReadTransaction;
+    readonly context?: Record<string, unknown>;
+    readonly name: string;
+    readonly parameters: Record<string, unknown>;
+}) {
+    return yield* actionExpressions({
+        ir: options.ir,
+        tx: options.read,
+        request: { id: "resolve", name: options.name, parameters: options.parameters },
+        context: options.context,
+    }).resolve;
+});

@@ -1,4 +1,4 @@
-import { o, type OntologyIR } from "@party-stack/ontology";
+import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import {
     context,
     eq as expressionEq,
@@ -14,7 +14,7 @@ import { Effect } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { projectOntologyBackend } from "./authorization.js";
 import type { ActionRequest, OntologyBackendService } from "@party-stack/ontology-backend";
-import type { attachment } from "@party-stack/ontology/values";
+import type { attachment } from "@party-stack/ontology-spec/values";
 
 test("attachment reads re-find the handle in an authorized source row and declared property", async () => {
     const ir: OntologyIR = {

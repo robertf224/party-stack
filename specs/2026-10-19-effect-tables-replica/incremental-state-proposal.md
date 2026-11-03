@@ -71,7 +71,7 @@ are independent. The existing `WebRuntime.layer` already supports both
 | `ontology-replica`           | Replication state, demand, outbox, replay and retention.                                  |
 | `ontology/tanstack`          | Local/replicated collection options, subset translation, and demand diagnostics.          |
 | `ontology`                   | Domain execution and application collection/view composition.                             |
-| `ontology-server/client`     | Scoped `connectLiveOntology` and framework `createConnectedLiveOntology` composition.     |
+| `ontology/client`            | Scoped `connectLiveOntology` and framework `createConnectedLiveOntology` composition.     |
 | `ontology-server/rpc/worker` | Worker transport and `serveOpenedOntologyWorker` readiness/lifecycle.                     |
 
 TanStack integration now lives in `ontology/tanstack`. Connect's session manager

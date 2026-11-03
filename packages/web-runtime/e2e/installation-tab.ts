@@ -1,5 +1,5 @@
 import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
-import { connectInstallationWorker } from "@party-stack/ontology-server/installation/worker";
+import { connectInstallationWorker } from "@party-stack/ontology/installation/worker";
 import { queryOnce } from "@tanstack/db";
 import { Effect, Exit, Scope } from "effect";
 import * as WebRuntime from "../src/WebRuntime.js";

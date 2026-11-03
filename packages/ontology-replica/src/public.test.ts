@@ -229,3 +229,76 @@ test("the replica Layer acquires its platform resources from one Runtime bundle"
         ).pipe(Effect.provide(app))
     );
 });
+
+test("native parameter resolution acquires narrow demand for a cold object lookup", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const definition: OntologyIR = {
+                    ...ir,
+                    actionTypes: [
+                        {
+                            name: "resolve",
+                            displayName: "Resolve",
+                            logic: [],
+                            parameters: [
+                                {
+                                    name: "item",
+                                    displayName: "Item",
+                                    type: o.objectReference({ objectType: "Item" }),
+                                },
+                                {
+                                    name: "count",
+                                    displayName: "Count",
+                                    type: o.integer({}),
+                                    defaultValue: o.Expression.getAt({
+                                        source: o.Expression.lookup({
+                                            reference: o.Expression.inputReference({ name: "item" }),
+                                        }),
+                                        path: ["count"],
+                                    }),
+                                },
+                            ],
+                        },
+                    ],
+                };
+                const loads: BackendSubset[] = [];
+                const replica = yield* makeReplica({
+                    ir: definition,
+                    namespace: "resolve-cold",
+                    tables: yield* Memory.make(),
+                    live: false,
+                    backend: {
+                        name: "fixture",
+                        queryFunction: () => Effect.die("No query function"),
+                        sourceId: "fixture",
+                        supportsIdempotency: false,
+                        applyAction: () => Effect.die("Resolving defaults cannot submit"),
+                        loadSubset: (subset) =>
+                            Effect.sync(() => {
+                                loads.push(subset);
+                                return {
+                                    complete: true,
+                                    rows: evaluateQuery(
+                                        [
+                                            { key: "one", value: { id: "one", count: 7 } },
+                                            { key: "two", value: { id: "two", count: 99 } },
+                                        ],
+                                        subset.query
+                                    ),
+                                };
+                            }),
+                    },
+                });
+                expect(yield* replica.get("Item", "one")).toBeUndefined();
+                expect(yield* replica.actions.resolveParameters("resolve", { item: "one" })).toEqual({
+                    item: "one",
+                    count: 7,
+                });
+                expect(loads).toHaveLength(1);
+                expect(loads[0]?.query?.where).toMatchObject({ op: "eq", right: "one" });
+                expect(yield* replica.get("Item", "two")).toBeUndefined();
+            })
+        )
+    );
+});

@@ -1,9 +1,12 @@
+import { classifyBackendFailure } from "@party-stack/ontology-backend";
 import { o } from "@party-stack/ontology-spec";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
+import { makeBlobStorage, exclusiveOwnerLiveness } from "@party-stack/ontology-storage/blobs";
+import { Runtime } from "@party-stack/runtime";
 import { MemoryRuntime, RuntimePartition } from "@party-stack/runtime";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vitest";
-import { makeBlobManager } from "./manager.js";
+import { makeBlobManagerFromStorage, type BlobManagerOptions } from "./manager.js";
 import { prepareActionParameters } from "./prepare.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 const ir: OntologyIR = {
@@ -28,6 +31,12 @@ const ir: OntologyIR = {
 };
 
 describe("prepareActionParameters", () => {
+    it("reuses a remote handle when the replica has no local byte storage", async () => {
+        const parameters = { file: { id: "remote-only" } };
+        await expect(
+            Effect.runPromise(prepareActionParameters({ ir, actionTypeName: "uploadDocument", parameters }))
+        ).resolves.toEqual({ parameters, attachmentUploads: [] });
+    });
     it("collects staged bytes with their resolved attachment type targets", async () => {
         await Effect.runPromise(
             Effect.scoped(
@@ -83,4 +92,15 @@ describe("prepareActionParameters", () => {
             )
         );
     });
+});
+
+const makeBlobManager = Effect.fnUntraced(function* (options: BlobManagerOptions) {
+    const runtime = yield* Runtime;
+    const storage = yield* makeBlobStorage({
+        namespace: JSON.stringify([runtime.owner, runtime.namespace]),
+        tables: runtime.tables,
+        bytes: runtime.bytes,
+        ...exclusiveOwnerLiveness(runtime.tables),
+    }).pipe(Effect.mapError((cause) => classifyBackendFailure("attachment.storage", cause)));
+    return yield* makeBlobManagerFromStorage({ ...options, storage });
 });

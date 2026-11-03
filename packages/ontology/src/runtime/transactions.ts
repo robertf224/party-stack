@@ -5,7 +5,8 @@ import { BasicIndex, whenSyncAccepted, DbClient, collectionOptions } from "@tans
 import { Effect, Fiber, Semaphore } from "effect";
 import { createReadTx } from "../live/mutators/createReadTx.js";
 import { storageSubset } from "../tanstack/index.js";
-import type { ExpressionReplay } from "../live/expression.js";
+import type { ActionRequest } from "@party-stack/ontology-backend";
+type ExpressionReplay = NonNullable<ActionRequest["replay"]>;
 import type { OntologyMutatorTx } from "../live/mutators/types.js";
 import type { OntologyMutatorRegistry, PrepareTransactionSources } from "../live/mutators/types.js";
 import type { ActionMutatorRegistry } from "@party-stack/ontology-backend/actions";

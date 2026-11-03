@@ -318,18 +318,16 @@ test("a scoped replica host runs without application collections and outlives in
         await Effect.runPromise(Scope.close(firstSession, Exit.void));
         expect(await Effect.runPromise(replicaController(host.replica).pending)).toEqual([]);
         expect(released).not.toHaveBeenCalled();
-        await Effect.runPromise(host.blobManager.stage("local-attachment", new Blob(["local bytes"])));
-        await Effect.runPromise(host.blobManager.bindRemoteId("local-attachment", "remote-attachment"));
-        const blobs = host.blobManager.storage;
-        await Effect.runPromise(blobs.collectGarbage({ olderThanMs: 0 }));
+        const created = await Effect.runPromise(
+            host.replica.attachments.create(new Blob(["local bytes"]), { id: "local-attachment" })
+        );
+        expect(
+            await (await Effect.runPromise(host.replica.attachments.blob(created.attachment))).text()
+        ).toBe("local bytes");
         const source = { objectType: "Note", primaryKey: "one", property: "file" };
         expect(
             await (
-                await Effect.runPromise(
-                    host.blobManager.read("local-attachment", {
-                        meta: { attachment: { id: "local-attachment", source } },
-                    })
-                )
+                await Effect.runPromise(host.replica.attachments.blob({ id: "remote-attachment", source }))
             ).text()
         ).toBe("remote bytes");
         expect(readAttachment).toHaveBeenCalledWith({ id: "remote-attachment", source });
@@ -337,7 +335,9 @@ test("a scoped replica host runs without application collections and outlives in
         expect(await Effect.runPromise(replicaController(host.replica).pending)).toEqual([]);
         await Effect.runPromise(Scope.close(owner, Exit.void));
         expect(released).toHaveBeenCalledOnce();
-        await expect(Effect.runPromise(host.blobManager.read("local"))).rejects.toThrow("closed");
+        await expect(Effect.runPromise(host.replica.attachments.blob({ id: "local" }))).rejects.toThrow(
+            "closed"
+        );
         await expect(Effect.runPromise(replicaController(host.replica).pending)).rejects.toMatchObject({
             kind: "InvalidRequest",
         });

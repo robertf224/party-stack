@@ -1,4 +1,5 @@
-import { o, makeStorageOntologyBackend, type OntologyMutatorRegistry } from "@party-stack/ontology";
+import { o, makeStorageOntologyBackend } from "@party-stack/ontology";
+import { BackendError } from "@party-stack/ontology-backend";
 import { collectByteBlob, byteChunks } from "@party-stack/ontology-storage/blobs";
 import { sqliteOntologyConformanceIR } from "@party-stack/ontology/testing/sqlite";
 import { makeHelpers } from "alchemy/Cloudflare/R2/BucketBinding";
@@ -12,6 +13,7 @@ import { makeDurableObjectOntologyStorage, makeR2Bytes } from "../src/index.js";
 import { r2Prefix } from "../src/r2Keys.js";
 import { testBucket, withTestRuntime } from "./bindings.js";
 import { runOntologyResource, type ResourceResult } from "./resource.js";
+import type { StorageBackendOptions } from "@party-stack/ontology-backend/storage";
 import type { Bucket } from "alchemy/Cloudflare/R2/Bucket";
 
 interface Environment {
@@ -219,13 +221,18 @@ export class AlchemyOntologyTest extends DurableObject<Environment> {
         return Effect.runPromise(
             Effect.scoped(
                 Effect.gen(function* () {
-                    const mutators: OntologyMutatorRegistry = {
-                        removeAsset: async ({ tx, args }) => {
-                            await tx.mutate.Asset!.delete(args.id as string);
-                        },
-                        rejectAsset: () => {
-                            throw new Error("Rejected by the application");
-                        },
+                    const mutators: NonNullable<StorageBackendOptions["mutators"]> = {
+                        removeAsset: (tx, request) => tx.delete("Asset", request.parameters.id as string),
+                        rejectAsset: () =>
+                            Effect.fail(
+                                new BackendError({
+                                    operation: "applyAction",
+                                    kind: "ValidationFailed",
+                                    message: "Rejected by the application",
+                                    retryable: false,
+                                    actionOutcome: "not-committed",
+                                })
+                            ),
                     };
                     const options = { ir: definition, bucket, ontologyId: "alchemy", mutators };
                     const { backend, blobs } = yield* makeAlchemyOntology(options);

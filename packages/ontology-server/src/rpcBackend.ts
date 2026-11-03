@@ -11,8 +11,6 @@ export function makeRpcBackend(
     description: OntologyDescription,
     operations: OntologyOperationsClient
 ): OntologyBackendService {
-    const boundary = <A>(run: (signal: AbortSignal) => Promise<A>) =>
-        Effect.tryPromise({ try: run, catch: (cause) => classifyBackendFailure("remote.attachment", cause) });
     const reconnect = Schedule.spaced(1_000).pipe(
         Schedule.while(({ input }: Schedule.InputMetadata<BackendError>) => Effect.succeed(input.retryable))
     );
@@ -31,20 +29,17 @@ export function makeRpcBackend(
     return {
         attachments: {
             stage: (value, bytes) =>
-                boundary(
-                    async () =>
-                        (
-                            await operations.attachments.create(bytes, {
-                                id: value.id,
-                                eager: description.replication === "committed",
-                            })
-                        ).attachment
-                ),
+                operations.attachments
+                    .create(bytes, { id: value.id, eager: description.replication === "committed" })
+                    .pipe(Effect.map((created) => created.attachment)),
             read: (value, range) =>
-                boundary(async (signal) => {
-                    const source = await operations.attachments.source(value, { signal });
-                    return range ? sliceByteSource(source, range.offset ?? 0, range.length) : source;
-                }),
+                operations.attachments
+                    .source(value)
+                    .pipe(
+                        Effect.map((source) =>
+                            range ? sliceByteSource(source, range.offset ?? 0, range.length) : source
+                        )
+                    ),
             metadata: (value, settings) =>
                 client
                     .AttachmentMetadata({ attachment: value, select: settings?.select })
@@ -119,11 +114,9 @@ export function makeRpcBackend(
                 .pipe(Effect.mapError((cause) => classifyBackendFailure("remote.request", cause))),
         applyAction: Effect.fn("OntologyBackend.invokeRemote")(function* (invocation) {
             for (const upload of invocation.attachmentUploads ?? []) {
-                const staged = yield* boundary(
-                    async () =>
-                        (await operations.attachments.create(upload.blob, { id: upload.attachment.id }))
-                            .attachment
-                );
+                const { attachment: staged } = yield* operations.attachments.create(upload.blob, {
+                    id: upload.attachment.id,
+                });
                 // Local storage parents preserve handles. HTTP multipart remains the
                 // atomic provider path when uploads require parameter canonicalization.
                 if (staged.id !== upload.attachment.id)

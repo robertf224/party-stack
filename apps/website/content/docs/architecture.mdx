@@ -3,6 +3,18 @@ title: Architecture
 description: Definitions, storage, backends, replicas, and servers.
 ---
 
+The package boundary is:
+
+- **Backend** implements data and action capabilities, whether adapted from a provider or owned locally.
+- **Replica** adds local state and sync: base data, outbox, optimistic state, demand, retention, and local attachments.
+- **Server** exposes those capabilities over transports, with authentication and authorization at the boundary.
+- **Ontology** provides the typed SDK and TanStack facade over those native capabilities.
+
+These roles compose. A server can expose an owned backend, forward to another
+backend, or host a replica. Using HTTP, a SharedWorker, or a Durable Object does
+not change the responsibility of each layer. Native backend, replica, and server
+implementations do not require the application SDK or its UI collections.
+
 ## The pieces
 
 | Component                       | Responsibility                                                                         |
@@ -38,6 +50,12 @@ prediction when it imports a parent update that includes that action.
   actions forward upstream without entering the read cache's outbox.
 - **Replica server:** can durably queue actions and publish their optimistic
   results before its own upstream confirms them.
+
+Use `makeOntologyServer` for the HTTP binding, including streamed uploads, or
+`ontologyServerHandlers` to provide the same role and authorization composition
+to another Effect RPC transport. Both are exported by `ontology-server`.
+The SDK's connected client lives in `ontology/client`; installation worker
+composition lives in `ontology/installation/worker`.
 
 A Durable Object can take any of these roles. Being a worker or a server does not
 by itself decide whether a component is authoritative.
