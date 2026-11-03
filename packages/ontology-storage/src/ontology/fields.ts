@@ -6,7 +6,7 @@ import type { OntologyIR, TypeDef } from "@party-stack/ontology-spec";
 
 export function validateField(
     ir: OntologyIR,
-    object: ObjectStore<unknown>,
+    object: Pick<ObjectStore<unknown>, "name" | "definition">,
     field: Field,
     multiEntry = false
 ): void {

@@ -135,8 +135,11 @@ truncated NDJSON response verify the distinction; no dependency patch was introd
 ## Nonblocking follow-ups
 
 - Describe's watch flag remains endpoint-wide, while an adapter can decline individual
-  subsets. Provider polling recommendations cover current Foundry user loads; fully
-  negotiating subset-specific watch/refresh capabilities remains a contract question.
+  subsets. Revisit discovery during the installations review: users, metadata and
+  domain ontologies may be separate routes with separate backend capabilities.
+  Route-level advertisement may resolve the current Foundry users/objects distinction;
+  assess remaining subset-dependent differences before adding negotiation machinery.
+  Existing provider polling recommendations cover current Foundry user loads.
 - RPC byte-source acquisition peels the stream header before returning its ByteSource.
   Consumption closes that read scope, and connection teardown closes abandoned reads.
   Review a caller that repeatedly acquires sources without consuming them during the

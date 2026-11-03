@@ -21,6 +21,7 @@ import {
 } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
+import { policyProperties } from "./policy.js";
 import { policyIndexes } from "./policy/indexes.js";
 import { evaluatePolicyView } from "./policy/view.js";
 import type { QueryReader } from "./query.js";
@@ -86,6 +87,45 @@ function reader(ir: OntologyIR, data: Record<string, Record<string, unknown>[]>)
 const strategies = ["rewrite", "eager"] as const;
 
 describe("authorization planning", () => {
+    it("collects grants across repeated types and selections referring to ancestor bindings", async () => {
+        const ir = definition();
+        ir.policy = {
+            read: {
+                select: [
+                    sub("first", {
+                        from: { source: { objectType: "Issue" }, binding: "a" },
+                        where: eq(field("a", "id"), literal("a")),
+                        select: [
+                            sub("second", {
+                                from: { source: { objectType: "Issue" }, binding: "b" },
+                                where: eq(field("b", "id"), literal("b")),
+                                select: [
+                                    selectField("title", field("b", "title")),
+                                    selectField("secret", field("a", "secret")),
+                                ],
+                            }),
+                        ],
+                    }),
+                ],
+            },
+        };
+        const properties = policyProperties(ir);
+        expect(properties.allowed.get("Issue")).toEqual(new Set(["id", "title", "secret"]));
+        expect(properties.guaranteed.get("Issue")).toEqual(new Set(["id"]));
+        for (const strategy of strategies) {
+            const { source } = reader(ir, {
+                Issue: [
+                    { id: "a", title: "A", secret: "a-secret" },
+                    { id: "b", title: "B", secret: "b-secret" },
+                ],
+            });
+            const view = evaluatePolicyView(source, { user: "user" }, undefined, strategy);
+            expect(await Effect.runPromise(view.tx.loadSubset("Issue"))).toEqual([
+                { key: "a", value: { id: "a", secret: "a-secret" } },
+                { key: "b", value: { id: "b", title: "B" } },
+            ]);
+        }
+    });
     it("prepares bounded indexes for policy predicates/correlations rather than selected output fields", () => {
         const ir = definition();
         ir.policy = {

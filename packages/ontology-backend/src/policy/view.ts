@@ -22,24 +22,31 @@ const keyOf = (type: string, key: Key) => JSON.stringify([type, key]);
 export function policyProperties(ir: OntologyIR) {
     const allowed = new Map<string, Set<string>>();
     const guaranteed = new Map<string, Set<string>>();
-    function query(q: Query) {
+    type Scope = ReadonlyMap<string, Set<string>>;
+    function query(q: Query, parent: Scope) {
         if (q.from.source.ontology) return;
         const object = ir.objectTypes.find((t) => t.name === q.from.source.objectType);
         if (!object) return;
         const upper = allowed.get(object.name) ?? new Set<string>();
+        // Publish before descending: another binding of this type must extend
+        // the same set, rather than have its grants overwritten on return.
+        allowed.set(object.name, upper);
+        const scope = new Map([...parent, [q.from.binding, upper]]);
         const always = new Set([object.primaryKey]);
         upper.add(object.primaryKey);
         function selections(items: readonly QuerySelection[], conditional: boolean) {
             for (const item of items) {
-                if (item.kind === "sub") query(item.value.query);
+                if (item.kind === "sub") query(item.value.query, scope);
                 else if (item.kind === "selectCase") {
                     for (const branch of item.value.branches) selections(branch.select, true);
                     selections(item.value.else ?? [], true);
                 } else {
                     const p = selectedProperty(item.value.expression);
-                    if (p?.binding === q.from.binding) {
-                        upper.add(p.property);
-                        if (!conditional) always.add(p.property);
+                    if (p) {
+                        scope.get(p.binding)?.add(p.property);
+                        // An ancestor field selected inside a child query is
+                        // conditional on that child having a matching row.
+                        if (!conditional && p.binding === q.from.binding) always.add(p.property);
                     }
                 }
             }
@@ -47,11 +54,10 @@ export function policyProperties(ir: OntologyIR) {
         selections(q.select, false);
         const existing = guaranteed.get(object.name);
         guaranteed.set(object.name, existing ? new Set([...existing].filter((p) => always.has(p))) : always);
-        allowed.set(object.name, upper);
     }
     function roots(items: readonly QuerySelection[]) {
         for (const item of items) {
-            if (item.kind === "sub") query(item.value.query);
+            if (item.kind === "sub") query(item.value.query, new Map());
             else if (item.kind === "selectCase") {
                 item.value.branches.forEach((b) => roots(b.select));
                 roots(item.value.else ?? []);

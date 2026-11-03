@@ -9,6 +9,7 @@ import { certain, uncertain } from "@party-stack/ontology-spec/utils";
 import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/ontology-spec/utils";
 import { Effect, Schema } from "effect";
 import { field, and, eq, ne, not, or, inArray, contains, like, ilike } from "../model.js";
+import { validateField } from "../ontology/fields.js";
 import { withObjectSources } from "../ontology/sources.js";
 import { batchCorrelation } from "./batch.js";
 import { compareScalar, readField, scalarKey } from "./evaluate.js";
@@ -19,6 +20,7 @@ import type {
     OntologyIR,
     Query,
     QueryDocument,
+    QueryFrom,
     QuerySelection,
     QuerySource,
     TypeDef,
@@ -215,14 +217,20 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 return yield* evaluate(e.value.else, locals);
             }
             case "exists": {
-                const rows = yield* queryRows(
+                if (e.value.query.page?.limit === 0) return certain(false);
+                const result = yield* queryRows(
                     {
                         ...e.value.query,
-                        page: { ...e.value.query.page, limit: e.value.query.page?.limit === 0 ? 0 : 1 },
+                        // Ordering cannot change existence, except when comparing
+                        // rows with a keyset cursor. Neither projection nor an
+                        // unavailable sort expression should block an EXISTS check.
+                        orderBy: e.value.query.page?.after ? e.value.query.orderBy : undefined,
+                        page: { ...e.value.query.page, limit: 1 },
                     },
-                    locals
+                    locals,
+                    true
                 );
-                return certain(rows.length > 0);
+                return result.rows.length ? certain(true) : result.uncertain ? uncertain() : certain(false);
             }
             case "struct": {
                 const result: Record<string, unknown> = Object.create(null);
@@ -319,15 +327,14 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
     });
     const lower = Effect.fnUntraced(function* (
         e: Expression,
-        binding: string,
+        from: QueryFrom,
         locals: Scope
     ): Effect.fn.Return<{ where?: Predicate; exact: boolean }, E> {
         if (e.kind === "literal" && typeof e.value.value === "boolean")
             return { where: eq(e.value.value, true), exact: true };
         if (e.kind === "and" || e.kind === "or") {
             const values = [];
-            for (const expression of e.value.expressions)
-                values.push(yield* lower(expression, binding, locals));
+            for (const expression of e.value.expressions) values.push(yield* lower(expression, from, locals));
             if (e.kind === "or" && values.some((v) => !v.exact)) return { exact: false };
             return {
                 where:
@@ -338,7 +345,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             };
         }
         if (e.kind === "not") {
-            const v = yield* lower(e.value.expression, binding, locals);
+            const v = yield* lower(e.value.expression, from, locals);
             return v.exact && v.where ? { where: not(v.where), exact: true } : { exact: false };
         }
         if (
@@ -347,14 +354,28 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
         )
             return { exact: false };
         const operand = Effect.fnUntraced(function* (
-            node: Expression
+            node: Expression,
+            multiEntry = false
         ): Effect.fn.Return<Operand | { unknown: true }, E> {
             if (
                 node.kind === "getAt" &&
                 node.value.source.kind === "localReference" &&
-                node.value.source.value.name === binding
-            )
-                return field(...node.value.path);
+                node.value.source.value.name === from.binding
+            ) {
+                const reader = source(from.source);
+                const object = reader.ir.objectTypes.find((t) => t.name === from.source.objectType);
+                const path = field(...node.value.path);
+                // Logical equality also accepts lists/structs; physical scans
+                // accept scalar fields (or scalar lists for CONTAINS) only.
+                if (object) {
+                    try {
+                        validateField(reader.ir, { name: object.name, definition: object }, path, multiEntry);
+                    } catch {
+                        return { unknown: true };
+                    }
+                }
+                return path;
+            }
             const value = yield* evaluate(node, locals);
             if (!value.certain) return { unknown: true };
             try {
@@ -364,7 +385,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 return { unknown: true };
             }
         });
-        const a = yield* operand(e.value.left);
+        const a = yield* operand(e.value.left, e.kind === "contains");
         if (a && typeof a === "object" && "unknown" in a) return { exact: false };
         if (e.kind === "in") {
             const b = yield* evaluate(e.value.right, locals);
@@ -402,13 +423,21 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
     });
     const queryRows = Effect.fnUntraced(function* (
         q: Query,
-        parent: Scope
-    ): Effect.fn.Return<{ row: Row<Record<string, unknown>>; scope: Scope; order: unknown[] }[], E> {
+        parent: Scope,
+        allowUncertain = false
+    ): Effect.fn.Return<
+        {
+            rows: { row: Row<Record<string, unknown>>; scope: Scope; order: unknown[] }[];
+            uncertain: boolean;
+        },
+        E
+    > {
+        let uncertain = false;
         const candidate =
             options.strategy === "reference"
                 ? { exact: false }
                 : q.where
-                  ? yield* lower(q.where, q.from.binding, parent)
+                  ? yield* lower(q.where, q.from, parent)
                   : { exact: true };
         const directOrder =
             q.orderBy?.every(
@@ -457,14 +486,23 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             const scope = new Map([...parent, [q.from.binding, row.value]]);
             if (q.where) {
                 const test = yield* evaluate(q.where, scope);
-                if (!test.certain)
-                    return yield* fail("A query filter depends on unavailable data.", "Forbidden");
+                if (!test.certain) {
+                    if (!allowUncertain)
+                        return yield* fail("A query filter depends on unavailable data.", "Forbidden");
+                    uncertain = true;
+                    return;
+                }
                 if (!(yield* attempt(() => booleanValue(test.value)))) return;
             }
             const order: unknown[] = [];
             for (const o of q.orderBy ?? []) {
                 const value = yield* evaluate(o.expression, scope);
-                if (!value.certain) return yield* fail("Ordering depends on unavailable data.", "Forbidden");
+                if (!value.certain) {
+                    if (!allowUncertain)
+                        return yield* fail("Ordering depends on unavailable data.", "Forbidden");
+                    uncertain = true;
+                    return;
+                }
                 order.push(value.value);
             }
             if (paged && q.page?.after && compare(order, row.key, q.page.after.values, q.page.after.key) <= 0)
@@ -486,7 +524,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             if (accepted.length > keep) accepted.pop();
         });
         if (paged) {
-            if (!keep) return accepted;
+            if (!keep) return { rows: accepted, uncertain };
             let after: Scan["after"];
             for (;;) {
                 const rows = yield* fetch(q.from.source, { ...scan, limit: 256, after });
@@ -499,17 +537,20 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             for (const row of rows) yield* accept(row);
         }
         yield* attempt(() => accepted.sort((a, b) => compare(a.order, a.row.key, b.order, b.row.key)));
-        if (pushedPage || prefetched) return accepted;
+        if (pushedPage || prefetched) return { rows: accepted, uncertain };
         const after = q.page?.after;
         const filtered = after
             ? yield* attempt(() =>
                   accepted.filter((a) => compare(a.order, a.row.key, after.values, after.key) > 0)
               )
             : accepted;
-        return filtered.slice(
-            q.page?.offset ?? 0,
-            q.page?.limit === undefined ? undefined : (q.page.offset ?? 0) + q.page.limit
-        );
+        return {
+            rows: filtered.slice(
+                q.page?.offset ?? 0,
+                q.page?.limit === undefined ? undefined : (q.page.offset ?? 0) + q.page.limit
+            ),
+            uncertain,
+        };
     });
     const prepareChildren = Effect.fnUntraced(function* (
         items: readonly QuerySelection[],
@@ -532,7 +573,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 ) ?? true;
             if (windowed && !directOrder) continue;
             const residual = plan.residual
-                ? yield* lower(plan.residual, query.from.binding, parents[0]!)
+                ? yield* lower(plan.residual, query.from, parents[0]!)
                 : { exact: true, where: undefined };
             if (!residual.exact) continue;
             const keys = new Map<string, { value: Scalar; parents: Scope[] }>();
@@ -626,7 +667,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 }
                 Object.assign(output, yield* select(selected, scope));
             } else if (item.kind === "sub") {
-                const rows = yield* queryRows(item.value.query, scope);
+                const { rows } = yield* queryRows(item.value.query, scope);
                 if (item.value.cardinality === "one" && rows.length > 1)
                     return yield* fail("A singular subquery returned multiple rows.");
                 const values = [];

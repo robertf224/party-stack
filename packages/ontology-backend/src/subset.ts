@@ -116,7 +116,7 @@ export const compileObjectSubset = Effect.fnUntraced(function* (
     const executor = queryExecutor({ reader, context });
     let where;
     if (subset.where) {
-        const lowered = yield* executor.lower(subset.where, subset.from.binding, new Map());
+        const lowered = yield* executor.lower(subset.where, subset.from, new Map());
         if (!lowered.exact) return yield* unsupported();
         where = lowered.where;
     }

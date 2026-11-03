@@ -7,6 +7,8 @@ import {
     and,
     gt,
     exists,
+    input,
+    or,
     field,
     literal,
     selectCase,
@@ -17,7 +19,7 @@ import {
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { policyView } from "./policy.js";
+import { authorizeAction, policyView } from "./policy.js";
 import { executeQuery, queryExecutor } from "./query.js";
 import type { QueryReader } from "./query.js";
 import type { OntologyIR, QueryDocument } from "@party-stack/ontology-spec";
@@ -384,6 +386,139 @@ describe("finite hierarchical queries", () => {
             ),
             { numRuns: 60 }
         );
+    });
+    it("keeps an existential action check uncertain until its draft parameter is known", async () => {
+        const definition = structuredClone(ir);
+        definition.actionTypes = [
+            { name: "edit", displayName: "Edit", parameters: [p("project")], logic: [] },
+        ];
+        definition.policy = {
+            read: { select: [] },
+            actions: [
+                {
+                    actionType: "edit",
+                    check: exists({
+                        from: { source: { objectType: "Project" }, binding: "p" },
+                        where: eq(field("p", "id"), input("project")),
+                        select: [],
+                    }),
+                },
+            ],
+        };
+        const { source } = reader({ Project: projects }, definition);
+        const check = (parameters: Record<string, unknown>, known: string[]) =>
+            Effect.runPromise(
+                authorizeAction(source, { user: "user" }, "edit", parameters, new Set(known))
+            ).then((result) => result.check);
+        expect(await check({}, [])).toEqual({ certain: false });
+        expect(await check({ project: "a" }, ["project"])).toEqual({ certain: true, value: true });
+        expect(await check({ project: "missing" }, ["project"])).toEqual({ certain: true, value: false });
+    });
+    it("proves EXISTS from known matches without treating missing input as a denial", async () => {
+        const query = {
+            from: { source: { objectType: "Project" }, binding: "p" },
+            where: or(eq(field("p", "id"), literal("a")), eq(field("p", "id"), input("project"))),
+            select: [],
+        };
+        for (const strategy of ["planned", "reference"] as const) {
+            const { source } = reader({ Project: projects });
+            const executor = queryExecutor({ reader: source, knownInputs: new Set(), strategy });
+            expect(await Effect.runPromise(executor.evaluate(exists(query)))).toEqual({
+                certain: true,
+                value: true,
+            });
+            expect(
+                await Effect.runPromise(executor.evaluate(exists({ ...query, page: { offset: 1 } })))
+            ).toEqual({ certain: false });
+            expect(
+                await Effect.runPromise(executor.evaluate(exists({ ...query, page: { limit: 0 } })))
+            ).toEqual({ certain: true, value: false });
+            const empty = queryExecutor({
+                reader: reader({ Project: [] }).source,
+                knownInputs: new Set(),
+                strategy,
+            });
+            expect(await Effect.runPromise(empty.evaluate(exists(query)))).toEqual({
+                certain: true,
+                value: false,
+            });
+            const strict = await Effect.runPromise(
+                Effect.result(
+                    executor.run({
+                        inputs: [p("project")],
+                        select: [sub("projects", query)],
+                    })
+                )
+            );
+            expect(strict).toMatchObject({ _tag: "Failure", failure: { kind: "Forbidden" } });
+        }
+    });
+    it("never proves an existential draft check contradicted by a completed input", async () => {
+        await fc.assert(
+            fc.asyncProperty(
+                fc.array(fc.boolean(), { maxLength: 12 }),
+                fc.nat({ max: 14 }),
+                fc.nat({ max: 3 }),
+                async (known, offset, limit) => {
+                    const data = known.map((match, i) => ({
+                        id: `p${i}`,
+                        title: match ? "known" : "other",
+                        admins: [],
+                    }));
+                    const query = {
+                        from: { source: { objectType: "Project" }, binding: "p" },
+                        where: or(
+                            eq(field("p", "title"), literal("known")),
+                            eq(field("p", "id"), input("project"))
+                        ),
+                        page: { offset, limit },
+                        select: [],
+                    };
+                    const completions = ["missing", ...data.map((r) => r.id)].map(
+                        (project) =>
+                            limit > 0 &&
+                            data.filter((r) => r.title === "known" || r.id === project).length > offset
+                    );
+                    for (const strategy of ["planned", "reference"] as const) {
+                        const result = await Effect.runPromise(
+                            queryExecutor({
+                                reader: reader({ Project: data }).source,
+                                knownInputs: new Set(),
+                                strategy,
+                            }).evaluate(exists(query))
+                        );
+                        if (result.certain)
+                            expect(completions.every((value) => value === result.value)).toBe(true);
+                        if (limit > 0 && known.filter(Boolean).length > offset)
+                            expect(result).toEqual({ certain: true, value: true });
+                    }
+                }
+            ),
+            { numRuns: 100 }
+        );
+    });
+    it("keeps structural equality out of scalar storage predicates", async () => {
+        for (const strategy of ["planned", "reference"] as const) {
+            const { source, calls } = reader({ Project: projects });
+            const result = await Effect.runPromise(
+                executeQuery(
+                    {
+                        select: [
+                            sub("projects", {
+                                from: { source: { objectType: "Project" }, binding: "p" },
+                                where: eq(field("p", "admins"), field("p", "admins")),
+                                page: { limit: 1 },
+                                select: [selectField("id", field("p", "id"))],
+                            }),
+                        ],
+                    },
+                    { reader: source, strategy }
+                )
+            );
+            expect(result.value).toEqual({ projects: [{ id: "a" }] });
+            expect(calls[0]?.query?.where).toBeUndefined();
+            expect(calls[0]?.query?.limit).toBeUndefined();
+        }
     });
     it("pushes correlations/windows and does not choose ELSE for unknown conditions", async () => {
         const { source, calls } = reader({ Project: projects, Issue: [] });

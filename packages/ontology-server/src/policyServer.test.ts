@@ -142,6 +142,106 @@ function definition(): OntologyIR {
 }
 const principal = { user: "alice", tenant: "org", role: "member" };
 
+test("draft checks preserve unknown parameters without permitting an unknown action check", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const ir = definition();
+                let applied = 0;
+                const owned = yield* makeOwnedBackend({
+                    ir,
+                    namespace: "draft-policy",
+                    tables: yield* Memory.make(),
+                    mutators: {
+                        edit: () =>
+                            Effect.sync(() => {
+                                applied++;
+                            }),
+                    },
+                });
+                yield* owned.storage.transaction((tx) =>
+                    tx.put("Item", { id: "a", owner: "alice", title: "A" })
+                );
+                const view = yield* projectOntologyBackend({ backend: owned, ir, context: principal });
+                expect(yield* view.backend.validateAction!("edit", {}, { knownParameters: [] })).toEqual({
+                    certain: false,
+                });
+                const denied = yield* Effect.result(
+                    view.backend.applyAction({
+                        id: "missing",
+                        name: "edit",
+                        parameters: { item: "missing", title: "Edit" },
+                    })
+                );
+                expect(denied).toMatchObject({ _tag: "Failure", failure: { kind: "NotFound" } });
+                expect(applied).toBe(0);
+                expect(
+                    (yield* view.backend.applyAction({
+                        id: "known",
+                        name: "edit",
+                        parameters: { item: "a", title: "Edit" },
+                    })).outcome
+                ).toBe("committed");
+                expect(applied).toBe(1);
+            })
+        )
+    );
+});
+
+test("schema projection includes grants from repeated types and ancestor selections", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const ir = definition();
+                ir.policy = {
+                    read: {
+                        select: [
+                            sub("first", {
+                                from: { source: { objectType: "Item" }, binding: "a" },
+                                where: eq(field("a", "id"), literal("a")),
+                                select: [
+                                    sub("second", {
+                                        from: { source: { objectType: "Item" }, binding: "b" },
+                                        where: eq(field("b", "id"), literal("b")),
+                                        select: [
+                                            selectField("title", field("b", "title")),
+                                            selectField("secret", field("a", "secret")),
+                                        ],
+                                    }),
+                                ],
+                            }),
+                        ],
+                    },
+                };
+                const owned = yield* makeOwnedBackend({
+                    ir,
+                    namespace: "nested-policy",
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                yield* owned.storage.transaction((tx) =>
+                    Effect.gen(function* () {
+                        yield* tx.put("Item", { id: "a", owner: "alice", title: "A", secret: "a-secret" });
+                        yield* tx.put("Item", { id: "b", owner: "bob", title: "B", secret: "b-secret" });
+                    })
+                );
+                const view = yield* projectOntologyBackend({ backend: owned, ir, context: principal });
+                expect(view.ir.objectTypes[0]!.properties.map((p) => p.name)).toEqual([
+                    "id",
+                    "title",
+                    "secret",
+                ]);
+                expect(
+                    (yield* view.backend.loadSubset(objectSubset("Item"))).rows.map((r) => r.value)
+                ).toEqual([
+                    { id: "a", secret: "a-secret" },
+                    { id: "b", title: "B" },
+                ]);
+            })
+        )
+    );
+});
+
 test("owned checks share the mutation snapshot and handlers only receive their granted read view", async () => {
     await Effect.runPromise(
         Effect.gen(function* () {

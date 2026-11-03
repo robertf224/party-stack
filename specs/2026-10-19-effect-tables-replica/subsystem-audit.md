@@ -362,12 +362,18 @@ and opportunities to remove duplicate or unused machinery.
 6. **Query IR and authorization:** expression/query boundaries, context and
    partitioning, schema projection, action bindings/checks, rewrite rules and
    eager/property-test oracles.
+   The [review in progress](./query-authorization-review.md) records draft EXISTS,
+   structural predicate lowering and nested grant-discovery regressions, plus
+   remaining expression-execution and builder-ergonomics checks.
 7. **Attachments and encrypted values:** byte streams and cold caches,
    transactional metadata/mappings, reference retention and GC, decryption,
    device caches/keyrings and platform persistence consent.
 8. **Connect and installations:** connection ontology, credentials/refresh,
    browser versus authority workflows, installation/ontology acquisition and
    server authentication integrations.
+   Revisit capability discovery alongside ontology routes: users, metadata and
+   domain data may use separate adapters with separate watch/poll/read capabilities.
+   Decide route-level advertisement before introducing finer subset negotiation.
 9. **LiveOntology and TanStack:** thin application facade, collection/query
    lifetimes, abort propagation, action promises, optimistic UI and future
    fragments/SSR boundaries.
