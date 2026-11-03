@@ -602,6 +602,25 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         expect(query).not.toHaveBeenCalled();
     });
 
+    it("rejects invalid subset windows through the typed error channel before SOQL", async () => {
+        const result = await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const backend = yield* createAdapter().open({});
+                    return yield* Effect.result(
+                        backend.loadSubset({ objectType: "Account", query: { limit: -1 } })
+                    );
+                })
+            )
+        );
+        expect(result).toMatchObject({
+            _tag: "Failure",
+            failure: { kind: "InvalidRequest", retryable: false },
+        });
+        expect(query).not.toHaveBeenCalled();
+        expect(queryMore).not.toHaveBeenCalled();
+    });
+
     it("cancels bound SOQL requests with their Effect fiber", async () => {
         let signal: AbortSignal | undefined;
         const transport = { query: vi.fn(() => new Promise<never>(() => {})) };

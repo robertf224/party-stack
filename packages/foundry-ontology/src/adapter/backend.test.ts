@@ -357,3 +357,36 @@ test("HTTP reads and watches use the same conservative subset filter while windo
         )
     );
 });
+
+test("invalid subset windows fail in the typed channel before provider IO", async () => {
+    mocks.fetch.mockClear();
+    const users = vi.fn(async () => ({ rows: [], complete: true }));
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeFoundryBackend({
+                    client: {} as OntologyClient,
+                    ir,
+                    context: {},
+                    watch: false,
+                    users: { objectType: "User", loadSubset: users },
+                    submitAction: async () => {
+                        throw new Error("Unexpected action");
+                    },
+                    decodeObject: (_type, value) => value,
+                });
+                for (const objectType of ["Issue", "User"]) {
+                    const result = yield* Effect.result(
+                        backend.loadSubset({ objectType, query: { limit: -1 } })
+                    );
+                    expect(result).toMatchObject({
+                        _tag: "Failure",
+                        failure: { kind: "InvalidRequest", retryable: false },
+                    });
+                }
+            })
+        )
+    );
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(users).not.toHaveBeenCalled();
+});

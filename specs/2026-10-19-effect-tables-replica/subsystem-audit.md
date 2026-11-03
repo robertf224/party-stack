@@ -350,7 +350,8 @@ and opportunities to remove duplicate or unused machinery.
    lost-response recovery.
 3. **Demand and GC:** shared demand, idle retention, coverage, row roots/pins,
    mark-and-sweep, persistent restart recovery and cache budgets.
-4. **Backend contracts and adapters:** hook capabilities and error semantics,
+4. **Backend contracts and adapters:** the [current review](./backend-contracts-review.md)
+   inventories hook capabilities and error semantics,
    Foundry/Salesforce pushdown, watch supervision, polling and retries.
 5. **Server and protocol:** owned/direct/cached/replica compositions, transport
    lifetimes, incremental delivery, ACKs/reset recovery, sessions and retention.

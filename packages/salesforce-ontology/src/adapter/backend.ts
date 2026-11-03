@@ -1,7 +1,7 @@
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
-import { evaluateQuery } from "@party-stack/ontology-storage";
+import { evaluateQuery, QuerySchema } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
-import { Effect, Schema } from "effect";
+import { Effect, Schema, Redacted } from "effect";
 import { searchSalesforceObjects } from "./salesforceObjectSearch.js";
 import { quoteSoqlIdentifier, serializeSoqlLiteral } from "./soql.js";
 import type {
@@ -55,6 +55,18 @@ export function makeSalesforceBackend(options: {
         supportsIdempotency: false,
         loadSubset: Effect.fn("Salesforce.loadSubset")(function* (subset: BackendSubset) {
             yield* Effect.annotateCurrentSpan("objectType", subset.objectType);
+            yield* Schema.decodeUnknownEffect(QuerySchema)(subset.query ?? {}).pipe(
+                Effect.mapError(
+                    (cause) =>
+                        new BackendError({
+                            operation: "salesforce.loadSubset",
+                            kind: "InvalidRequest",
+                            message: "Invalid subset query.",
+                            retryable: false,
+                            cause: Redacted.make(cause),
+                        })
+                )
+            );
             const definition = options.ir.objectTypes.find((type) => type.name === subset.objectType);
             if (!definition)
                 return yield* new BackendError({

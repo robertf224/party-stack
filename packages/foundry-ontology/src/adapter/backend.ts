@@ -1,8 +1,8 @@
 import { makeObjectSetWatcher } from "@party-stack/foundry-object-set-watcher";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
-import { evaluateQuery } from "@party-stack/ontology-storage";
+import { evaluateQuery, QuerySchema } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
-import { Effect, Schema, Stream } from "effect";
+import { Effect, Schema, Stream, Redacted } from "effect";
 import { searchFoundryObjects } from "./foundryObjectSearch.js";
 import { analyzeSubsetFilter, subsetFilter } from "./subsetFilter.js";
 import type { Actions } from "@osdk/foundry.ontologies";
@@ -75,6 +75,18 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
         encrypted: options.encrypted,
         loadSubset: Effect.fn("Foundry.loadSubset")(function* (subset: BackendSubset) {
             yield* Effect.annotateCurrentSpan("objectType", subset.objectType);
+            yield* Schema.decodeUnknownEffect(QuerySchema)(subset.query ?? {}).pipe(
+                Effect.mapError(
+                    (cause) =>
+                        new BackendError({
+                            operation: "foundry.loadSubset",
+                            kind: "InvalidRequest",
+                            message: "Invalid subset query.",
+                            retryable: false,
+                            cause: Redacted.make(cause),
+                        })
+                )
+            );
             if (subset.objectType === options.users?.objectType)
                 return yield* Effect.tryPromise({
                     try: (signal) => options.users!.loadSubset(subset.query ?? {}, signal),
@@ -88,7 +100,6 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                     message: "Unknown Foundry object type.",
                     retryable: false,
                 });
-            yield* Effect.try({ try: () => evaluateQuery([], subset.query ?? {}), catch: unavailable });
             const predicate = subset.query?.where;
             const candidates =
                 predicate?.op === "in" &&
