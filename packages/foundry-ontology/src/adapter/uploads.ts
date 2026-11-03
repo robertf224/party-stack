@@ -1,5 +1,6 @@
-import { byteSource, byteChunks, type ByteInput } from "@party-stack/ontology-storage/blobs";
-import { Schema, Stream } from "effect";
+import { Attachments } from "@osdk/foundry.ontologies";
+import { byteChunks, collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
+import { Effect, Schema, Stream } from "effect";
 import type { OntologyClient } from "@party-stack/foundry-client";
 
 const MediaReference = Schema.Struct({
@@ -31,17 +32,21 @@ async function uploadBinary(
         filename: string;
         contentType: string;
         preview?: boolean;
+        signal?: AbortSignal;
     }
 ): Promise<unknown> {
     const url = new URL(options.path, client.baseUrl.endsWith("/") ? client.baseUrl : `${client.baseUrl}/`);
     url.searchParams.set("filename", options.filename);
     if (options.preview) url.searchParams.set("preview", "true");
-    const body = Stream.toReadableStream(byteChunks(input));
-    const init: RequestInit & { duplex: "half" } = {
+    const headers = new Headers({ "Content-Type": options.contentType, Accept: "application/json" });
+    const stream = input instanceof Blob ? undefined : Stream.toReadableStream(byteChunks(input));
+    const body = input instanceof Blob ? input : stream!;
+    const init: RequestInit & { duplex?: "half" } = {
         method: options.method,
-        headers: { "Content-Type": options.contentType, Accept: "application/json" },
+        headers,
         body,
-        duplex: "half",
+        ...(stream ? { duplex: "half" as const } : {}),
+        signal: options.signal,
     };
     try {
         const response = await client.fetch(url, init);
@@ -59,14 +64,14 @@ async function uploadBinary(
         }
         return await response.json();
     } finally {
-        if (!body.locked) await body.cancel().catch(() => undefined);
+        if (stream && !stream.locked) await stream.cancel().catch(() => undefined);
     }
 }
 
 export async function uploadFoundryMedia(
     client: OntologyClient,
     input: ByteInput,
-    options: { filename: string }
+    options: { filename: string; signal?: AbortSignal }
 ) {
     return Schema.decodeUnknownSync(MediaReference)(
         await uploadBinary(client, input, {
@@ -81,17 +86,29 @@ export async function uploadFoundryMedia(
 export async function uploadFoundryAttachment(
     client: OntologyClient,
     input: ByteInput,
-    options: { filename: string; rid?: string }
+    options: { filename: string; rid?: string; signal?: AbortSignal }
 ) {
-    return Schema.decodeUnknownSync(Schema.Struct({ rid: Schema.NonEmptyString }))(
-        await uploadBinary(client, input, {
-            filename: options.filename,
-            path: options.rid
-                ? `api/v2/ontologies/attachments/upload/${encodeURIComponent(options.rid)}`
-                : "api/v2/ontologies/attachments/upload",
-            method: "POST",
-            contentType: byteSource(input).type || "application/octet-stream",
-            preview: Boolean(options.rid),
-        })
-    );
+    // Ordinary attachments require a known-length body. Browser fetch cannot set
+    // Content-Length for a stream; materialize only at this provider boundary.
+    const blob =
+        input instanceof Blob
+            ? input
+            : await Effect.runPromise(collectByteBlob(input), { signal: options.signal });
+    const signal = options.signal;
+    const uploadClient = signal
+        ? {
+              ...client,
+              fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+                  client.fetch(input, {
+                      ...init,
+                      signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+                  }),
+          }
+        : client;
+    return options.rid
+        ? Attachments.uploadWithRid(uploadClient, options.rid, blob, {
+              filename: options.filename,
+              preview: true,
+          })
+        : Attachments.upload(uploadClient, blob, { filename: options.filename });
 }

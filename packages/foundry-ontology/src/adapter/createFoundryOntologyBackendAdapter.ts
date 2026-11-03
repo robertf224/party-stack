@@ -41,7 +41,7 @@ import {
 } from "./foundryActionValidation.js";
 import { createFoundryCodec } from "./foundryCodec.js";
 import { decodeFoundryMediaId, mediaReferenceToFoundryMediaId } from "./foundryMediaId.js";
-import { uploadFoundryMedia, uploadFoundryAttachment } from "./streamingMedia.js";
+import { uploadFoundryMedia, uploadFoundryAttachment } from "./uploads.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { BackendSnapshot, ValidationReport } from "@party-stack/ontology-backend";
 import type { Query } from "@party-stack/ontology-storage";
@@ -204,7 +204,10 @@ export function createFoundryOntologyBackendAdapter(
         materializeAttachment: async (
             attachment: attachment,
             input: ByteInput,
-            { target }: { target?: import("@party-stack/ontology-spec").AttachmentTypeDef },
+            {
+                target,
+                signal,
+            }: { target?: import("@party-stack/ontology-spec").AttachmentTypeDef; signal?: AbortSignal },
             client = opts.client
         ) => {
             invariant(
@@ -217,7 +220,7 @@ export function createFoundryOntologyBackendAdapter(
             );
             const filename = byteSource(input).name ?? "";
             if (!isFoundryAttachmentRid(attachment.id)) {
-                const uploaded = await uploadFoundryAttachment(client, input, { filename });
+                const uploaded = await uploadFoundryAttachment(client, input, { filename, signal });
                 return {
                     ...attachment,
                     id: uploaded.rid,
@@ -231,7 +234,7 @@ export function createFoundryOntologyBackendAdapter(
                     throw error;
                 }
             }
-            await uploadFoundryAttachment(client, input, { filename, rid: attachment.id });
+            await uploadFoundryAttachment(client, input, { filename, rid: attachment.id, signal });
         },
         getAttachmentContent: async (attachment: attachment, readOptions?: { signal?: AbortSignal }) => {
             const client = withRequestSignal(opts.client, readOptions?.signal);
@@ -324,7 +327,10 @@ export function createFoundryOntologyBackendAdapter(
     const submitAction = async (
         name: string,
         parameters: Record<string, unknown>,
-        context: { attachmentUploads?: readonly import("@party-stack/ontology-backend").AttachmentUpload[] },
+        context: {
+            attachmentUploads?: readonly import("@party-stack/ontology-backend").AttachmentUpload[];
+            signal?: AbortSignal;
+        },
         client = opts.client
     ) => {
         const mediaReferences = new Map<string, Awaited<ReturnType<typeof MediaSets.uploadMedia>>>();
@@ -342,6 +348,7 @@ export function createFoundryOntologyBackendAdapter(
                         upload.blob,
                         {
                             target: upload.target,
+                            signal: context.signal,
                         },
                         client
                     );
@@ -353,6 +360,7 @@ export function createFoundryOntologyBackendAdapter(
                 }
                 const reference = await uploadFoundryMedia(client, upload.blob, {
                     filename: getAttachmentName(upload.blob) ?? upload.attachment.id,
+                    signal: context.signal,
                 });
                 mediaReferences.set(upload.attachment.id, reference);
                 attachmentIdMappings.push({
@@ -592,6 +600,7 @@ export function createFoundryOntologyBackendAdapter(
                         invocation.name,
                         invocation.parameters,
                         {
+                            signal,
                             attachmentUploads: invocation.attachmentUploads
                                 ? [...invocation.attachmentUploads]
                                 : undefined,
@@ -617,7 +626,7 @@ export function createFoundryOntologyBackendAdapter(
                                 (await attachments.materializeAttachment(
                                     value,
                                     blob,
-                                    { target },
+                                    { target, signal },
                                     withRequestSignal(opts.client, signal)
                                 )) ?? value
                             );

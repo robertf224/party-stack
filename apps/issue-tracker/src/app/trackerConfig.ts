@@ -23,5 +23,5 @@ export const FOUNDRY_CLIENT_ID = requiredEnv(
 export const FOUNDRY_REDIRECT_URL =
     import.meta.env.VITE_FOUNDRY_REDIRECT_URL ?? new URL("/auth/callback", globalThis.location.origin).href;
 
-export const TRACKER_CACHE_EPOCH = "query-ir-v0";
+export const TRACKER_CACHE_EPOCH = "native-subset-v0";
 export const FOUNDRY_INSTALLATION_ID = new URL(FOUNDRY_URL).origin;

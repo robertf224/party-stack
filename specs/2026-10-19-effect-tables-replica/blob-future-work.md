@@ -18,9 +18,14 @@ selected fields to provider metadata APIs; byte reads do not preflight metadata.
 OPFS, Node and Expo write chunks to files. SQLite stores bounded 64 KiB BLOB rows
 plus a completed-generation marker. R2 known-size sources use streaming put (empty
 objects use an empty ArrayBuffer); unknown-size sources use 8 MiB multipart buffers.
-Foundry regular attachment and temporary-media uploads use the authenticated HTTP
-fetch directly because the generated SDK only accepts Blob. Incoming provider reads
-stay streamed. Full-Blob conveniences and the memory fallback use an explicit
+Foundry ordinary attachment uploads use the generated SDK with a known-length Blob.
+Stream sources are collected at that provider boundary within the materialization
+limit below; existing Blob inputs are passed through. Browser fetch cannot manually
+set Content-Length for a stream, and live browser/SharedWorker verification rejected
+streamed ordinary attachments with both octet-stream and PNG Content-Type, while
+Blob controls succeeded. Temporary-media uploads retain the authenticated streaming
+HTTP path; a live unknown-length octet-stream upload succeeded on that endpoint.
+Incoming provider reads stay streamed. Full-Blob conveniences and the memory fallback use an explicit
 64 MiB default materialization limit rather than an unbounded array of chunks.
 
 HTTP actions with uploads use one multipart request; standalone creation uses one
@@ -45,6 +50,34 @@ integration. No production-data migration is supplied for the new development-on
 SQLite byte layout. See gateway-v0-parity.md.
 
 Reference: [Effect v4 Multipart](https://effect.website/docs/v4/api/effect/http/Multipart).
+
+## Foundry upload streaming
+
+Revisit streaming ordinary attachment uploads when the provider/browser combination
+can send a supported request without collecting a Blob. Do not add a native Blob
+representation to the shared byte-source or RPC contracts solely for this optimization.
+Other adapters continue streaming where their provider and HTTP runtime allow it.
+
+Live smoke test on November 2, 2026, using the same synthetic PNG and authenticated
+browser/SharedWorker client (no explicit Content-Length on the stream requests):
+
+| Endpoint/body                        | Content-Type             | Result                      |
+| ------------------------------------ | ------------------------ | --------------------------- |
+| Ordinary attachment / ReadableStream | application/octet-stream | 400 Default:InvalidArgument |
+| Ordinary attachment / ReadableStream | image/png                | 400 Default:InvalidArgument |
+| Ordinary attachment / Blob           | application/octet-stream | 200                         |
+| Ordinary attachment / SDK Blob       | image/png                | 200                         |
+| Temporary media / ReadableStream     | application/octet-stream | 200                         |
+| Temporary media / Blob               | application/octet-stream | 200                         |
+
+These results establish the observed endpoint distinction, rather than inferring
+streaming support from Content-Type or the SDK's Blob-only signature. The request
+references do not explicitly document a length requirement; recheck provider support
+when revisiting the ordinary attachment optimization. The test deliberately stopped
+before action application; unlinked uploads use Foundry's one-hour expiry.
+
+References: [Upload Attachment](https://www.palantir.com/docs/foundry/api/v2/ontologies-v2-resources/attachments/upload-attachment/),
+[Upload Media](https://www.palantir.com/docs/foundry/api/v2/media-sets-v2-resources/media-sets/upload-media/).
 
 ## Offline query attachment policies
 

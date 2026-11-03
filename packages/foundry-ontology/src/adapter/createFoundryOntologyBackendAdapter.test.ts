@@ -31,19 +31,9 @@ const metadataMocks = vi.hoisted(() => ({
     bulkLoadOntologyEntities: vi.fn(),
 }));
 
-vi.mock("./streamingMedia.js", () => ({
+vi.mock("./uploads.js", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("./uploads.js")>()),
     uploadFoundryMedia: mediaMocks.uploadMedia,
-    uploadFoundryAttachment: (
-        client: unknown,
-        input: unknown,
-        options: { filename: string; rid?: string }
-    ) =>
-        options.rid
-            ? attachmentMocks.uploadWithRid(client, options.rid, input, {
-                  filename: options.filename,
-                  preview: true,
-              })
-            : attachmentMocks.upload(client, input, { filename: options.filename }),
 }));
 vi.mock("@osdk/foundry.mediasets", () => ({
     MediaSets: mediaMocks,
