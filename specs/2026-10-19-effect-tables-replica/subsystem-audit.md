@@ -374,9 +374,13 @@ and opportunities to remove duplicate or unused machinery.
 8. **Connect and installations:** connection ontology, credentials/refresh,
    browser versus authority workflows, installation/ontology acquisition and
    server authentication integrations.
-   Revisit capability discovery alongside ontology routes: users, metadata and
-   domain data may use separate adapters with separate watch/poll/read capabilities.
-   Decide route-level advertisement before introducing finer subset negotiation.
+   General ontology interfaces/composition and per-type/multi-feed capability
+   negotiation are [deferred beyond v0](./ontology-composition-future-work.md).
+   Keep Foundry's explicit users integration. Review installation teardown without
+   introducing a replacement route registry; preserve one SharedWorker storage/
+   credential owner, auth controls, scoped host acquisition and partition cleanup.
+   Inspect forced context.user, cache lookup before context partition resolution,
+   and the configured-user pull transform replacing the context declaration.
 9. **LiveOntology and TanStack:** thin application facade, collection/query
    lifetimes, abort propagation, action promises, optimistic UI and future
    fragments/SSR boundaries.

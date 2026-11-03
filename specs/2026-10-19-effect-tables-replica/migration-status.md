@@ -202,6 +202,12 @@ tracked in [blob-future-work.md](./blob-future-work.md).
 
 ## Follow-up design
 
+- **Ontology composition and scoped capabilities (deferred November 3):** named
+  schema interfaces, pure import/lens-binding graphs, Effect-provided sources and
+  per-type/multi-feed replication need a separate design/implementation project.
+  Keep the Foundry users integration for v0. See
+  [the recorded direction](./ontology-composition-future-work.md).
+
 - **Postgres concurrency (implemented October 30):** snapshot readers no longer
   acquire the Tables-prefix lock. Cooperating writers use key-level coordination,
   conservative logical-table predicate guards and confirmed-abort retries.
