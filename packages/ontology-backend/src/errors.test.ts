@@ -212,6 +212,25 @@ it("does not disguise native Effect RPC decoding failures as retryable network f
     expect(JSON.stringify(projectBackendError(error))).not.toContain("secret");
 });
 
+it.each([
+    ["HTTP response ended before RPC request completed", "Unavailable", true],
+    ["Received empty HTTP response from RPC server", "Unavailable", true],
+    ["Error decoding HTTP response", "InvalidResponse", false],
+] as const)(
+    "classifies Effect RPC %s independently of malformed frames",
+    async (message, kind, retryable) => {
+        const { RpcClientError } = await import("effect/rpc");
+        const error = classifyBackendFailure(
+            "applyAction",
+            new RpcClientError.RpcClientError({
+                reason: new RpcClientError.RpcClientDefect({ message, cause: { private: "secret" } }),
+            })
+        );
+        expect(error).toMatchObject({ kind, retryable, actionOutcome: "unknown" });
+        expect(JSON.stringify(projectBackendError(error))).not.toContain("secret");
+    }
+);
+
 it("keeps HTTP status separate from the detailed error kind", async () => {
     const { backendErrorStatus } = await import("./errors.js");
     expect(backendErrorStatus({ kind: "ValidationFailed" })).toBe(422);

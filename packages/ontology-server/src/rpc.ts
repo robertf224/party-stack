@@ -17,7 +17,7 @@ import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { OntologyIRSchema } from "@party-stack/ontology-spec/effect";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { digestBytes } from "@party-stack/ontology-storage/blobs";
-import { Context, Deferred, Effect, Schema, Stream, Layer, Scope } from "effect";
+import { Context, Effect, Schema, Stream, Layer, Scope } from "effect";
 import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcSchema } from "effect/rpc";
 import {
     OntologyErrorProjection,
@@ -256,7 +256,7 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
         read: unavailableSource,
         submit: unavailableSource,
         acknowledge: unavailableSource,
-        demand: unavailableSource,
+        demand: () => Stream.fromEffect(unavailableSource()),
         subscribeChanges: unavailableSource(),
     };
     return ReplicaRpcs.toLayer({
@@ -472,8 +472,7 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                 Effect.gen(function* () {
                     yield* Effect.annotateCurrentSpan("activity", "subscription");
                     yield* authorize({ operation: "Demand", subset }, context.headers);
-                    yield* source.demand(subset);
-                    return Stream.concat(Stream.make("ready" as const), Stream.never);
+                    return source.demand(subset).pipe(Stream.as("ready" as const));
                 })
             ),
         Changes: (_, context) =>
@@ -503,17 +502,8 @@ const unavailable = (cause: unknown) => classifyBackendFailure("remote.protocol"
 
 /** Use the same source contract with Effect RPC's worker, HTTP or socket transport. */
 export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(function* (
-    client: OntologyRpcClient,
-    options?: { readonly retryIntervalMs?: number }
+    client: OntologyRpcClient
 ): Effect.fn.Return<OntologyConnection, BackendError, Scope.Scope> {
-    const retryIntervalMs = options?.retryIntervalMs ?? 1_000;
-    if (!Number.isFinite(retryIntervalMs) || retryIntervalMs < 1)
-        return yield* new BackendError({
-            operation: "remote.protocol",
-            kind: "InvalidConfiguration",
-            message: "Protocol retry interval must be positive.",
-            retryable: false,
-        });
     const description = yield* client.Describe().pipe(Effect.mapError(unavailable));
     const operations = yield* makeOntologyOperationsClient(client);
     const common = {
@@ -561,36 +551,7 @@ export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(f
                 Stream.mapError(unavailable)
             )
         ),
-        demand: (subset) =>
-            Effect.gen(function* () {
-                const ready = yield* Deferred.make<void, BackendError>();
-                yield* Effect.forkScoped(
-                    Effect.gen(function* () {
-                        let established = false;
-                        for (;;) {
-                            const result = yield* Effect.result(
-                                Stream.runForEach(client.Demand(subset), () =>
-                                    Effect.gen(function* () {
-                                        established = true;
-                                        yield* Deferred.succeed(ready, undefined);
-                                    })
-                                ).pipe(Effect.mapError(unavailable))
-                            );
-                            if (!established) {
-                                yield* Deferred.fail(
-                                    ready,
-                                    result._tag === "Failure"
-                                        ? result.failure
-                                        : unavailable("Demand stream ended before acquisition.")
-                                );
-                                return;
-                            }
-                            yield* Effect.sleep(retryIntervalMs);
-                        }
-                    })
-                );
-                yield* Deferred.await(ready);
-            }),
+        demand: (subset) => client.Demand(subset).pipe(Stream.as(undefined), Stream.mapError(unavailable)),
     };
     return { ...common, replication: { kind: "speculative", source } };
 });

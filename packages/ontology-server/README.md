@@ -79,10 +79,11 @@ The replica's surrounding scope must own its synchronization loop.
 ## Stateless backend operations
 
 ```ts
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { connectOntologyBackendHttp } from "@party-stack/ontology-server/rpc/http";
 
 const backend = yield * connectOntologyBackendHttp({ url }).pipe(Effect.provide(FetchHttpClient.layer));
-const snapshot = yield * backend.loadSubset({ objectType: "Issue", query });
+const snapshot = yield * backend.loadSubset(objectSubset("Issue", query));
 const receipt = yield * backend.applyAction(invocation);
 ```
 
@@ -268,6 +269,14 @@ demand for its selected subsets; there is no parallel `Demand` RPC in that path.
 Committed `SubscribeSelection` owns demand in the same way. The snapshot strategy
 uses separate demand leases with finite state reads. Rich storage values retain their representation
 through the shared codec.
+
+Snapshot demand leases are streams: the first element confirms acquisition and later
+failures remain observable. The protocol client performs one attempt; Replica's
+shared watch supervisor owns retry/backoff, retry-after deadlines and credential
+reactivation. Demand failures appear in `status.get.demands[].watchError`; failures
+of the shared change-hint stream appear in `status.get.watchError`. Terminal failures
+stop retrying, and closing the consumer closes its lease. A local parent remains
+reachable independently of the device's upstream network status.
 
 Authorization is mandatory per operation. Sources must belong to the authenticated
 principal's partition. Ordinary owned/cached-proxy delivery sends selected committed

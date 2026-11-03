@@ -1,6 +1,7 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { Clock, Effect, Queue, Ref, Stream } from "effect";
+import { Clock, Effect, Exit, Queue, Ref, Scope, Stream } from "effect";
 import { deliveryRecovery } from "./recovery.js";
+import { superviseWatch } from "./watch.js";
 import type { ReplicaService } from "./engine.js";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 
@@ -47,7 +48,11 @@ export const replicaStateSource = (parent: ReplicaService): OntologySource => ({
     subscribe: parent.subscribeClient,
     accept: parent.acceptClient,
     acknowledgeDelivery: parent.acknowledgeDelivery,
-    demand: (subset) => parent.demand(subset).pipe(Effect.andThen(parent.syncSubset(subset))),
+    demand: (subset) =>
+        Stream.concat(
+            Stream.fromEffect(parent.demand(subset).pipe(Effect.andThen(parent.syncSubset(subset)))),
+            Stream.never
+        ).pipe(Stream.scoped),
     subscribeChanges: parent.subscribeChanges,
     submit: parent.submitClient,
     acknowledge: parent.acknowledgeClient,
@@ -189,7 +194,14 @@ export interface ParentConnection {
 export const connectReplicaParent = Effect.fn("Replica.connectParent")(function* (
     child: ReplicaService,
     source: OntologySource,
-    options?: { readonly retryIntervalMs?: number; readonly heartbeatIntervalMs?: number }
+    options?: {
+        readonly retryIntervalMs?: number;
+        readonly heartbeatIntervalMs?: number;
+        readonly authentication?: {
+            readonly generation: Effect.Effect<number>;
+            readonly awaitActivation: (after: number) => Effect.Effect<void>;
+        };
+    }
 ) {
     const retryIntervalMs = options?.retryIntervalMs ?? 1_000;
     const heartbeatIntervalMs = options?.heartbeatIntervalMs ?? 60_000;
@@ -206,7 +218,14 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
             retryable: false,
         });
     const error = yield* Ref.make<BackendError | undefined>(undefined);
-    const parentChanges = yield* Effect.result(source.subscribeChanges);
+    const initialWatchScope = yield* Scope.fork(yield* Effect.scope);
+    const parentChanges = yield* Effect.result(
+        Scope.provide(source.subscribeChanges, initialWatchScope).pipe(
+            Effect.onExit((exit) =>
+                Exit.isFailure(exit) ? Scope.close(initialWatchScope, exit) : Effect.void
+            )
+        )
+    );
     if (parentChanges._tag === "Failure") {
         if (!parentChanges.failure.retryable) return yield* parentChanges.failure;
         yield* Ref.set(error, parentChanges.failure);
@@ -248,38 +267,48 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
         Effect.gen(function* () {
             const span = yield* Effect.currentSpan;
             let first = true;
-            for (;;) {
-                const existing =
-                    first && parentChanges._tag === "Success" ? parentChanges.success : undefined;
-                first = false;
-                const result = yield* Effect.result(
-                    Effect.scoped(
+            yield* superviseWatch({
+                authentication: options?.authentication,
+                retryDelayMs: retryIntervalMs,
+                stream: () =>
+                    Stream.unwrap(
                         Effect.gen(function* () {
-                            const changes = existing ?? (yield* source.subscribeChanges);
+                            const initial = first ? parentChanges : undefined;
+                            first = false;
+                            const changes = initial
+                                ? initial._tag === "Success"
+                                    ? initial.success.pipe(
+                                          Stream.ensuring(Scope.close(initialWatchScope, Exit.void))
+                                      )
+                                    : yield* Effect.fail(initial.failure)
+                                : yield* source.subscribeChanges;
                             span.event("replica.subscribed", yield* Clock.currentTimeNanos, {
                                 diagnostic: true,
                             });
                             // Refresh after every acquisition: events during a gap are not replayable hints.
                             yield* wake;
-                            yield* Stream.runForEach(changes, () =>
-                                Effect.gen(function* () {
-                                    span.event("replica.invalidation", yield* Clock.currentTimeNanos, {
-                                        diagnostic: true,
-                                    });
-                                    yield* wake;
-                                })
-                            );
+                            return changes;
                         })
-                    )
-                );
-                span.event("replica.disconnected", yield* Clock.currentTimeNanos, { diagnostic: true });
-                if (result._tag === "Failure") {
-                    yield* Ref.set(error, result.failure);
-                    if (!result.failure.retryable) return;
-                }
-                yield* wake;
-                yield* Effect.sleep(retryIntervalMs);
-            }
+                    ),
+                onValue: () =>
+                    Effect.gen(function* () {
+                        span.event("replica.invalidation", yield* Clock.currentTimeNanos, {
+                            diagnostic: true,
+                        });
+                        yield* wake;
+                    }),
+                onError: (failure) =>
+                    Effect.gen(function* () {
+                        if (failure) {
+                            span.event("replica.disconnected", yield* Clock.currentTimeNanos, {
+                                diagnostic: true,
+                                kind: failure.kind,
+                            });
+                            yield* Ref.set(error, failure);
+                        }
+                        yield* child.reportWatchFailure(failure);
+                    }),
+            });
         }).pipe(
             Effect.withSpan("Replica.watchParent", { root: true, attributes: { activity: "subscription" } })
         ),

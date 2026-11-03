@@ -1,6 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
-import { Deferred, Effect, Exit, Fiber, Layer, Scope } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Scope, Stream } from "effect";
 import { RpcClient, RpcServer } from "effect/rpc";
 import { replicaServerBackend } from "./composition.js";
 import {
@@ -38,7 +38,6 @@ export const serveOntologyWorker = Effect.fn("OntologyServer.serveWorker")(funct
  * The enclosing scope owns RPC requests, streams and the connection lifetime.
  */
 export const connectOntologyWorker = Effect.fn("OntologyServer.connectWorker")(function* (options?: {
-    readonly retryIntervalMs?: number;
     readonly connectionTimeoutMs?: number;
 }): Effect.fn.Return<OntologyConnection, BackendError, Scope.Scope | Worker.WorkerPlatform | Worker.Spawner> {
     const timeout = options?.connectionTimeoutMs ?? 5_000;
@@ -69,7 +68,7 @@ export const connectOntologyWorker = Effect.fn("OntologyServer.connectWorker")(f
                 )
             );
             const client = yield* makeOntologyRpcClient.pipe(Effect.provideContext(transport));
-            return yield* makeOntologyProtocolClient(client, options).pipe(
+            return yield* makeOntologyProtocolClient(client).pipe(
                 Effect.timeoutOrElse({
                     duration: timeout,
                     orElse: () =>
@@ -137,7 +136,7 @@ export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(
         acknowledgeDelivery: (position) =>
             Effect.flatMap(current, (value) => value.acknowledgeDelivery!(position)),
         acknowledge: (...args) => Effect.flatMap(current, (value) => value.acknowledge(...args)),
-        demand: (subset) => Effect.flatMap(current, (value) => value.demand(subset)),
+        demand: (subset) => Stream.unwrap(Effect.map(current, (value) => value.demand(subset))),
         subscribeChanges: Effect.flatMap(current, (value) => value.subscribeChanges),
     };
     yield* Effect.forkScoped(

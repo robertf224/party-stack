@@ -25,6 +25,11 @@ const speculativeSource = (connection: OntologyConnection) => {
     if (connection.replication.kind !== "speculative") throw new Error("Expected speculative replication.");
     return connection.replication.source;
 };
+const holdDemand = Effect.fnUntraced(function* (stream: Stream.Stream<void, BackendError>) {
+    const pull = yield* Stream.toPull(stream);
+    yield* pull;
+});
+
 const ir: OntologyIR = {
     types: [],
     linkTypes: [],
@@ -343,6 +348,60 @@ test("incremental state delivery owns demand without a parallel Demand RPC", asy
     );
 });
 
+test.each(["Unavailable", "Forbidden"] as const)(
+    "Demand RPC exposes %s after readiness without transport retries",
+    async (kind) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const owned = yield* setup();
+                    const { source } = yield* openParent(owned);
+                    let attempts = 0,
+                        ready = 0;
+                    const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                        Effect.provide(
+                            ontologyRpcHandlers({
+                                source: {
+                                    ...source,
+                                    demand: () =>
+                                        Stream.suspend(() => {
+                                            attempts++;
+                                            return Stream.concat(
+                                                Stream.make(undefined),
+                                                Stream.fail(
+                                                    new BackendError({
+                                                        operation: "Demand",
+                                                        kind,
+                                                        retryable: kind === "Unavailable",
+                                                        message: "Disconnected.",
+                                                    })
+                                                )
+                                            );
+                                        }),
+                                },
+                                authorize: () => Effect.void,
+                            })
+                        )
+                    );
+                    const connection = yield* makeOntologyProtocolClient(client);
+                    const result = yield* Effect.result(
+                        Stream.runForEach(
+                            speculativeSource(connection).demand({ objectType: "Counter" }),
+                            () =>
+                                Effect.sync(() => {
+                                    ready++;
+                                })
+                        )
+                    );
+                    expect(ready).toBe(1);
+                    expect(result).toMatchObject({ _tag: "Failure", failure: { kind } });
+                    expect(attempts).toBe(1);
+                })
+            )
+        );
+    }
+);
+
 test("native HTTP advertises and transports read-only parameter resolution with portable values", async () => {
     await Effect.runPromise(
         Effect.scoped(
@@ -395,15 +454,20 @@ test("RPC demand leases and change subscriptions close with the client scope", a
                 const source: OntologySource = {
                     ...parentSource,
                     demand: () =>
-                        Effect.acquireRelease(
-                            Effect.sync(() => {
-                                leases++;
-                            }),
-                            () =>
-                                Effect.sync(() => {
-                                    leases--;
-                                })
-                        ),
+                        Stream.concat(
+                            Stream.fromEffect(
+                                Effect.acquireRelease(
+                                    Effect.sync(() => {
+                                        leases++;
+                                    }),
+                                    () =>
+                                        Effect.sync(() => {
+                                            leases--;
+                                        })
+                                )
+                            ),
+                            Stream.never
+                        ).pipe(Stream.scoped),
                 };
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(ontologyRpcHandlers({ source, authorize: () => Effect.void }))
@@ -411,7 +475,10 @@ test("RPC demand leases and change subscriptions close with the client scope", a
                 const remote = yield* makeOntologyProtocolClient(client);
                 const session = yield* speculativeSource(remote).openClient();
                 const consumer = yield* Scope.make();
-                yield* Scope.provide(speculativeSource(remote).demand({ objectType: "Counter" }), consumer);
+                yield* Scope.provide(
+                    holdDemand(speculativeSource(remote).demand({ objectType: "Counter" })),
+                    consumer
+                );
                 expect(leases).toBe(1);
                 const initial = yield* Deferred.make<void>();
                 let messages = 0;
@@ -476,16 +543,21 @@ test("HTTP RPC preserves values/authentication and reacquires interrupted stream
                                 }))
                             ),
                         demand: () =>
-                            Effect.acquireRelease(
-                                Effect.sync(() => {
-                                    leases++;
-                                    acquisitions++;
-                                }),
-                                () =>
-                                    Effect.sync(() => {
-                                        leases--;
-                                    })
-                            ),
+                            Stream.concat(
+                                Stream.fromEffect(
+                                    Effect.acquireRelease(
+                                        Effect.sync(() => {
+                                            leases++;
+                                            acquisitions++;
+                                        }),
+                                        () =>
+                                            Effect.sync(() => {
+                                                leases--;
+                                            })
+                                    )
+                                ),
+                                Stream.never
+                            ).pipe(Stream.scoped),
                     },
                     authorize: (_request, headers) =>
                         headers.authorization === "Bearer test"
@@ -503,7 +575,6 @@ test("HTTP RPC preserves values/authentication and reacquires interrupted stream
                     const http = yield* HttpClient.HttpClient;
                     const remote = yield* connectOntologyHttp({
                         url: "https://ontology.test/rpc",
-                        retryIntervalMs: 5,
                     }).pipe(
                         Effect.provideService(
                             HttpClient.HttpClient,
@@ -524,15 +595,22 @@ test("HTTP RPC preserves values/authentication and reacquires interrupted stream
                     const state = yield* speculativeSource(remote).read(session);
                     expect(state.state.objects[0]?.base[0]?.value.special).toEqual(special);
                     const consumer = yield* Scope.make();
-                    yield* Scope.provide(
-                        speculativeSource(remote).demand({ objectType: "Counter" }),
-                        consumer
-                    );
+                    const child = yield* makeReplica({
+                        namespace: "http-demand-reconnect",
+                        ir,
+                        tables: yield* Memory.make(),
+                        source: speculativeSource(remote),
+                        live: false,
+                    });
+                    yield* Scope.provide(child.demand.acquire(objectSubset("Counter")), consumer);
                     yield* Effect.promise(() =>
-                        vi.waitFor(() => {
-                            expect(acquisitions).toBe(2);
-                            expect(leases).toBe(1);
-                        })
+                        vi.waitFor(
+                            () => {
+                                expect(acquisitions).toBe(2);
+                                expect(leases).toBe(1);
+                            },
+                            { timeout: 3_000 }
+                        )
                     );
                     expect(
                         yield* Stream.runHead(yield* speculativeSource(remote).subscribeChanges)
@@ -620,7 +698,9 @@ test("RPC authorization runs before source operations, including demand and chan
                     )
                 ).toMatchObject({ _tag: "Failure", failure: { kind: "ValidationFailed" } });
                 expect(
-                    yield* Effect.result(speculativeSource(remote).demand({ objectType: "Counter" }))
+                    yield* Effect.result(
+                        holdDemand(speculativeSource(remote).demand({ objectType: "Counter" }))
+                    )
                 ).toMatchObject({
                     _tag: "Failure",
                     failure: { kind: "ValidationFailed" },

@@ -146,3 +146,13 @@ input) justifies them; immutable pointers are sufficient for the current migrati
 Alchemy R2 is the initial Cloudflare byte implementation. A Files SDK BlobBytes
 adapter may be useful later for additional providers. Provider IO must compose
 with native metadata, retention and deletion intents rather than recreate them.
+
+## RPC byte-source acquisition lifetime
+
+The protocol client's source acquisition currently consumes the ReadAttachment
+metadata header and retains a scope for the remaining stream. Consumption releases
+it, and closing the connection releases unconsumed reads. A caller that repeatedly
+acquires sources without consuming them can keep multiple reads alive until then.
+Review per-read scope/cancellation ownership during the attachment subsystem pass.
+Preserve metadata-only pushdown and cold-cache first-byte streaming; do not repair
+this by eagerly buffering files or adding a separate metadata preflight download.

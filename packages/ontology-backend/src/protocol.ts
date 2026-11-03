@@ -112,7 +112,11 @@ export interface OntologySource {
     ) => Effect.Effect<void, BackendError>;
     /** Acceptance only; selected delivery carries the resulting state. */
     readonly accept?: (request: ClientSubmission) => Effect.Effect<void, BackendError>;
-    readonly demand: (subset: CompiledSubset) => Effect.Effect<void, BackendError, Scope.Scope>;
+    /** Snapshot-mode interest lease. The first element confirms acquisition;
+     * failures/EOF remain observable, and closing the stream releases interest.
+     * Replica supervision owns retries, not the transport.
+     */
+    readonly demand: (subset: CompiledSubset) => Stream.Stream<void, BackendError>;
     readonly subscribeChanges: Effect.Effect<Stream.Stream<void, BackendError>, BackendError, Scope.Scope>;
     readonly submit: (request: ClientSubmission) => Effect.Effect<ClientState, BackendError>;
     readonly acknowledge: (

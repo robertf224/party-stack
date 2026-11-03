@@ -8,7 +8,7 @@ part of the later SDK/installation review.
 - [x] Inventory owned, direct proxy, cached proxy and intermediate replica construction
 - [x] Inspect HTTP and MessagePort transport acquisition, cancellation and startup
 - [x] Inspect Describe and optional backend capability propagation
-- [ ] Finish snapshot-mode demand failure supervision (incremental path simplified below)
+- [x] Finish snapshot-mode demand failure supervision
 - [x] Inspect authorization/projection and diagnostic/admin RPC boundaries
 - [x] Inspect upload limits, ownership, error projection and cancellation
 - [x] Inspect retained delivery, acknowledgment, session and bounded-state ownership
@@ -108,12 +108,32 @@ still apply to one blob pass rather than a hidden default pass plus another swee
   They are private operations, subscribed lazily and canceled on release. Clearing
   traces clears the client's display buffer rather than another client's history.
 
-## Remaining follow-ups
+## Snapshot supervision completion
 
-- Snapshot-mode Demand still has its own post-acquisition retry loop. Unlike the
-  simplified incremental path, a later failure is not fully represented through
-  the replica's standard supervision/status contract. Resolve its lifetime/error
-  ownership before treating this checklist as complete; do not add more silent retries.
+Snapshot-mode OntologySource.demand now exposes a scoped readiness/lifetime stream.
+The transport's hidden retry loop and unused retryIntervalMs constructor setting are
+removed. Replica uses its existing watch supervisor for both this lease and the
+shared parent change-hint stream: retry-after/backoff, terminal failures and credential
+reactivation follow the same rules as adapter watches. Both error channels appear in
+public status. Initial acquisition failures release partial resources; defects become
+sanitized terminal Internal failures instead of leaving readiness unresolved. The first
+parent change subscription has its own scope, acquired before the snapshot and released
+before a retry. Watch failure alone does not prohibit independent finite reads.
+
+Device connectivity must not gate a protocol lease: its parent can be a local worker.
+An offline regression verifies cached parent data remains accessible. Fake-clock
+regressions cover post-readiness rate limits, nonretryable permission failures,
+cleanup before retry, cancellation, initial failure/defect cleanup and public status.
+RPC tests prove post-readiness errors are exposed without transport retries.
+
+Effect RPC currently reports HTTP EOF using RpcClientDefect, the same reason as
+malformed frames. Backend normalization recognizes only upstream's two exact HTTP
+empty/incomplete-response cases as retryable Unavailable, with an unknown write
+outcome. Decode failures remain nonretryable InvalidResponse. Unit cases and an actual
+truncated NDJSON response verify the distinction; no dependency patch was introduced.
+
+## Nonblocking follow-ups
+
 - Describe's watch flag remains endpoint-wide, while an adapter can decline individual
   subsets. Provider polling recommendations cover current Foundry user loads; fully
   negotiating subset-specific watch/refresh capabilities remains a contract question.
@@ -121,6 +141,8 @@ still apply to one blob pass rather than a hidden default pass plus another swee
   Consumption closes that read scope, and connection teardown closes abandoned reads.
   Review a caller that repeatedly acquires sources without consuming them during the
   attachment subsystem pass: connection ownership alone is not per-read release.
+  This is also recorded in blob-future-work.md, rather than left as an untracked
+  server review item.
 - General untrusted speculative replication, provider cursor paging, full query IVM,
   finite-query work budgets and installation partition ownership remain the previously
   recorded future work. This checkpoint introduces none of those capabilities.
@@ -133,5 +155,8 @@ and held-write/cross-client rejection flow. Server: 82 tests, including all serv
 roles with snapshot/incremental HTTP delivery, MessagePort startup/cleanup, capability
 round trips and multipart validation. Final workspace CI: 133/133 successful,
 including real PostgreSQL, sample applications and Worker-safe DO bundles.
-The snapshot-mode demand supervision item above remains open; this is a saved
-review checkpoint rather than a claim that every server follow-up is complete.
+Those counts describe the first saved checkpoint. Completion regressions now pass
+78 backend, 193 Replica and 84 server tests. Final workspace CI for the completion
+checkpoint: 133/133 successful, including real PostgreSQL and Worker-safe DO bundles.
+The subsystem checklist is complete;
+the explicit capability/resource and broader feature follow-ups above remain.

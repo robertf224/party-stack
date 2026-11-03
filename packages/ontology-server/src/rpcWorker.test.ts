@@ -20,6 +20,11 @@ const speculativeSource = (connection: OntologyConnection) => {
     if (connection.replication.kind !== "speculative") throw new Error("Expected speculative replication.");
     return connection.replication.source;
 };
+const holdDemand = Effect.fnUntraced(function* (stream: Stream.Stream<void, BackendError>) {
+    const pull = yield* Stream.toPull(stream);
+    yield* pull;
+});
+
 const ir: OntologyIR = {
     types: [],
     linkTypes: [],
@@ -344,21 +349,29 @@ test("closing one port releases its demands without closing the shared source", 
                 const source = {
                     ...replicaStateSource(parent),
                     demand: () =>
-                        Effect.acquireRelease(
-                            Effect.sync(() => {
-                                leases++;
-                            }),
-                            () =>
-                                Effect.sync(() => {
-                                    leases--;
-                                })
-                        ),
+                        Stream.concat(
+                            Stream.fromEffect(
+                                Effect.acquireRelease(
+                                    Effect.sync(() => {
+                                        leases++;
+                                    }),
+                                    () =>
+                                        Effect.sync(() => {
+                                            leases--;
+                                        })
+                                )
+                            ),
+                            Stream.never
+                        ).pipe(Stream.scoped),
                 };
                 const firstScope = yield* Scope.make();
                 const first = yield* Scope.provide(openPort(source), firstScope);
                 const second = yield* openPort(source);
-                yield* Scope.provide(speculativeSource(first).demand({ objectType: "Counter" }), firstScope);
-                yield* speculativeSource(second).demand({ objectType: "Counter" });
+                yield* Scope.provide(
+                    holdDemand(speculativeSource(first).demand({ objectType: "Counter" })),
+                    firstScope
+                );
+                yield* holdDemand(speculativeSource(second).demand({ objectType: "Counter" }));
                 expect(leases).toBe(2);
                 yield* Scope.close(firstScope, Exit.void);
                 yield* Effect.promise(() => vi.waitFor(() => expect(leases).toBe(1)));

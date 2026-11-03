@@ -1,5 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { Effect, Stream } from "effect";
+import { Effect, Redacted, Stream } from "effect";
 
 /** Each attempt has its own scope. Terminal failures stay observable; only
  * retryable failures reopen subscriptions. Normal EOF also needs a repair.
@@ -37,6 +37,18 @@ export const superviseWatch = Effect.fnUntraced(function* <A>(options: {
                         )
                     );
                 }).pipe(Effect.withSpan("Replica.watchAttempt", { attributes: { activity: "subscription" } }))
+            ).pipe(
+                Effect.catchDefect((cause) =>
+                    Effect.fail(
+                        new BackendError({
+                            operation: "replica.watch",
+                            kind: "Internal",
+                            retryable: false,
+                            message: "The change subscription failed internally.",
+                            cause: Redacted.make(cause),
+                        })
+                    )
+                )
             )
         );
         const error =

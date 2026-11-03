@@ -196,6 +196,7 @@ export interface ReplicaService extends OwnedReadTransaction {
     };
     readonly changes: Stream.Stream<void>;
     readonly reportReplicationFailure: (error?: BackendError) => Effect.Effect<void>;
+    readonly reportWatchFailure: (error?: BackendError) => Effect.Effect<void>;
     readonly observeRows: (
         objectType: string,
         query?: Query
@@ -2863,21 +2864,20 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             yield* wakeState;
             return;
         }
-        if (options.source)
-            return yield* options.source.demand(
-                copy.query ? { ...copy, query: retentionQuery(copy.query) } : copy
-            );
-        if (options.live === false) return;
-        const watched = adapter!.watchSubset?.(objectSubset(copy.objectType, copy.query));
+        if (!options.source && options.live === false) return;
+        const remoteSubset = copy.query ? { ...copy, query: retentionQuery(copy.query) } : copy;
+        const watched = options.source
+            ? options.source.demand(remoteSubset)
+            : adapter!.watchSubset?.(objectSubset(copy.objectType, copy.query));
         const configuredInterval =
             options.demand?.refresh?.pollIntervalMs ??
-            adapter!.refresh?.(objectSubset(copy.objectType, copy.query))?.pollIntervalMs ??
+            adapter?.refresh?.(objectSubset(copy.objectType, copy.query))?.pollIntervalMs ??
             false;
         const demand = demands.get(key)!;
         demand.watched = Boolean(watched);
         demand.pollDisabled = !watched && configuredInterval === false;
         const pollIntervalMs =
-            watched || adapter!.changes || configuredInterval === false
+            watched || adapter?.changes || configuredInterval === false
                 ? undefined
                 : (configuredInterval ?? options.pollIntervalMs ?? 5_000);
         if (pollIntervalMs !== undefined && (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 100))
@@ -2888,6 +2888,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 ? undefined
                 : Stream.fromEffectRepeat(Effect.sleep(pollIntervalMs)));
         if (!hints) return;
+        const ready = options.source ? yield* Deferred.make<void, BackendError>() : undefined;
         let firstWatch = true;
         demand.pollIntervalMs = pollIntervalMs;
         const invalidateCoverage = boundary(
@@ -2918,10 +2919,16 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 firstWatch = false;
                                 return hints;
                             }
-                            return adapter!.watchSubset?.(objectSubset(copy.objectType, copy.query)) ?? hints;
+                            return options.source
+                                ? options.source.demand(remoteSubset)
+                                : (adapter!.watchSubset?.(objectSubset(copy.objectType, copy.query)) ??
+                                      hints);
                         })
                     ),
-                canRun: canSync,
+                // A protocol parent may be a local worker while the device is
+                // offline. Its transport failures, not upstream connectivity,
+                // determine whether this lease needs retrying.
+                canRun: options.source ? undefined : canSync,
                 authentication,
                 onValue: () =>
                     Effect.gen(function* () {
@@ -2929,6 +2936,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         yield* invalidateCoverage;
                         yield* diagnostics.changed;
                         yield* wakeState;
+                        if (ready) yield* Deferred.succeed(ready, undefined);
                     }),
                 onError: (error) =>
                     Effect.sync(() => {
@@ -2941,7 +2949,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 : Effect.void
                         ),
                         Effect.andThen(diagnostics.changed),
-                        Effect.andThen(error ? wakeState : Effect.void)
+                        Effect.andThen(error ? wakeState : Effect.void),
+                        Effect.andThen(ready && error ? Deferred.fail(ready, error) : Effect.void)
                     ),
             }).pipe(
                 Effect.withSpan("Replica.watchSubset", {
@@ -2951,6 +2960,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             ),
             { startImmediately: true }
         );
+        if (ready) yield* Deferred.await(ready);
     });
     const demandCodec = Table.make<CompiledSubset>({ name: "demand" });
     const demandCache = yield* makeDemandCache({
@@ -2980,6 +2990,21 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         })
     );
     const service: ReplicaService = {
+        reportWatchFailure: (error) =>
+            Effect.sync(() => {
+                changeWatchFailure = error;
+            }).pipe(
+                Effect.andThen(diagnostics.changed),
+                Effect.andThen(wakeState),
+                Effect.andThen(
+                    error
+                        ? Effect.logWarning("Replica change subscription failed", {
+                              kind: error.kind,
+                              retryable: error.retryable,
+                          })
+                        : Effect.void
+                )
+            ),
         localTransaction: (body) =>
             access(tables.transaction((tx) => body(tx, reader(tx, false)))).pipe(Effect.tap(() => notify)),
         visibleChanges: access(PubSub.subscribe(visibleEvents)).pipe(
@@ -4286,7 +4311,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     if (options.startSync !== false && options.source) {
         yield* options.source.subscribe
             ? connectReplicaDelivery(service, options.source)
-            : connectReplicaParent(service, options.source);
+            : connectReplicaParent(service, options.source, { authentication });
     } else if (options.startSync !== false) {
         if (adapter?.subscribeSelection) yield* connectReplicaDelivery(service);
         const dataPollIntervalMs = options.pollIntervalMs ?? 5000;
@@ -4372,21 +4397,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     canRun: canSync,
                     authentication,
                     onValue: () => wakeState,
-                    onError: (error) =>
-                        Effect.sync(() => {
-                            changeWatchFailure = error;
-                        }).pipe(
-                            Effect.andThen(diagnostics.changed),
-                            Effect.andThen(wakeState),
-                            Effect.andThen(
-                                error
-                                    ? Effect.logWarning("Replica change subscription failed", {
-                                          kind: error.kind,
-                                          retryable: error.retryable,
-                                      })
-                                    : Effect.void
-                            )
-                        ),
+                    onError: service.reportWatchFailure,
                 }).pipe(
                     Effect.withSpan("Replica.watchChanges", {
                         root: true,

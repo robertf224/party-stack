@@ -156,6 +156,24 @@ const ProviderFailure = Schema.Struct({
 /** Normalize SDK failures. No provider message/body is made public by this classifier. */
 export function classifyBackendFailure(operation: string, cause: unknown): BackendError {
     if (cause instanceof BackendError) return cause;
+    // Effect RPC currently puts HTTP EOF in RpcClientDefect alongside decoding
+    // failures. Only its two explicit EOF cases mean transport loss; malformed
+    // frames must remain terminal InvalidResponse failures. Replace this narrow
+    // normalization when upstream exposes a structured interrupted-response reason.
+    if (
+        cause instanceof RpcClientError.RpcClientError &&
+        cause.reason._tag === "RpcClientDefect" &&
+        (cause.reason.message === "HTTP response ended before RPC request completed" ||
+            cause.reason.message === "Received empty HTTP response from RPC server")
+    )
+        return new BackendError({
+            operation,
+            kind: "Unavailable",
+            message: "The RPC connection was interrupted.",
+            retryable: true,
+            actionOutcome: "unknown",
+            cause: Redacted.make(cause),
+        });
     if (
         (cause instanceof RpcClientError.RpcClientError && cause.reason._tag === "RpcClientDefect") ||
         (cause instanceof HttpClientError.HttpClientError && cause.reason._tag === "DecodeError")

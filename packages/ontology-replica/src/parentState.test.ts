@@ -128,7 +128,7 @@ const client = Effect.fnUntraced(function* (
             openClient: () => Effect.fail(failure()),
             read: () => Effect.fail(failure()),
             acknowledge: () => Effect.fail(failure()),
-            demand: () => Effect.void,
+            demand: () => Stream.concat(Stream.make(undefined), Stream.never),
             subscribeChanges: Effect.succeed(Stream.never),
             submit: () => Effect.fail(failure()),
         },

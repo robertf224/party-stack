@@ -218,6 +218,13 @@ still require explicit recovery. Pending local actions survive snapshot recovery
 Memory tabs naturally lose their positions when closed. Persistent replicas retain
 them; resumption requires a compatible selection and unexpired upstream state.
 
+The snapshot delivery strategy uses finite reads plus a scoped demand lease. A lost
+lease or change-notification stream is reported through replica watch status and
+retried only when its error permits, including any retry-after deadline. Closing a
+consumer releases its demand and cancels lease retries. Transport clients do not
+retry these subscriptions independently of the replica. Local worker communication
+can continue while the device is offline from its upstream provider.
+
 Attachment byte reclamation ranks eligible metadata with a storage query using
 age multiplied by size (with a small-object overhead), while respecting retention
 roots. Raw table stores page computed Top K candidates rather than materializing

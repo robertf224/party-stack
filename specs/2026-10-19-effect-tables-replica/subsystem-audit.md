@@ -357,6 +357,8 @@ and opportunities to remove duplicate or unused machinery.
    Foundry/Salesforce pushdown, watch supervision, polling and retries.
 5. **Server and protocol:** owned/direct/cached/replica compositions, transport
    lifetimes, incremental delivery, ACKs/reset recovery, sessions and retention.
+   The [server review](./server-protocol-review.md) records the completed functional
+   pass, ownership fixes, snapshot watch supervision and explicit follow-ups.
 6. **Query IR and authorization:** expression/query boundaries, context and
    partitioning, schema projection, action bindings/checks, rewrite rules and
    eager/property-test oracles.

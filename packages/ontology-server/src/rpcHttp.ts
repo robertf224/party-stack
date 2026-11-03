@@ -56,7 +56,6 @@ export const makeOntologyHttpHandler = Effect.fn("RemoteOntology.httpHandler")(f
  */
 export const connectOntologyHttp = Effect.fn("RemoteOntology.connectHttp")(function* (options: {
     readonly url: string;
-    readonly retryIntervalMs?: number;
 }): Effect.fn.Return<OntologyConnection, BackendError, HttpClient.HttpClient | Scope.Scope> {
     const client = yield* makeOntologyRpcClient.pipe(
         Effect.provide(
@@ -65,7 +64,7 @@ export const connectOntologyHttp = Effect.fn("RemoteOntology.connectHttp")(funct
             )
         )
     );
-    const connection = yield* makeOntologyProtocolClient(client, options);
+    const connection = yield* makeOntologyProtocolClient(client);
     const uploads = yield* makeHttpAttachmentClient(options.url);
     return {
         ...connection,
