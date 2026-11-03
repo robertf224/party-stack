@@ -246,6 +246,103 @@ test("domain RPC carries selected state, resumable ordered actions and acknowled
     );
 });
 
+test("speculative delivery checks its client session before acquiring upstream demand", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* setup();
+                const loads = vi.spyOn(owned, "loadSubset");
+                const parent = yield* makeReplica({
+                    namespace: "delivery-admission",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend: owned,
+                    live: false,
+                });
+                const source = replicaStateSource(parent);
+                const session = yield* source.openClient();
+                const result = yield* Effect.result(
+                    Effect.scoped(
+                        source.subscribe!(
+                            { ...session, connectionId: "stale" },
+                            {
+                                generation: 1,
+                                selection: { subsets: [{ objectType: "Counter" }], actionIds: [] },
+                            }
+                        )
+                    )
+                );
+                expect(result).toMatchObject({ _tag: "Failure", failure: { kind: "SessionReplaced" } });
+                expect(loads).not.toHaveBeenCalled();
+            })
+        )
+    );
+});
+
+test("incremental state delivery owns demand without a parallel Demand RPC", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* setup();
+                yield* owned.applyAction({ id: "seed", name: "increment", parameters: {} });
+                const parent = yield* makeReplica({
+                    namespace: "delivery-parent",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend: owned,
+                });
+                const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                    Effect.provide(
+                        ontologyRpcHandlers({
+                            source: replicaStateSource(parent),
+                            ir,
+                            authorize: (request) =>
+                                request.operation === "Demand"
+                                    ? Effect.fail(
+                                          new BackendError({
+                                              operation: "Demand",
+                                              kind: "Internal",
+                                              retryable: false,
+                                              message: "Unexpected separate demand lease.",
+                                          })
+                                      )
+                                    : Effect.void,
+                        })
+                    )
+                );
+                const connection = yield* makeOntologyProtocolClient(client);
+                const child = yield* makeReplica({
+                    namespace: "delivery-child",
+                    ir,
+                    tables: yield* Memory.make(),
+                    source: speculativeSource(connection),
+                });
+                const consumer = yield* Scope.make();
+                yield* Effect.addFinalizer(() => Scope.close(consumer, Exit.void));
+                yield* Scope.provide(child.demand.acquire(objectSubset("Counter")), consumer);
+                expect((yield* child.get("Counter", "one"))?.count).toBe(1);
+                expect((yield* parent.status.get).demands.some((d) => d.references > 0)).toBe(true);
+                yield* owned.applyAction({ id: "update", name: "increment", parameters: {} });
+                yield* Effect.promise(() =>
+                    vi.waitFor(async () =>
+                        expect((await Effect.runPromise(child.get("Counter", "one")))?.count).toBe(2)
+                    )
+                );
+                yield* Scope.close(consumer, Exit.void);
+                yield* Effect.promise(() =>
+                    vi.waitFor(async () =>
+                        expect(
+                            (await Effect.runPromise(parent.status.get)).demands.filter(
+                                (d) => d.references > 0
+                            )
+                        ).toHaveLength(0)
+                    )
+                );
+            })
+        )
+    );
+});
+
 test("native HTTP advertises and transports read-only parameter resolution with portable values", async () => {
     await Effect.runPromise(
         Effect.scoped(
@@ -1018,6 +1115,55 @@ test("only replica servers advertise speculative state; owned and proxy roles ex
     );
 });
 
+test.each(["absent", "read-only", "read-write"] as const)(
+    "HTTP preserves %s attachment capabilities",
+    async (mode) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const owned = yield* setup();
+                    const { handleRequest } = yield* makeOntologyServer({
+                        kind: "proxy",
+                        ir,
+                        authorize: () => Effect.void,
+                        backend: {
+                            ...owned,
+                            attachments:
+                                mode === "absent"
+                                    ? undefined
+                                    : {
+                                          stage:
+                                              mode === "read-write"
+                                                  ? (value) => Effect.succeed(value)
+                                                  : undefined,
+                                          read: () => Effect.succeed(new Blob(["test"])),
+                                          metadata: () => Effect.succeed({ size: 4 }),
+                                      },
+                        },
+                    });
+                    yield* Effect.gen(function* () {
+                        const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
+                        expect(Boolean(connection.backend.attachments)).toBe(mode !== "absent");
+                        expect(Boolean(connection.backend.attachments?.stage)).toBe(mode === "read-write");
+                        expect(connection.backend.encrypted).toBeUndefined();
+                        if (connection.backend.attachments) {
+                            const blob = yield* collectByteBlob(
+                                yield* connection.backend.attachments.read({ id: "file" })
+                            );
+                            expect(yield* Effect.promise(() => blob.text())).toBe("test");
+                        }
+                    }).pipe(
+                        Effect.provide(FetchHttpClient.layer),
+                        Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                            handleRequest(new Request(input, init))
+                        )
+                    );
+                })
+            )
+        );
+    }
+);
+
 test("committed RPC subset watching preserves provider hints and releases its scope", async () => {
     await Effect.runPromise(
         Effect.scoped(
@@ -1066,6 +1212,50 @@ test("committed RPC subset watching preserves provider hints and releases its sc
         )
     );
 });
+
+test.each(["watchSubset", "changes"] as const)(
+    "RPC %s exposes failed watch attempts to replica supervision",
+    async (hook) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const owned = yield* setup();
+                    const failure = new BackendError({
+                        operation: "test.watch",
+                        kind: "RateLimited",
+                        retryable: true,
+                        retryAfterMs: 30_000,
+                        message: "Try later.",
+                    });
+                    const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                        Effect.provide(
+                            ontologyRpcHandlers({
+                                backend: {
+                                    ...owned,
+                                    watchSubset: () => Stream.fail(failure),
+                                    changes: { ...owned.changes!, watch: Stream.fail(failure) },
+                                },
+                                ir,
+                                errors: "forward",
+                                authorize: () => Effect.void,
+                            })
+                        )
+                    );
+                    const connection = yield* makeOntologyProtocolClient(client);
+                    const stream =
+                        hook === "changes"
+                            ? connection.backend.changes!.watch!
+                            : connection.backend.watchSubset!(objectSubset("Counter"))!;
+                    const result = yield* Effect.result(Stream.runDrain(stream).pipe(Effect.timeout(200)));
+                    expect(result).toMatchObject({
+                        _tag: "Failure",
+                        failure: { kind: "RateLimited", retryable: true, retryAfterMs: 30_000 },
+                    });
+                })
+            )
+        );
+    }
+);
 
 test.each([
     "InvalidRequest",

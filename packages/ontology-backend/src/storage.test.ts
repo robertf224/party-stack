@@ -1,8 +1,9 @@
 import { o } from "@party-stack/ontology-spec";
 import { context } from "@party-stack/ontology-spec/query";
-import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
+import { byteSource, collectByteBlob, makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect } from "effect";
+import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { CurrentExecutionContext } from "./policy.js";
 import { makeStorageBackend } from "./storage.js";
@@ -102,3 +103,56 @@ test("fixed storage bindings scope idempotency by the declared context partition
         )
     );
 });
+
+test.each([true, false])(
+    "storage owner periodic maintenance enabled=%s includes orphan bytes and preserves roots",
+    async (periodic) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const tables = yield* Memory.make();
+                    const files = new Map<string, Blob>();
+                    const blobs = yield* makeBlobStorage({
+                        namespace: "maintenance",
+                        tables,
+                        mode: "authoritative",
+                        bytes: {
+                            read: (id) =>
+                                Effect.sync(() => {
+                                    const file = files.get(id);
+                                    return file && byteSource(file);
+                                }),
+                            write: (id, input) =>
+                                collectByteBlob(input).pipe(
+                                    Effect.map((blob) => {
+                                        files.set(id, blob);
+                                    })
+                                ),
+                            delete: (id) =>
+                                Effect.sync(() => {
+                                    files.delete(id);
+                                }),
+                        },
+                    });
+                    const backend = yield* makeStorageBackend({
+                        namespace: "maintenance",
+                        ir,
+                        tables,
+                        blobs,
+                        maintenance: periodic ? undefined : false,
+                    });
+                    yield* backend.attachments!.stage!({ id: "orphan" }, new Blob(["orphan"]));
+                    yield* backend.attachments!.stage!({ id: "retained" }, new Blob(["retained"]));
+                    yield* tables.transaction((tx) => blobs.in(tx).retain("object-reference", ["retained"]));
+                    expect(files.size).toBe(2);
+                    yield* TestClock.adjust(60 * 60_000);
+                    expect(files.size).toBe(periodic ? 1 : 2);
+                    yield* backend.collectGarbage();
+                    expect(files.size).toBe(1);
+                    expect(yield* blobs.metadata("orphan")).toBeUndefined();
+                    expect(yield* blobs.metadata("retained")).toBeDefined();
+                })
+            ).pipe(Effect.provide(TestClock.layer()))
+        );
+    }
+);

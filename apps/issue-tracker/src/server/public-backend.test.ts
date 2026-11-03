@@ -68,7 +68,7 @@ it("searches canonical profiles and projects snapshots and journal changes befor
             ).toBe("Failure");
             yield* owned.storage.transaction((tx) => tx.delete("Session", "session"));
             expect((yield* backend.changes!.pull({ cursor: page.cursor })).commits[0]?.changes).toEqual([]);
-        })
+        }).pipe(Effect.scoped)
     );
 });
 

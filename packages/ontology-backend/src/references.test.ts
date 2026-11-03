@@ -68,6 +68,6 @@ test("reference validation is rechecked in the commit transaction and returns pa
             expect((yield* owned.changes!.pull({ cursor: before.cursor })).commits).toEqual([]);
             yield* owned.applyAction({ id: "same-action", name: "create", parameters: {} });
             expect(applied).toBe(1);
-        })
+        }).pipe(Effect.scoped)
     );
 });

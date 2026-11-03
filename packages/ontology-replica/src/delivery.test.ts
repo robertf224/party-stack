@@ -194,6 +194,8 @@ test("multipart delivery settles a rejection after cross-client writes", async (
                 const waiter = yield* Effect.forkScoped(
                     Effect.result(child.outbox.wait("rejected").pipe(Effect.timeout("3 seconds")))
                 );
+                // Acceptance must flow while upstream execution is still held. A
+                // selected stream cannot wait for a refresh gated behind that write.
                 yield* child.outbox.wait("rejected", { until: "accepted" }).pipe(Effect.timeout("3 seconds"));
                 yield* Deferred.succeed(rejectNow, undefined);
                 const result = yield* Fiber.join(waiter);

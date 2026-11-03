@@ -168,7 +168,9 @@ async function setup(sqlite: boolean, namespace = crypto.randomUUID()) {
     const owner = Effect.runSync(Scope.make());
     closers.push(() => Effect.runPromise(Scope.close(owner, Exit.void)));
     const tables = await runtime.runPromise(Tables);
-    const backend = await runtime.runPromise(makeOwnedBackend({ tables, namespace, ir, mutators: {} }));
+    const backend = await runtime.runPromise(
+        Scope.provide(makeOwnedBackend({ tables, namespace, ir, mutators: {} }), owner)
+    );
     const factory = await runtime.runPromise(
         Scope.provide(makeBetterAuthStorage({ storage: backend.storage, models }), owner)
     );
@@ -266,7 +268,7 @@ for (const sqlite of [false, true])
         });
 
         it("journals auth transactions as one batch and persists that history across backend reconstruction", async () => {
-            const { adapter, backend, runtime, tables, namespace } = await setup(sqlite);
+            const { adapter, backend, runtime, tables, namespace, owner } = await setup(sqlite);
             const before = await runtime.runPromise(backend.loadSubset(objectSubset("Person")));
             let id = "";
             await adapter.transaction(async (tx) => {
@@ -280,7 +282,7 @@ for (const sqlite of [false, true])
                 await tx.create({ model: "membership", data: { owner: id, role: "admin" } });
             });
             const reopened = await runtime.runPromise(
-                makeOwnedBackend({ tables, namespace, ir, mutators: {} })
+                Scope.provide(makeOwnedBackend({ tables, namespace, ir, mutators: {} }), owner)
             );
             const page = await runtime.runPromise(reopened.changes!.pull({ cursor: before.cursor }));
             expect(page.commits).toHaveLength(1);

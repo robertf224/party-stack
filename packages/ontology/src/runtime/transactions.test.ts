@@ -100,7 +100,7 @@ test("mutator queries lazily read transaction-local persisted rows and earlier w
                 )
             ).toBe(true);
             expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(5);
-        })
+        }).pipe(Effect.scoped)
     );
 });
 
@@ -197,7 +197,7 @@ test("action null clears optional properties while omitted inputs preserve exist
                 parameters: { note: "one", label: null },
             });
             expect((yield* backend.loadSubset(objectSubset("Note"))).rows[0]?.value.label).toBeUndefined();
-        })
+        }).pipe(Effect.scoped)
     );
 });
 

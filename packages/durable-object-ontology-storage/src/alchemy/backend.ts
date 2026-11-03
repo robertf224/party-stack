@@ -52,6 +52,8 @@ export const makeAlchemyOntology = Effect.fn("AlchemyOntology.make")(function* (
     const backend = yield* makeStorageBackend({
         ...options,
         namespace: options.ontologyId,
+        // DO alarms own maintenance; an in-memory interval must not prevent hibernation.
+        maintenance: false,
         tables,
         blobs,
     });

@@ -22,7 +22,7 @@ const ir: OntologyIR = {
         },
     ],
 };
-const setup = Effect.fnUntraced(function* () {
+const setup = Effect.fnUntraced(function* (reject?: BackendError) {
     const first = yield* Deferred.make<void>();
     const finish = yield* Deferred.make<void>();
     const stage = vi.fn(() =>
@@ -85,6 +85,7 @@ const setup = Effect.fnUntraced(function* () {
                         )
                     );
                 }
+                if (reject) return yield* reject;
                 committed();
                 return {
                     operationId: request.id,
@@ -204,4 +205,68 @@ test("multipart actions reauthorize before final EOF and reject truncated upload
             )
         );
     }
+});
+
+test("multipart unknown actions fail promptly without dispatch", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { client, committed } = yield* setup();
+                const result = yield* Effect.result(
+                    client
+                        .applyAction({
+                            id: "unknown",
+                            name: "unknown",
+                            parameters: { files: [{ id: "audio" }] },
+                            attachmentUploads: [{ attachment: { id: "audio" }, blob: new Blob(["audio"]) }],
+                        })
+                        .pipe(Effect.timeout(200))
+                );
+                expect(result).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "InvalidRequest", actionOutcome: "not-committed" },
+                });
+                expect(committed).not.toHaveBeenCalled();
+            })
+        )
+    );
+});
+
+test("multipart failures preserve safe issues for visible action parameters", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const issue = {
+                    path: ["files"],
+                    code: "arraySize",
+                    category: "input",
+                    messageSource: "standard",
+                    message: "Choose fewer files.",
+                } as const;
+                const { client, committed } = yield* setup(
+                    new BackendError({
+                        operation: "applyAction",
+                        kind: "ValidationFailed",
+                        retryable: false,
+                        actionOutcome: "not-committed",
+                        message: "Invalid files.",
+                        issues: [issue],
+                    })
+                );
+                const result = yield* Effect.result(
+                    client.applyAction({
+                        id: "invalid",
+                        name: "save",
+                        parameters: { files: [{ id: "audio" }] },
+                        attachmentUploads: [{ attachment: { id: "audio" }, blob: new Blob(["audio"]) }],
+                    })
+                );
+                expect(result).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "ValidationFailed", issues: [issue] },
+                });
+                expect(committed).not.toHaveBeenCalled();
+            })
+        )
+    );
 });

@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import { createLiveOntology, o, type OntologyIR } from "@party-stack/ontology";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
@@ -7,7 +9,7 @@ import { MemoryRuntime } from "@party-stack/runtime";
 import { createTraceCapture } from "@party-stack/runtime/tracing";
 import { createLiveQueryCollection, eq } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
-import { Effect, Tracer } from "effect";
+import { Effect, Exit, Scope, Tracer } from "effect";
 import { StrictMode, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -31,6 +33,7 @@ const ir: OntologyIR = {
     ],
 };
 type Definition = { objectTypes: { Note: { id: string } }; actionTypes: {}; queryFunctionTypes: {} };
+const backendScope = Effect.runSync(Scope.make());
 const backend = await Effect.runPromise(
     makeOwnedBackend({
         namespace: "fixture",
@@ -42,7 +45,7 @@ const backend = await Effect.runPromise(
                     .put("Note", { id: "one", image: { id: "preview" } })
                     .pipe(Effect.andThen(tx.put("Note", { id: "two" }))),
         },
-    })
+    }).pipe(Scope.provide(backendScope))
 );
 await Effect.runPromise(backend.applyAction({ id: "seed", name: "seed", parameters: {} }));
 let loads = 0;
@@ -85,6 +88,11 @@ const ontology = await createLiveOntology<Definition>({
                     ),
             }),
     }),
+});
+
+import.meta.hot?.dispose(async () => {
+    await ontology.cleanup();
+    await Effect.runPromise(Scope.close(backendScope, Exit.void));
 });
 
 await Effect.runPromise(ontology.storage!.syncOnce);

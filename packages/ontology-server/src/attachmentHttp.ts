@@ -95,7 +95,7 @@ export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
             ).pipe(Stream.provideContext(captured)),
         };
     };
-    const raw = Effect.fnUntraced(function* (request: Request) {
+    const raw = Effect.fnUntraced(function* (request: Request, action: { name?: string }) {
         if (request.method !== "POST") return yield* invalid("Uploads require POST.");
         const headers = Headers.fromInput(request.headers);
         const url = new URL(request.url);
@@ -151,16 +151,22 @@ export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
                         payload = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Payload))(
                             part.value
                         ).pipe(Effect.mapError(() => invalid("Invalid multipart action payload.")));
+                        action.name = payload.request.name;
                         const ids = payload.files.map((file) => file.attachment.id);
                         if (new Set(ids).size !== ids.length)
                             return yield* invalid("Duplicate action attachment ID.");
-                        const references = new Map(
-                            collectActionAttachments(
-                                ir,
-                                payload.request.name,
-                                payload.request.parameters
-                            ).map((reference) => [reference.attachment.id, reference])
-                        );
+                        const actionPayload = payload;
+                        const references = yield* Effect.try({
+                            try: () =>
+                                new Map(
+                                    collectActionAttachments(
+                                        ir,
+                                        actionPayload.request.name,
+                                        actionPayload.request.parameters
+                                    ).map((reference) => [reference.attachment.id, reference])
+                                ),
+                            catch: () => invalid("Invalid action attachment references."),
+                        });
                         if (ids.some((id) => !references.has(id)))
                             return yield* invalid("An upload is not referenced by the action parameters.");
                         yield* options.authorize(
@@ -231,18 +237,21 @@ export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
                     })
                 )
             ),
-            Effect.tapError((error) => Deferred.fail(result, failure(error)))
+            // A parser/authorization defect must wake the request too, rather than
+            // leaving it waiting on a result that only the failed producer can supply.
+            Effect.onError((cause) => Deferred.failCause(result, Cause.map(cause, failure)))
         );
         const pump = yield* Effect.forkScoped(producer);
         const receipt = yield* Deferred.await(result);
         yield* Fiber.join(pump);
         return Response.json(Schema.encodeSync(ActionReceiptSchema)(receipt));
     });
-    return (request: Request) =>
-        Effect.runPromiseWith(captured)(
+    return (request: Request) => {
+        const action: { name?: string } = {};
+        return Effect.runPromiseWith(captured)(
             Effect.acquireUseRelease(
                 Effect.forkIn(
-                    Effect.scoped(raw(request)).pipe(
+                    Effect.scoped(raw(request, action)).pipe(
                         Effect.timeout(duration),
                         Effect.mapError(failure),
                         Effect.catchDefect(() =>
@@ -252,6 +261,7 @@ export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
                                     kind: "Internal",
                                     message: "Upload could not be completed.",
                                     retryable: false,
+                                    actionOutcome: "unknown",
                                 })
                             )
                         )
@@ -263,7 +273,11 @@ export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
             ).pipe(
                 Effect.catch((error) =>
                     Effect.sync(() => {
-                        const projected = projectBackendError(error, options.errors, errorContext(options));
+                        const projected = projectBackendError(
+                            error,
+                            options.errors,
+                            errorContext(options, action.name)
+                        );
                         return Response.json(Schema.encodeSync(BackendError)(projected), {
                             status: status(projected.kind),
                         });
@@ -289,6 +303,7 @@ export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
             ),
             { signal: request.signal }
         );
+    };
 });
 
 /** The HTTP transport shares its configured Effect HttpClient (credentials, tracing, cancellation). */

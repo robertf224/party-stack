@@ -231,7 +231,7 @@ export interface OntologyBackendService {
      * Merely receiving an ID, or an action being naturally idempotent, is insufficient.
      */
     readonly supportsIdempotency: boolean;
-    /** Indexed bounded local maintenance; an enclosing server scope schedules it. */
+    /** Indexed bounded local maintenance; the backend owner schedules it. */
     readonly maintenance?: Effect.Effect<void, BackendError>;
     /** Return the request or explicitly describe the region actually fulfilled.
      * Consumers use the shared subset normalizer before applying requested windows.

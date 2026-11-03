@@ -1,6 +1,8 @@
 # @party-stack/ontology-server
 
-HTTP remoting for LiveOntology with policy-aware describe/load/apply and structured errors.
+Transport bindings for native ontology backends and replicas, with policy-aware
+describe/load/apply and structured errors. The server package does not depend on
+the application SDK.
 
 The package was renamed from `@party-stack/remote-ontology`. The replica-state RPC HTTP transport uses
 streaming NDJSON over Fetch, rather than SSE/EventSource framing. The same Effect
@@ -261,14 +263,19 @@ const connection =
 The HttpClient service supplies authentication/fetch behavior; its Layer constructs
 that service. The surrounding Scope owns client/server fibers and subscription
 leases. Cancelling a demand releases it; reconnecting a change stream invalidates
-the view so missed hints are repaired. Rich storage values retain their representation
+the view so missed hints are repaired. Incremental `SubscribeState` owns upstream
+demand for its selected subsets; there is no parallel `Demand` RPC in that path.
+Committed `SubscribeSelection` owns demand in the same way. The snapshot strategy
+uses separate demand leases with finite state reads. Rich storage values retain their representation
 through the shared codec.
 
 Authorization is mandatory per operation. Sources must belong to the authenticated
 principal's partition. Ordinary owned/cached-proxy delivery sends selected committed
 snapshots followed by atomic patches; the replica role also transfers speculative
 state and action handoff. Returned-state projection for untrusted speculative clients
-and resumable delivery history remain future work. Protocol children use normal local
+remains future work. Delivery resumes from a stored acknowledged position while
+history remains available; expired history requires a snapshot without discarding
+pending actions. Protocol children use normal local
 row/blob retention, metadata pushdown and streaming cold-cache byte reads.
 
 ## Worker transport
@@ -323,13 +330,15 @@ There is no separate RemoteOntologyError envelope or legacy JSON parser.
 
 Connections additionally expose `.operations`: query functions, full/draft action
 validation, attachment creation/metadata/bytes, owner outbox controls and trace
-subscriptions. Supplying `ontology` to the server binds these helpers to the
-owner's LiveOntology. They use named, schema-validated RPCs and mandatory per-call
+subscriptions. Supplying a native `replica` enables its local operations; data/action
+capabilities come from `backend`. They use named, schema-validated RPCs and mandatory per-call
 authorization. Servers supplying a `backend` also expose authorized stateless
 subset reads, action commits and optional journal reads, without session allocation.
 
 Trace snapshots use a sliding buffer and are subscribed only while the consumer
 asks for them. Attachment downloads stream metadata followed by bounded byte frames.
+Describe reports attachment access/staging and decryption capabilities; a protocol
+backend does not manufacture absent capabilities or staging for read-only attachments.
 
 The HTTP binding uses the same configured Effect HttpClient for RPC and binary IO.
 Standalone attachment creation sends one streamed binary POST to the mounted URL;
@@ -367,3 +376,8 @@ require explicit `deleteLocalData` / `releaseOwner` callbacks and authorization.
 Deletion acknowledgment and the optional owner-release notification are separate
 so a transport failure during shutdown cannot turn an acknowledged deletion into
 a reported deletion failure.
+
+HTTP and MessagePort bindings do not schedule backend maintenance. The owned
+backend's acquisition Scope owns its periodic sweep, or an external owner invokes
+maintenance (the Alchemy DO resource uses its alarm). Mounting another transport
+over the same backend therefore does not start another cleanup loop.

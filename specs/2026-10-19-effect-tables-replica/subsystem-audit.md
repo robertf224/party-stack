@@ -253,8 +253,10 @@ scope. Similarly, a TTL is not a total space budget. These are separate concerns
   Replica age GC does not itself impose a hard budget on that separate UI copy.
 - Connect authority expiry is scheduled by `maintainConnect`, or explicitly by
   a serverless job/alarm calling `collectExpired`. Merely defining a TTL does not
-  run maintenance. Owned HTTP servers have periodic maintenance; direct owned
-  services also do cleanup proportional to writes and expose maintenance.
+  run maintenance. Owned backend acquisition owns periodic maintenance; HTTP and
+  MessagePort bindings do not add timers. Direct owned services also do cleanup
+  proportional to writes. The Alchemy DO owner disables the timer and calls the
+  composed cleanup operation from its alarm.
 - Workerd transport tests have logged disconnect-related unhandled-promise
   exceptions and NDJSON body warnings. Passing tests do not establish that these
   messages are harmless; their origin still needs transport-specific triage.

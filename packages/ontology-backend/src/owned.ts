@@ -14,6 +14,7 @@ import { digestBytes, byteSource } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, PubSub, Redacted, Schema, Semaphore, Stream } from "effect";
 import { acknowledgeDelivery, makeDelivery, scanSelectedRows, collectDeliveryGarbage } from "./delivery.js";
+import { maintenanceInterval, scheduleMaintenance } from "./maintenance.js";
 import { CurrentActionAuthorization, CurrentQueryAuthorization, CurrentExecutionContext } from "./policy.js";
 import { actionReferenceIssues } from "./references.js";
 import { compileObjectSubset } from "./subset.js";
@@ -42,6 +43,7 @@ import type {
     StorageTransaction,
 } from "@party-stack/ontology-storage";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
+import type { Scope } from "effect";
 
 export interface OwnedReadTransaction {
     /** Exact grouped-read capability for the finite query executor, when available. */
@@ -95,6 +97,10 @@ export interface OwnedBackendOptions {
     readonly history?: { readonly maxCommits?: number; readonly maxAgeMs?: number };
     /** Infinity retains results indefinitely; finite windows bound idempotency. */
     readonly resultRetentionMs?: number;
+    /** Owner-scoped sweep, every 60 seconds by default. False leaves scheduling to
+     * an external owner (for example a DO alarm); maintenance remains callable.
+     */
+    readonly maintenance?: false | { readonly intervalMs?: number };
     readonly mutators: Readonly<
         Record<string, (tx: OwnedTransaction, invocation: ActionRequest) => Effect.Effect<void, BackendError>>
     >;
@@ -158,7 +164,7 @@ interface ChangeTarget {
 /** Authoritative local backend with atomic mutation batches, durable receipts, and a pull journal. */
 export const makeOwnedBackend = Effect.fnUntraced(function* (
     options: OwnedBackendOptions
-): Effect.fn.Return<OwnedBackendService, BackendError> {
+): Effect.fn.Return<OwnedBackendService, BackendError, Scope.Scope> {
     const schemas = yield* Effect.try({
         try: () => compileEffectSchemas(options.ir),
         catch: (cause) => fault("definition", "InvalidConfiguration", "Invalid ontology definition.", cause),
@@ -190,6 +196,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             "Journal retention requires a positive commit bound."
         );
     const resultRetentionMs = options.resultRetentionMs ?? 7 * 24 * 60 * 60 * 1000;
+    const maintenanceIntervalMs = yield* maintenanceInterval(options.maintenance);
     if (resultRetentionMs <= 0 || Number.isNaN(resultRetentionMs))
         return yield* fault("retention", "InvalidConfiguration", "Result retention must be positive.");
     if (
@@ -681,14 +688,16 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             });
         }
     );
+    const maintenance = collectGarbage.pipe(
+        Effect.andThen(collectDeliveryGarbage(tables, options.namespace)),
+        Effect.asVoid
+    );
+    yield* scheduleMaintenance(maintenance, maintenanceIntervalMs);
     return {
         name: "owned",
         storage: trustedStorage,
         sourceId: source,
-        maintenance: collectGarbage.pipe(
-            Effect.andThen(collectDeliveryGarbage(tables, options.namespace)),
-            Effect.asVoid
-        ),
+        maintenance,
         supportsIdempotency: true,
         subscribeSelection,
         acknowledgeDelivery: (position) => acknowledgeDelivery(tables, options.namespace, position),

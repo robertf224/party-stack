@@ -387,13 +387,16 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
             ),
         watchSubset:
             backend.watchSubset || backend.changes?.watch
-                ? (subset) =>
-                      Stream.unwrap(
+                ? (subset) => {
+                      const watched = backend.watchSubset?.(subset) ?? backend.changes?.watch;
+                      if (!watched) return undefined;
+                      return Stream.unwrap(
                           Effect.gen(function* () {
                               yield* projected.loadSubset(subset);
-                              return backend.watchSubset?.(subset) ?? backend.changes?.watch ?? Stream.empty;
+                              return watched;
                           })
-                      )
+                      );
+                  }
                 : undefined,
         refresh: (subset) => backend.refresh?.(subset),
     };

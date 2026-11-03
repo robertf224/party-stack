@@ -61,6 +61,8 @@ const Description = Schema.Struct({
     watchSubset: Schema.optional(Schema.Boolean),
     actionParameterResolution: Schema.optional(Schema.Boolean),
     queries: Schema.optional(Schema.Boolean),
+    attachments: Schema.optional(Schema.Struct({ stage: Schema.Boolean })),
+    encrypted: Schema.optional(Schema.Boolean),
 });
 const ReplicaRpcs = RpcGroup.make(
     Rpc.make("Describe", { success: Description, error: BackendError }),
@@ -335,6 +337,14 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                                 options.backend?.resolveActionParameters || options.replica
                             ),
                             queries: Boolean(options.query),
+                            attachments: options.backend
+                                ? options.backend.attachments && {
+                                      stage: Boolean(options.backend.attachments.stage),
+                                  }
+                                : options.replica
+                                  ? { stage: true }
+                                  : undefined,
+                            encrypted: Boolean(options.backend ? options.backend.encrypted : options.replica),
                         };
                     })
                 )

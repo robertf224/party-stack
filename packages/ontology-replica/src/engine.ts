@@ -2859,14 +2859,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             root: true,
             attributes: { activity: "subscription", objectType: subset.objectType },
         });
-        if (options.source)
-            return yield* options.source.demand(
-                copy.query ? { ...copy, query: retentionQuery(copy.query) } : copy
-            );
         if (deliveryActive) {
             yield* wakeState;
             return;
         }
+        if (options.source)
+            return yield* options.source.demand(
+                copy.query ? { ...copy, query: retentionQuery(copy.query) } : copy
+            );
         if (options.live === false) return;
         const watched = adapter!.watchSubset?.(objectSubset(copy.objectType, copy.query));
         const configuredInterval =
@@ -2957,17 +2957,22 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         policy: options.demand,
         acquire: (key) => acquireDemand(demandCodec.decode(key)),
     });
-    const waitForDelivery = Effect.gen(function* () {
-        if (!deliveryActive || !(yield* canSync)) return;
-        for (;;) {
-            if (replicationError?.recovery === "stop")
-                return yield* fault(replicationError.kind, replicationError.message);
-            const selected = yield* requestedView();
-            const installed = yield* receiver.installed;
-            if (installed?.metadata?.generation === selected.generation) return;
-            yield* Effect.sleep(2);
-        }
-    }).pipe(
+    const waitForDelivery = Effect.fnUntraced(
+        function* (subset: CompiledSubset | undefined) {
+            if (!deliveryActive || !(yield* canSync)) return;
+            for (;;) {
+                if (replicationError?.recovery === "stop")
+                    return yield* fault(replicationError.kind, replicationError.message);
+                const selected = yield* requestedView();
+                const installed = yield* receiver.installed;
+                if (
+                    installed?.metadata?.generation === selected.generation &&
+                    (!subset || (yield* access(tables.read((tx) => service.hasCoverage(tx, subset)))))
+                )
+                    return;
+                yield* Effect.sleep(2);
+            }
+        },
         Effect.timeoutOrElse({
             duration: 10_000,
             orElse: () =>
@@ -3037,10 +3042,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         subscribeClient: (session, selected, policy, resume) =>
             traceDelivery(
                 Effect.gen(function* () {
-                    for (const subset of selected.selection.subsets)
-                        yield* service.retainLocal(subset.objectType, subset.query);
                     yield* access(tables.transaction((tx) => clients.select(tx, session, selected)));
-                    return yield* makeDelivery({
+                    // The selected stream owns upstream demand too: no parallel
+                    // lease RPC can silently lose interest while delivery stays open.
+                    for (const subset of selected.selection.subsets) yield* service.demand(subset);
+                    // Publish existing base/optimistic/action state immediately. Data
+                    // refresh may be gated behind a submitting action; acceptance
+                    // must remain deliverable while that action is still in flight.
+                    const delivery = yield* makeDelivery({
                         tables: options.tables,
                         namespace: name("speculative"),
                         policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
@@ -3060,6 +3069,18 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 })
                             ),
                     });
+                    return {
+                        ...delivery,
+                        frames: delivery.frames.pipe(
+                            Stream.mergeEffect(
+                                Effect.forEach(
+                                    selected.selection.subsets,
+                                    (subset) => service.syncSubset(subset),
+                                    { discard: true }
+                                )
+                            )
+                        ),
+                    };
                 })
             ),
         parentDeliveryGeneration: requestedView().pipe(Effect.map((selected) => selected.generation)),
@@ -3911,11 +3932,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         wake,
         syncSubset: (subset) =>
             deliveryActive
-                ? wakeState.pipe(Effect.andThen(waitForDelivery))
+                ? wakeState.pipe(Effect.andThen(waitForDelivery(subset)))
                 : options.source
                   ? service.refreshParent(options.source)
                   : runStateSync(subsetKey(subset)),
-        syncOnce: syncOnce.pipe(Effect.andThen(waitForDelivery)),
+        syncOnce: syncOnce.pipe(Effect.andThen(waitForDelivery(undefined))),
         enqueue: Effect.fn("Replica.enqueue", { root: true })(function* (
             invocation: ActionRequest,
             settings?: { optimistic?: boolean }

@@ -90,7 +90,7 @@ test("async reads cannot make parallel patches overwrite each other's fields or 
             expect((yield* backend.changes!.pull({ cursor: before.cursor })).commits[0]?.changes).toEqual([
                 { kind: "put", objectType: "Item", key: "one", value: expected },
             ]);
-        })
+        }).pipe(Effect.scoped)
     );
 });
 
@@ -119,6 +119,6 @@ test("a caught read-back failure cannot leave committed object changes missing f
             expect((yield* backend.changes!.pull({})).commits.flatMap((commit) => commit.changes)).toEqual([
                 { kind: "put", objectType: "Item", key: "one", value: rows[0]!.value },
             ]);
-        })
+        }).pipe(Effect.scoped)
     );
 });

@@ -239,7 +239,7 @@ test("owned checks share the mutation snapshot and handlers only receive their g
                 owner: "alice",
                 title: "New",
             });
-        })
+        }).pipe(Effect.scoped)
     );
 });
 
@@ -307,7 +307,7 @@ test("generated action updates preserve unread properties and untouched nested f
                 id: "a",
                 title: "New",
             });
-        })
+        }).pipe(Effect.scoped)
     );
 });
 
@@ -374,7 +374,9 @@ test("a shared native backend uses each invocation's trusted context without ret
                 expect((yield* owned.storage.read((tx) => tx.get("Item", user)))?.owner).toBe(user);
             }
             expect(yield* owned.queryFunction("actor", {})).toBe("service");
-        }).pipe(Effect.scoped)
+        })
+            .pipe(Effect.scoped)
+            .pipe(Effect.scoped)
     );
 });
 

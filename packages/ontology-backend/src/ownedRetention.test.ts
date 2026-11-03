@@ -1,7 +1,7 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Effect } from "effect";
+import { Effect, Exit, Scope } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { makeOwnedBackend } from "./owned.js";
@@ -78,7 +78,7 @@ test("owned replay history is bounded and expired cursors require a coordinated 
                 Table.make({ name: JSON.stringify(["backend", f.options.namespace, "journal"]) })
             );
             expect(journal.map((row) => row.key)).toEqual([4, 5]);
-        })
+        }).pipe(Effect.scoped)
     );
 });
 
@@ -97,7 +97,7 @@ test("failed authority changes and receipts roll back, and successful receipts s
             expect(yield* reopened.applyAction(invocation("good"))).toEqual(committed);
             expect((yield* reopened.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(1);
             expect((yield* reopened.changes!.pull({})).commits).toHaveLength(1);
-        })
+        }).pipe(Effect.scoped)
     );
 });
 
@@ -129,7 +129,9 @@ test("result and journal retention are independent of committed application rows
             // Finite idempotency is explicit: after retention the same ID is a new invocation.
             yield* backend.applyAction(invocation("one"));
             expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(2);
-        }).pipe(Effect.provide(TestClock.layer()))
+        })
+            .pipe(Effect.provide(TestClock.layer()))
+            .pipe(Effect.scoped)
     );
 });
 
@@ -172,6 +174,44 @@ test("reducing journal retention drains an old backlog in bounded batches", asyn
             const reopened = yield* makeOwnedBackend({ ...fixture.options, history: { maxCommits: 2 } });
             const snapshot = yield* reopened.loadSubset(objectSubset("Counter"));
             expect((yield* reopened.changes!.pull({ cursor: snapshot.cursor })).commits).toEqual([]);
-        })
+        }).pipe(Effect.scoped)
     );
 });
+
+test.each([true, false])(
+    "owned periodic maintenance enabled=%s belongs to the acquisition scope",
+    async (periodic) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const tables = yield* Memory.make();
+                    const owner = yield* Scope.make();
+                    yield* Effect.addFinalizer(() => Scope.close(owner, Exit.void));
+                    const backend = yield* Scope.provide(
+                        makeOwnedBackend({
+                            namespace: "maintenance",
+                            ir,
+                            tables,
+                            resultRetentionMs: 1,
+                            maintenance: periodic ? undefined : false,
+                            mutators: { increment: () => Effect.void },
+                        }),
+                        owner
+                    );
+                    const receipts = Table.make({
+                        name: JSON.stringify(["backend", "maintenance", "receipts"]),
+                    });
+                    yield* backend.applyAction(invocation("before-close"));
+                    yield* TestClock.adjust(60_000);
+                    expect(yield* tables.query(receipts)).toHaveLength(periodic ? 0 : 1);
+                    yield* backend.maintenance!;
+                    expect(yield* tables.query(receipts)).toHaveLength(0);
+                    yield* backend.applyAction(invocation("after-close"));
+                    yield* Scope.close(owner, Exit.void);
+                    yield* TestClock.adjust(60_000);
+                    expect(yield* tables.query(receipts)).toHaveLength(1);
+                })
+            ).pipe(Effect.provide(TestClock.layer()))
+        );
+    }
+);

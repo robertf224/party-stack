@@ -1,4 +1,4 @@
-import { makeOntologyHttpHandler } from "@party-stack/ontology-server/rpc/http";
+import { makeOntologyServer } from "@party-stack/ontology-server";
 import { ReadWriteBucket } from "alchemy/Cloudflare/R2/ReadWriteBucket";
 import { ReadWriteBucketBinding } from "alchemy/Cloudflare/R2/ReadWriteBucketBinding";
 import { ReadSecret, ReadSecretBinding, Secret, Store } from "alchemy/Cloudflare/SecretsStore";
@@ -121,11 +121,12 @@ export function OntologyDurableObject(
                     bucket,
                     ontologyId: options.ontologyId ?? name,
                 }).pipe(Effect.orDie);
-                const handle = yield* makeOntologyHttpHandler({
+                const { handleRequest } = yield* makeOntologyServer({
+                    kind: "owned",
                     backend,
                     ir: options.ir,
                     authorize: options.authorize,
-                });
+                }).pipe(Effect.orDie);
                 const schedule =
                     gc === false
                         ? Effect.void
@@ -140,7 +141,9 @@ export function OntologyDurableObject(
                     fetch: Effect.gen(function* () {
                         const request = yield* HttpServerRequest.HttpServerRequest;
                         const webRequest = yield* HttpServerRequest.toWeb(request);
-                        return HttpServerResponse.fromWeb(yield* Effect.promise(() => handle(webRequest)));
+                        return HttpServerResponse.fromWeb(
+                            yield* Effect.promise(() => handleRequest(webRequest))
+                        );
                     }),
                     alarm: () =>
                         gc === false

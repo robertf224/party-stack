@@ -7,10 +7,16 @@ import { asRuntimeLayer } from "@party-stack/runtime/testing";
 import { defineRuntimeFixture, runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { createLiveQueryCollection, queryOnce } from "@tanstack/db";
 import { Effect, Exit, Scope, Layer, Deferred } from "effect";
-import { expect, test, vi } from "vite-plus/test";
+import { expect, test, vi, onTestFinished } from "vite-plus/test";
 import { replicaController } from "../../../ontology-replica/lib/internal.js";
 import { createLiveOntology, makeLiveOntology } from "../live/LiveOntology.js";
 import { makeReplicaHost } from "./host.js";
+
+const openOwnedBackend = (options: Parameters<typeof makeOwnedBackend>[0]) => {
+    const owner = Effect.runSync(Scope.make());
+    onTestFinished(() => Effect.runPromise(Scope.close(owner, Exit.void)));
+    return Effect.runPromise(Scope.provide(makeOwnedBackend(options), owner));
+};
 
 const ir: OntologyIR = {
     types: [],
@@ -51,17 +57,15 @@ test.each([false, true])(
     async (inspectOutbox) => {
         const entered = Effect.runSync(Deferred.make<void>());
         const release = Effect.runSync(Deferred.make<void>());
-        const owned = await Effect.runPromise(
-            makeOwnedBackend({
-                namespace: "optimistic-publication",
-                ir,
-                tables: await Effect.runPromise(Memory.make()),
-                mutators: {
-                    rename: (tx, request) =>
-                        tx.put("Note", { id: request.parameters.note, title: request.parameters.title }),
-                },
-            })
-        );
+        const owned = await openOwnedBackend({
+            namespace: "optimistic-publication",
+            ir,
+            tables: await Effect.runPromise(Memory.make()),
+            mutators: {
+                rename: (tx, request) =>
+                    tx.put("Note", { id: request.parameters.note, title: request.parameters.title }),
+            },
+        });
         await Effect.runPromise(
             owned.storage.transaction((tx) => tx.put("Note", { id: "one", title: "Before" }))
         );
@@ -113,17 +117,15 @@ test.each([false, true])(
 test("LiveOntology persists and restores offline projections, exposes local-only inspection, and records Effect spans", async () => {
     const local = await Effect.runPromise(Memory.make());
     const server = await Effect.runPromise(Memory.make());
-    const backend = await Effect.runPromise(
-        makeOwnedBackend({
-            namespace: "server",
-            ir,
-            tables: server,
-            mutators: {
-                rename: (tx, invocation) =>
-                    tx.put("Note", { id: invocation.parameters.note, title: invocation.parameters.title }),
-            },
-        })
-    );
+    const backend = await openOwnedBackend({
+        namespace: "server",
+        ir,
+        tables: server,
+        mutators: {
+            rename: (tx, invocation) =>
+                tx.put("Note", { id: invocation.parameters.note, title: invocation.parameters.title }),
+        },
+    });
     await Effect.runPromise(
         backend.storage.transaction((tx) => tx.put("Note", { id: "one", title: "Before" }))
     );
@@ -226,9 +228,7 @@ test("LiveOntology persists and restores offline projections, exposes local-only
 
 test("closing the owning Effect scope closes DbClient collections and replica fibers", async () => {
     const tables = await Effect.runPromise(Memory.make());
-    const backend = await Effect.runPromise(
-        makeOwnedBackend({ namespace: "lifetime-server", ir, tables, mutators: {} })
-    );
+    const backend = await openOwnedBackend({ namespace: "lifetime-server", ir, tables, mutators: {} });
     const runtime = defineRuntimeFixture(() => ({
         owner: "user",
         namespace: "lifetime",
@@ -273,9 +273,7 @@ test("closing the owning Effect scope closes DbClient collections and replica fi
 test("a scoped replica host runs without application collections and outlives individual reader sessions", async () => {
     const local = await Effect.runPromise(Memory.make());
     const server = await Effect.runPromise(Memory.make());
-    const backend = await Effect.runPromise(
-        makeOwnedBackend({ namespace: "host-server", ir, tables: server, mutators: {} })
-    );
+    const backend = await openOwnedBackend({ namespace: "host-server", ir, tables: server, mutators: {} });
     const released = vi.fn();
     const adapter: import("../live/OntologyBackendAdapter.js").OntologyBackendAdapter = {
         name: "host",

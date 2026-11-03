@@ -212,43 +212,56 @@ test("worker composition serves during delayed acquisition and releases its open
     );
 });
 
-test("worker startup returns typed failures and immediately releases partially acquired resources", async () => {
-    const cleanup = vi.fn();
-    await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                const channel = new MessageChannel();
-                yield* Effect.addFinalizer(() =>
-                    Effect.sync(() => {
-                        channel.port1.close();
-                        channel.port2.close();
-                    })
-                );
-                yield* serveOpenedOntologyWorker({
-                    open: Effect.gen(function* () {
-                        yield* Effect.addFinalizer(() => Effect.sync(cleanup));
-                        return yield* new BackendError({
-                            operation: "test.open",
-                            kind: "Unauthenticated",
+test.each(["failure", "defect"] as const)(
+    "worker startup reports a %s and releases partially acquired resources",
+    async (kind) => {
+        const cleanup = vi.fn();
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const channel = new MessageChannel();
+                    yield* Effect.addFinalizer(() =>
+                        Effect.sync(() => {
+                            channel.port1.close();
+                            channel.port2.close();
+                        })
+                    );
+                    yield* serveOpenedOntologyWorker({
+                        open: Effect.gen(function* () {
+                            yield* Effect.addFinalizer(() => Effect.sync(cleanup));
+                            if (kind === "defect")
+                                return yield* Effect.die(new Error("private startup detail"));
+                            return yield* new BackendError({
+                                operation: "test.open",
+                                kind: "Unauthenticated",
+                                retryable: false,
+                                message: "Sign in again.",
+                            });
+                        }),
+                        errors: "forward",
+                        authorize: () => Effect.void,
+                    }).pipe(
+                        Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1)),
+                        Effect.forkScoped
+                    );
+                    const result = yield* Effect.result(
+                        connectOntologyWorker().pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)))
+                    );
+                    expect(result).toMatchObject({
+                        _tag: "Failure",
+                        failure: {
+                            kind: kind === "defect" ? "Internal" : "Unauthenticated",
                             retryable: false,
-                            message: "Sign in again.",
-                        });
-                    }),
-                    errors: "forward",
-                    authorize: () => Effect.void,
-                }).pipe(
-                    Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1)),
-                    Effect.forkScoped
-                );
-                const result = yield* Effect.result(
-                    connectOntologyWorker().pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)))
-                );
-                expect(result).toMatchObject({ _tag: "Failure", failure: { kind: "Unauthenticated" } });
-                expect(cleanup).toHaveBeenCalledTimes(1);
-            })
-        )
-    );
-});
+                        },
+                    });
+                    if (result._tag === "Failure")
+                        expect(result.failure.message).not.toContain("private startup detail");
+                    expect(cleanup).toHaveBeenCalledTimes(1);
+                })
+            )
+        );
+    }
+);
 
 test("two memory tabs hand off actions to one owner through native MessagePorts", async () => {
     await Effect.runPromise(

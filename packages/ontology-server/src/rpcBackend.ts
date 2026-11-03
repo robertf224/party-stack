@@ -1,6 +1,6 @@
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { sliceByteSource } from "@party-stack/ontology-storage/blobs";
-import { Effect, Schedule, Stream } from "effect";
+import { Effect, Stream } from "effect";
 import type { OntologyOperationsClient } from "./operations.js";
 import type { OntologyDescription, OntologyRpcClient } from "./rpc.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
@@ -11,50 +11,46 @@ export function makeRpcBackend(
     description: OntologyDescription,
     operations: OntologyOperationsClient
 ): OntologyBackendService {
-    const reconnect = Schedule.spaced(1_000).pipe(
-        Schedule.while(({ input }: Schedule.InputMetadata<BackendError>) => Effect.succeed(input.retryable))
-    );
-    const hints = (stream: Stream.Stream<void, BackendError>) =>
-        Stream.concat(
-            stream,
-            Stream.fail(
-                new BackendError({
-                    operation: "remote.watch",
-                    kind: "Unavailable",
-                    retryable: true,
-                    message: "Subscription ended; reconnecting.",
-                })
-            )
-        ).pipe(Stream.retry(reconnect));
+    // One stream represents one attempt, like every other adapter. Replica watch
+    // supervision must see EOF/errors to invalidate coverage and apply retry policy.
     return {
-        attachments: {
-            stage: (value, bytes) =>
-                operations.attachments
-                    .create(bytes, { id: value.id, eager: description.replication === "committed" })
-                    .pipe(Effect.map((created) => created.attachment)),
-            read: (value, range) =>
-                operations.attachments
-                    .source(value)
-                    .pipe(
-                        Effect.map((source) =>
-                            range ? sliceByteSource(source, range.offset ?? 0, range.length) : source
-                        )
-                    ),
-            metadata: (value, settings) =>
-                client
-                    .AttachmentMetadata({ attachment: value, select: settings?.select })
-                    .pipe(
-                        Effect.mapError((cause) =>
-                            classifyBackendFailure("remote.attachment.metadata", cause)
-                        )
-                    ),
-        },
-        encrypted: {
-            decrypt: (value) =>
-                client
-                    .Decrypt({ value })
-                    .pipe(Effect.mapError((cause) => classifyBackendFailure("remote.decrypt", cause))),
-        },
+        attachments: description.attachments
+            ? {
+                  stage: description.attachments.stage
+                      ? (value, bytes) =>
+                            operations.attachments
+                                .create(bytes, {
+                                    id: value.id,
+                                    eager: description.replication === "committed",
+                                })
+                                .pipe(Effect.map((created) => created.attachment))
+                      : undefined,
+                  read: (value, range) =>
+                      operations.attachments
+                          .source(value)
+                          .pipe(
+                              Effect.map((source) =>
+                                  range ? sliceByteSource(source, range.offset ?? 0, range.length) : source
+                              )
+                          ),
+                  metadata: (value, settings) =>
+                      client
+                          .AttachmentMetadata({ attachment: value, select: settings?.select })
+                          .pipe(
+                              Effect.mapError((cause) =>
+                                  classifyBackendFailure("remote.attachment.metadata", cause)
+                              )
+                          ),
+              }
+            : undefined,
+        encrypted: description.encrypted
+            ? {
+                  decrypt: (value) =>
+                      client
+                          .Decrypt({ value })
+                          .pipe(Effect.mapError((cause) => classifyBackendFailure("remote.decrypt", cause))),
+              }
+            : undefined,
         name: "protocol",
         sourceId: description.sourceId,
         supportsIdempotency: description.supportsIdempotency,
@@ -70,22 +66,18 @@ export function makeRpcBackend(
                               Effect.mapError((cause) => classifyBackendFailure("remote.pullChanges", cause))
                           ),
                   watch: description.watchChanges
-                      ? hints(
-                            client.WatchChanges().pipe(
-                                Stream.map(() => undefined),
-                                Stream.mapError((cause) => classifyBackendFailure("remote.changes", cause))
-                            )
+                      ? client.WatchChanges().pipe(
+                            Stream.map(() => undefined),
+                            Stream.mapError((cause) => classifyBackendFailure("remote.changes", cause))
                         )
                       : undefined,
               }
             : undefined,
         watchSubset: description.watchSubset
             ? (subset) =>
-                  hints(
-                      client.WatchSubset(subset).pipe(
-                          Stream.map(() => undefined),
-                          Stream.mapError((cause) => classifyBackendFailure("remote.watchSubset", cause))
-                      )
+                  client.WatchSubset(subset).pipe(
+                      Stream.map(() => undefined),
+                      Stream.mapError((cause) => classifyBackendFailure("remote.watchSubset", cause))
                   )
             : undefined,
         subscribeSelection: description.delivery

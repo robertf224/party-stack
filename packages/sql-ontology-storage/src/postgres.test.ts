@@ -8,11 +8,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { ConnectionError, SqlError } from "effect/sql/SqlError";
 import { expect, inject, test } from "vitest";
 import { make } from "./tables.js";
+import type { Scope } from "effect";
 
 const url = inject("postgresUrl");
 const layer = () => PgClient.layer({ url: Redacted.make(url), maxConnections: 12 });
 const prefix = () => `pg_test_${crypto.randomUUID().replaceAll("-", "")}`;
-const run = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
+const run = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient | Scope.Scope>) =>
     Effect.runPromise(effect.pipe(Effect.provide(layer()), Effect.scoped));
 
 test("native PostgreSQL ranks and windows each partition independently", async () => {

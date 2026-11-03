@@ -97,7 +97,7 @@ test("journal replay and installed rows agree with a plain-map transaction oracl
                                 (yield* backend.loadSubset(objectSubset("Item"))).rows.map((row) => row.value)
                             ).toEqual(sorted(expected.values()));
                         }
-                    })
+                    }).pipe(Effect.scoped)
                 );
             }
         ),

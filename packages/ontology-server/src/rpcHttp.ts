@@ -42,17 +42,6 @@ export const makeOntologyHttpHandler = Effect.fn("RemoteOntology.httpHandler")(f
         ),
         Effect.provide(RpcSerialization.layerNdjson)
     );
-    if (options.backend?.maintenance)
-        yield* Effect.forkScoped(
-            Effect.forever(
-                Effect.sleep(60_000).pipe(
-                    Effect.andThen(options.backend.maintenance),
-                    Effect.catch((error) =>
-                        Effect.logWarning("Ontology maintenance failed", { kind: error.kind })
-                    )
-                )
-            )
-        );
     // HttpEffect handles request scopes uninterruptibly by default. Restore interruption
     // while waiting for an RPC response so disconnecting before the first NDJSON chunk
     // closes the request scope and cancels the corresponding server handler.
@@ -82,12 +71,17 @@ export const connectOntologyHttp = Effect.fn("RemoteOntology.connectHttp")(funct
         ...connection,
         backend: {
             ...connection.backend,
-            attachments: {
-                ...connection.backend.attachments!,
-                stage: (value, bytes) =>
-                    uploads
-                        .create(bytes, { id: value.id, eager: connection.replication.kind === "committed" })
-                        .pipe(Effect.map((created) => created.attachment)),
+            attachments: connection.backend.attachments && {
+                ...connection.backend.attachments,
+                stage: connection.backend.attachments.stage
+                    ? (value, bytes) =>
+                          uploads
+                              .create(bytes, {
+                                  id: value.id,
+                                  eager: connection.replication.kind === "committed",
+                              })
+                              .pipe(Effect.map((created) => created.attachment))
+                    : undefined,
             },
             applyAction: (invocation) =>
                 invocation.attachmentUploads?.length

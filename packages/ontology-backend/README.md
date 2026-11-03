@@ -96,28 +96,31 @@ const owned =
         mutators,
         resultRetentionMs: 7 * 24 * 60 * 60 * 1_000,
         history: { maxCommits: 10_000, maxAgeMs: 24 * 60 * 60 * 1_000 },
-        clients: {
-            sessionIdleTimeoutMs: 7 * 24 * 60 * 60 * 1_000,
-            maxSessions: 256,
-            maxUnacknowledgedActions: 1_024,
-        },
+        maintenance: { intervalMs: 60_000 },
     });
 ```
 
 Result retention is measured from completion, independent of journal retention and
-idle client-session expiry. Infinity is supported for results and journal bounds;
+replication delivery expiry. Infinity is supported for results and journal bounds;
 retaining an audit history intentionally consumes storage. Bounded indexed
-`maintenance` expires results, journal history and session delivery bookkeeping.
-The HTTP server scope schedules maintenance; other hosts must run it from their own
-lifecycle/alarm. Pending outbox work is not expired by result cleanup.
+`maintenance` expires results, journal history and retained delivery bookkeeping.
+Acquisition requires an Effect Scope. The owned backend starts one periodic sweep
+in that scope (every 60 seconds by default); HTTP and worker bindings add no timers.
+Set `maintenance: false` when an external owner schedules cleanup, then call the
+service's `maintenance` effect from that lifecycle/alarm. The Alchemy DO constructor
+does this automatically through its alarm and composed `collectGarbage` operation.
+`makeStorageBackend` schedules that composed operation, including orphan attachment
+cleanup with the normal grace period; it does not start a second journal timer.
+Pending outbox work is not expired by result cleanup.
 
 Idempotency is finite when result retention is finite. Reusing an operation ID after
 its result has expired may execute it again. Advertising/versioning a remote retry
 window is deferred; `supportsIdempotency` does not promise eternal receipt retention.
 
-A client session tracks ordered submissions, acknowledgments and delivered state.
+Intermediate replicas additionally track client sessions for ordered submissions,
+acknowledgments and delivered state. This is not owned-backend action bookkeeping.
 Acknowledgment removes submission fingerprints; expiry removes session/delivery
-records, not accepted unresolved actions. Limits are configurable admission bounds,
+records, not accepted unresolved actions. Replica clientSessions limits are configurable admission bounds,
 not a limit on stateless readers. SharedWorker hosts use a shorter ten-minute lease.
 
 Journal expiry raises HistoryExpired. A replica rebuilds retained/active demand from

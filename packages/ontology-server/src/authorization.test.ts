@@ -18,6 +18,53 @@ import { projectOntologyBackend } from "./authorization.js";
 import type { ActionRequest, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { attachment } from "@party-stack/ontology-spec/values";
 
+test("projection preserves unsupported subset watches and provider polling defaults", async () => {
+    const ir: OntologyIR = {
+        types: [],
+        linkTypes: [],
+        actionTypes: [],
+        queryFunctionTypes: [],
+        context: { type: o.struct({ fields: [] }) },
+        objectTypes: [
+            {
+                name: "Item",
+                displayName: "Item",
+                pluralDisplayName: "Items",
+                primaryKey: "id",
+                properties: [{ name: "id", displayName: "ID", type: o.string({}) }],
+            },
+        ],
+        policy: {
+            read: {
+                select: [
+                    sub("items", {
+                        from: { source: { objectType: "Item" }, binding: "item" },
+                        select: [selectField("id", expressionField("item", "id"))],
+                    }),
+                ],
+            },
+        },
+    };
+    const { backend } = await Effect.runPromise(
+        projectOntologyBackend({
+            ir,
+            context: {},
+            backend: {
+                name: "test",
+                sourceId: "test",
+                supportsIdempotency: false,
+                loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                applyAction: () => Effect.die("Unexpected action"),
+                queryFunction: () => Effect.void,
+                watchSubset: () => undefined,
+                refresh: () => ({ pollIntervalMs: 60_000 }),
+            },
+        })
+    );
+    expect(backend.watchSubset!(objectSubset("Item"))).toBeUndefined();
+    expect(backend.refresh!(objectSubset("Item"))).toEqual({ pollIntervalMs: 60_000 });
+});
+
 test("attachment reads re-find the handle in an authorized source row and declared property", async () => {
     const ir: OntologyIR = {
         types: [],

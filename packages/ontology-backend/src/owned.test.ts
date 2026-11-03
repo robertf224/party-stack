@@ -117,7 +117,7 @@ test("owned commits atomically persist rows, receipts, and ordered source-scoped
                 backend.changes!.pull({ cursor: JSON.stringify({ source: "other", revision: 1 }) })
             );
             expect(Result.isFailure(invalid) && invalid.failure.kind).toBe("SourceMismatch");
-        })
+        }).pipe(Effect.scoped)
     );
 });
 
@@ -162,7 +162,7 @@ test("concurrent actions read their transaction state and journal pagination nev
             } while (true);
             expect(new Set(ids).size).toBe(12);
             expect(ids).toHaveLength(12);
-        })
+        }).pipe(Effect.scoped)
     );
 });
 
@@ -339,7 +339,7 @@ test("trusted integrations share the action journal and preserve callback errors
                 tx.ensureIndex("Counter", { name: "count", field: { _tag: "Field", path: ["count"] } })
             );
             expect((yield* backend.changes!.pull({ cursor: page.cursor })).commits).toEqual([]);
-        })
+        }).pipe(Effect.scoped)
     );
 });
 
@@ -373,7 +373,7 @@ test("a failed journal append rolls back the integration's object writes", async
             expect((yield* backend.loadSubset(objectSubset("Counter"))).cursor).toBe(before.cursor);
             yield* backend.storage.transaction((tx) => tx.put("Counter", { id: "one", count: 1 }));
             expect((yield* backend.changes!.pull({ cursor: before.cursor })).commits).toHaveLength(1);
-        })
+        }).pipe(Effect.scoped)
     );
 });
 
@@ -419,6 +419,6 @@ test("unknown names are invalid requests, while declared capabilities without ha
                 "NotImplemented",
             ]);
             expect((yield* backend.changes!.pull({})).commits).toEqual([]);
-        })
+        }).pipe(Effect.scoped)
     );
 });

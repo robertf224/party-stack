@@ -149,6 +149,16 @@ export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(
         }).pipe(
             Scope.provide(startupScope),
             Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(startupScope, exit) : Effect.void)),
+            Effect.catchDefect(() =>
+                Effect.fail(
+                    new BackendError({
+                        operation: "worker.open",
+                        kind: "Internal",
+                        retryable: false,
+                        message: "Ontology worker initialization failed.",
+                    })
+                )
+            ),
             Effect.catch((error) => Deferred.fail(ready, error))
         )
     );

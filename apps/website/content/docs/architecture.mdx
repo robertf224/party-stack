@@ -155,6 +155,12 @@ children settle their duplicate predictions as part of installing parent batches
 State refresh and outbox processing have independent scoped lifetimes. Canceling
 UI demand never owns or cancels the background action worker.
 
+An incremental subscription owns demand for the subsets it delivers. For an
+intermediate replica this is `SubscribeState`; for committed state it is
+`SubscribeSelection`. Opening the stream acquires upstream demand and closing it
+releases that demand. The snapshot strategy instead holds a demand lease across
+its finite state reads.
+
 Their scheduling is separate as well. Query/watch polling wakes state refresh;
 outbox processing wakes for new work, commands, availability changes, commit
 evidence or an action/confirmation retry deadline. An idle, blocked or accepted
@@ -172,6 +178,9 @@ action retention roots before deleting rows. The explicit `syncOnce` checkpoint
 composes maintenance, state refresh and outbox processing; ordinary workers do not
 use that combined checkpoint to drive one another. See [Replica](/docs/replica)
 for the public service, one-shot mode and persistent query pins.
+Owned backend acquisition also owns its periodic receipt/journal/delivery sweep.
+HTTP and worker transports add no maintenance timers. DO construction disables
+the periodic fiber and runs the composed cleanup operation from its alarm.
 
 ## Platform Runtime
 

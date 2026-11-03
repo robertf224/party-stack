@@ -3,6 +3,7 @@ import { digestBytes as digest, byteSource, sliceByteSource } from "@party-stack
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
 import { Effect, Redacted, Schema, Stream } from "effect";
 import { executeAction, resolveReadActionParameters } from "./actions.js";
+import { maintenanceInterval, scheduleMaintenance } from "./maintenance.js";
 import { makeOwnedBackend } from "./owned.js";
 import { CurrentExecutionContext } from "./policy.js";
 import {
@@ -34,6 +35,7 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
     options: StorageBackendOptions
 ) {
     const { tables, blobs } = options;
+    const maintenanceIntervalMs = yield* maintenanceInterval(options.maintenance);
     const actionScope = yield* Effect.try({
         try: () =>
             options.actionScope ??
@@ -78,6 +80,8 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
         delivery: options.delivery,
         history: options.history,
         resultRetentionMs: options.resultRetentionMs,
+        // This owner schedules the composed row/receipt/delivery/blob pass below.
+        maintenance: false,
         ir: options.ir,
         tables,
         blobs,
@@ -244,8 +248,17 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
         },
     });
 
+    const collectGarbage = (options?: { readonly orphanGraceMs?: number; readonly limit?: number }) =>
+        boundary(
+            (backend.maintenance ?? Effect.void).pipe(
+                Effect.andThen(blobs.collectGarbage({ olderThanMs: 0, ...options }))
+            )
+        );
+    const maintenance = collectGarbage().pipe(Effect.asVoid);
+    yield* scheduleMaintenance(maintenance, maintenanceIntervalMs);
     return {
         ...backend,
+        maintenance,
         // Incoming HTTP sources may be one-shot. Owned storage accepts bytes into
         // its final byte store first; fingerprinting and retries reopen that store.
         applyAction: Effect.fn("StorageOntology.applyAction")(function* (invocation: ActionRequest) {
@@ -272,11 +285,6 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
                 })
             );
         }),
-        collectGarbage: (options?: { readonly orphanGraceMs?: number; readonly limit?: number }) =>
-            boundary(
-                (backend.maintenance ?? Effect.void).pipe(
-                    Effect.andThen(blobs.collectGarbage({ olderThanMs: 0, ...options }))
-                )
-            ),
+        collectGarbage,
     };
 });
