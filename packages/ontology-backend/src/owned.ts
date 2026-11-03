@@ -7,11 +7,12 @@ import {
     makeStorageModel,
     field,
     lte,
+    or,
     indexesForQuery,
 } from "@party-stack/ontology-storage";
 import { digestBytes, byteSource } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Clock, Effect, PubSub, Schema, Stream } from "effect";
+import { Clock, Effect, PubSub, Redacted, Schema, Semaphore, Stream } from "effect";
 import { acknowledgeDelivery, makeDelivery, scanSelectedRows, collectDeliveryGarbage } from "./delivery.js";
 import { CurrentActionAuthorization, CurrentQueryAuthorization, CurrentExecutionContext } from "./policy.js";
 import { actionReferenceIssues } from "./references.js";
@@ -117,7 +118,13 @@ export interface OwnedBackendService extends OntologyBackendService {
     readonly storage: OwnedStorageService;
 }
 const fault = (operation: string, kind: BackendError["kind"], message: string, cause?: unknown) =>
-    new BackendError({ operation, kind, message, retryable: false, cause });
+    new BackendError({
+        operation,
+        kind,
+        message,
+        retryable: false,
+        cause: cause === undefined ? undefined : Redacted.make(cause),
+    });
 const boundary = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(Effect.mapError((error) => classifyBackendFailure("storage", error)));
 const CursorSchema = Schema.Struct({ source: Schema.String, revision: Schema.Int });
@@ -141,6 +148,12 @@ const stableValue = (value: unknown): unknown => {
         );
     return value;
 };
+
+interface ChangeTarget {
+    readonly kind: "put" | "delete";
+    readonly objectType: string;
+    readonly key: Key;
+}
 
 /** Authoritative local backend with atomic mutation batches, durable receipts, and a pull journal. */
 export const makeOwnedBackend = Effect.fnUntraced(function* (
@@ -285,7 +298,23 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             : {}),
     });
     const mutation = (native: StorageTransaction) => {
-        const changes = new Map<string, ObjectChange>();
+        const changes = new Map<string, ChangeTarget>();
+        // This gate belongs only to this transaction. Include patch reads and
+        // journal tracking, beyond the lower storage layer's row/retention write.
+        const gate = Semaphore.makeUnsafe(1);
+        const put = (name: string, value: Record<string, unknown>) =>
+            boundary(
+                Effect.gen(function* () {
+                    const store = yield* object(name);
+                    const key = value[store.definition.primaryKey] as Key;
+                    changes.set(JSON.stringify([name, key]), {
+                        kind: "put",
+                        objectType: name,
+                        key,
+                    });
+                    yield* native.put(store, value);
+                })
+            );
         const tx: OwnedStorageTransaction = {
             ensureIndex: (name, index) =>
                 boundary(Effect.flatMap(object(name), (store) => native.ensureIndex(store, index))),
@@ -315,47 +344,50 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                                 "InvalidRequest",
                                 "Patches cannot change an object's identity."
                             );
-                        yield* tx.put(name, value);
+                        yield* put(name, value);
                     })
-                ),
-            put: (name, value) =>
-                boundary(
-                    Effect.gen(function* () {
-                        const store = yield* object(name);
-                        yield* native.put(store, value);
-                        const key = value[store.definition.primaryKey] as Key;
-                        changes.set(JSON.stringify([name, key]), {
-                            kind: "put",
-                            objectType: name,
-                            key,
-                            value: (yield* native.get(store, key))!,
-                        });
-                    })
-                ),
+                ).pipe(gate.withPermits(1)),
+            put: (name, value) => gate.withPermits(1)(put(name, value)),
             delete: (name, key) =>
                 boundary(
                     Effect.gen(function* () {
                         const store = yield* object(name);
-                        yield* native.delete(store, key);
                         changes.set(JSON.stringify([name, key]), {
                             kind: "delete",
                             objectType: name,
                             key,
                         });
+                        yield* native.delete(store, key);
                     })
-                ),
+                ).pipe(gate.withPermits(1)),
         };
         return { tx, changes };
     };
     const append = Effect.fnUntraced(function* (
-        changes: ReadonlyMap<string, ObjectChange>,
+        native: ReadStorageTransaction,
+        changes: ReadonlyMap<string, ChangeTarget>,
         operationId?: string
     ) {
+        // Read canonical final values once per touched object. A failed publication
+        // read rolls back the transaction rather than being caught inside a write.
+        const published: ObjectChange[] = yield* Effect.forEach(changes.values(), (change) =>
+            Effect.gen(function* () {
+                if (change.kind === "delete") return { ...change, kind: "delete" as const };
+                const value = yield* read(native).get(change.objectType, change.key);
+                if (value === undefined)
+                    return yield* fault(
+                        "commit",
+                        "Internal",
+                        "A written object is unavailable during publication."
+                    );
+                return { ...change, kind: "put" as const, value };
+            })
+        );
         const revision = yield* tables.allocateRevision(journal.name, initialRevision);
         if (!Number.isSafeInteger(revision))
             return yield* fault("commit", "Unavailable", "Backend journal revision exhausted.");
         const encodedCursor = cursor(revision);
-        const commit: BackendCommit = { cursor: encodedCursor, operationId, changes: [...changes.values()] };
+        const commit: BackendCommit = { cursor: encodedCursor, operationId, changes: published };
         if (
             !(yield* tables.insert(journal, revision, {
                 revision,
@@ -366,7 +398,11 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             return yield* fault("commit", "Internal", "Publication revision was already committed.");
         const journalFloor = Math.max(0, Number.isFinite(maxCommits) ? revision - maxCommits : 0);
         if (journalFloor > 0)
-            for (const row of yield* tables.query(journal, { where: lte(field("revision"), journalFloor) }))
+            for (const row of yield* tables.query(journal, {
+                where: lte(field("revision"), journalFloor),
+                orderBy: [{ field: field("revision") }],
+                limit: 100,
+            }))
                 yield* tables.delete(journal, row.key);
         return encodedCursor;
     });
@@ -389,7 +425,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                         Effect.gen(function* () {
                             const { tx, changes } = mutation(native);
                             const value = yield* body(tx);
-                            if (changes.size) yield* append(changes);
+                            if (changes.size) yield* append(native, changes);
                             return { value, changed: changes.size > 0 };
                         })
                     )
@@ -409,7 +445,8 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         const parameterSchema = authorization
             ? authorization.parameterSchemas[invocation.name]
             : schemas.actionParameterSchemas[invocation.name];
-        if (!parameterSchema || !options.mutators[invocation.name])
+        if (!parameterSchema) return yield* fault("applyAction", "InvalidRequest", "Unknown action type.");
+        if (!options.mutators[invocation.name])
             return yield* fault(
                 "applyAction",
                 "NotImplemented",
@@ -522,7 +559,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             affectedComplete: true,
             operationId: invocation.id,
             outcome: "committed",
-            cursor: yield* append(changes, invocation.id),
+            cursor: yield* append(native, changes, invocation.id),
         };
         yield* tables.put(receipts, prepared.receiptKey, {
             fingerprint,
@@ -556,14 +593,11 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 )
                     return true;
             }
-            return (
-                options.history?.maxAgeMs !== undefined &&
-                Number.isFinite(options.history.maxAgeMs) &&
-                (yield* tx.query(journal, {
-                    where: lte(field("committedAt"), now - options.history.maxAgeMs),
-                    limit: 1,
-                })).length > 0
-            );
+            const floor = Number.isFinite(maxCommits) ? (yield* current) - maxCommits : 0;
+            const expired = [lte(field("revision"), floor)];
+            if (options.history?.maxAgeMs !== undefined && Number.isFinite(options.history.maxAgeMs))
+                expired.push(lte(field("committedAt"), now - options.history.maxAgeMs));
+            return (yield* tx.query(journal, { where: or(...expired), limit: 1 })).length > 0;
         })
     );
     const collectGarbage = boundary(
@@ -579,27 +613,30 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                               }))
                                   yield* tx.delete(receipts, row.key);
                           }
+                          const revision = yield* current;
+                          const floor = Number.isFinite(maxCommits) ? revision - maxCommits : 0;
+                          const conditions = [lte(field("revision"), floor)];
                           if (
                               options.history?.maxAgeMs !== undefined &&
                               Number.isFinite(options.history.maxAgeMs)
-                          ) {
-                              const expired = yield* tx.query(journal, {
-                                  where: lte(field("committedAt"), now - options.history.maxAgeMs),
-                                  orderBy: [{ field: field("revision") }],
-                                  limit: 100,
+                          )
+                              conditions.push(lte(field("committedAt"), now - options.history.maxAgeMs));
+                          const expired = yield* tx.query(journal, {
+                              where: or(...conditions),
+                              orderBy: [{ field: field("revision") }],
+                              limit: 100,
+                          });
+                          const head = yield* tx.get(metadata, "head");
+                          if (head && expired.length)
+                              yield* tx.put(metadata, "head", {
+                                  ...head,
+                                  revision,
+                                  journalFloor: Math.max(
+                                      head.journalFloor ?? 0,
+                                      ...expired.map((row) => row.value.revision)
+                                  ),
                               });
-                              const head = yield* tx.get(metadata, "head");
-                              if (head && expired.length)
-                                  yield* tx.put(metadata, "head", {
-                                      ...head,
-                                      revision: yield* current,
-                                      journalFloor: Math.max(
-                                          head.journalFloor ?? 0,
-                                          ...expired.map((row) => row.value.revision)
-                                      ),
-                                  });
-                              for (const row of expired) yield* tx.delete(journal, row.key);
-                          }
+                          for (const row of expired) yield* tx.delete(journal, row.key);
                       })
                   )
                 : Effect.void
@@ -715,7 +752,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         validateAction: (name, parameters, settings) =>
             Effect.gen(function* () {
                 const action = options.ir.actionTypes.find((action) => action.name === name);
-                if (!action) return yield* fault("validateAction", "NotImplemented", "Unknown action type.");
+                if (!action) return yield* fault("validateAction", "InvalidRequest", "Unknown action type.");
                 const known = settings?.knownParameters;
                 const definition = known
                     ? {
@@ -761,7 +798,9 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                         const definition = options.ir.queryFunctionTypes.find(
                             (candidate) => candidate.name === name
                         );
-                        if (!handler || !definition)
+                        if (!definition)
+                            return yield* fault("query", "InvalidRequest", "Unknown query function.");
+                        if (!handler)
                             return yield* fault(
                                 "query",
                                 "NotImplemented",

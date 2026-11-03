@@ -4,7 +4,10 @@ import {
 } from "@party-stack/icons-salesforce-lightning";
 import { salesforceObjectTypeId, salesforcePropertyId } from "../utils/ids.js";
 import { convertSalesforceFieldType } from "./convertMetaTypeDef.js";
-import type { MetaObjectProperty, MetaObjectType } from "@party-stack/ontology";
+import type {
+    PropertyDef as MetaObjectProperty,
+    ObjectType as MetaObjectType,
+} from "@party-stack/ontology-spec/meta";
 import type { SalesforceFieldDescribe, SalesforceSObjectDescribe } from "@party-stack/salesforce-client";
 
 const COMPOUND_PARENT_TYPES = new Set(["address", "location"]);

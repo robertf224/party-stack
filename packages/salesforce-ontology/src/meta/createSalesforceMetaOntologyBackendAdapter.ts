@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { makeSalesforceMetadataBackend } from "./backend.js";
 import type { SalesforceCrudActionTypeSelection } from "../crud.js";
-import type { OntologyBackendAdapter } from "@party-stack/ontology";
+import type { OntologyBackendAdapter } from "@party-stack/ontology-backend";
 import type { SalesforceClient } from "@party-stack/salesforce-client";
 
 export interface CreateSalesforceMetaOntologyBackendAdapterOpts {

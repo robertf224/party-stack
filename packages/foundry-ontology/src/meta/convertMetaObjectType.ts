@@ -1,7 +1,10 @@
 import { fromBlueprintIconName } from "@party-stack/icons-blueprint";
 import { convertFoundryObjectPropertyType } from "./convertMetaTypeDef.js";
 import type { ObjectTypeFullMetadata, PropertyV2 } from "@osdk/foundry.ontologies";
-import type { MetaObjectProperty, MetaObjectType } from "@party-stack/ontology";
+import type {
+    PropertyDef as MetaObjectProperty,
+    ObjectType as MetaObjectType,
+} from "@party-stack/ontology-spec/meta";
 
 export function convertFoundryMetaObjectType(metadata: ObjectTypeFullMetadata): MetaObjectType {
     const objectType = metadata.objectType;

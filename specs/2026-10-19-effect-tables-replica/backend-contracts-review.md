@@ -10,15 +10,17 @@ and removed the server dependency on the application SDK.
 - [x] Inventory the common backend contract, optional capabilities and actual callers
 - [x] Inventory owned, Foundry, Salesforce and metadata implementations
 - [x] Resolve public contract feedback before changing signatures
-- [ ] Complete action/default/validation/receipt and error-channel audit
-- [ ] Complete owned transaction, journal, idempotency and retention audit
-- [ ] Complete provider pushdown, snapshot completeness and cancellation audit
-- [ ] Complete watch/poll/reconnect/error supervision audit
-- [ ] Verify bounded state and remove obsolete implementation paths
-- [ ] Run regression/property tests for findings and workspace CI
+- [x] Complete action/default/validation/receipt and error-channel audit
+- [x] Complete owned transaction, journal, idempotency and retention audit
+- [x] Complete provider pushdown, snapshot completeness and cancellation audit
+- [x] Complete watch/poll/reconnect/error supervision audit
+- [x] Verify bounded state and remove obsolete implementation paths
+- [x] Run regression/property tests for findings and workspace CI
 
-Inventory is complete; the remaining checklist items are not claimed complete by
-reading their implementations. Earlier subsystem tests remain useful evidence.
+The functional review is complete through the checkpoints below. This combines
+source review with targeted regressions and independent oracles; it does not claim
+every possible provider response or resource interleaving has been proved correct.
+The remaining type-precision and provider-capability follow-ups are explicit below.
 
 ## Contract inventory
 
@@ -28,19 +30,19 @@ ActionReceipt, BackendChangePage, BackendAttachments and BackendEncryptedValues.
 The common service is already Effect-native. Closing an acquisition Scope owns
 backend resources; returned watchers are Effect Streams.
 
-| Area                     | Current contract                                     | Meaning                                                                                                                                                    |
-| ------------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Identity                 | name, sourceId, supportsIdempotency                  | Stable source identity and durable keyed retry guarantee; not authentication or a live connection ID.                                                      |
-| Reads                    | loadSubset(ObjectSubset)                             | Return rows exactly matching the requested filter/order/window. Complete means the requested window is complete, not the entire type.                      |
-| Demand notifications     | watchSubset(subset)                                  | Optional per-subset invalidation hints. The function itself can return undefined for unsupported types.                                                    |
-| Durable changes          | changes.pull, changes.watch                          | Pull committed change pages using opaque cursors; watch only wakes pull.                                                                                   |
-| Selected delivery        | subscribeSelection, acknowledgeDelivery              | Optional retained snapshot/patch delivery with explicit ACKs and resume positions.                                                                         |
-| Freshness recommendation | refresh(subset)                                      | Optional polling/coverage-age recommendation. Replica owns its scheduling and caller configuration wins.                                                   |
-| Actions                  | resolveActionParameters, validateAction, applyAction | Read-only prefills, preflight certainty/issues, and durable remote execution receipts respectively.                                                        |
-| Query functions          | queryFunction                                        | Named ontology function invocation, not arbitrary Query IR execution. Currently mandatory even for read-only metadata backends that return NotImplemented. |
-| Attachments              | attachments.stage/read/metadata                      | Optional byte capability. Stage is optional within it; read may return Blob or byte streams, with optional range arguments.                                |
-| Encrypted properties     | encrypted.decrypt                                    | Explicit portable plaintext response and optional ciphertext identity evidence; local caching belongs to Replica.                                          |
-| Maintenance              | maintenance                                          | Optional bounded storage cleanup; its enclosing host schedules execution.                                                                                  |
+| Area                     | Current contract                                     | Meaning                                                                                                                                                             |
+| ------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity                 | name, sourceId, supportsIdempotency                  | Stable source identity and durable keyed retry guarantee; not authentication or a live connection ID.                                                               |
+| Reads                    | loadSubset(ObjectSubset)                             | Return the requested result or explicitly report fulfilledSubset; shared normalization applies residual filtering/windows. Complete applies to the declared region. |
+| Demand notifications     | watchSubset(subset)                                  | Optional per-subset invalidation hints. The function itself can return undefined for unsupported types.                                                             |
+| Durable changes          | changes.pull, changes.watch                          | Pull committed change pages using opaque cursors; watch only wakes pull.                                                                                            |
+| Selected delivery        | subscribeSelection, acknowledgeDelivery              | Optional retained snapshot/patch delivery with explicit ACKs and resume positions.                                                                                  |
+| Freshness recommendation | refresh(subset)                                      | Optional polling/coverage-age recommendation. Replica owns its scheduling and caller configuration wins.                                                            |
+| Actions                  | resolveActionParameters, validateAction, applyAction | Read-only prefills, preflight certainty/issues, and durable remote execution receipts respectively.                                                                 |
+| Query functions          | queryFunction                                        | Named ontology function invocation, not arbitrary Query IR execution. Currently mandatory even for read-only metadata backends that return NotImplemented.          |
+| Attachments              | attachments.stage/read/metadata                      | Optional byte capability. Stage is optional within it; read may return Blob or byte streams, with optional range arguments.                                         |
+| Encrypted properties     | encrypted.decrypt                                    | Explicit portable plaintext response and optional ciphertext identity evidence; local caching belongs to Replica.                                                   |
+| Maintenance              | maintenance                                          | Optional bounded storage cleanup; its enclosing host schedules execution.                                                                                           |
 
 Provider inputs now use spec `ObjectSubset`, including notifications, refresh
 recommendations and ordinary committed selected delivery. `ObjectSelection` contains
@@ -112,24 +114,22 @@ SDK integration checks still cover Promise actions, TanStack wiring, authoring
 wrappers and value hydration. Detailed replication/storage behavior belongs in the
 owning lower package rather than being tested only through LiveOntology.
 
-## Implementation cleanup candidates
+## Remaining follow-ups
 
-- Native adapters still import SDK acquisition types. Their public native service
-  is Effectful, but internal provider callbacks and the adapter/provider factory
-  layer still use Promises. Move reusable acquisition contracts below ontology and
-  keep SDK conveniences as wrappers. NonRetryableError was removed in the boundary
-  checkpoint below; do not restore a compatibility bridge.
-- Hook-specific ApplyActionError/ValidateActionError/LoadSubsetError aliases exist,
-  but OntologyBackendService still declares broad BackendError everywhere. Decide
-  the intended allowable failures, then wire the narrower types to actual hooks.
-- Unknown action/query names, missing Salesforce action metadata and malformed
-  provider responses now have distinct failures. Continue auditing the remaining
-  helper/codec boundaries and owned-backend hooks rather than treating these
-  targeted fixes as a complete error audit.
-- Salesforce supplies neither a CDC watch nor a recommended polling interval;
-  its comment now explicitly describes polling as caller-configured.
-- Finish source-identity, malformed-row and exact completeness checks across data
-  and metadata bindings before claiming this subsystem review complete.
+- Hook-specific ApplyActionError/ValidateActionError/LoadSubsetError aliases remain
+  type-level guidance. Actual hooks deliberately retain the common BackendError
+  channel, including storage/source incompatibilities; narrowing these signatures
+  needs a complete allowable-kind design rather than unchecked casts.
+- Salesforce CDC and opaque provider page continuation remain future capabilities.
+  Polling is caller-configured today; this checkpoint does not imply a native feed.
+- Full query watching/IVM, hard budgets for an individual provider response, and
+  more native predicate/window pushdown remain separate performance work. Finite
+  source loads can still collect broad candidate sets before residual evaluation.
+- Pure-helper boundary cleanup agreed during the storage review remains deferred;
+  SDK Promise callbacks stay inside Effect.tryPromise. Native adapter acquisition
+  and lower-level codecs/metadata no longer import application SDK contracts.
+- Installation/context assumptions discovered during the partition audit are
+  recorded in subsystem-audit.md and deferred to the installation review.
 
 ## Asynchronous provider operations — future work
 
@@ -216,3 +216,55 @@ Implemented and verified before the broader-fulfillment slice:
 Regression evidence: Foundry 208 tests; Salesforce 59 tests; full workspace CI
 133/133 successful, including Worker bundle verification. These are targeted
 boundary checks; the unchecked journal, lifecycle and contract items above remain.
+
+## Owned execution, retention and acquisition checkpoint — November 2
+
+The owned path commits object/reference changes, receipt and journal publication in
+one storage transaction. PostgreSQL allocates its sequence under a short publication
+lock held through COMMIT; source-scoped cursors do not use sequence allocation alone
+as proof of commit order. Existing real-PostgreSQL tests verify overlapping independent
+writers, late commits after snapshots, concurrent duplicate submissions, aborted
+transactions, lost COMMIT replies, and journal-head preservation after compaction.
+
+Changes and regression evidence in this checkpoint:
+
+- A deterministic asynchronous-read test reproduced parallel patches overwriting
+  separate fields of one object inside one transaction. A transaction-local write
+  gate now includes the read/modify/write and its journal capture. Separate database
+  transactions still use the driver's existing concurrency rules. A 100-case plain-map
+  oracle verifies writes, deletes, caught rollback results, coalesced journal replay,
+  and installed rows after every generated transaction.
+- A separate read-back failure regression reproduced an object committing without
+  a journal change when trusted code caught the wrapper's post-write read failure.
+  Writes now track touched identities before mutation; publication reads each
+  final canonical put once, outside the user callback. A publication read failure
+  therefore rolls back the transaction. Repeated puts no longer read back every
+  intermediate value.
+- Lowering maxCommits no longer scans/deletes an entire old backlog during append.
+  Publication and maintenance each reclaim at most 100 journal records per pass;
+  maintenance also detects count-based backlog. Cursors below the logical floor
+  require snapshots immediately, even while physical cleanup drains the backlog.
+- Receipt retention remains independent: seven days by default, configurable to
+  Infinity. Only successful commits get receipts; failed mutations roll back. Reuse
+  inside the window returns the durable receipt or conflicts on changed input;
+  reuse after expiry is a new action, as previously agreed. No new expiry-advertising
+  or automatic unknown-outcome protocol was introduced.
+- Fixed storage bindings use the declared context partition for receipt scope rather
+  than hardcoded context.user. A tenant-only context regression verifies separate
+  receipts for the same ID across partitions. Parameter defaults also honor the
+  current execution context, falling back to the fixed binding, like action execution.
+- Owned unknown action/query names use InvalidRequest; declared capabilities without
+  implementations use NotImplemented. Storage composition preserves standard error
+  classification instead of collapsing all storage failures to Unavailable. Owned
+  private causes are redacted. Missing Foundry media sources are InvalidRequest;
+  missing response bodies are nonretryable InvalidResponse.
+- OntologyBackendAdapter and its authoring provider type now live in ontology-backend,
+  with the SDK reexporting them. Foundry/Salesforce client creation occurs inside
+  scoped open and acquisition failures use the typed channel. The provider factory
+  itself performs no IO. Lower provider codecs, metadata and validators import spec,
+  storage and backend contracts directly. Removed the unused deprecated Foundry
+  decoder aliases. Installation behavior is unchanged.
+
+Verification: backend 71 tests (including the new transaction oracle), Foundry 211,
+Salesforce 60, and the real PostgreSQL project's nine tests. Full workspace CI: 133/133 successful for the final checkpoint. Existing Replica and server regressions exercise the consuming paths.
+Server/protocol is the next subsystem review.

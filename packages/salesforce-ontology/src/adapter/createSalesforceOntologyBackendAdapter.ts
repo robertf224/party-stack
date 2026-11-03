@@ -1,15 +1,12 @@
-import {
-    type OntologyBackendAdapter,
-    type OntologyBackendAdapterProvider,
-    type OntologyIR,
-} from "@party-stack/ontology";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { type SalesforceClient } from "@party-stack/salesforce-client";
 import { Effect, Redacted, Schema } from "effect";
 import { getSalesforceActionMetadata } from "../actionMetadata.js";
 import { makeSalesforceBackend } from "./backend.js";
 import { createSalesforceCodec } from "./salesforceCodec.js";
+import type { OntologyBackendAdapter, OntologyBackendAdapterProvider } from "@party-stack/ontology-backend";
 import type { ActionReceipt } from "@party-stack/ontology-backend";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ProviderIssue = Schema.Struct({
     statusCode: Schema.optional(Schema.String),
@@ -270,9 +267,26 @@ export type CreateSalesforceOntologyBackendOptions<
 export function createSalesforceOntologyBackend<
     Context extends Record<string, unknown> = Record<string, unknown>,
 >(opts: CreateSalesforceOntologyBackendOptions<Context>): OntologyBackendAdapterProvider<Context> {
-    return async (ir, context) =>
-        createSalesforceOntologyBackendAdapter({
-            ir,
-            client: "client" in opts ? opts.client : await opts.createClient(ir, context),
-        });
+    return (ir, context) => ({
+        name: "salesforce",
+        open: (executionContext) =>
+            Effect.gen(function* () {
+                const client = yield* Effect.tryPromise({
+                    try: async () => ("client" in opts ? opts.client : opts.createClient(ir, context)),
+                    catch: (cause) => classifyBackendFailure("salesforce.open", cause),
+                });
+                const adapter = yield* Effect.try({
+                    try: () => createSalesforceOntologyBackendAdapter({ ir, client }),
+                    catch: (cause) =>
+                        new BackendError({
+                            operation: "salesforce.open",
+                            kind: "InvalidConfiguration",
+                            message: "Invalid Salesforce backend configuration.",
+                            retryable: false,
+                            cause: Redacted.make(cause),
+                        }),
+                });
+                return yield* adapter.open(executionContext);
+            }),
+    });
 }

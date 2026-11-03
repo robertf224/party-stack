@@ -3,7 +3,7 @@ import { readableByteSource } from "@party-stack/ontology-storage/blobs";
 import { decodeFoundryUserProfilePictureAttachment } from "./foundryUser.js";
 import { loadUserSubset } from "./loadUserSubset.js";
 import type { FoundryUsersIntegration } from "../adapter/createFoundryOntologyBackendAdapter.js";
-import type { Lens } from "@party-stack/ontology";
+import type { Lens } from "@party-stack/ontology-spec";
 
 export function createFoundryUsersIntegration(options: {
     objectType: string;

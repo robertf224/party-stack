@@ -8,7 +8,7 @@ import { matchesMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
 import { synthesizeSalesforceCrudActionTypes } from "./synthesizeCrudActionTypes.js";
 import type { SalesforceCrudActionTypeSelection } from "../crud.js";
 import type { MetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
-import type { MetaActionType } from "@party-stack/ontology";
+import type { ActionType as MetaActionType } from "@party-stack/ontology-spec/meta";
 import type { Query } from "@party-stack/ontology-storage";
 import type {
     SalesforceClient,

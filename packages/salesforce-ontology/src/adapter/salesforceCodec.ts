@@ -1,5 +1,5 @@
 import { Temporal } from "temporal-polyfill";
-import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology";
+import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology-spec";
 
 type SalesforceObjectRecord = Record<string, unknown>;
 

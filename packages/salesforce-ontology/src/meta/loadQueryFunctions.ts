@@ -2,7 +2,7 @@ import { classifySalesforceStandardAction } from "../standardActions.js";
 import { matchesMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
 import { convertSalesforceMetaStandardQueryFunctionType } from "./convertMetaQueryFunctionType.js";
 import type { MetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
-import type { QueryFunctionTypeDef } from "@party-stack/ontology";
+import type { QueryFunctionTypeDef } from "@party-stack/ontology-spec";
 import type { Query } from "@party-stack/ontology-storage";
 import type {
     SalesforceClient,

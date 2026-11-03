@@ -6,11 +6,12 @@ import {
     type ParameterEvaluatedConstraint,
     type SyncApplyActionResponseV2,
 } from "@osdk/foundry.ontologies";
-import { certain, uncertain, type Uncertain, type ValidationIssue } from "@party-stack/ontology";
+import { certain, uncertain, type Uncertain } from "@party-stack/ontology-spec";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
-import type { Result } from "@party-stack/ontology/values";
+import type { ValidationIssue } from "@party-stack/ontology-backend";
+import type { Result } from "@party-stack/ontology-spec/values";
 
 export interface FoundrySubmissionCriterion {
     condition: Condition;

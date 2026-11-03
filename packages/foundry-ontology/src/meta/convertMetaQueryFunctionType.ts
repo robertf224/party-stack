@@ -1,5 +1,5 @@
 import type { QueryDataType, QueryParameterV2, QueryTypeV2 } from "@osdk/foundry.ontologies";
-import type { QueryFunctionParameterDef, QueryFunctionTypeDef, TypeDef } from "@party-stack/ontology";
+import type { QueryFunctionParameterDef, QueryFunctionTypeDef, TypeDef } from "@party-stack/ontology-spec";
 
 function stringType(): TypeDef {
     return { kind: "string", value: {} };

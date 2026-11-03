@@ -7,16 +7,9 @@ import {
     MediaReferenceProperties,
     Queries,
 } from "@osdk/foundry.ontologies";
-import {
-    certain,
-    uncertain,
-    type PartialAttachmentMetadata,
-    type OntologyAttachmentIdMapping,
-    type OntologyBackendAdapter,
-    type OntologyBackendAdapterProvider,
-    type OntologyIR,
-} from "@party-stack/ontology";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { certain, uncertain, type OntologyIR } from "@party-stack/ontology-spec";
+import { resolveType, unwrapType } from "@party-stack/ontology-spec/utils";
 import {
     byteSource,
     byteChunks,
@@ -24,8 +17,7 @@ import {
     sliceByteSource,
     type ByteInput,
 } from "@party-stack/ontology-storage/blobs";
-import { resolveType, unwrapType } from "@party-stack/ontology/utils";
-import { Effect, Stream, Schema, Redacted } from "effect";
+import { Effect, Stream, Schema, Redacted, type Types } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { getFoundryAttachmentKind } from "../meta/foundryAttachmentMetadata.js";
@@ -42,9 +34,26 @@ import { createFoundryCodec } from "./foundryCodec.js";
 import { decodeFoundryMediaId, mediaReferenceToFoundryMediaId } from "./foundryMediaId.js";
 import { uploadFoundryMedia, uploadFoundryAttachment } from "./uploads.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
-import type { BackendSnapshot, ValidationReport } from "@party-stack/ontology-backend";
+import type {
+    BackendAttachments,
+    BackendSnapshot,
+    ValidationReport,
+    ActionReceipt,
+    OntologyBackendAdapter,
+    OntologyBackendAdapterProvider,
+} from "@party-stack/ontology-backend";
+type PartialAttachmentMetadata = Types.Mutable<Effect.Success<ReturnType<BackendAttachments["metadata"]>>>;
+type OntologyAttachmentIdMapping = NonNullable<ActionReceipt["attachmentIdMappings"]>[number];
+import type { attachment } from "@party-stack/ontology-spec/values";
 import type { Query } from "@party-stack/ontology-storage";
-import type { attachment } from "@party-stack/ontology/values";
+
+const attachmentFailure = (kind: "InvalidRequest" | "InvalidResponse", message: string) =>
+    new BackendError({
+        operation: "foundry.attachment",
+        kind,
+        message,
+        retryable: false,
+    });
 
 function isFoundryAttachmentRid(value: string): value is AttachmentRid {
     return /^ri\.attachments\.[^.]+\.attachment\..+$/.test(value);
@@ -262,10 +271,11 @@ export function createFoundryOntologyBackendAdapter(
             const media = decodeFoundryMediaId(attachment.id);
             if (media) {
                 const source = attachment.source;
-                invariant(
-                    source,
-                    `Foundry media attachment "${attachment.id}" is missing its object property source.`
-                );
+                if (!source)
+                    throw attachmentFailure(
+                        "InvalidRequest",
+                        "Media reads require an object property source."
+                    );
                 const response = await MediaReferenceProperties.getMediaContent(
                     client,
                     client.ontologyRid,
@@ -274,13 +284,15 @@ export function createFoundryOntologyBackendAdapter(
                     source.property,
                     { preview: true }
                 );
-                invariant(response.body, "Foundry returned no media body.");
+                if (!response.body)
+                    throw attachmentFailure("InvalidResponse", "Foundry returned no media body.");
                 return readableByteSource(response.body, {
                     type: response.headers.get("content-type") ?? attachment.type,
                 });
             }
             const contents = await Attachments.read(client, attachment.id);
-            invariant(contents.body, "Foundry returned no attachment body.");
+            if (!contents.body)
+                throw attachmentFailure("InvalidResponse", "Foundry returned no attachment body.");
             return readableByteSource(contents.body, {
                 type: contents.headers.get("content-type") ?? attachment.type,
             });
@@ -314,10 +326,11 @@ export function createFoundryOntologyBackendAdapter(
                 if (!needsBasicMetadata) return result;
 
                 const source = attachment.source;
-                invariant(
-                    source,
-                    `Foundry media attachment "${attachment.id}" is missing its object property source.`
-                );
+                if (!source)
+                    throw attachmentFailure(
+                        "InvalidRequest",
+                        "Media reads require an object property source."
+                    );
                 const info = await MediaReferenceProperties.getMediaMetadata(
                     client,
                     client.ontologyRid,
@@ -790,11 +803,32 @@ export type CreateFoundryOntologyBackendOptions<
 export function createFoundryOntologyBackend<
     Context extends Record<string, unknown> = Record<string, unknown>,
 >(opts: CreateFoundryOntologyBackendOptions<Context>): OntologyBackendAdapterProvider<Context> {
-    return async (ir, context) =>
-        createFoundryOntologyBackendAdapter({
-            ir,
-            client: "client" in opts ? opts.client : await opts.createClient(ir, context),
-            users: opts.users,
-            watch: opts.watch,
-        });
+    return (ir, context) => ({
+        name: "foundry",
+        open: (executionContext) =>
+            Effect.gen(function* () {
+                const client = yield* Effect.tryPromise({
+                    try: async () => ("client" in opts ? opts.client : opts.createClient(ir, context)),
+                    catch: (cause) => classifyBackendFailure("foundry.open", cause),
+                });
+                const adapter = yield* Effect.try({
+                    try: () =>
+                        createFoundryOntologyBackendAdapter({
+                            ir,
+                            client,
+                            users: opts.users,
+                            watch: opts.watch,
+                        }),
+                    catch: (cause) =>
+                        new BackendError({
+                            operation: "foundry.open",
+                            kind: "InvalidConfiguration",
+                            message: "Invalid Foundry backend configuration.",
+                            retryable: false,
+                            cause: Redacted.make(cause),
+                        }),
+                });
+                return yield* adapter.open(executionContext);
+            }),
+    });
 }

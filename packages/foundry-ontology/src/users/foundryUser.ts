@@ -1,5 +1,5 @@
-import { applyLensToObjectType, o, type Lens, type ObjectTypeDef } from "@party-stack/ontology";
-import type * as v from "@party-stack/ontology/values";
+import { applyLensToObjectType, o, type Lens, type ObjectTypeDef } from "@party-stack/ontology-spec";
+import type * as v from "@party-stack/ontology-spec/values";
 
 export const foundryUserObjectType: ObjectTypeDef = {
     name: "FoundryUser",

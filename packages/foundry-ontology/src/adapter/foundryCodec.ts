@@ -9,16 +9,10 @@ import {
 } from "./foundryMediaId.js";
 import type { MediaReference } from "@osdk/foundry.core";
 import type { AttachmentProperty, OntologyObjectV2 } from "@osdk/foundry.ontologies";
-import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology";
+import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology-spec";
 import type { Encrypted } from "@party-stack/ontology-spec/values";
 
 type FoundryObjectRecord = Record<string, unknown>;
-/** @deprecated Use {@link FoundryCodec} instead. */
-export type FoundryObjectDecoder = FoundryCodec;
-
-/** @deprecated Use {@link createFoundryCodec} instead. */
-export const createFoundryObjectDecoder = createFoundryCodec;
-
 export interface FoundryCodec {
     decodeObject: (objectType: string, object: OntologyObjectV2 | FoundryObjectRecord) => FoundryObjectRecord;
     decodeEditObject: (objectType: string, object: FoundryObjectRecord) => FoundryObjectRecord;

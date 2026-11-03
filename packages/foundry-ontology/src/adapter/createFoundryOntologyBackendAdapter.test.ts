@@ -416,7 +416,7 @@ describe("Foundry live behavior", () => {
             watch: false,
         });
 
-        await expect(backend(ir, {})).resolves.toMatchObject({
+        expect(await backend(ir, {})).toMatchObject({
             name: "foundry",
         });
     });
@@ -921,6 +921,37 @@ describe("Foundry media attachments", () => {
         expect(ontologyMocks.applyWithOverrides).not.toHaveBeenCalled();
     });
 
+    it("classifies missing media sources and response bodies without retrying malformed responses", async () => {
+        const attachment = { id: encodeFoundryMediaId(mediaId), type: "image/png" };
+        const read = (
+            value: typeof attachment & {
+                source?: { objectType: string; primaryKey: string; property: string };
+            }
+        ) =>
+            Effect.runPromise(
+                Effect.scoped(
+                    Effect.result(
+                        Effect.flatMap(adapter.open({}), (backend) => backend.attachments!.read(value))
+                    )
+                )
+            );
+        expect(await read(attachment)).toMatchObject({
+            _tag: "Failure",
+            failure: { kind: "InvalidRequest", retryable: false },
+        });
+        expect(ontologyMocks.getMediaContent).not.toHaveBeenCalled();
+        ontologyMocks.getMediaContent.mockResolvedValue(new Response(null));
+        expect(
+            await read({
+                ...attachment,
+                source: { objectType: "Task", primaryKey: "one", property: "media" },
+            })
+        ).toMatchObject({
+            _tag: "Failure",
+            failure: { kind: "InvalidResponse", retryable: false },
+        });
+    });
+
     it("reads confirmed media through its object property source", async () => {
         const id = encodeFoundryMediaId(mediaId);
         const attachment = {
@@ -1166,4 +1197,21 @@ describe("native Foundry failure boundaries", () => {
         }
         expect(signal?.aborted).toBe(true);
     });
+});
+
+it("defers client acquisition to scoped open and reports acquisition failures in the typed channel", async () => {
+    const createClient = vi.fn(async () => {
+        throw { statusCode: 401 };
+    });
+    const provider = createFoundryOntologyBackend({ createClient, watch: false });
+    const adapter = await provider(
+        { types: [], objectTypes: [], linkTypes: [], actionTypes: [], queryFunctionTypes: [] },
+        {}
+    );
+    expect(createClient).not.toHaveBeenCalled();
+    expect(await Effect.runPromise(Effect.scoped(Effect.result(adapter.open({}))))).toMatchObject({
+        _tag: "Failure",
+        failure: { kind: "Unauthenticated", retryable: false },
+    });
+    expect(createClient).toHaveBeenCalledTimes(1);
 });

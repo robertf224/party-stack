@@ -21,12 +21,12 @@ import type {
     ActionParameterDef,
     ActionTypeDef,
     Expression,
-    MetaActionType,
     PropertyAssignment,
     StringConstraint,
     StringSuggestion,
     TypeDef,
-} from "@party-stack/ontology";
+} from "@party-stack/ontology-spec";
+import type { ActionType as MetaActionType } from "@party-stack/ontology-spec/meta";
 
 const FOUNDRY_CURRENT_USER_CONTEXT_PATH = ["user"];
 const FOUNDRY_UUID_PARAMETER_PREFIX = "__uuid_";

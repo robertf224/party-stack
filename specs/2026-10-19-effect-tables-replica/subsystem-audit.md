@@ -407,3 +407,33 @@ alias masking, shared-demand cancellation, metadata error propagation and
 post-header byte-stream cancellation. Run the workspace CI gate before committing;
 the commit/response records its final outcome. This review does not substitute
 for future SSR, cost-planner or resource-budget acceptance tests.
+
+### Declared-context partition audit — November 2
+
+The native ontology resource, connected-client runtime constructor, runtime-backed
+Replica host, and server policy binding use contextPartition. Connect's userId is
+the authenticated provider account, independently of ontology partition identity;
+it must not be mechanically replaced with the partition string. Foundry's remaining
+context.user use is draft-validator provider identity, not a cache key. Review its
+assumption separately when authentication/context composition is revisited.
+
+Fixed storage-backend bindings formerly scoped receipt IDs using context.user;
+that now uses the declared partition, with a regression for tenant-only context.
+Low-level Replica constructors still accept explicitly owned Tables/namespaces;
+the runtime-backed constructors provide the derived partition.
+
+Defer installation behavior changes to the installation/ontology review:
+
+- createOntologyBackendInstallation unconditionally sets context.user to the
+  connection account ID, even when custom context/partition declarations differ.
+  Decide the default-account convenience separately from trusted context binding.
+- Host caches and worker routing select by connection account + ontology + metadata
+  flag; the persistent runtime uses the declared partition. Check context rebinding
+  and ensure two account selections mapping to one partition do not acquire competing
+  replicas over the same storage.
+- forget destroys every partition registered for one account. A deliberately shared
+  declared partition needs ownership-aware cleanup so another account's registered
+  state is not destroyed. Also review duplicate partition registry entries and cache
+  invalidation/lifetime before implementing a narrow deletion-only workaround.
+
+No installation behavior was changed in this backend checkpoint.

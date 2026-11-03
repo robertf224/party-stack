@@ -6,7 +6,7 @@ import type {
     Expression,
     StringConstraint,
     StringSuggestion,
-} from "@party-stack/ontology";
+} from "@party-stack/ontology-spec";
 
 function parseDate(value: unknown): unknown {
     if (typeof value !== "string") return undefined;

@@ -794,3 +794,20 @@ function queryNative(
         )
     );
 }
+
+it("defers client acquisition to scoped open and reports acquisition failures in the typed channel", async () => {
+    const createClient = vi.fn(async () => {
+        throw { statusCode: 401 };
+    });
+    const provider = createSalesforceOntologyBackend({ createClient });
+    const adapter = await provider(
+        { types: [], objectTypes: [], linkTypes: [], actionTypes: [], queryFunctionTypes: [] },
+        {}
+    );
+    expect(createClient).not.toHaveBeenCalled();
+    expect(await Effect.runPromise(Effect.scoped(Effect.result(adapter.open({}))))).toMatchObject({
+        _tag: "Failure",
+        failure: { kind: "Unauthenticated", retryable: false },
+    });
+    expect(createClient).toHaveBeenCalledTimes(1);
+});

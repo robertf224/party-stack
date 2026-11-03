@@ -6,7 +6,7 @@ import type {
     ValueTypeConstraint,
     ValueTypeFieldType,
 } from "@osdk/foundry.ontologies";
-import type { PropertyDef, StringConstraint, TypeDef } from "@party-stack/ontology";
+import type { PropertyDef, StringConstraint, TypeDef } from "@party-stack/ontology-spec";
 
 export function convertFoundryValueTypeFieldType(
     type: ValueTypeFieldType,

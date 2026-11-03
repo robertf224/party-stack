@@ -3,7 +3,11 @@ import { convertFoundryMetaLinkTypes } from "./convertMetaLinkType.js";
 import { convertFoundryMetaObjectType } from "./convertMetaObjectType.js";
 import { convertFoundryMetaValueType } from "./convertMetaValueType.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
-import type { MetaLinkType, MetaObjectType, MetaValueType } from "@party-stack/ontology";
+import type {
+    LinkType as MetaLinkType,
+    ObjectType as MetaObjectType,
+    ValueType as MetaValueType,
+} from "@party-stack/ontology-spec/meta";
 
 export async function loadFoundryMetaOntology(client: OntologyClient): Promise<{
     objectTypes: MetaObjectType[];

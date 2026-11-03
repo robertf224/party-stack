@@ -54,7 +54,7 @@ describe("createSalesforceOntologyRoute", () => {
             ontologyId: "salesforce:tasks",
         } as never);
 
-        await expect(configuration.backend(ir, {})).resolves.toMatchObject({
+        expect(await configuration.backend(ir, {})).toMatchObject({
             name: "salesforce",
         });
     });

@@ -376,3 +376,49 @@ test("a failed journal append rolls back the integration's object writes", async
         })
     );
 });
+
+test("unknown names are invalid requests, while declared capabilities without handlers are not implemented", async () => {
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const backend = yield* makeOwnedBackend({
+                namespace: "owned-names",
+                tables: yield* Memory.make(),
+                ir: {
+                    ...ir,
+                    queryFunctionTypes: [
+                        {
+                            name: "declared",
+                            displayName: "Declared",
+                            parameters: [],
+                            returnType: o.string({}),
+                        },
+                    ],
+                },
+                mutators: {},
+            });
+            const results = yield* Effect.all(
+                [
+                    backend.applyAction({ id: "bad", name: "unknown", parameters: {} }),
+                    backend.applyAction({
+                        id: "known",
+                        name: "increment",
+                        parameters: { id: "one", amount: 1 },
+                    }),
+                    backend.validateAction!("unknown", {}),
+                    backend.queryFunction("unknown", {}),
+                    backend.queryFunction("declared", {}),
+                ].map(Effect.result)
+            );
+            expect(
+                results.map((result) => (result._tag === "Failure" ? result.failure.kind : "success"))
+            ).toEqual([
+                "InvalidRequest",
+                "NotImplemented",
+                "InvalidRequest",
+                "InvalidRequest",
+                "NotImplemented",
+            ]);
+            expect((yield* backend.changes!.pull({})).commits).toEqual([]);
+        })
+    );
+});

@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { makeFoundryMetadataBackend } from "./backend.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
-import type { OntologyBackendAdapter } from "@party-stack/ontology";
+import type { OntologyBackendAdapter } from "@party-stack/ontology-backend";
 
 export interface CreateFoundryMetaOntologyBackendAdapterOpts {
     client: OntologyClient;

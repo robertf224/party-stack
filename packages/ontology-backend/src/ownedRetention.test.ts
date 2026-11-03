@@ -132,3 +132,46 @@ test("result and journal retention are independent of committed application rows
         }).pipe(Effect.provide(TestClock.layer()))
     );
 });
+
+test("reducing journal retention drains an old backlog in bounded batches", async () => {
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const fixture = yield* setup(Infinity);
+            const before = yield* fixture.backend.loadSubset(objectSubset("Counter"));
+            for (let n = 0; n < 450; n++) yield* fixture.backend.applyAction(invocation(`old-${n}`));
+            const journal = Table.make({
+                name: JSON.stringify(["backend", fixture.options.namespace, "journal"]),
+            });
+            const requests: number[] = [];
+            const tables = {
+                ...fixture.tables,
+                query: (<A>(table: Table<A>, query?: import("@party-stack/ontology-storage").Query) => {
+                    if (table.name === journal.name) {
+                        expect(query?.limit).toBeDefined();
+                        requests.push(query!.limit!);
+                    }
+                    return fixture.tables.query(table, query);
+                }) as typeof fixture.tables.query,
+            };
+            const backend = yield* makeOwnedBackend({
+                ...fixture.options,
+                tables,
+                history: { maxCommits: 2 },
+            });
+            yield* backend.applyAction(invocation("new"));
+            // Publication and post-action maintenance each reclaim at most 100 records.
+            expect(yield* fixture.tables.query(journal)).toHaveLength(251);
+            expect(yield* Effect.result(backend.changes!.pull({ cursor: before.cursor }))).toMatchObject({
+                _tag: "Failure",
+                failure: { kind: "HistoryExpired" },
+            });
+            for (let n = 0; n < 3; n++) yield* backend.maintenance!;
+            expect((yield* fixture.tables.query(journal)).map((row) => row.key)).toEqual([450, 451]);
+            expect(Math.max(...requests)).toBeLessThanOrEqual(100);
+            expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(451);
+            const reopened = yield* makeOwnedBackend({ ...fixture.options, history: { maxCommits: 2 } });
+            const snapshot = yield* reopened.loadSubset(objectSubset("Counter"));
+            expect((yield* reopened.changes!.pull({ cursor: snapshot.cursor })).commits).toEqual([]);
+        })
+    );
+});

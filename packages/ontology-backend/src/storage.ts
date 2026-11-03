@@ -1,10 +1,16 @@
+import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { digestBytes as digest, byteSource, sliceByteSource } from "@party-stack/ontology-storage/blobs";
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
-import { Effect, Schema, Stream } from "effect";
+import { Effect, Redacted, Schema, Stream } from "effect";
 import { executeAction, resolveReadActionParameters } from "./actions.js";
 import { makeOwnedBackend } from "./owned.js";
 import { CurrentExecutionContext } from "./policy.js";
-import { BackendError, encryptedPropertyCodec, EncryptedValueSchema } from "./index.js";
+import {
+    BackendError,
+    classifyBackendFailure,
+    encryptedPropertyCodec,
+    EncryptedValueSchema,
+} from "./index.js";
 import type { ActionRequest, AttachmentUpload } from "./index.js";
 import type { OwnedBackendOptions, OwnedBackendService, OwnedTransaction } from "./owned.js";
 import type { attachment } from "@party-stack/ontology-spec/values";
@@ -20,16 +26,7 @@ export interface StorageBackendOptions extends Omit<
     readonly context?: Record<string, unknown>;
     readonly mutators?: OwnedBackendOptions["mutators"];
 }
-const failure = (cause: unknown) =>
-    cause instanceof BackendError
-        ? cause
-        : new BackendError({
-              operation: "storage-ontology",
-              kind: "Unavailable",
-              message: "Ontology storage failed.",
-              retryable: false,
-              cause,
-          });
+const failure = (cause: unknown) => classifyBackendFailure("storage-ontology", cause);
 const boundary = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.mapError(failure));
 
 /** Shared authoritative execution/attachment composition; platform factories supply Tables and byte IO. */
@@ -37,6 +34,19 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
     options: StorageBackendOptions
 ) {
     const { tables, blobs } = options;
+    const actionScope = yield* Effect.try({
+        try: () =>
+            options.actionScope ??
+            (options.context ? contextPartition(options.ir, options.context) : "system"),
+        catch: (cause) =>
+            new BackendError({
+                operation: "storage-ontology",
+                kind: "InvalidConfiguration",
+                message: "Invalid action identity partition.",
+                retryable: false,
+                cause: Redacted.make(cause),
+            }),
+    });
     yield* boundary(blobs.recover);
     const stage = Effect.fn("StorageOntology.stageAttachment")(function* (
         attachment: attachment,
@@ -136,7 +146,7 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
                   }),
               }
             : undefined,
-        actionScope: options.actionScope ?? JSON.stringify(options.context?.user ?? "system"),
+        actionScope,
         mutators: {
             ...Object.fromEntries(
                 options.ir.actionTypes
@@ -247,16 +257,21 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
             return yield* backend.applyAction({ ...invocation, attachmentUploads: uploads });
         }),
         blobs,
-        resolveActionParameters: (name: string, parameters: Record<string, unknown>) =>
-            backend.storage.read((read) =>
+        resolveActionParameters: Effect.fn("StorageOntology.resolveParameters")(function* (
+            name: string,
+            parameters: Record<string, unknown>
+        ) {
+            const context = (yield* CurrentExecutionContext) ?? options.context;
+            return yield* backend.storage.read((read) =>
                 resolveReadActionParameters({
                     ir: options.ir,
                     read,
                     name,
                     parameters,
-                    context: options.context,
+                    context,
                 })
-            ),
+            );
+        }),
         collectGarbage: (options?: { readonly orphanGraceMs?: number; readonly limit?: number }) =>
             boundary(
                 (backend.maintenance ?? Effect.void).pipe(

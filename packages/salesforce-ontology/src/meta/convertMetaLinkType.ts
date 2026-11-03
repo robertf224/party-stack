@@ -1,5 +1,5 @@
 import { salesforceLinkTypeId } from "../utils/ids.js";
-import type { MetaLinkType } from "@party-stack/ontology";
+import type { LinkType as MetaLinkType } from "@party-stack/ontology-spec/meta";
 import type { SalesforceFieldDescribe, SalesforceSObjectDescribe } from "@party-stack/salesforce-client";
 
 /**

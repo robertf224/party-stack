@@ -1,6 +1,6 @@
 import { Context, Schema } from "effect";
 import { ObjectSubsetSchema } from "./subsetSchema.js";
-import type { AttachmentTypeDef } from "@party-stack/ontology-spec";
+import type { AttachmentTypeDef, OntologyIR } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { attachment, Encrypted } from "@party-stack/ontology-spec/values";
 import type { Key, Row } from "@party-stack/ontology-storage";
@@ -209,11 +209,24 @@ export interface BackendEncryptedValues {
         value: Encrypted<unknown>
     ) => Effect.Effect<import("./encrypted.js").DecryptedValue, BackendError>;
 }
+/** Scoped acquisition contract shared by provider adapters and application composition. */
+export interface OntologyBackendAdapter {
+    readonly name: string;
+    readonly open: (
+        context: Record<string, unknown>
+    ) => Effect.Effect<OntologyBackendService, BackendError, Scope.Scope>;
+}
+/** Authoring factory; resource acquisition and provider IO belong in open. */
+export type OntologyBackendAdapterProvider<
+    Context extends Record<string, unknown> = Record<string, unknown>,
+> = (ir: OntologyIR, context: Context) => OntologyBackendAdapter | Promise<OntologyBackendAdapter>;
+
 export interface OntologyBackendService {
     readonly name: string;
     /** Stable identity for the source whose cursors and receipts this binding returns. */
     readonly sourceId: string;
-    /** Durable keyed idempotency: repeated IDs return the recorded result, with
+    /** Durable keyed idempotency within the configured receipt-retention window:
+     * repeated IDs return the recorded result, with
      * conflicting payloads rejected. The guarantee must survive source restart.
      * Merely receiving an ID, or an action being naturally idempotent, is insufficient.
      */

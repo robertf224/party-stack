@@ -1,7 +1,5 @@
-import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
-import type { OntologyIR } from "@party-stack/ontology-spec";
+export type { OntologyBackendAdapter, OntologyBackendAdapterProvider } from "@party-stack/ontology-backend";
 import type { CollectionConfig, UtilsRecord } from "@tanstack/db";
-import type { Effect, Scope } from "effect";
 
 export interface OntologyCollectionUtils extends UtilsRecord {
     /** Fetch and atomically replace the source snapshot, when supported by the adapter. */
@@ -30,15 +28,3 @@ export interface OntologyApplyActionResult {
      */
     attachmentIdMappings?: OntologyAttachmentIdMapping[];
 }
-
-export interface OntologyBackendAdapter {
-    name: string;
-    /** Acquire all backend resources and capabilities in the caller's Scope. */
-    open: (
-        context: Record<string, unknown>
-    ) => Effect.Effect<OntologyBackendService, BackendError, Scope.Scope>;
-}
-
-export type OntologyBackendAdapterProvider<
-    Context extends Record<string, unknown> = Record<string, unknown>,
-> = (ir: OntologyIR, context: Context) => OntologyBackendAdapter | Promise<OntologyBackendAdapter>;

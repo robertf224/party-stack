@@ -5,7 +5,8 @@ import {
     type SalesforceCrudOperation,
 } from "../utils/ids.js";
 import { convertSalesforceFieldType } from "./convertMetaTypeDef.js";
-import type { MetaActionType, TypeDef } from "@party-stack/ontology";
+import type { TypeDef } from "@party-stack/ontology-spec";
+import type { ActionType as MetaActionType } from "@party-stack/ontology-spec/meta";
 import type { SalesforceFieldDescribe, SalesforceSObjectDescribe } from "@party-stack/salesforce-client";
 
 const COMPOUND_PARENT_TYPES = new Set(["address", "location"]);
