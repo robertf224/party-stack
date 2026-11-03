@@ -1,43 +1,89 @@
 import {
-    NonRetryableError,
     type OntologyBackendAdapter,
     type OntologyBackendAdapterProvider,
     type OntologyIR,
 } from "@party-stack/ontology";
-import { classifyBackendFailure } from "@party-stack/ontology-backend";
-import { SalesforceApiError, type SalesforceClient } from "@party-stack/salesforce-client";
-import { Effect } from "effect";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { type SalesforceClient } from "@party-stack/salesforce-client";
+import { Effect, Redacted, Schema } from "effect";
 import { getSalesforceActionMetadata } from "../actionMetadata.js";
 import { makeSalesforceBackend } from "./backend.js";
 import { createSalesforceCodec } from "./salesforceCodec.js";
 import type { ActionReceipt } from "@party-stack/ontology-backend";
 
-function isNonRetryableSalesforceError(error: unknown): boolean {
-    if (!(error instanceof SalesforceApiError)) {
-        return false;
+const ProviderIssue = Schema.Struct({
+    statusCode: Schema.optional(Schema.String),
+    message: Schema.optional(Schema.String),
+    fields: Schema.optional(Schema.Array(Schema.String)),
+});
+const SaveResult = Schema.Struct({
+    success: Schema.Boolean,
+    id: Schema.optional(Schema.String),
+    errors: Schema.Array(ProviderIssue),
+});
+const InvocableResults = Schema.Array(
+    Schema.Struct({
+        isSuccess: Schema.Boolean,
+        errors: Schema.optional(Schema.NullOr(Schema.Array(ProviderIssue))),
+        outputValues: Schema.optional(Schema.NullOr(Schema.Record(Schema.String, Schema.Unknown))),
+    })
+);
+const rejected = (operation: string, kind: BackendError["kind"], message: string) =>
+    new BackendError({ operation, kind, message, retryable: false, actionOutcome: "not-committed" });
+const invalidResponse = (operation: string, cause?: unknown) =>
+    new BackendError({
+        operation,
+        kind: "InvalidResponse",
+        message: "Salesforce returned an invalid response.",
+        retryable: false,
+        actionOutcome: "unknown",
+        cause: Redacted.make(cause),
+    });
+function response<A>(schema: Schema.Decoder<A>, value: unknown, operation: string): A {
+    try {
+        return Schema.decodeUnknownSync(schema)(value);
+    } catch (cause) {
+        throw invalidResponse(operation, cause);
     }
-    if (error.statusCode === 400 || error.statusCode === 403 || error.statusCode === 404) {
-        return true;
-    }
-    const code = error.errorCode?.toUpperCase();
-    return (
-        code === "INVALID_INPUT" ||
-        code === "REQUIRED_FIELD_MISSING" ||
-        code === "FIELD_CUSTOM_VALIDATION_EXCEPTION" ||
-        code === "INSUFFICIENT_ACCESS" ||
-        code === "INSUFFICIENT_ACCESS_OR_READONLY" ||
-        code === "NOT_FOUND"
-    );
 }
-
-function assertSaveSucceeded(result: { success: boolean; errors: Array<{ message: string }> }): void {
-    if (result.success) return;
-    throw new NonRetryableError(
-        result.errors
-            .map((error) => error.message)
-            .filter(Boolean)
-            .join("; ") || "Salesforce rejected the record write."
-    );
+function providerRejection(operation: string, errors: readonly (typeof ProviderIssue.Type)[]): BackendError {
+    const classified = classifyBackendFailure(operation, { errorCode: errors[0]?.statusCode });
+    const kind = classified.kind === "Unavailable" ? "ValidationFailed" : classified.kind;
+    return new BackendError({
+        operation,
+        kind,
+        message: kind === "ValidationFailed" ? "Submission failed validation." : classified.message,
+        retryable: kind === "RateLimited",
+        actionOutcome: "not-committed",
+        issues:
+            kind === "ValidationFailed"
+                ? errors.flatMap((error) =>
+                      error.message
+                          ? [
+                                {
+                                    message: error.message,
+                                    category: "custom" as const,
+                                    source: "submission" as const,
+                                    messageSource: "configured" as const,
+                                },
+                            ]
+                          : []
+                  )
+                : undefined,
+        cause: Redacted.make(errors),
+    });
+}
+function assertSaveSucceeded(value: unknown) {
+    const result = response(SaveResult, value, "salesforce.applyAction");
+    if (!result.success) throw providerRejection("salesforce.applyAction", result.errors);
+    return result;
+}
+function invocableResult(value: unknown, operation: string) {
+    const results = response(InvocableResults, value, operation);
+    if (results.length !== 1) throw invalidResponse(operation);
+    const result = results[0]!;
+    if (!result.isSuccess) throw providerRejection(operation, result.errors ?? []);
+    return result;
 }
 
 export function createSalesforceOntologyBackendAdapter(opts: {
@@ -65,29 +111,49 @@ export function createSalesforceOntologyBackendAdapter(opts: {
     ): Promise<Pick<ActionReceipt, "affected" | "affectedComplete">> {
         const actionType = opts.ir.actionTypes.find((candidate) => candidate.name === name);
         if (!actionType) {
-            throw new NonRetryableError(`Unknown Salesforce action type "${name}".`);
+            throw rejected(
+                "salesforce.applyAction",
+                "InvalidRequest",
+                `Unknown Salesforce action type "${name}".`
+            );
         }
 
-        const parameterTypes = new Map(
-            actionType.parameters.map((parameter) => [parameter.name, parameter.type])
-        );
         const requestParameters: Record<string, unknown> = {};
-        for (const [parameterName, value] of Object.entries(parameters)) {
-            if (value === undefined) continue;
-            const parameterType = parameterTypes.get(parameterName);
-            requestParameters[parameterName] = parameterType
-                ? encodeInvocableParameter(parameterType, value)
-                : value;
+        try {
+            const parameterTypes = new Map(
+                actionType.parameters.map((parameter) => [parameter.name, parameter.type])
+            );
+            for (const [parameterName, value] of Object.entries(parameters)) {
+                if (value === undefined) continue;
+                const parameterType = parameterTypes.get(parameterName);
+                requestParameters[parameterName] = parameterType
+                    ? encodeInvocableParameter(parameterType, value)
+                    : value;
+            }
+        } catch (cause) {
+            throw new BackendError({
+                operation: "salesforce.applyAction",
+                kind: "InvalidRequest",
+                retryable: false,
+                actionOutcome: "not-committed",
+                message: "Invalid action parameters.",
+                cause: Redacted.make(cause),
+            });
         }
 
         const metadata = getSalesforceActionMetadata(actionType);
         if (!metadata) {
-            throw new NonRetryableError(`Salesforce action type "${name}" is missing Salesforce metadata.`);
+            throw rejected(
+                "salesforce.applyAction",
+                "InvalidConfiguration",
+                `Salesforce action type "${name}" is missing Salesforce metadata.`
+            );
         }
         if (metadata.kind === "crud") {
             if (metadata.operation === "create") {
-                const result = await client.createRecord(metadata.objectType, requestParameters);
-                assertSaveSucceeded(result);
+                const result = assertSaveSucceeded(
+                    await client.createRecord(metadata.objectType, requestParameters)
+                );
                 return {
                     affected: [
                         { objectType: metadata.objectType, ...(result.id ? { keys: [result.id] } : {}) },
@@ -97,7 +163,11 @@ export function createSalesforceOntologyBackendAdapter(opts: {
             }
             const recordId = requestParameters.recordId;
             if (typeof recordId !== "string" || recordId.length === 0) {
-                throw new NonRetryableError(`Salesforce ${metadata.operation} action requires recordId.`);
+                throw rejected(
+                    "salesforce.applyAction",
+                    "InvalidRequest",
+                    `Salesforce ${metadata.operation} action requires recordId.`
+                );
             }
             if (metadata.operation === "update") {
                 const fields = Object.fromEntries(
@@ -131,18 +201,7 @@ export function createSalesforceOntologyBackendAdapter(opts: {
             throw classifyBackendFailure("salesforce.applyAction", error);
         }
 
-        const result = results[0];
-        if (!result) {
-            throw new Error(`Salesforce action "${actionApiName}" returned no results.`);
-        }
-        if (!result.isSuccess) {
-            const message =
-                result.errors
-                    ?.map((entry) => entry.message)
-                    .filter(Boolean)
-                    .join("; ") || `Salesforce action "${actionApiName}" failed.`;
-            throw new NonRetryableError(message);
-        }
+        invocableResult(results, "salesforce.applyAction");
 
         // Flows and standard actions can modify records outside their inputs.
         return { affected: opts.ir.objectTypes.map((type) => ({ objectType: type.name })) };
@@ -155,7 +214,11 @@ export function createSalesforceOntologyBackendAdapter(opts: {
     ): Promise<unknown> {
         const queryFunction = opts.ir.queryFunctionTypes.find((candidate) => candidate.name === name);
         if (!queryFunction) {
-            throw new NonRetryableError(`Unknown Salesforce query function type "${name}".`);
+            throw rejected(
+                "salesforce.queryFunction",
+                "InvalidRequest",
+                `Unknown Salesforce query function type "${name}".`
+            );
         }
         const parameterTypes = new Map(
             queryFunction.parameters.map((parameter) => [parameter.name, parameter.type])
@@ -169,19 +232,12 @@ export function createSalesforceOntologyBackendAdapter(opts: {
                 : value;
         }
         const results = await client.invokeStandardAction(name, [requestParameters]);
-        const result = results[0];
-        if (!result) {
-            throw new Error(`Salesforce standard query "${name}" returned no results.`);
+        const result = invocableResult(results, "salesforce.queryFunction");
+        try {
+            return codec.decodeValue(queryFunction.returnType, result.outputValues ?? {});
+        } catch (cause) {
+            throw invalidResponse("salesforce.queryFunction", cause);
         }
-        if (!result.isSuccess) {
-            throw new NonRetryableError(
-                result.errors
-                    ?.map((entry) => entry.message)
-                    .filter(Boolean)
-                    .join("; ") || `Salesforce standard query "${name}" failed.`
-            );
-        }
-        return codec.decodeValue(queryFunction.returnType, result.outputValues ?? {});
     }
 
     return {
@@ -195,8 +251,6 @@ export function createSalesforceOntologyBackendAdapter(opts: {
                     decodeObject: (objectType, object) => codec.decodeObject(objectType, object),
                     submitAction,
                     runQueryFunction,
-                    isRejected: (cause) =>
-                        cause instanceof NonRetryableError || isNonRetryableSalesforceError(cause),
                 })
             ),
     };

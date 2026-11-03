@@ -73,6 +73,10 @@ export async function uploadFoundryMedia(
     input: ByteInput,
     options: { filename: string; signal?: AbortSignal }
 ) {
+    // Live browser/SharedWorker smoke test (2026-11-02): this endpoint accepted
+    // a ReadableStream with application/octet-stream and no Content-Length (200).
+    // Keep streaming here: the ordinary attachment endpoint behaved differently.
+    // See specs/2026-10-19-effect-tables-replica/blob-future-work.md for the controls.
     return Schema.decodeUnknownSync(MediaReference)(
         await uploadBinary(client, input, {
             ...options,
@@ -88,8 +92,13 @@ export async function uploadFoundryAttachment(
     input: ByteInput,
     options: { filename: string; rid?: string; signal?: AbortSignal }
 ) {
-    // Ordinary attachments require a known-length body. Browser fetch cannot set
-    // Content-Length for a stream; materialize only at this provider boundary.
+    // Live browser/SharedWorker smoke test (2026-11-02): streamed bodies failed
+    // with 400 Default:InvalidArgument for both octet-stream and PNG Content-Type;
+    // Blob and SDK controls succeeded. Media uploads above accepted streaming.
+    // The docs do not state a length requirement, so revisit with a provider test.
+    // For now use the SDK's Blob path, materializing only at this boundary within
+    // collectByteBlob's size limit. Browser fetch forbids setting Content-Length
+    // manually. Do not add a Blob/File capability to storage or RPC for this fix.
     const blob =
         input instanceof Blob
             ? input

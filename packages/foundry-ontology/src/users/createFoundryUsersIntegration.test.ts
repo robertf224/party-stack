@@ -1,7 +1,8 @@
 import { o, type Lens } from "@party-stack/ontology";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { eq, field } from "@party-stack/ontology-storage";
-import { Effect } from "effect";
+import { byteSource } from "@party-stack/ontology-storage/blobs";
+import { Effect, Stream } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { createFoundryOntologyBackendAdapter } from "../adapter/createFoundryOntologyBackendAdapter.js";
 import { createFoundryUsersIntegration } from "./createFoundryUsersIntegration.js";
@@ -110,4 +111,27 @@ describe("createFoundryUsersIntegration", () => {
             ).then((blob) => blob?.size)
         ).resolves.toBe(0);
     });
+});
+
+it("returns profile-picture bytes as a stream without buffering the response", async () => {
+    const response = new Response(
+        new ReadableStream({
+            start(controller) {
+                controller.enqueue(new Uint8Array([1, 2, 3]));
+            },
+        }),
+        { headers: { "Content-Type": "image/png" } }
+    );
+    const buffer = vi.spyOn(response, "blob");
+    mocks.profilePicture.mockResolvedValue(response);
+    const integration = createFoundryUsersIntegration({ objectType: "User", lens: identityLens });
+    const source = await integration.getAttachmentContent!(
+        {} as never,
+        foundryUserProfilePictureAttachment("user-1")
+    );
+    expect(source).not.toBeInstanceOf(Blob);
+    expect(source?.type).toBe("image/png");
+    expect(buffer).not.toHaveBeenCalled();
+    const head = await Effect.runPromise(Stream.runHead(byteSource(source!).stream));
+    expect(head).toMatchObject({ _tag: "Some", value: new Uint8Array([1, 2, 3]) });
 });

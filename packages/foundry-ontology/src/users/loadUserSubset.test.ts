@@ -149,3 +149,33 @@ test("cancellation before a request or between pages stops further requests", as
     );
     expect(mocks.list).toHaveBeenCalledTimes(1);
 });
+
+test("user list and search reject repeated cursors rather than accumulating forever", async () => {
+    for (const query of [{}, { where: ilike(field("givenName"), "rob%") }]) {
+        mocks.list.mockReset().mockResolvedValue({ data: [user("a", "Robert")], nextPageToken: "same" });
+        mocks.search.mockReset().mockResolvedValue({ data: [user("a", "Robert")], nextPageToken: "same" });
+        await expect(loadUserSubset(client, identity, query, signal())).rejects.toMatchObject({
+            kind: "InvalidResponse",
+            retryable: false,
+        });
+        expect(query.where ? mocks.search : mocks.list).toHaveBeenCalledTimes(2);
+    }
+});
+
+test("malformed user identities or pages cannot establish complete coverage", async () => {
+    for (const page of [
+        { data: [{ username: "missing-id" }] },
+        { data: null },
+        { data: [], nextPageToken: 42 },
+    ]) {
+        mocks.list.mockResolvedValue(page);
+        await expect(loadUserSubset(client, identity, {}, signal())).rejects.toMatchObject({
+            kind: "InvalidResponse",
+            retryable: false,
+        });
+    }
+    mocks.getBatch.mockResolvedValue({ data: { a: { id: null } } });
+    await expect(
+        loadUserSubset(client, identity, { where: eq(field("id"), "a") }, signal())
+    ).rejects.toMatchObject({ kind: "InvalidResponse", retryable: false });
+});

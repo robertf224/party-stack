@@ -211,6 +211,9 @@ export interface OntologyBackendService {
     readonly supportsIdempotency: boolean;
     /** Indexed bounded local maintenance; an enclosing server scope schedules it. */
     readonly maintenance?: Effect.Effect<void, BackendError>;
+    /** Return the requested filter/order/window, not raw overfetched candidates.
+     * complete certifies this requested region only; extra rows do not declare broader coverage.
+     */
     readonly loadSubset: (subset: ObjectSubset) => Effect.Effect<BackendSnapshot, BackendError>;
     /** Optional selected committed rows. Closing the Scope releases demand; delivery state expires by policy. */
     readonly subscribeSelection?: (

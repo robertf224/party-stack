@@ -138,7 +138,7 @@ export interface SalesforceInvocableActionResult {
         statusCode?: string;
         message?: string;
         fields?: string[];
-    }>;
+    }> | null;
     outputValues?: Record<string, unknown> | null;
 }
 

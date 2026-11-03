@@ -114,19 +114,20 @@ owning lower package rather than being tested only through LiveOntology.
 
 ## Implementation cleanup candidates
 
-- Native adapters still import SDK acquisition types and NonRetryableError.
-  Their public native service is Effectful, but internal provider callbacks and
-  the adapter/provider factory layer still use Promises. Move reusable acquisition
-  contracts below ontology and keep SDK conveniences as wrappers; remove the old
-  error class rather than adding another compatibility bridge.
+- Native adapters still import SDK acquisition types. Their public native service
+  is Effectful, but internal provider callbacks and the adapter/provider factory
+  layer still use Promises. Move reusable acquisition contracts below ontology and
+  keep SDK conveniences as wrappers. NonRetryableError was removed in the boundary
+  checkpoint below; do not restore a compatibility bridge.
 - Hook-specific ApplyActionError/ValidateActionError/LoadSubsetError aliases exist,
   but OntologyBackendService still declares broad BackendError everywhere. Decide
   the intended allowable failures, then wire the narrower types to actual hooks.
-- Unknown action names, missing provider metadata, provider validation failures,
-  malformed provider responses and unsupported operations need distinct errors;
-  NonRetryableError currently collapses some of these cases into ValidationFailed.
-- Salesforce's comment refers to polling repair, but the adapter supplies neither
-  a CDC watch nor a recommended polling interval. Do not describe it as automatic.
+- Unknown action/query names, missing Salesforce action metadata and malformed
+  provider responses now have distinct failures. Continue auditing the remaining
+  helper/codec boundaries and owned-backend hooks rather than treating these
+  targeted fixes as a complete error audit.
+- Salesforce supplies neither a CDC watch nor a recommended polling interval;
+  its comment now explicitly describes polling as caller-configured.
 - Finish source-identity, malformed-row and exact completeness checks across data
   and metadata bindings before claiming this subsystem review complete.
 
@@ -140,3 +141,55 @@ handle before polling/watching, retain attachment dependencies, and reconcile a 
 receipt or surface a terminal failure without resubmitting the initial request.
 Provider operation IDs and caller idempotency IDs remain distinct. Define recovery,
 status retention and refresh deadlines before reintroducing an accepted provider result.
+
+## Explicit broader fulfilled subsets — next implementation slice
+
+The current loadSubset contract returns the exact requested filter/order/window.
+Users and metadata loaders may fetch broader provider candidates, but evaluate the
+full request before returning. Ordinary snapshot installation currently accepts
+extra rows without establishing broader coverage; keyed repair/read-back rejects
+unrequested keys. This is not a supported superset-reporting capability.
+
+A future optional fulfilledSubset could describe the complete region actually
+returned. Keep caller demand separate, prove that the fulfilled region satisfies
+the request (including ordering/windows), and associate coverage with that region.
+Extra rows remain evictable: losing required rows invalidates the completeness
+claim. A watcher for only the requested subset cannot keep a broader claim fresh;
+watch/journal invalidation and coverage age must cover the declared region. Scope
+any such claim to the authorized projection before exposing it downstream. Do not
+infer a complete superset from candidate counts or returned IDs alone. Exact request
+fulfillment is the current behavior. The approved next slice adds explicit fulfilled
+subset reporting, an opt-in under the Replica object-cache configuration to retain
+extra rows, and shared engine-side filtering/order/window evaluation. Defaults must
+not persist 990 unnecessary rows merely because a provider fetched 1,000 for ten
+requested results. Preserve existing already-windowed backend semantics without
+applying offsets twice, and cover direct server/query readers as well as Replica.
+
+## Action/error and finite-load boundary checkpoint — November 2
+
+Implemented and verified before the broader-fulfillment slice:
+
+- Removed the SDK NonRetryableError class and both provider fallback classifiers.
+  Unknown action/query names are InvalidRequest; missing Salesforce action metadata
+  is InvalidConfiguration. Foundry rejects unknown actions before consuming uploads.
+- Malformed Foundry edit/validation responses and Salesforce save/invocable responses
+  fail through the typed channel as nonretryable InvalidResponse. A malformed write
+  response retains an unknown outcome; preflight failures never imply a committed
+  action. Receipt-key codec failures no longer escape as Effect defects.
+- Salesforce result-level permission/throttling failures preserve those categories
+  instead of becoming validation errors. Custom rejection text lives in categorized
+  issues, with provider causes redacted. Successful Flow errors:null is accepted,
+  matching the [provider example](https://help.salesforce.com/s/articleView?id=platform.flow_distribute_system_rest.htm&language=en_US&type=5).
+- Foundry complete/draft validation requests propagate cancellation to SDK fetch.
+  Attachment helpers and both metadata adapters use standard authentication/rate-limit
+  classification rather than wrapping every failure as retryable Unavailable.
+- Object and user pagination reject malformed pages/identities and repeated tokens.
+  The seen-token sets belong only to one finite load. No provider pagination cursor
+  is persisted or used as a replication cursor.
+- Users and metadata still evaluate the full requested subset before returning.
+  User profile-picture bodies now use the ordinary byte-stream path. Salesforce's
+  Ontology descriptor is a local singleton rather than a link-type fetch.
+
+Regression evidence: Foundry 208 tests; Salesforce 59 tests; full workspace CI
+133/133 successful, including Worker bundle verification. These are targeted
+boundary checks; the unchecked journal, lifecycle and contract items above remain.

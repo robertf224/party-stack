@@ -9,7 +9,6 @@ import {
 } from "@osdk/foundry.ontologies";
 import {
     certain,
-    NonRetryableError,
     uncertain,
     type PartialAttachmentMetadata,
     type OntologyAttachmentIdMapping,
@@ -17,7 +16,7 @@ import {
     type OntologyBackendAdapterProvider,
     type OntologyIR,
 } from "@party-stack/ontology";
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import {
     byteSource,
     byteChunks,
@@ -26,7 +25,7 @@ import {
     type ByteInput,
 } from "@party-stack/ontology-storage/blobs";
 import { resolveType, unwrapType } from "@party-stack/ontology/utils";
-import { Effect, Stream } from "effect";
+import { Effect, Stream, Schema, Redacted } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { getFoundryActionOverrideParameterMapping } from "../meta/convertMetaActionType.js";
 import { getFoundryAttachmentKind } from "../meta/foundryAttachmentMetadata.js";
@@ -65,7 +64,7 @@ export function isFoundryNotFoundError(error: unknown): boolean {
 export interface FoundryUsersIntegration {
     objectType: string;
     loadSubset(client: OntologyClient, query: Query, signal: AbortSignal): Promise<BackendSnapshot>;
-    getAttachmentContent?(client: OntologyClient, attachment: attachment): Promise<Blob | undefined>;
+    getAttachmentContent?(client: OntologyClient, attachment: attachment): Promise<ByteInput | undefined>;
     getAttachmentMetadata?(
         client: OntologyClient,
         attachment: attachment,
@@ -135,7 +134,13 @@ function prepareFoundryActionInvocation(options: {
 } {
     const actionType = options.ir.actionTypes.find((candidate) => candidate.name === options.name);
     if (!actionType) {
-        throw new NonRetryableError(`Unknown Foundry action type "${options.name}".`);
+        throw new BackendError({
+            operation: "foundry.prepare",
+            kind: "InvalidRequest",
+            retryable: false,
+            actionOutcome: "not-committed",
+            message: `Unknown Foundry action type "${options.name}".`,
+        });
     }
     const overrideMapping = getFoundryActionOverrideParameterMapping(actionType);
     const parameterTypes = new Map(
@@ -145,26 +150,37 @@ function prepareFoundryActionInvocation(options: {
     const uniqueIdentifierLinkIdValues: Record<string, string> = {};
     let actionExecutionTime: string | undefined;
 
-    for (const [parameterName, value] of Object.entries(options.parameters)) {
-        if (overrideMapping.uuidByParameterName.has(parameterName)) {
-            if (value !== undefined) {
-                uniqueIdentifierLinkIdValues[overrideMapping.uuidByParameterName.get(parameterName)!] =
-                    serializeOverrideValue(value);
+    try {
+        for (const [parameterName, value] of Object.entries(options.parameters)) {
+            if (overrideMapping.uuidByParameterName.has(parameterName)) {
+                if (value !== undefined) {
+                    uniqueIdentifierLinkIdValues[overrideMapping.uuidByParameterName.get(parameterName)!] =
+                        serializeOverrideValue(value);
+                }
+                continue;
             }
-            continue;
-        }
-        if (overrideMapping.nowParameterName === parameterName) {
-            if (value !== undefined) {
-                actionExecutionTime = serializeActionExecutionTime(value);
+            if (overrideMapping.nowParameterName === parameterName) {
+                if (value !== undefined) {
+                    actionExecutionTime = serializeActionExecutionTime(value);
+                }
+                continue;
             }
-            continue;
+            if (value !== undefined) {
+                const parameterType = parameterTypes.get(parameterName);
+                parameters[parameterName] = parameterType
+                    ? options.codec.encodeValue(parameterType, value)
+                    : value;
+            }
         }
-        if (value !== undefined) {
-            const parameterType = parameterTypes.get(parameterName);
-            parameters[parameterName] = parameterType
-                ? options.codec.encodeValue(parameterType, value)
-                : value;
-        }
+    } catch (cause) {
+        throw new BackendError({
+            operation: "foundry.prepare",
+            kind: "InvalidRequest",
+            retryable: false,
+            actionOutcome: "not-committed",
+            message: "Invalid action parameters.",
+            cause: Redacted.make(cause),
+        });
     }
 
     return {
@@ -200,6 +216,9 @@ export function createFoundryOntologyBackendAdapter(
     opts: CreateFoundryOntologyBackendAdapterOptions
 ): OntologyBackendAdapter {
     const codec = createFoundryCodec(opts.ir);
+    const Validation = Schema.Struct({ result: Schema.Literals(["VALID", "INVALID"]) });
+    const ActionResponse = Schema.Struct({ validation: Schema.optional(Validation) });
+    const ValidationResponse = Schema.Struct({ validation: Validation });
     const attachments = {
         materializeAttachment: async (
             attachment: attachment,
@@ -333,6 +352,14 @@ export function createFoundryOntologyBackendAdapter(
         },
         client = opts.client
     ) => {
+        if (!opts.ir.actionTypes.some((action) => action.name === name))
+            throw new BackendError({
+                operation: "foundry.applyAction",
+                kind: "InvalidRequest",
+                retryable: false,
+                actionOutcome: "not-committed",
+                message: "Unknown Foundry action type.",
+            });
         const mediaReferences = new Map<string, Awaited<ReturnType<typeof MediaSets.uploadMedia>>>();
         const attachmentIdMappings: OntologyAttachmentIdMapping[] = [];
         const attachmentIds = new Map<string, string>();
@@ -393,13 +420,14 @@ export function createFoundryOntologyBackendAdapter(
                 codec: actionCodec,
             });
         } catch (cause) {
+            if (cause instanceof BackendError) throw cause;
             throw new BackendError({
                 operation: "foundry.prepare",
-                kind: "ValidationFailed",
+                kind: "InvalidRequest",
                 retryable: false,
                 actionOutcome: "not-committed",
-                message: cause instanceof Error ? cause.message : "Invalid action parameters.",
-                cause,
+                message: "Invalid action parameters.",
+                cause: Redacted.make(cause),
             });
         }
 
@@ -428,6 +456,18 @@ export function createFoundryOntologyBackendAdapter(
         } catch (error) {
             throw foundryActionError("foundry.applyAction", error, opts.ir, name, parameters);
         }
+        try {
+            Schema.decodeUnknownSync(ActionResponse)(result);
+        } catch (cause) {
+            throw new BackendError({
+                operation: "foundry.applyAction",
+                kind: "InvalidResponse",
+                retryable: false,
+                actionOutcome: "unknown",
+                message: "Foundry returned an invalid action response.",
+                cause: Redacted.make(cause),
+            });
+        }
         if (result.validation?.result === "INVALID") {
             throw new BackendError({
                 operation: "foundry.applyAction",
@@ -448,7 +488,12 @@ export function createFoundryOntologyBackendAdapter(
     ) => {
         const queryFunctionType = opts.ir.queryFunctionTypes.find((candidate) => candidate.name === name);
         if (!queryFunctionType) {
-            throw new Error(`Unknown Foundry query function type "${name}".`);
+            throw new BackendError({
+                operation: "foundry.queryFunction",
+                kind: "InvalidRequest",
+                retryable: false,
+                message: `Unknown Foundry query function type "${name}".`,
+            });
         }
 
         const parameterTypes = new Map(
@@ -467,21 +512,22 @@ export function createFoundryOntologyBackendAdapter(
             parameters: requestParameters,
         });
 
-        return codec.decodeValue(queryFunctionType.returnType, result.value);
+        try {
+            return codec.decodeValue(queryFunctionType.returnType, result.value);
+        } catch (cause) {
+            throw new BackendError({
+                operation: "foundry.queryFunction",
+                kind: "InvalidResponse",
+                retryable: false,
+                message: "Foundry returned an invalid query result.",
+                cause: Redacted.make(cause),
+            });
+        }
     };
     const attempt = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
         Effect.tryPromise({
             try: run,
-            catch: (cause) =>
-                cause instanceof BackendError
-                    ? cause
-                    : new BackendError({
-                          operation,
-                          kind: "Unavailable",
-                          message: "Foundry helper request failed.",
-                          retryable: true,
-                          cause,
-                      }),
+            catch: (cause) => classifyBackendFailure(operation, cause),
         });
     const validateAction = Effect.fn("Foundry.validateAction")(function* (
         name: string,
@@ -492,9 +538,9 @@ export function createFoundryOntologyBackendAdapter(
             catch: (cause) => foundryActionError("foundry.validateAction", cause, opts.ir, name, parameters),
         });
         const result = yield* Effect.tryPromise({
-            try: () =>
+            try: (signal) =>
                 Actions.applyWithOverrides(
-                    opts.client,
+                    withRequestSignal(opts.client, signal),
                     opts.client.ontologyRid,
                     toFoundryActionTypeName(name),
                     {
@@ -508,15 +554,21 @@ export function createFoundryOntologyBackendAdapter(
                 ),
             catch: (cause) => foundryActionError("foundry.validateAction", cause, opts.ir, name, parameters),
         });
-        if (!result.validation)
-            return yield* new BackendError({
-                operation: "foundry.validateAction",
-                kind: "Unavailable",
-                message: "Validation response is missing.",
-                retryable: true,
-            });
+        const { validation } = yield* Schema.decodeUnknownEffect(ValidationResponse)(result).pipe(
+            Effect.mapError(
+                (cause) =>
+                    new BackendError({
+                        operation: "foundry.validateAction",
+                        kind: "InvalidResponse",
+                        retryable: false,
+                        actionOutcome: "not-committed",
+                        message: "Foundry returned an invalid validation response.",
+                        cause: Redacted.make(cause),
+                    })
+            )
+        );
         return certain(
-            result.validation.result === "VALID"
+            validation.result === "VALID"
                 ? { kind: "ok" as const, value: undefined }
                 : { kind: "err" as const, value: getFoundryValidationIssues(result, parameters) }
         );
@@ -530,7 +582,7 @@ export function createFoundryOntologyBackendAdapter(
         if (!action)
             return yield* new BackendError({
                 operation: "foundry.validateActionDraft",
-                kind: "NotImplemented",
+                kind: "InvalidRequest",
                 message: "Unknown action type.",
                 retryable: false,
             });
@@ -566,11 +618,11 @@ export function createFoundryOntologyBackendAdapter(
         const userId = typeof live.context?.user === "string" ? live.context.user : undefined;
         if (!userId) return uncertain();
         return yield* Effect.tryPromise({
-            try: async () =>
+            try: async (signal) =>
                 validateFoundryActionDraftCriteria({
-                    client: opts.client,
+                    client: withRequestSignal(opts.client, signal),
                     criteria: await loadFoundrySubmissionCriteria({
-                        client: opts.client,
+                        client: withRequestSignal(opts.client, signal),
                         actionTypeName: name,
                         userId,
                     }),

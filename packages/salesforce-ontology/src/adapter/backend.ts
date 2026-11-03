@@ -28,24 +28,8 @@ export function makeSalesforceBackend(options: {
         parameters: Record<string, unknown>,
         client: SalesforceClient
     ) => Promise<unknown>;
-    readonly isRejected: (cause: unknown) => boolean;
 }): OntologyBackendService {
-    const failure = (operation: string, cause: unknown) => {
-        if (cause instanceof BackendError) return cause;
-        const classified = classifyBackendFailure(operation, cause);
-        if (classified.kind !== "Unavailable") return classified;
-        const rejected = options.isRejected(cause);
-        return new BackendError({
-            operation,
-            kind: rejected ? "ValidationFailed" : "Unavailable",
-            message:
-                rejected && cause instanceof Error
-                    ? cause.message
-                    : "Salesforce operation could not be confirmed.",
-            retryable: !rejected,
-            cause,
-        });
-    };
+    const failure = classifyBackendFailure;
     const clientFor = (signal: AbortSignal) => options.client.withSignal?.(signal) ?? options.client;
     return {
         name: "salesforce",
@@ -117,7 +101,16 @@ export function makeSalesforceBackend(options: {
             const rows = yield* Effect.forEach(values, (value) =>
                 Schema.decodeUnknownEffect(KeySchema)(value[definition.primaryKey]).pipe(
                     Effect.map((key) => ({ key, value })),
-                    Effect.mapError((cause) => failure("salesforce.loadSubset", cause))
+                    Effect.mapError(
+                        (cause) =>
+                            new BackendError({
+                                operation: "salesforce.loadSubset",
+                                kind: "InvalidResponse",
+                                message: "Salesforce returned an invalid row identity.",
+                                retryable: false,
+                                cause: Redacted.make(cause),
+                            })
+                    )
                 )
             );
             // Only primary-key predicates are pushed down for now. Apply ordering,
@@ -157,6 +150,6 @@ export function makeSalesforceBackend(options: {
             });
         }),
         // The client's CDC API cannot yet report stream health/reconnect gaps.
-        // Keep Replica's polling repair until that capability can be represented.
+        // Callers can configure Replica polling; this binding does not enable it automatically.
     };
 }

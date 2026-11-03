@@ -1,7 +1,22 @@
 import { OntologyObjectsV2 } from "@osdk/foundry.ontologies";
+import { BackendError } from "@party-stack/ontology-backend";
+import { Schema, Redacted } from "effect";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import type { SearchJsonQueryV2, SearchOrderByV2 } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
+
+const Page = Schema.Struct({
+    data: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+    nextPageToken: Schema.optional(Schema.String),
+});
+const invalidResponse = (cause: unknown) =>
+    new BackendError({
+        operation: "foundry.loadSubset",
+        kind: "InvalidResponse",
+        message: "Foundry returned an invalid object page.",
+        retryable: false,
+        cause: Redacted.make(cause),
+    });
 
 /** Shared HTTP/pagination path. Callers translate their query syntax before searching. */
 export async function searchFoundryObjects(
@@ -33,8 +48,8 @@ export async function searchFoundryObjects(
         : client;
     const results = await AsyncIterable.toArray(
         AsyncIterable.fromPagination(
-            (pageSize, pageToken: string | undefined) =>
-                OntologyObjectsV2.search(requestClient, client.ontologyRid, objectType, {
+            async (pageSize, pageToken: string | undefined) => {
+                const result = await OntologyObjectsV2.search(requestClient, client.ontologyRid, objectType, {
                     snapshot: true,
                     where: options.where,
                     excludeRid: true,
@@ -43,7 +58,13 @@ export async function searchFoundryObjects(
                     pageSize,
                     pageToken,
                     orderBy: options.orderBy,
-                }),
+                });
+                try {
+                    return Schema.decodeUnknownSync(Page)(result);
+                } catch (cause) {
+                    throw invalidResponse(cause);
+                }
+            },
             (page) => page.nextPageToken,
             (page) => page.data,
             10_000,
@@ -51,5 +72,9 @@ export async function searchFoundryObjects(
         )
     );
     options.signal?.throwIfAborted();
-    return results.slice(offset, limit === undefined ? undefined : offset + limit).map(decodeObject);
+    try {
+        return results.slice(offset, limit === undefined ? undefined : offset + limit).map(decodeObject);
+    } catch (cause) {
+        throw invalidResponse(cause);
+    }
 }

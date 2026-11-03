@@ -399,3 +399,96 @@ test("invalid subset windows fail in the typed channel before provider IO", asyn
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(users).not.toHaveBeenCalled();
 });
+
+test.each([
+    null,
+    { edits: { type: "edits" } },
+    { edits: { type: "unexpected", edits: [] } },
+    { edits: { type: "largeScaleEdits", editedObjectTypes: "Issue" } },
+    { edits: { type: "edits", edits: [{ type: "addLink" }] } },
+])("malformed action edits fail through the typed channel with an unknown outcome: %j", async (result) => {
+    const submitAction = vi.fn(async () => ({ result, attachmentIdMappings: [] })) as unknown as Parameters<
+        typeof makeFoundryBackend
+    >[0]["submitAction"];
+    const outcome = await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeFoundryBackend({
+                    client: {} as OntologyClient,
+                    ir,
+                    context: {},
+                    watch: false,
+                    submitAction,
+                    decodeObject: (_type, value) => value,
+                });
+                return yield* Effect.result(
+                    backend.applyAction({ id: "once", name: "edit", parameters: {} })
+                );
+            })
+        )
+    );
+    expect(outcome).toMatchObject({
+        _tag: "Failure",
+        failure: { kind: "InvalidResponse", retryable: false, actionOutcome: "unknown" },
+    });
+    expect(submitAction).toHaveBeenCalledTimes(1);
+});
+
+test("a receipt-key decoding failure is a typed unknown outcome, not a defect", async () => {
+    const outcome = await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeFoundryBackend({
+                    client: {} as OntologyClient,
+                    ir,
+                    context: {},
+                    watch: false,
+                    submitAction: async () => ({
+                        result: {
+                            edits: {
+                                type: "edits",
+                                edits: [{ type: "modifyObject", objectType: "Issue", primaryKey: "one" }],
+                            },
+                        } as never,
+                        attachmentIdMappings: [],
+                    }),
+                    decodeObject: () => {
+                        throw new Error("private decoding details");
+                    },
+                });
+                return yield* Effect.result(
+                    backend.applyAction({ id: "once", name: "edit", parameters: {} })
+                );
+            })
+        )
+    );
+    expect(outcome).toMatchObject({
+        _tag: "Failure",
+        failure: { kind: "InvalidResponse", actionOutcome: "unknown", retryable: false },
+    });
+});
+
+test("malformed snapshot keys fail before publishing complete coverage", async () => {
+    mocks.fetch.mockResolvedValue([{ title: "no key" }]);
+    const outcome = await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeFoundryBackend({
+                    client: {} as OntologyClient,
+                    ir,
+                    context: {},
+                    watch: false,
+                    submitAction: async () => {
+                        throw new Error("Unexpected write");
+                    },
+                    decodeObject: (_type, value) => value,
+                });
+                return yield* Effect.result(backend.loadSubset(objectSubset("Issue")));
+            })
+        )
+    );
+    expect(outcome).toMatchObject({
+        _tag: "Failure",
+        failure: { kind: "InvalidResponse", retryable: false },
+    });
+});

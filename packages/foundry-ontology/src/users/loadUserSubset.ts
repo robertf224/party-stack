@@ -1,11 +1,35 @@
 import { Users, type User } from "@osdk/foundry.admin";
+import { BackendError } from "@party-stack/ontology-backend";
 import { applyLensToObject, mapTargetPathToSourceWithLens, type Lens } from "@party-stack/ontology-spec";
 import { evaluateQuery, type Predicate, type Query } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
+import { Schema, Redacted } from "effect";
+import * as AsyncIterable from "../utils/AsyncIterable.js";
 import { chunk } from "../utils/chunk.js";
 import { foundryUserProfilePictureAttachment } from "./foundryUser.js";
 import type { Client } from "@party-stack/foundry-client";
 import type { BackendSnapshot, SourceQueryPlan } from "@party-stack/ontology-backend";
+
+const UserIdentity = Schema.Struct({ id: Schema.String });
+const UserPage = Schema.Struct({
+    data: Schema.Array(UserIdentity),
+    nextPageToken: Schema.optional(Schema.String),
+});
+const UserBatch = Schema.Struct({ data: Schema.Record(Schema.String, UserIdentity) });
+function checked<A>(schema: Schema.Decoder<unknown>, value: A): A {
+    try {
+        Schema.decodeUnknownSync(schema)(value);
+        return value;
+    } catch (cause) {
+        throw new BackendError({
+            operation: "foundry.users.loadSubset",
+            kind: "InvalidResponse",
+            message: "Foundry returned an invalid user response.",
+            retryable: false,
+            cause: Redacted.make(cause),
+        });
+    }
+}
 
 type Selection =
     | { type: "getBatch"; ids: string[]; paths: number[][] }
@@ -115,22 +139,30 @@ export async function loadUserSubset(
                 requestClient,
                 ids.map((userId) => ({ userId }))
             );
+            checked(UserBatch, response);
             users.push(...Object.values(response.data));
         }
     } else {
-        let pageToken: string | undefined;
-        do {
-            signal.throwIfAborted();
-            const page =
-                selection?.type === "search"
-                    ? await Users.search(requestClient, {
-                          where: { type: "queryString", value: selection.term },
-                          pageToken,
-                      })
-                    : await Users.list(requestClient, { pageToken });
-            users.push(...page.data);
-            pageToken = page.nextPageToken;
-        } while (pageToken !== undefined);
+        users.push(
+            ...(await AsyncIterable.toArray(
+                AsyncIterable.fromPagination(
+                    async (_pageSize, pageToken: string | undefined) => {
+                        signal.throwIfAborted();
+                        const page =
+                            selection?.type === "search"
+                                ? await Users.search(requestClient, {
+                                      where: { type: "queryString", value: selection.term },
+                                      pageToken,
+                                  })
+                                : await Users.list(requestClient, { pageToken });
+                        return checked(UserPage, page);
+                    },
+                    (page) => page.nextPageToken,
+                    (page) => page.data,
+                    500
+                )
+            ))
+        );
     }
     signal.throwIfAborted();
     const rows = users.map((user) => ({

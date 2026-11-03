@@ -1,9 +1,17 @@
+import { BackendError } from "@party-stack/ontology-backend";
+import { Schema, Redacted } from "effect";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import { buildSoqlQuery } from "./soql.js";
 import type { CompiledSoqlFilter } from "./soql.js";
 import type { SalesforceClient } from "@party-stack/salesforce-client";
 
 type SalesforceObject = Record<string, unknown>;
+
+const Page = Schema.Struct({
+    done: Schema.Boolean,
+    records: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+    nextRecordsUrl: Schema.optional(Schema.String),
+});
 
 /** Shared SOQL transport; query compilation and collection materialization live outside it. */
 export async function searchSalesforceObjects(
@@ -45,11 +53,28 @@ export async function searchSalesforceObjects(
         AsyncIterable.fromPagination(
             async (_pageSize, pageToken: string | undefined) => {
                 opts.signal?.throwIfAborted();
-                const page = await (pageToken
+                const result = await (pageToken
                     ? client.queryMore<SalesforceObject>(pageToken)
                     : client.query<SalesforceObject>(soql));
+                let page: typeof Page.Type;
+                try {
+                    page = Schema.decodeUnknownSync(Page)(result);
+                } catch (cause) {
+                    throw new BackendError({
+                        operation: "salesforce.loadSubset",
+                        kind: "InvalidResponse",
+                        retryable: false,
+                        message: "Salesforce returned an invalid object page.",
+                        cause: Redacted.make(cause),
+                    });
+                }
                 if (!page.done && !page.nextRecordsUrl)
-                    throw new Error("Salesforce returned an incomplete page without a query locator.");
+                    throw new BackendError({
+                        operation: "salesforce.loadSubset",
+                        kind: "InvalidResponse",
+                        retryable: false,
+                        message: "Salesforce returned an incomplete page without a query locator.",
+                    });
                 return page;
             },
             (page) => (page.done ? undefined : page.nextRecordsUrl),
@@ -69,5 +94,15 @@ export async function searchSalesforceObjects(
         ? results
         : results.slice(offset, limit === undefined ? undefined : offset + limit);
 
-    return sliced.map(decodeObject);
+    try {
+        return sliced.map(decodeObject);
+    } catch (cause) {
+        throw new BackendError({
+            operation: "salesforce.loadSubset",
+            kind: "InvalidResponse",
+            message: "Salesforce returned an invalid row.",
+            retryable: false,
+            cause: Redacted.make(cause),
+        });
+    }
 }

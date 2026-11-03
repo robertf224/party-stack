@@ -1,10 +1,14 @@
 import { ActionTypesV2 } from "@osdk/foundry.ontologies";
-import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
+import {
+    BackendError,
+    classifyBackendFailure,
+    type OntologyBackendService,
+} from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import { evaluateQuery, type Predicate } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
-import { Effect } from "effect";
+import { Effect, Redacted, Schema } from "effect";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import { convertFoundryMetaActionType } from "./convertMetaActionType.js";
@@ -17,16 +21,7 @@ import type { ActionTypeSearchJsonQueryV2 } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 
-const failure = (operation: string, cause: unknown) =>
-    cause instanceof BackendError
-        ? cause
-        : new BackendError({
-              operation,
-              kind: "Unavailable",
-              message: "Foundry metadata could not be loaded.",
-              retryable: true,
-              cause,
-          });
+const failure = (operation: string, cause: unknown) => classifyBackendFailure(operation, cause);
 // Candidate selection is deliberately a superset. Residual predicates are evaluated on decoded metadata.
 const names = (predicate?: Predicate): string[] | undefined => {
     if (!predicate) return;
@@ -182,12 +177,21 @@ export function makeFoundryMetadataBackend(options: {
                     try: () =>
                         evaluateQuery(
                             values.map((value) => ({
-                                key: (value as unknown as Record<string, unknown>)[type.primaryKey] as string,
+                                key: Schema.decodeUnknownSync(Schema.Union([Schema.String, Schema.Finite]))(
+                                    (value as unknown as Record<string, unknown>)[type.primaryKey]
+                                ),
                                 value: value as unknown as Record<string, unknown>,
                             })),
                             subset.query ?? {}
                         ),
-                    catch: (cause) => failure("metadata.filter", cause),
+                    catch: (cause) =>
+                        new BackendError({
+                            operation: "metadata.decode",
+                            kind: "InvalidResponse",
+                            message: "Foundry returned invalid metadata.",
+                            retryable: false,
+                            cause: Redacted.make(cause),
+                        }),
                 }),
             };
         }),

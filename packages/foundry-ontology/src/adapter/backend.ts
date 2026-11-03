@@ -20,6 +20,43 @@ import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { Query } from "@party-stack/ontology-storage";
 
 const KeySchema = Schema.Union([Schema.String, Schema.Finite]);
+const ObjectTarget = Schema.Struct({ objectType: Schema.String, primaryKey: Schema.Unknown });
+const ActionResult = Schema.Struct({
+    operationId: Schema.optional(Schema.String),
+    edits: Schema.optional(
+        Schema.Union([
+            Schema.Struct({
+                type: Schema.Literal("largeScaleEdits"),
+                editedObjectTypes: Schema.Array(Schema.String),
+            }),
+            Schema.Struct({
+                type: Schema.Literal("edits"),
+                edits: Schema.Array(
+                    Schema.Union([
+                        Schema.Struct({
+                            type: Schema.Literals(["addObject", "modifyObject", "deleteObject"]),
+                            ...ObjectTarget.fields,
+                        }),
+                        Schema.Struct({
+                            type: Schema.Literals(["addLink", "deleteLink"]),
+                            aSideObject: ObjectTarget,
+                            bSideObject: ObjectTarget,
+                        }),
+                    ])
+                ),
+            }),
+        ])
+    ),
+});
+const invalidResponse = (operation: string, cause: unknown) =>
+    new BackendError({
+        operation,
+        kind: "InvalidResponse",
+        message: "Foundry returned an invalid response.",
+        retryable: false,
+        actionOutcome: "unknown",
+        cause: Redacted.make(cause),
+    });
 const unavailable = (cause: unknown) => classifyBackendFailure("foundry.sync", cause);
 
 /** One scoped watcher multiplexes the live object types used by this binding.
@@ -137,6 +174,12 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                     ),
                 catch: unavailable,
             });
+            const rows = yield* Effect.forEach(values, (value) =>
+                Schema.decodeUnknownEffect(KeySchema)(value[definition.primaryKey]).pipe(
+                    Effect.map((key) => ({ key, value })),
+                    Effect.mapError((cause) => invalidResponse("foundry.loadSubset", cause))
+                )
+            );
             return {
                 fetchedRows: values.length,
                 pushdown: {
@@ -155,63 +198,58 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                         text: JSON.stringify(pushed ?? { type: "and", value: [] }, null, 2),
                     },
                 } satisfies SourceQueryPlan,
-                rows: evaluateQuery(
-                    values.map((value) => ({ key: value[definition.primaryKey] as string | number, value })),
-                    subset.query ?? {}
-                ),
+                rows: evaluateQuery(rows, subset.query ?? {}),
                 complete: true,
             };
         }),
         applyAction: Effect.fn("Foundry.applyAction")(function* (invocation: ActionRequest) {
-            const { result, attachmentIdMappings } = yield* Effect.tryPromise({
+            const { result: rawResult, attachmentIdMappings } = yield* Effect.tryPromise({
                 try: (signal) => options.submitAction(invocation, signal),
-                catch: (cause) =>
-                    cause instanceof BackendError
-                        ? cause
-                        : cause instanceof Error && cause.name === "NonRetryableError"
-                          ? new BackendError({
-                                operation: "foundry.applyAction",
-                                kind: "ValidationFailed",
-                                message: cause.message,
-                                retryable: false,
-                                cause,
-                            })
-                          : unavailable(cause),
+                catch: (cause) => classifyBackendFailure("foundry.applyAction", cause),
             });
-            const targets = new Map<string, Set<string | number> | undefined>();
-            const add = (objectType: string, rawKey?: unknown) => {
-                const definition = options.ir.objectTypes.find((type) => type.name === objectType);
-                if (!definition || objectType === options.users?.objectType) return;
-                const key =
-                    rawKey === undefined
-                        ? undefined
-                        : options.decodeObject(objectType, { [definition.primaryKey]: rawKey })[
-                              definition.primaryKey
-                          ];
-                if (!Schema.is(KeySchema)(key)) targets.set(objectType, undefined);
-                else if (!targets.has(objectType) || targets.get(objectType))
-                    targets.set(objectType, new Set([...(targets.get(objectType) ?? []), key]));
-            };
-            if (!result.edits) for (const type of options.ir.objectTypes) add(type.name);
-            else if (result.edits.type === "largeScaleEdits")
-                for (const type of result.edits.editedObjectTypes) add(type);
-            else
-                for (const edit of result.edits.edits) {
-                    if (edit.type === "addLink" || edit.type === "deleteLink") {
-                        add(edit.aSideObject.objectType, edit.aSideObject.primaryKey);
-                        add(edit.bSideObject.objectType, edit.bSideObject.primaryKey);
-                    } else add(edit.objectType, edit.primaryKey);
-                }
-            return {
-                operationId: invocation.id,
-                outcome: "committed",
-                providerOperationId: result.operationId,
-                affected: [...targets].map(([objectType, keys]) => ({
-                    objectType,
-                    ...(keys ? { keys: [...keys] } : {}),
-                })),
-                attachmentIdMappings: attachmentIdMappings.length ? attachmentIdMappings : undefined,
-            } satisfies ActionReceipt;
+            const result = yield* Schema.decodeUnknownEffect(ActionResult)(rawResult).pipe(
+                Effect.mapError((cause) => invalidResponse("foundry.applyAction", cause))
+            );
+            return yield* Effect.try({
+                try: () => {
+                    const targets = new Map<string, Set<string | number> | undefined>();
+                    const add = (objectType: string, rawKey?: unknown) => {
+                        const definition = options.ir.objectTypes.find((type) => type.name === objectType);
+                        if (!definition || objectType === options.users?.objectType) return;
+                        const key =
+                            rawKey === undefined
+                                ? undefined
+                                : options.decodeObject(objectType, { [definition.primaryKey]: rawKey })[
+                                      definition.primaryKey
+                                  ];
+                        if (rawKey === undefined) targets.set(objectType, undefined);
+                        else if (!Schema.is(KeySchema)(key)) throw new Error("Invalid edit identity.");
+                        else if (!targets.has(objectType) || targets.get(objectType))
+                            targets.set(objectType, new Set([...(targets.get(objectType) ?? []), key]));
+                    };
+                    if (!result.edits) for (const type of options.ir.objectTypes) add(type.name);
+                    else if (result.edits.type === "largeScaleEdits")
+                        for (const type of result.edits.editedObjectTypes) add(type);
+                    else
+                        for (const edit of result.edits.edits) {
+                            if ("aSideObject" in edit) {
+                                add(edit.aSideObject.objectType, edit.aSideObject.primaryKey);
+                                add(edit.bSideObject.objectType, edit.bSideObject.primaryKey);
+                            } else add(edit.objectType, edit.primaryKey);
+                        }
+                    return {
+                        operationId: invocation.id,
+                        outcome: "committed",
+                        providerOperationId: result.operationId,
+                        affected: [...targets].map(([objectType, keys]) => ({
+                            objectType,
+                            ...(keys ? { keys: [...keys] } : {}),
+                        })),
+                        attachmentIdMappings: attachmentIdMappings.length ? attachmentIdMappings : undefined,
+                    } satisfies ActionReceipt;
+                },
+                catch: (cause) => invalidResponse("foundry.applyAction", cause),
+            });
         }),
         // Admin users have no ontology websocket feed; the Replica owns this polling lifetime.
         refresh: (subset: ObjectSubset) =>

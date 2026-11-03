@@ -1,8 +1,12 @@
-import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
+import {
+    BackendError,
+    classifyBackendFailure,
+    type OntologyBackendService,
+} from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import { evaluateQuery } from "@party-stack/ontology-storage";
-import { Effect } from "effect";
+import { Effect, Redacted, Schema } from "effect";
 import { convertSalesforceMetaLinkTypes } from "./convertMetaLinkType.js";
 import { convertStorageMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
 import { convertSalesforceMetaObjectType } from "./convertMetaObjectType.js";
@@ -12,16 +16,7 @@ import { loadSalesforceQueryFunctionTypes } from "./loadQueryFunctions.js";
 import type { CreateSalesforceMetaOntologyBackendAdapterOpts } from "./createSalesforceMetaOntologyBackendAdapter.js";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 
-const failure = (cause: unknown) =>
-    cause instanceof BackendError
-        ? cause
-        : new BackendError({
-              operation: "metadata.load",
-              kind: "Unavailable",
-              message: "Salesforce metadata could not be loaded.",
-              retryable: true,
-              cause,
-          });
+const failure = (cause: unknown) => classifyBackendFailure("metadata.load", cause);
 export function makeSalesforceMetadataBackend(
     options: CreateSalesforceMetaOntologyBackendAdapterOpts
 ): OntologyBackendService {
@@ -50,6 +45,11 @@ export function makeSalesforceMetadataBackend(
                     message: "Unknown metadata object type.",
                     retryable: false,
                 });
+            if (subset.objectType === "Ontology")
+                return {
+                    complete: true,
+                    rows: evaluateQuery([{ key: "ontology", value: { id: "ontology" } }], subset.query ?? {}),
+                };
             const values = yield* Effect.tryPromise({
                 try: async (signal) => {
                     const client = options.client.withSignal?.(signal) ?? options.client;
@@ -82,12 +82,21 @@ export function makeSalesforceMetadataBackend(
                     try: () =>
                         evaluateQuery(
                             values.map((value) => ({
-                                key: (value as unknown as Record<string, unknown>)[type.primaryKey] as string,
+                                key: Schema.decodeUnknownSync(Schema.Union([Schema.String, Schema.Finite]))(
+                                    (value as unknown as Record<string, unknown>)[type.primaryKey]
+                                ),
                                 value: value as unknown as Record<string, unknown>,
                             })),
                             subset.query ?? {}
                         ),
-                    catch: failure,
+                    catch: (cause) =>
+                        new BackendError({
+                            operation: "metadata.decode",
+                            kind: "InvalidResponse",
+                            message: "Salesforce returned invalid metadata.",
+                            retryable: false,
+                            cause: Redacted.make(cause),
+                        }),
                 }),
             };
         }),

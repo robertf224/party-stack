@@ -383,7 +383,8 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         ).rejects.toEqual(
             expect.objectContaining({
                 kind: "ValidationFailed",
-                message: "Flow failed validation",
+                message: "Submission failed validation.",
+                issues: [expect.objectContaining({ message: "Flow failed validation", category: "custom" })],
             })
         );
     });
@@ -567,7 +568,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             );
             expect(result).toMatchObject({
                 _tag: "Failure",
-                failure: { kind: "Unavailable", retryable: true },
+                failure: { kind: "InvalidResponse", retryable: false },
             });
         }
     });
@@ -639,6 +640,111 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         }
         expect(signal?.aborted).toBe(true);
         expect(queryMore).not.toHaveBeenCalled();
+    });
+    it("does not retry malformed or missing action results", async () => {
+        for (const result of [[], [{ isSuccess: "true" }], [{ isSuccess: true }, { isSuccess: true }]]) {
+            invokeFlowAction.mockResolvedValue(result);
+            const outcome = await runNative(createAdapter(), (backend) =>
+                Effect.result(backend.applyAction({ id: "once", name: "Create_Account", parameters: {} }))
+            );
+            expect(outcome).toMatchObject({
+                _tag: "Failure",
+                failure: { kind: "InvalidResponse", actionOutcome: "unknown", retryable: false },
+            });
+        }
+        expect(invokeFlowAction).toHaveBeenCalledTimes(3);
+        createRecord.mockResolvedValue({ id: "maybe-committed" });
+        const outcome = await runNative(createAdapter(), (backend) =>
+            Effect.result(backend.applyAction({ id: "once", name: "createAccount", parameters: {} }))
+        );
+        expect(outcome).toMatchObject({
+            _tag: "Failure",
+            failure: { kind: "InvalidResponse", actionOutcome: "unknown", retryable: false },
+        });
+    });
+
+    it("accepts the provider's documented null error list on successful flows", async () => {
+        invokeFlowAction.mockResolvedValue([{ isSuccess: true, errors: null, outputValues: null }]);
+        expect(
+            await runNative(createAdapter(), (backend) =>
+                backend.applyAction({ id: "once", name: "Create_Account", parameters: {} })
+            )
+        ).toMatchObject({ outcome: "committed" });
+    });
+
+    it("distinguishes permission and throttling rejections from validation issues", async () => {
+        for (const [code, kind, retryable] of [
+            ["INSUFFICIENT_ACCESS_OR_READONLY", "Forbidden", false],
+            ["REQUEST_LIMIT_EXCEEDED", "RateLimited", true],
+        ] as const) {
+            invokeFlowAction.mockResolvedValue([
+                { isSuccess: false, errors: [{ statusCode: code, message: "private provider detail" }] },
+            ]);
+            const outcome = await runNative(createAdapter(), (backend) =>
+                Effect.result(backend.applyAction({ id: "once", name: "Create_Account", parameters: {} }))
+            );
+            expect(outcome).toMatchObject({
+                _tag: "Failure",
+                failure: { kind, retryable, actionOutcome: "not-committed" },
+            });
+            if (outcome._tag === "Failure")
+                expect(outcome.failure.message).not.toContain("private provider detail");
+        }
+    });
+
+    it("rejects invalid action names and missing metadata before any write", async () => {
+        const adapter = createSalesforceOntologyBackendAdapter({
+            ir: {
+                ...ir,
+                actionTypes: [
+                    ...ir.actionTypes,
+                    { name: "unconfigured", displayName: "Unconfigured", parameters: [], logic: [] },
+                ],
+            },
+            client: {
+                instanceUrl: "https://example.my.salesforce.com",
+                invokeFlowAction,
+                createRecord,
+            } as unknown as SalesforceClient,
+        });
+        for (const [name, kind] of [
+            ["missing", "InvalidRequest"],
+            ["unconfigured", "InvalidConfiguration"],
+        ]) {
+            const outcome = await runNative(adapter, (backend) =>
+                Effect.result(backend.applyAction({ id: "once", name: name!, parameters: {} }))
+            );
+            expect(outcome).toMatchObject({
+                _tag: "Failure",
+                failure: { kind, retryable: false, actionOutcome: "not-committed" },
+            });
+        }
+        expect(invokeFlowAction).not.toHaveBeenCalled();
+        expect(createRecord).not.toHaveBeenCalled();
+    });
+
+    it("rejects repeated or malformed provider pages", async () => {
+        query.mockResolvedValue({ done: false, nextRecordsUrl: "/same", records: [] });
+        queryMore.mockResolvedValue({ done: false, nextRecordsUrl: "/same", records: [] });
+        const outcome = await runNative(createAdapter(), (backend) =>
+            Effect.result(backend.loadSubset(objectSubset("Account")))
+        );
+        expect(outcome).toMatchObject({
+            _tag: "Failure",
+            failure: { kind: "InvalidResponse", retryable: false },
+        });
+        expect(queryMore).toHaveBeenCalledOnce();
+        for (const page of [
+            { done: "true", records: [] },
+            { done: true, records: null },
+        ]) {
+            query.mockResolvedValue(page);
+            expect(
+                await runNative(createAdapter(), (backend) =>
+                    Effect.result(backend.loadSubset(objectSubset("Account")))
+                )
+            ).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidResponse", retryable: false } });
+        }
     });
 });
 

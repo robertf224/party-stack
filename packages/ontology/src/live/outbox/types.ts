@@ -3,13 +3,6 @@ import type { Collection } from "@tanstack/db";
 
 export type OntologyOutboxStatus = import("@party-stack/ontology-backend/protocol").PendingAction["state"];
 
-export class NonRetryableError extends Error {
-    constructor(message: string, options?: ErrorOptions) {
-        super(message, options);
-        this.name = "NonRetryableError";
-    }
-}
-
 export interface OntologyActionRequest {
     actionTypeName: string;
     parameters: Record<string, unknown>;

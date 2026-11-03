@@ -1,7 +1,7 @@
 import { o } from "@party-stack/ontology";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
-import { Effect, Stream } from "effect";
+import { Effect, Stream, Fiber } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
@@ -196,7 +196,7 @@ describe("Foundry action execution time overrides", () => {
     it("rejects an invalid execution time before making a Foundry request", async () => {
         await expect(
             applyNative(adapter, "setTimestamp", { __now: "not an ISO instant" }, { objects: {} })
-        ).rejects.toThrow("Invalid action execution time: expected a Date or Temporal-like ISO instant.");
+        ).rejects.toMatchObject({ kind: "InvalidRequest", actionOutcome: "not-committed" });
         expect(ontologyMocks.applyWithOverrides).not.toHaveBeenCalled();
     });
 });
@@ -284,6 +284,7 @@ describe("Foundry live behavior", () => {
                     {
                         type: "modifyObject",
                         objectType: "Task",
+                        primaryKey: "task-1",
                     },
                 ],
             },
@@ -591,7 +592,7 @@ describe("Foundry attachments", () => {
                 blob,
                 { target }
             )
-        ).rejects.toMatchObject({ kind: "Unavailable", cause: error });
+        ).rejects.toMatchObject({ kind: "Unavailable", retryable: true });
         expect(attachmentMocks.upload).not.toHaveBeenCalled();
         expect(attachmentMocks.uploadWithRid).not.toHaveBeenCalled();
     });
@@ -1051,3 +1052,118 @@ function validateDraftNative(
         )
     );
 }
+
+describe("native Foundry failure boundaries", () => {
+    const ir = {
+        types: [],
+        objectTypes: [],
+        linkTypes: [],
+        queryFunctionTypes: [],
+        actionTypes: [{ name: "edit", displayName: "Edit", parameters: [], logic: [] }],
+    };
+
+    it("rejects unknown actions before consuming or uploading attachments", async () => {
+        const adapter = createFoundryOntologyBackendAdapter({
+            client: {} as OntologyClient,
+            watch: false,
+            ir,
+        });
+        const outcome = await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const backend = yield* adapter.open({});
+                    return yield* Effect.result(
+                        backend.applyAction({
+                            id: "once",
+                            name: "missing",
+                            parameters: {},
+                            attachmentUploads: [
+                                {
+                                    attachment: { id: "local" },
+                                    blob: { type: "image/png", stream: Stream.never },
+                                    target: o.attachment({}).value,
+                                },
+                            ],
+                        })
+                    );
+                })
+            )
+        );
+        expect(outcome).toMatchObject({
+            _tag: "Failure",
+            failure: { kind: "InvalidRequest", retryable: false, actionOutcome: "not-committed" },
+        });
+        expect(ontologyMocks.applyWithOverrides).not.toHaveBeenCalled();
+        expect(attachmentMocks.upload).not.toHaveBeenCalled();
+    });
+
+    it.each([{}, { validation: { result: "unexpected" } }])(
+        "reports malformed validation responses without retrying: %j",
+        async (result) => {
+            ontologyMocks.applyWithOverrides.mockResolvedValue(result);
+            const adapter = createFoundryOntologyBackendAdapter({
+                client: {} as OntologyClient,
+                watch: false,
+                ir,
+            });
+            const outcome = await Effect.runPromise(Effect.result(validateNative(adapter, "edit", {}, {})));
+            expect(outcome).toMatchObject({
+                _tag: "Failure",
+                failure: { kind: "InvalidResponse", retryable: false, actionOutcome: "not-committed" },
+            });
+            expect(ontologyMocks.applyWithOverrides).toHaveBeenCalledOnce();
+        }
+    );
+
+    it("preserves authentication failures in attachment helpers", async () => {
+        attachmentMocks.get.mockRejectedValue({ statusCode: 401 });
+        const adapter = createFoundryOntologyBackendAdapter({
+            client: {} as OntologyClient,
+            watch: false,
+            ir,
+        });
+        const outcome = await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const backend = yield* adapter.open({});
+                    return yield* Effect.result(
+                        backend.attachments!.stage!(
+                            { id: "ri.attachments.main.attachment.existing" },
+                            new Blob(["bytes"]),
+                            { target: o.attachment({ meta: { foundry: { kind: "attachment" } } }).value }
+                        )
+                    );
+                })
+            )
+        );
+        expect(outcome).toMatchObject({
+            _tag: "Failure",
+            failure: { kind: "Unauthenticated", retryable: false },
+        });
+        expect(attachmentMocks.upload).not.toHaveBeenCalled();
+    });
+    it("cancels VALIDATE_ONLY transport when its Effect is interrupted", async () => {
+        let signal: AbortSignal | undefined;
+        const fetch = vi.fn<typeof globalThis.fetch>((_input, init) => {
+            signal = init?.signal ?? undefined;
+            return new Promise((_resolve, reject) =>
+                signal?.addEventListener("abort", () => reject(signal!.reason), { once: true })
+            );
+        });
+        ontologyMocks.applyWithOverrides.mockImplementation((client: OntologyClient) =>
+            client.fetch("https://foundry.example/validate").then(() => ({ validation: { result: "VALID" } }))
+        );
+        const adapter = createFoundryOntologyBackendAdapter({
+            client: { fetch } as unknown as OntologyClient,
+            watch: false,
+            ir,
+        });
+        const fiber = Effect.runFork(validateNative(adapter, "edit", {}, {}));
+        try {
+            await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+        } finally {
+            await Effect.runPromise(Fiber.interrupt(fiber));
+        }
+        expect(signal?.aborted).toBe(true);
+    });
+});
