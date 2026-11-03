@@ -112,6 +112,24 @@ configuration wins. Demand idle retention controls how long unused interest stay
 alive, while `cache.objects` controls object eviction. Completed action result retention
 is separate from pending outbox intent. These policies do not share a scheduler.
 
+### Broader provider loads
+
+An adapter can report `fulfilledSubset` when it loaded a broader region than requested.
+The shared query engine applies the requested filter, order and pagination. Omitting
+that field means the adapter already fulfilled exactly the request, including its window.
+
+By default, the replica stores only the requested objects (plus any pagination prefix
+needed for local reads). Opt in to retaining the broader result with:
+
+```ts
+const cache = { objects: { storeBroaderSubsets: true } };
+```
+
+This also records the broader coverage for reuse. Extra objects remain ordinary cache
+data: they do not create demand, and garbage collection invalidates coverage when it
+removes required objects. A watcher for a narrower request does not keep the broader
+coverage fresh indefinitely.
+
 ## Persistent query pins
 
 A pin is one replaceable, persisted multi-root entity query per replica partition.

@@ -1,5 +1,6 @@
 import { Users, type User } from "@osdk/foundry.admin";
 import { BackendError } from "@party-stack/ontology-backend";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { applyLensToObject, mapTargetPathToSourceWithLens, type Lens } from "@party-stack/ontology-spec";
 import { evaluateQuery, type Predicate, type Query } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
@@ -105,7 +106,7 @@ function placements(
                     ? selection?.type === "getBatch"
                         ? "source"
                         : "candidate"
-                    : "adapter",
+                    : "engine",
             });
     };
     if (predicate) visit(predicate, []);
@@ -114,6 +115,7 @@ function placements(
 
 export async function loadUserSubset(
     client: Client,
+    objectType: string,
     lens: Lens,
     query: Query,
     signal: AbortSignal
@@ -173,15 +175,16 @@ export async function loadUserSubset(
         ),
     }));
     return {
-        rows: evaluateQuery(rows, query),
+        rows,
+        fulfilledSubset: objectSubset(objectType, selection ? { where: query.where } : {}),
         complete: true,
         fetchedRows: users.length,
         pushdown: {
             source: "Foundry users",
             predicates: placements(query.where, selection),
-            sorting: query.orderBy?.length ? "adapter" : "none",
+            sorting: query.orderBy?.length ? "engine" : "none",
             pagination:
-                query.limit !== undefined || query.offset !== undefined || query.after ? "adapter" : "none",
+                query.limit !== undefined || query.offset !== undefined || query.after ? "engine" : "none",
             rechecksFilter: Boolean(query.where),
             native: {
                 language: "json",

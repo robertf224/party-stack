@@ -1,4 +1,5 @@
 import { Context, Schema } from "effect";
+import { ObjectSubsetSchema } from "./subsetSchema.js";
 import type { AttachmentTypeDef } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { attachment, Encrypted } from "@party-stack/ontology-spec/values";
@@ -39,8 +40,15 @@ export interface ObjectSelection {
     readonly subsets: readonly ObjectSubset[];
 }
 export interface BackendSnapshot {
+    /** Region represented by these rows, including any window already applied.
+     * Omitted means the requested subset. A broader unwindowed region lets the
+     * engine finish filtering/ordering/windowing and optionally cache extra objects.
+     * Rows may include residual candidates outside this region; consumers discard
+     * them before installing its objects or recording complete coverage.
+     */
+    readonly fulfilledSubset?: ObjectSubset;
     readonly rows: readonly Row<Record<string, unknown>>[];
-    /** Complete for the requested query, including its limit/cursor, not for the whole object type. */
+    /** Complete for fulfilledSubset (or the request when omitted), including its window. */
     readonly complete: boolean;
     /** Rows fetched from the provider, before adapter-side filtering/windowing.
      * Diagnostic only; omitted when the adapter cannot report it. Not a DB scan count.
@@ -57,11 +65,11 @@ export const SourceQueryPlanSchema = Schema.Struct({
     predicates: Schema.Array(
         Schema.Struct({
             path: Schema.Array(Schema.Int),
-            execution: Schema.Literals(["source", "candidate", "adapter"]),
+            execution: Schema.Literals(["source", "candidate", "adapter", "engine"]),
         })
     ),
-    sorting: Schema.Literals(["source", "adapter", "none"]),
-    pagination: Schema.Literals(["source", "adapter", "none"]),
+    sorting: Schema.Literals(["source", "adapter", "engine", "none"]),
+    pagination: Schema.Literals(["source", "adapter", "engine", "none"]),
     rechecksFilter: Schema.Boolean,
     /** Optional native syntax for raw inspection. Consumers must not parse it to infer execution. */
     native: Schema.optional(Schema.Struct({ language: Schema.String, text: Schema.String })),
@@ -153,6 +161,7 @@ export const BackendCommitSchema = Schema.Struct({
     operationId: Schema.optional(Schema.String),
 });
 export const BackendSnapshotSchema = Schema.Struct({
+    fulfilledSubset: Schema.optional(ObjectSubsetSchema),
     fetchedRows: Schema.optional(Schema.Number),
     pushdown: Schema.optional(SourceQueryPlanSchema),
     rows: Schema.Array(
@@ -211,8 +220,8 @@ export interface OntologyBackendService {
     readonly supportsIdempotency: boolean;
     /** Indexed bounded local maintenance; an enclosing server scope schedules it. */
     readonly maintenance?: Effect.Effect<void, BackendError>;
-    /** Return the requested filter/order/window, not raw overfetched candidates.
-     * complete certifies this requested region only; extra rows do not declare broader coverage.
+    /** Return the request or explicitly describe the region actually fulfilled.
+     * Consumers use the shared subset normalizer before applying requested windows.
      */
     readonly loadSubset: (subset: ObjectSubset) => Effect.Effect<BackendSnapshot, BackendError>;
     /** Optional selected committed rows. Closing the Scope releases demand; delivery state expires by policy. */
@@ -231,6 +240,8 @@ export interface OntologyBackendService {
     ) => Effect.Effect<Record<string, unknown>, BackendError>;
     /** Demand-scoped invalidation hints, independent of a durable journal. Undefined
      * means this subset needs polling. Reconnect must invalidate to repair missed events.
+     * Must cover every change relevant to the requested subset; broader watches
+     * may emit extra hints. It does not maintain broader fulfilledSubset coverage.
      */
     readonly watchSubset?: (subset: ObjectSubset) => Stream.Stream<void, BackendError> | undefined;
     /** Recommended demand refresh defaults. Caller configuration wins; healthy

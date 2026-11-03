@@ -1,8 +1,12 @@
+import { objectSubset, resolveSubsetSnapshot } from "@party-stack/ontology-backend/subset";
 import { and, eq, field, ilike, inArray, or } from "@party-stack/ontology-storage";
+import { Effect } from "effect";
 import { beforeEach, expect, test, vi } from "vite-plus/test";
-import { loadUserSubset } from "./loadUserSubset.js";
+import { createFoundryUserObjectType } from "./foundryUser.js";
+import { loadUserSubset as fetchUserSubset } from "./loadUserSubset.js";
 import type { Client } from "@party-stack/foundry-client";
 import type { Lens } from "@party-stack/ontology-spec";
+import type { Query } from "@party-stack/ontology-storage";
 
 const mocks = vi.hoisted(() => ({ list: vi.fn(), search: vi.fn(), getBatch: vi.fn() }));
 vi.mock("@osdk/foundry.admin", () => ({ Users: mocks }));
@@ -51,8 +55,8 @@ test("ID batches deduplicate, respect the 500-ID API limit, and finish sorting/p
     expect(result.fetchedRows).toBe(501);
     expect(result.pushdown).toMatchObject({
         predicates: [{ path: [], execution: "source" }],
-        sorting: "adapter",
-        pagination: "adapter",
+        sorting: "engine",
+        pagination: "engine",
     });
 });
 
@@ -88,7 +92,7 @@ test("an unsupported OR branch lists users rather than losing matches to an ID-o
     );
     expect(result.rows.map((row) => row.key)).toEqual(["a", "b"]);
     expect(mocks.getBatch).not.toHaveBeenCalled();
-    expect(result.pushdown?.predicates.map((term) => term.execution)).toEqual(["adapter", "adapter"]);
+    expect(result.pushdown?.predicates.map((term) => term.execution)).toEqual(["engine", "engine"]);
 });
 
 test("an AND can narrow by ID while retaining all remaining conditions", async () => {
@@ -100,7 +104,7 @@ test("an AND can narrow by ID while retaining all remaining conditions", async (
         signal()
     );
     expect(result.rows).toEqual([]);
-    expect(result.pushdown?.predicates.map((term) => term.execution)).toEqual(["source", "adapter"]);
+    expect(result.pushdown?.predicates.map((term) => term.execution)).toEqual(["source", "engine"]);
 });
 
 test("ID lookup follows a renamed ID lens and preserves the projected key", async () => {
@@ -179,3 +183,16 @@ test("malformed user identities or pages cannot establish complete coverage", as
         loadUserSubset(client, identity, { where: eq(field("id"), "a") }, signal())
     ).rejects.toMatchObject({ kind: "InvalidResponse", retryable: false });
 });
+
+async function loadUserSubset(client: Client, lens: Lens, query: Query, signal: AbortSignal) {
+    const snapshot = await fetchUserSubset(client, "User", lens, query, signal);
+    const ir = {
+        types: [],
+        linkTypes: [],
+        actionTypes: [],
+        queryFunctionTypes: [],
+        objectTypes: [createFoundryUserObjectType("User", lens)],
+    };
+    return (await Effect.runPromise(resolveSubsetSnapshot(ir, objectSubset("User", query), snapshot)))
+        .snapshot;
+}

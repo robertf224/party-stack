@@ -35,7 +35,7 @@ export function QueryLoadStats({
         (load.pushdown?.rechecksFilter ||
             load.pushdown?.predicates.some((term) => term.execution !== "source")) &&
             "filtering",
-        load.pushdown?.pagination === "adapter" && "pagination",
+        (load.pushdown?.pagination === "adapter" || load.pushdown?.pagination === "engine") && "pagination",
     ].filter((step): step is string => typeof step === "string");
     return (
         <span className="ps-query-row-flow" data-reduced={load.rows < fetched || undefined}>

@@ -1,5 +1,5 @@
 import { isUnknownActionOutcome } from "@party-stack/ontology-backend";
-import { objectSubset } from "@party-stack/ontology-backend/subset";
+import { objectSubset, resolveSubsetSnapshot, coversSubset } from "@party-stack/ontology-backend/subset";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { tableUsage } from "@party-stack/ontology-storage/tables";
 import { alwaysOnlineConnectivity } from "@party-stack/runtime";
@@ -326,6 +326,7 @@ export interface ReplicaService extends OwnedReadTransaction {
 interface ReplicaCommonOptions {
     readonly namespace: string;
     readonly ir: OntologyIR;
+    readonly context?: Record<string, unknown>;
     readonly tables: TablesService;
     readonly blobs?: BlobStorageService;
     /** Receives only a persisted local transaction. Return resolved defaults to freeze them at enqueue. */
@@ -348,6 +349,7 @@ interface ReplicaCommonOptions {
     readonly outbox?: ReplicaOutboxPolicy;
     /** Replica cache eviction only; owned storage is never collected by this policy. */
     readonly objectCacheGc?: false | ObjectCacheGcPolicy;
+    readonly storeBroaderSubsets?: boolean;
     readonly publish?: Effect.Effect<void>;
 }
 /** Use a provider/owned backend binding or a protocol source, never both.
@@ -1180,12 +1182,23 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const loadSubset = (subset: CompiledSubset, reason: ReplicaLoad["reason"]) =>
         diagnostics.load(
             { operation: "loadSubset", reason, subset },
-            adapter!.loadSubset(objectSubset(subset.objectType, subset.query)),
+            adapter!
+                .loadSubset(objectSubset(subset.objectType, subset.query))
+                .pipe(
+                    Effect.flatMap((snapshot) =>
+                        resolveSubsetSnapshot(
+                            options.ir,
+                            objectSubset(subset.objectType, subset.query),
+                            snapshot,
+                            options.context
+                        )
+                    )
+                ),
             (snapshot) => ({
-                rows: snapshot.rows.length,
-                fetchedRows: snapshot.fetchedRows,
-                pushdown: snapshot.pushdown,
-                complete: snapshot.complete,
+                rows: snapshot.snapshot.rows.length,
+                fetchedRows: snapshot.snapshot.fetchedRows,
+                pushdown: snapshot.snapshot.pushdown,
+                complete: snapshot.snapshot.complete,
             })
         );
     const prepareSnapshot = Effect.fn("Replica.loadSnapshot")(function* (
@@ -1198,10 +1211,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         yield* Effect.annotateCurrentSpan("objectType", subset.objectType);
         // Local reads apply their own offset. Install the complete leading prefix
         // so a pushed-down offset is not applied twice against a cold cache.
-        const snapshot = yield* loadSubset(
-            subset.query ? { ...subset, query: retentionQuery(subset.query) } : subset,
-            reason
-        );
+        const request = subset.query ? { ...subset, query: retentionQuery(subset.query) } : subset;
+        const resolved = yield* loadSubset(request, reason);
+        const snapshot = resolved.snapshot;
+        const expanded = options.storeBroaderSubsets === true;
+        const storedSubset = expanded ? resolved.fulfilled : subset;
+        const storedRows = expanded ? resolved.fulfilledRows : snapshot.rows;
         if (requireComplete && !snapshot.complete)
             return yield* fault("Unavailable", "Action read-back was incomplete.");
         const v = yield* view(subset.objectType);
@@ -1216,13 +1231,13 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     return yield* fault("InvalidResponse", "Action read-back returned an unrequested key.");
                 repaired.delete(row.key);
             }
-        } else if (!backend.changes && snapshot.complete && !isWholeCollection(subset.query)) {
-            const returned = new Set(snapshot.rows.map((row) => row.key));
-            const candidates = yield* boundary(tables.query(v.base, { where: subset.query?.where }));
+        } else if (!backend.changes && snapshot.complete && !isWholeCollection(storedSubset.query)) {
+            const returned = new Set(storedRows.map((row) => row.key));
+            const candidates = yield* boundary(tables.query(v.base, { where: storedSubset.query?.where }));
             const missing = candidates.filter((row) => !returned.has(row.key)).map((row) => row.key);
             for (let offset = 0; offset < missing.length; offset += 128) {
                 const keys = missing.slice(offset, offset + 128);
-                const repair = yield* loadSubset(
+                const repairResult = yield* loadSubset(
                     {
                         objectType: subset.objectType,
                         query: {
@@ -1231,6 +1246,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     },
                     "repair"
                 );
+                const repair = repairResult.snapshot;
                 if (!repair.complete)
                     return yield* fault("Unavailable", "Filtered snapshot repair was incomplete.");
                 for (const key of keys) repaired.set(key, undefined);
@@ -1248,7 +1264,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         return (tx: Transaction) =>
             Effect.gen(function* () {
                 const incoming = [
-                    ...snapshot.rows,
+                    ...storedRows,
                     ...[...repaired].flatMap(([key, value]) => (value === undefined ? [] : [{ key, value }])),
                 ];
                 const preserved = new Map<Key, ObjectValue>();
@@ -1260,7 +1276,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                             preserveCachedCopies(yield* tx.get(v.base, row.key), row.value, properties)
                         );
                 // Only an unfiltered complete snapshot can prove arbitrary cached keys were removed.
-                if (snapshot.complete && isWholeCollection(subset.query)) {
+                if (snapshot.complete && isWholeCollection(storedSubset.query)) {
                     yield* clearRowBlobs(tx, subset.objectType, "base");
                     yield* tx.clear(v.base);
                 }
@@ -1281,6 +1297,16 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         accessedAt: now,
                     });
                 }
+                if (expanded && subsetKey(storedSubset) !== subsetKey(subset))
+                    yield* tx.put(coverage, subsetKey(storedSubset), {
+                        subset: storedSubset,
+                        complete: snapshot.complete,
+                        snapshotCursor: snapshot.cursor,
+                        barrierCursor:
+                            snapshot.cursor !== (yield* position(tx)).cursor ? snapshot.cursor : undefined,
+                        rowKeys: storedRows.map((row) => row.key),
+                        updatedAt: now,
+                    });
                 yield* tx.put(coverage, subsetKey(subset), {
                     subset,
                     complete: snapshot.complete,
@@ -1908,6 +1934,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     return proof("query");
                 if (
                     record.complete &&
+                    coversSubset(subset, record.subset) &&
+                    (!hasWindow(record.subset.query) || !backend.changes || record.snapshotCursor === cursor)
+                )
+                    return proof("query");
+                if (
+                    record.complete &&
                     key !== undefined &&
                     primaryKeyLookup(record.subset.query, definitions.get(subset.objectType)!.primaryKey) ===
                         key
@@ -1989,6 +2021,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 demand.pollIntervalMs === undefined &&
                 !demand.watchFailure &&
                 cached?.complete &&
+                !cached.invalidated &&
                 demand.installed === demand.revision
             )
                 continue;
@@ -2857,6 +2890,16 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         if (!hints) return;
         let firstWatch = true;
         demand.pollIntervalMs = pollIntervalMs;
+        const invalidateCoverage = boundary(
+            tables.transaction((tx) =>
+                Effect.gen(function* () {
+                    for (const cached of yield* tx.query(coverage, {
+                        where: eq(field("subset", "objectType"), copy.objectType),
+                    }))
+                        yield* tx.put(coverage, cached.key, { ...cached.value, invalidated: true });
+                })
+            )
+        );
         yield* Effect.forkScoped(
             superviseWatch({
                 stream: () =>
@@ -2883,6 +2926,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 onValue: () =>
                     Effect.gen(function* () {
                         if (!demand.loadFailure || demand.loadFailure.error.retryable) demand.revision++;
+                        yield* invalidateCoverage;
                         yield* diagnostics.changed;
                         yield* wakeState;
                     }),
@@ -2891,6 +2935,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         if (error || demand.watchFailure) demand.revision++;
                         demand.watchFailure = error;
                     }).pipe(
+                        Effect.andThen(
+                            error
+                                ? invalidateCoverage.pipe(Effect.catch(service.reportReplicationFailure))
+                                : Effect.void
+                        ),
                         Effect.andThen(diagnostics.changed),
                         Effect.andThen(error ? wakeState : Effect.void)
                     ),

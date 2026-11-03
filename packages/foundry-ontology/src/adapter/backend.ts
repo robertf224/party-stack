@@ -1,7 +1,7 @@
 import { makeObjectSetWatcher } from "@party-stack/foundry-object-set-watcher";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
-import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
-import { evaluateQuery, QuerySchema } from "@party-stack/ontology-storage";
+import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
+import { QuerySchema } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema, Stream, Redacted } from "effect";
 import { searchFoundryObjects } from "./foundryObjectSearch.js";
@@ -181,16 +181,21 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                 )
             );
             return {
+                fulfilledSubset: objectSubset(subset.objectType, { where: subset.query?.where }),
                 fetchedRows: values.length,
                 pushdown: {
                     source: "Foundry",
-                    predicates: plan.predicates,
-                    sorting: subset.query?.orderBy?.length ? "adapter" : "none",
+                    predicates: plan.predicates.map((predicate) => ({
+                        ...predicate,
+                        execution:
+                            predicate.execution === "adapter" ? ("engine" as const) : predicate.execution,
+                    })),
+                    sorting: subset.query?.orderBy?.length ? "engine" : "none",
                     pagination:
                         subset.query?.limit !== undefined ||
                         subset.query?.offset !== undefined ||
                         subset.query?.after
-                            ? "adapter"
+                            ? "engine"
                             : "none",
                     rechecksFilter: Boolean(predicate),
                     native: {
@@ -198,7 +203,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                         text: JSON.stringify(pushed ?? { type: "and", value: [] }, null, 2),
                     },
                 } satisfies SourceQueryPlan,
-                rows: evaluateQuery(rows, subset.query ?? {}),
+                rows,
                 complete: true,
             };
         }),

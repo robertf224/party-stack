@@ -1,6 +1,6 @@
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
-import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
-import { evaluateQuery, QuerySchema } from "@party-stack/ontology-storage";
+import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
+import { QuerySchema } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema, Redacted } from "effect";
 import { searchSalesforceObjects } from "./salesforceObjectSearch.js";
@@ -113,10 +113,11 @@ export function makeSalesforceBackend(options: {
                     )
                 )
             );
-            // Only primary-key predicates are pushed down for now. Apply ordering,
-            // cursor and limits after all pages are decoded and filtered locally.
+            // Only primary-key predicates are pushed down. The shared engine
+            // evaluates residual conditions and windows over this completed region.
             return {
-                rows: evaluateQuery(rows, subset.query ?? {}),
+                rows,
+                fulfilledSubset: objectSubset(subset.objectType, { where: subset.query?.where }),
                 fetchedRows: values.length,
                 complete: true,
             };

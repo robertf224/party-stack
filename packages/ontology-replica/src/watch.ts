@@ -11,7 +11,7 @@ export const superviseWatch = Effect.fnUntraced(function* <A>(options: {
         readonly generation: Effect.Effect<number>;
         readonly awaitActivation: (after: number) => Effect.Effect<void>;
     };
-    readonly onValue: (value: A) => Effect.Effect<void>;
+    readonly onValue: (value: A) => Effect.Effect<void, BackendError>;
     readonly onError: (error: BackendError | undefined) => Effect.Effect<void>;
     readonly retryDelayMs?: number;
 }) {

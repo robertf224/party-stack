@@ -14,7 +14,7 @@ import type { ReplicaAttachments } from "./attachments/service.js";
 import type { DemandPolicy } from "./demandCache.js";
 import type { ReplicaService as KernelService } from "./engine.js";
 import type { PinOptions, PinStatus } from "./pins.js";
-import type { ObjectCacheGcPolicy, ObjectCacheSweepOptions } from "./policies.js";
+import type { ObjectCachePolicy, ObjectCacheSweepOptions } from "./policies.js";
 import type { ReplicaStatus } from "./status.js";
 import type { ReplicaRowsBatch } from "./visible.js";
 import type { ConnectionMonitor } from "@party-stack/connect";
@@ -54,7 +54,7 @@ export interface ReplicaConfiguration {
     /** Only used when this replica serves speculative children. */
     readonly clientSessions?: ClientPolicy;
     readonly cache?: {
-        readonly objects?: ObjectCacheGcPolicy | false;
+        readonly objects?: ObjectCachePolicy | false;
         readonly attachments?:
             | {
                   readonly minUnusedAgeMs?: number;
@@ -332,6 +332,8 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
               }),
         startSync: options.live !== false,
         objectCacheGc: options.cache?.objects,
+        storeBroaderSubsets:
+            options.cache?.objects !== false && options.cache?.objects?.storeBroaderSubsets === true,
         connectivity: options.network,
         connection: options.authentication,
         clients: options.clientSessions,

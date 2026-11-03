@@ -168,10 +168,16 @@ function PredicatePills({
             annotation.path.length === path.length &&
             annotation.path.every((part, index) => part === path[index])
     )?.execution;
-    const labels = { source: "Pushed down", candidate: "Approximate pushdown", adapter: "Not pushed down" };
+    const labels = {
+        source: "Pushed down",
+        candidate: "Approximate pushdown",
+        adapter: "Not pushed down",
+        engine: "Not pushed down",
+    };
     const descriptions = {
         source: "Translated to a native source condition; the adapter may also verify returned rows.",
         candidate: "The source narrows candidates; the adapter evaluates the exact condition.",
+        engine: "Evaluated by the query engine after loading candidates.",
         adapter: "Evaluated in the adapter; this condition was not sent to the source.",
     };
     return (

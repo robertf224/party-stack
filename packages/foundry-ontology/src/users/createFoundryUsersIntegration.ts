@@ -11,7 +11,8 @@ export function createFoundryUsersIntegration(options: {
 }): FoundryUsersIntegration {
     return {
         objectType: options.objectType,
-        loadSubset: (client, query, signal) => loadUserSubset(client, options.lens, query, signal),
+        loadSubset: (client, query, signal) =>
+            loadUserSubset(client, options.objectType, options.lens, query, signal),
         async getAttachmentContent(client, attachment) {
             const userId = decodeFoundryUserProfilePictureAttachment(attachment.id);
             if (!userId) return;

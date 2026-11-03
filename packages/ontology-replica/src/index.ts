@@ -24,7 +24,12 @@ export type { PinOptions, PinStatus } from "./pins.js";
 export type { DemandPolicy, DemandRefreshPolicy } from "./demandCache.js";
 export { ReplicaUpstream } from "./upstream.js";
 export type { ReplicaUpstreamService } from "./upstream.js";
-export type { ActionWaitOptions, ObjectCacheSweepOptions, ObjectCacheGcPolicy } from "./policies.js";
+export type {
+    ActionWaitOptions,
+    ObjectCacheSweepOptions,
+    ObjectCacheGcPolicy,
+    ObjectCachePolicy,
+} from "./policies.js";
 export type { PendingAction } from "@party-stack/ontology-backend/protocol";
 export class Replica extends Context.Service<Replica, ReplicaService>()(
     "@party-stack/ontology-replica/Replica"

@@ -3,9 +3,8 @@ import {
     classifyBackendFailure,
     type OntologyBackendService,
 } from "@party-stack/ontology-backend";
-import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
+import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import metaOntology from "@party-stack/ontology-spec/meta";
-import { evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect, Redacted, Schema } from "effect";
 import { convertSalesforceMetaLinkTypes } from "./convertMetaLinkType.js";
 import { convertStorageMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
@@ -48,7 +47,8 @@ export function makeSalesforceMetadataBackend(
             if (subset.objectType === "Ontology")
                 return {
                     complete: true,
-                    rows: evaluateQuery([{ key: "ontology", value: { id: "ontology" } }], subset.query ?? {}),
+                    rows: [{ key: "ontology", value: { id: "ontology" } }],
+                    fulfilledSubset: objectSubset("Ontology"),
                 };
             const values = yield* Effect.tryPromise({
                 try: async (signal) => {
@@ -77,18 +77,24 @@ export function makeSalesforceMetadataBackend(
             });
             return {
                 complete: true,
+                fulfilledSubset: objectSubset(subset.objectType, {
+                    where:
+                        (subset.objectType === "ObjectType" &&
+                            convertStorageMetaNameQuery(subset.query).type !== "getBatch") ||
+                        subset.objectType === "LinkType" ||
+                        subset.objectType === "ValueType"
+                            ? undefined
+                            : subset.query?.where,
+                }),
                 fetchedRows: values.length,
                 rows: yield* Effect.try({
                     try: () =>
-                        evaluateQuery(
-                            values.map((value) => ({
-                                key: Schema.decodeUnknownSync(Schema.Union([Schema.String, Schema.Finite]))(
-                                    (value as unknown as Record<string, unknown>)[type.primaryKey]
-                                ),
-                                value: value as unknown as Record<string, unknown>,
-                            })),
-                            subset.query ?? {}
-                        ),
+                        values.map((value) => ({
+                            key: Schema.decodeUnknownSync(Schema.Union([Schema.String, Schema.Finite]))(
+                                (value as unknown as Record<string, unknown>)[type.primaryKey]
+                            ),
+                            value: value as unknown as Record<string, unknown>,
+                        })),
                     catch: (cause) =>
                         new BackendError({
                             operation: "metadata.decode",

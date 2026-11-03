@@ -239,7 +239,9 @@ export function QueryPushdown({
             collection: sameQuery
                 ? "This query previously loaded the complete collection."
                 : "Complete collection; includes every matching row.",
-            query: "Previously loaded complete result of the same query or primary-key lookup.",
+            query: sameQuery
+                ? "Previously loaded complete result of the same query or primary-key lookup."
+                : "A previously loaded complete result covers this request.",
             "primary-key": "Requested primary key is present in this maintained result.",
         }[coverageProof.reason];
     const residualFilter = plan?.predicates.some((term) => term.execution !== "source");
@@ -248,23 +250,30 @@ export function QueryPushdown({
             ? incompleteFilter
                 ? `Fully pushed down to ${source}; this tab still evaluates the remaining conditions.`
                 : `Fully pushed down to ${source}.`
-            : plan.predicates.every((term) => term.execution === "adapter")
+            : plan.predicates.every((term) => term.execution === "adapter" || term.execution === "engine")
               ? `Not pushed down to ${source}.`
               : `Partly pushed down to ${source}.`
         : (load?.subset?.query ?? demand.query)?.where
           ? "Pushdown not reported."
           : "No filter requested.";
+    const evaluator =
+        plan?.predicates.some((term) => term.execution === "engine") ||
+        plan?.sorting === "engine" ||
+        plan?.pagination === "engine"
+            ? "query engine"
+            : "adapter";
     const adapterSteps = [
-        residualFilter && `The adapter filters ${source}’s response to finish evaluating the query.`,
+        residualFilter && `The ${evaluator} filters ${source}’s response to finish evaluating the query.`,
         plan?.rechecksFilter &&
             !residualFilter &&
             load?.fetchedRows !== undefined &&
             load.rows !== undefined &&
             load.fetchedRows !== load.rows &&
-            "The adapter also checks returned rows against the filter.",
-        plan?.sorting === "adapter" && "The adapter sorts the returned rows.",
-        plan?.pagination === "adapter" &&
-            `The adapter applies the query limit or pagination before returning rows to the ${sourceReplica}.`,
+            `The ${evaluator} also checks returned rows against the filter.`,
+        (plan?.sorting === "adapter" || plan?.sorting === "engine") &&
+            `The ${evaluator} sorts the returned rows.`,
+        (plan?.pagination === "adapter" || plan?.pagination === "engine") &&
+            `The ${evaluator} applies the query limit or pagination before returning rows to the ${sourceReplica}.`,
     ].filter((step): step is string => typeof step === "string");
     const refreshDescription = refreshProof && (
         <span className="ps-query-refresh">

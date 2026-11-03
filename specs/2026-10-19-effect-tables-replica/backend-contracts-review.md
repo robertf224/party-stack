@@ -53,12 +53,12 @@ transactions can add exact grouped-window reads.
 
 ## Implementation inventory
 
-| Implementation  | Read pushdown today                                                                                                                       | Freshness today                                                                    | Writes                                                                                                 |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Owned/storage   | Native storage predicates, ordering/windows and optional grouped windows                                                                  | Atomic journal, change hints and retained committed selected delivery              | Transactional mutators, receipts, journal, attachment reference/mapping metadata                       |
-| Foundry data    | Supported predicates, including safe broader candidates and primary-key batches; residual checks, ordering and windows run in the adapter | Scoped object-set watcher; admin-user type recommends 60-second polling            | Provider edits become affected targets; no keyed-idempotency guarantee                                 |
-| Salesforce data | Primary-key equality/IN only; remaining predicates, ordering and windows run after all provider pages                                     | No CDC hook or recommended polling interval; explicit Replica polling is available | CRUD synthetic targets; incomplete target flag accounts for automation; no keyed-idempotency guarantee |
-| Metadata        | Provider-specific name/type candidates followed by local evaluation                                                                       | Foundry can recommend configured polling; Salesforce has no watch hook             | Typed NotImplemented                                                                                   |
+| Implementation  | Read pushdown today                                                                                                                                   | Freshness today                                                                    | Writes                                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Owned/storage   | Native storage predicates, ordering/windows and optional grouped windows                                                                              | Atomic journal, change hints and retained committed selected delivery              | Transactional mutators, receipts, journal, attachment reference/mapping metadata                       |
+| Foundry data    | Supported predicates, including safe broader candidates and primary-key batches; residual checks, ordering and windows run in the shared query engine | Scoped object-set watcher; admin-user type recommends 60-second polling            | Provider edits become affected targets; no keyed-idempotency guarantee                                 |
+| Salesforce data | Primary-key equality/IN only; remaining predicates, ordering and windows run after all provider pages                                                 | No CDC hook or recommended polling interval; explicit Replica polling is available | CRUD synthetic targets; incomplete target flag accounts for automation; no keyed-idempotency guarantee |
+| Metadata        | Provider-specific name/type candidates followed by local evaluation                                                                                   | Foundry can recommend configured polling; Salesforce has no watch hook             | Typed NotImplemented                                                                                   |
 
 Both data adapters can fetch substantially more rows than the final requested
 window. This is a performance finding, not evidence of correct arbitrary native
@@ -142,28 +142,51 @@ receipt or surface a terminal failure without resubmitting the initial request.
 Provider operation IDs and caller idempotency IDs remain distinct. Define recovery,
 status retention and refresh deadlines before reintroducing an accepted provider result.
 
-## Explicit broader fulfilled subsets — next implementation slice
+## Explicit broader fulfilled subsets
 
-The current loadSubset contract returns the exact requested filter/order/window.
-Users and metadata loaders may fetch broader provider candidates, but evaluate the
-full request before returning. Ordinary snapshot installation currently accepts
-extra rows without establishing broader coverage; keyed repair/read-back rejects
-unrequested keys. This is not a supported superset-reporting capability.
+`BackendSnapshot.fulfilledSubset?: ObjectSubset` describes the region fulfilled,
+including any already-applied window. Omitted means the exact request, including
+pagination. `complete` applies to that region. Raw candidates can require residual
+filtering; consumers normalize through the shared query evaluator before exposing
+requested results. Never infer completeness from candidate counts or returned IDs.
 
-A future optional fulfilledSubset could describe the complete region actually
-returned. Keep caller demand separate, prove that the fulfilled region satisfies
-the request (including ordering/windows), and associate coverage with that region.
-Extra rows remain evictable: losing required rows invalidates the completeness
-claim. A watcher for only the requested subset cannot keep a broader claim fresh;
-watch/journal invalidation and coverage age must cover the declared region. Scope
-any such claim to the authorized projection before exposing it downstream. Do not
-infer a complete superset from candidate counts or returned IDs alone. Exact request
-fulfillment is the current behavior. The approved next slice adds explicit fulfilled
-subset reporting, an opt-in under the Replica object-cache configuration to retain
-extra rows, and shared engine-side filtering/order/window evaluation. Defaults must
-not persist 990 unnecessary rows merely because a provider fetched 1,000 for ten
-requested results. Preserve existing already-windowed backend semantics without
-applying offsets twice, and cover direct server/query readers as well as Replica.
+Replica `cache.objects.storeBroaderSubsets` defaults to false. Opting in stores the
+fulfilled region's objects and coverage; otherwise only requested objects and the
+normal pagination prefix are installed. Extra objects have ordinary age/budget GC,
+not new demand roots. GC invalidates coverage when required objects are removed.
+Explicit source windows must contain the requested window with the same predicate,
+ordering and cursor; the normalizer subtracts the already-applied offset. Unwindowed
+coverage uses structural predicate implication (including conjunction/disjunction and
+key equality/IN containment), never data-dependent guesses.
+
+Foundry, Salesforce, users and metadata return candidates plus their fulfilled
+region; residual filter/order/window evaluation runs in the shared consumer path.
+Finite server queries normalize too. Authorization normalizes upstream candidates
+then returns only projected exact results, without forwarding a privileged broader
+coverage claim. Direct trusted protocol loads preserve the declaration so each
+receiving replica can choose its own cache policy.
+
+A narrow watch cannot keep a broader claim fresh indefinitely. Known invalidations
+and watch failures invalidate the type's coverage before demand can reuse it. A
+broader claim otherwise ages normally unless maintained by its own live demand or
+a committed journal. Watch-scope reporting remains future work: the current hook
+must invalidate every change relevant to the requested subset or return undefined
+so polling/coverage age can provide refresh. Watching more is safe; watching less is not.
+
+Opaque provider pagination remains scoped to each finite load. A future pager could
+reuse provider pages and continuation chains separately from replication cursors.
+[TanStack's cursor pager](https://tanstack.com/db/latest/docs/collections/query-collection)
+caches whole pages and fetches a missing tail. Any equivalent capability here needs
+source/partition/filter/order identity, expiry and bounded storage, and cannot skip
+necessary candidates when residual filtering or sorting remains local.
+
+Broader-fulfillment verification: 100 generated filter/order/window comparisons
+against an independent full-scan oracle; Replica regressions for default/explicit
+opt-in storage, offset prefixes, coverage reuse, GC, and narrow-watch hints/failures;
+server finite-query, authorization and RPC round-trip checks. Backend 65 tests,
+Replica 186, server 71, Foundry 209, Salesforce 59, devtools 44. Full workspace CI:
+133/133 successful. This completes the fulfillment slice, not the remaining owned
+journal/lifecycle review above.
 
 ## Action/error and finite-load boundary checkpoint — November 2
 

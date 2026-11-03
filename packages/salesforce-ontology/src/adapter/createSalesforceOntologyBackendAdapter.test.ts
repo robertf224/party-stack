@@ -1,5 +1,5 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
-import { objectSubset } from "@party-stack/ontology-backend/subset";
+import { objectSubset, resolveSubsetSnapshot } from "@party-stack/ontology-backend/subset";
 import { eq, field, inArray, like } from "@party-stack/ontology-storage";
 import { SalesforceApiError } from "@party-stack/salesforce-client";
 import { Effect, Fiber } from "effect";
@@ -434,7 +434,14 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             Effect.scoped(
                 Effect.gen(function* () {
                     const backend = yield* adapter.open!({});
-                    return yield* use(backend);
+                    return yield* use({
+                        ...backend,
+                        loadSubset: (subset) =>
+                            backend.loadSubset(subset).pipe(
+                                Effect.flatMap((snapshot) => resolveSubsetSnapshot(ir, subset, snapshot)),
+                                Effect.map((result) => result.snapshot)
+                            ),
+                    });
                 })
             )
         );

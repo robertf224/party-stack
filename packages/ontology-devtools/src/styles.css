@@ -1026,7 +1026,8 @@
         border-color: #fbbf2480;
         background: #fbbf2408;
     }
-    .ps-query-comparison[data-execution="adapter"] {
+    .ps-query-comparison[data-execution="adapter"],
+    .ps-query-comparison[data-execution="engine"] {
         border-color: #94a3b880;
         background: #94a3b808;
     }

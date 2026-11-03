@@ -4,9 +4,8 @@ import {
     classifyBackendFailure,
     type OntologyBackendService,
 } from "@party-stack/ontology-backend";
-import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
+import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import metaOntology from "@party-stack/ontology-spec/meta";
-import { evaluateQuery, type Predicate } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
 import { Effect, Redacted, Schema } from "effect";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
@@ -20,6 +19,7 @@ import { getQueryFunctionTypes, listQueryFunctionTypes } from "./loadQueryFuncti
 import type { ActionTypeSearchJsonQueryV2 } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
+import type { Predicate } from "@party-stack/ontology-storage";
 
 const failure = (operation: string, cause: unknown) => classifyBackendFailure(operation, cause);
 // Candidate selection is deliberately a superset. Residual predicates are evaluated on decoded metadata.
@@ -116,8 +116,10 @@ export function makeFoundryMetadataBackend(options: {
             if (subset.objectType === "Ontology")
                 return {
                     complete: true,
-                    rows: evaluateQuery([{ key: "ontology", value: { id: "ontology" } }], subset.query ?? {}),
+                    rows: [{ key: "ontology", value: { id: "ontology" } }],
+                    fulfilledSubset: objectSubset("Ontology"),
                 };
+            const candidates = names(subset.query?.where);
             const values = yield* Effect.tryPromise({
                 try: async (signal) => {
                     const client: OntologyClient = {
@@ -128,7 +130,6 @@ export function makeFoundryMetadataBackend(options: {
                                 signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
                             }),
                     };
-                    const candidates = names(subset.query?.where);
                     if (candidates?.length === 0) return [];
                     if (subset.objectType === "ActionType") {
                         const where = actionCandidates(subset.query?.where);
@@ -172,18 +173,22 @@ export function makeFoundryMetadataBackend(options: {
             });
             return {
                 complete: true,
+                fulfilledSubset: objectSubset(subset.objectType, {
+                    where:
+                        candidates?.length !== 0 &&
+                        ["ObjectType", "LinkType", "ValueType"].includes(subset.objectType)
+                            ? undefined
+                            : subset.query?.where,
+                }),
                 fetchedRows: values.length,
                 rows: yield* Effect.try({
                     try: () =>
-                        evaluateQuery(
-                            values.map((value) => ({
-                                key: Schema.decodeUnknownSync(Schema.Union([Schema.String, Schema.Finite]))(
-                                    (value as unknown as Record<string, unknown>)[type.primaryKey]
-                                ),
-                                value: value as unknown as Record<string, unknown>,
-                            })),
-                            subset.query ?? {}
-                        ),
+                        values.map((value) => ({
+                            key: Schema.decodeUnknownSync(Schema.Union([Schema.String, Schema.Finite]))(
+                                (value as unknown as Record<string, unknown>)[type.primaryKey]
+                            ),
+                            value: value as unknown as Record<string, unknown>,
+                        })),
                     catch: (cause) =>
                         new BackendError({
                             operation: "metadata.decode",

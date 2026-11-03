@@ -1,4 +1,4 @@
-import { objectSubset } from "@party-stack/ontology-backend/subset";
+import { objectSubset, resolveSubsetSnapshot } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
 import { and, contains, eq, field, inArray, ilike, like, or } from "@party-stack/ontology-storage";
 import { Effect, Exit, Scope, Stream, Fiber } from "effect";
@@ -65,7 +65,7 @@ test("native snapshots stay native with a users integration, and watcher resourc
             )
         );
         expect(subscribe).not.toHaveBeenCalled();
-        expect(await Effect.runPromise(backend.loadSubset(objectSubset("Issue")))).toEqual({
+        expect(await Effect.runPromise(loadSubset(backend, objectSubset("Issue")))).toEqual({
             complete: true,
             fetchedRows: 1,
             pushdown: {
@@ -171,7 +171,8 @@ test("identity subsets use the shared search path with an IN predicate and propa
                     decodeObject: (_type, value) => value,
                 });
                 expect(
-                    yield* backend.loadSubset(
+                    yield* loadSubset(
+                        backend,
                         objectSubset("Issue", { where: inArray(field("id"), ["one", "gone", "one"]) })
                     )
                 ).toEqual({
@@ -201,7 +202,7 @@ test("identity subsets use the shared search path with an IN predicate and propa
                 mocks.fetch.mockRejectedValue({ statusCode: 403 });
                 expect(
                     (yield* Effect.result(
-                        backend.loadSubset(objectSubset("Issue", { where: inArray(field("id"), ["one"]) }))
+                        loadSubset(backend, objectSubset("Issue", { where: inArray(field("id"), ["one"]) }))
                     ))._tag
                 ).toBe("Failure");
             })
@@ -313,7 +314,12 @@ test("HTTP reads and watches use the same conservative subset filter while windo
                     objectSet: { type: "base", objectType: "Issue" },
                     where: filter,
                 });
-                const snapshot = yield* backend.loadSubset(objectSubset(subset.objectType, subset.query));
+                const candidates = yield* backend.loadSubset(objectSubset(subset.objectType, subset.query));
+                expect(candidates.rows).toHaveLength(3);
+                expect(candidates.fulfilledSubset).toEqual(
+                    objectSubset("Issue", { where: subset.query.where })
+                );
+                const snapshot = yield* loadSubset(backend, objectSubset(subset.objectType, subset.query));
                 expect(snapshot.rows.map((row) => row.key)).toEqual(["a"]);
                 expect(snapshot.fetchedRows).toBe(3);
                 expect(snapshot.pushdown).toEqual({
@@ -322,8 +328,8 @@ test("HTTP reads and watches use the same conservative subset filter while windo
                         { path: [0], execution: "source" },
                         { path: [1], execution: "candidate" },
                     ],
-                    sorting: "adapter",
-                    pagination: "adapter",
+                    sorting: "engine",
+                    pagination: "engine",
                     rechecksFilter: true,
                     native: { language: "json", text: JSON.stringify(filter, null, 2) },
                 });
@@ -346,7 +352,7 @@ test("HTTP reads and watches use the same conservative subset filter while windo
                     Stream.runDrain(backend.watchSubset!(objectSubset(search.objectType, search.query))!),
                     { startImmediately: true }
                 );
-                const searched = yield* backend.loadSubset(objectSubset(search.objectType, search.query));
+                const searched = yield* loadSubset(backend, objectSubset(search.objectType, search.query));
                 expect(searched.rows.map((row) => row.key)).toEqual(["title"]);
                 expect(searched.pushdown?.predicates).toEqual([
                     { path: [0], execution: "candidate" },
@@ -386,7 +392,7 @@ test("invalid subset windows fail in the typed channel before provider IO", asyn
                 });
                 for (const objectType of ["Issue", "User"]) {
                     const result = yield* Effect.result(
-                        backend.loadSubset(objectSubset(objectType, { limit: -1 }))
+                        loadSubset(backend, objectSubset(objectType, { limit: -1 }))
                     );
                     expect(result).toMatchObject({
                         _tag: "Failure",
@@ -483,7 +489,7 @@ test("malformed snapshot keys fail before publishing complete coverage", async (
                     },
                     decodeObject: (_type, value) => value,
                 });
-                return yield* Effect.result(backend.loadSubset(objectSubset("Issue")));
+                return yield* Effect.result(loadSubset(backend, objectSubset("Issue")));
             })
         )
     );
@@ -492,3 +498,13 @@ test("malformed snapshot keys fail before publishing complete coverage", async (
         failure: { kind: "InvalidResponse", retryable: false },
     });
 });
+
+function loadSubset(
+    backend: import("@party-stack/ontology-backend").OntologyBackendService,
+    subset: import("@party-stack/ontology-spec/query").ObjectSubset
+) {
+    return backend.loadSubset(subset).pipe(
+        Effect.flatMap((snapshot) => resolveSubsetSnapshot(ir, subset, snapshot)),
+        Effect.map((result) => result.snapshot)
+    );
+}

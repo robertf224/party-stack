@@ -23,3 +23,10 @@ export interface ObjectCacheGcPolicy extends ObjectCacheSweepOptions {
     /** Time between automatic bounded sweeps. Defaults to 60 seconds. */
     readonly sweepIntervalMs?: number;
 }
+
+export interface ObjectCachePolicy extends ObjectCacheGcPolicy {
+    /** Persist the broader fulfilled subset's objects and coverage. Defaults to false.
+     * Extra rows are ordinary evictable cache data, not additional demand roots.
+     */
+    readonly storeBroaderSubsets?: boolean;
+}
