@@ -1,5 +1,5 @@
 import { sha256 } from "@noble/hashes/sha2.js";
-import { Effect, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { blobFailure } from "./model.js";
 
 /** Lazy bytes. Durable sources reopen on every consumption; incoming streams may be one-shot. */
@@ -9,6 +9,33 @@ export interface ByteSource {
     readonly type: string;
     readonly name?: string;
 }
+
+/** Bind acquisition and consumption to both the caller and an optional owner.
+ * Closing either interrupts pending IO, including an acquired but unconsumed body.
+ * Durable sources may reopen while this read's caller scope remains open.
+ */
+export const scopedByteSource = Effect.fnUntraced(function* <E, R>(
+    acquire: Effect.Effect<ByteSource, E, R>,
+    owner?: Scope.Scope
+): Effect.fn.Return<ByteSource, E, R | Scope.Scope> {
+    const caller = yield* Effect.scope;
+    if (caller.state._tag === "Closed") return yield* Effect.interrupt;
+    const lifetime = yield* Effect.acquireRelease(Scope.fork(owner ?? caller), (scope, exit) =>
+        Scope.close(scope, exit)
+    );
+    const closed = yield* Deferred.make<void>();
+    yield* Scope.addFinalizer(lifetime, Deferred.succeed(closed, undefined));
+    const source = yield* Effect.flatMap(
+        Effect.forkIn(Scope.provide(acquire, lifetime), lifetime),
+        Fiber.join
+    ).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(lifetime, exit) : Effect.void)));
+    return {
+        ...source,
+        stream: Stream.suspend(() =>
+            lifetime.state._tag === "Closed" ? Stream.fromEffect(Effect.interrupt) : source.stream
+        ).pipe(Stream.interruptWhen(Deferred.await(closed).pipe(Effect.andThen(Effect.interrupt)))),
+    };
+});
 export type ByteInput = Blob | ByteSource;
 /** Application input. Length can be omitted for recordings and other generated content. */
 export interface ReadableByteInput {
@@ -92,6 +119,8 @@ export const collectByteBlob = Effect.fnUntraced(function* (
         : new File(parts, source.name, { type: source.type });
 });
 
+// Effect 4.1's Digest currently accepts a complete Uint8Array. Keep incremental
+// hashing here so attachments stay streamed; revisit if Digest gains streaming IO.
 export const digestBytes = Effect.fnUntraced(function* (input: ByteInput) {
     const hash = sha256.create();
     yield* Stream.runForEach(byteChunks(input), (chunk) => Effect.sync(() => hash.update(chunk)));

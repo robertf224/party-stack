@@ -2,7 +2,7 @@ import { o } from "@party-stack/ontology-spec";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
 import { asRuntimeLayer } from "@party-stack/runtime/testing";
-import { Effect, Exit, Scope } from "effect";
+import { Effect, Exit, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { makeReplicaAttachments } from "../../../../ontology-replica/lib/attachments/service.js";
 import { createLiveOntology } from "../LiveOntology.js";
@@ -58,7 +58,7 @@ const testAttachments = async (options: { ir: OntologyIR; blobManager: BlobManag
     const attachments = await Effect.runPromise(
         Scope.provide(makeReplicaAttachments({ ir: options.ir, manager: options.blobManager }), scope)
     );
-    return createLiveOntologyAttachments({ attachments, run: (work) => Effect.runPromise(work) });
+    return createLiveOntologyAttachments({ attachments, scope, run: (work) => Effect.runPromise(work) });
 };
 
 describe("createLiveOntologyAttachments", () => {
@@ -391,4 +391,40 @@ describe("createLiveOntologyAttachments", () => {
                 .then((blob) => blob.text())
         ).resolves.toBe("hello");
     });
+});
+
+it("SDK source cancellation releases an acquired but unconsumed native read", async () => {
+    let active = 0;
+    const attachments = await testAttachments({
+        ir,
+        blobManager: {
+            source: () =>
+                Effect.acquireRelease(
+                    Effect.sync(() => {
+                        active++;
+                        return { type: "text/plain", stream: Stream.make(new Uint8Array([1])) };
+                    }),
+                    () =>
+                        Effect.sync(() => {
+                            active--;
+                        })
+                ),
+        } as unknown as BlobManagerService,
+    });
+    const abort = new AbortController();
+    await attachments.source({ id: "file" }, { signal: abort.signal });
+    expect(active).toBe(1);
+    abort.abort();
+    await vi.waitFor(() => expect(active).toBe(0));
+    const next = await attachments.source({ id: "file" });
+    expect(active).toBe(1);
+    expect((await Effect.runPromise(collectByteBlob(next))).size).toBe(1);
+    expect(active).toBe(0);
+    // Reopening a durable SDK source acquires a fresh scope after the first EOF.
+    expect((await Effect.runPromise(collectByteBlob(next))).size).toBe(1);
+    expect(active).toBe(0);
+    await attachments.source({ id: "file" });
+    expect(active).toBe(1);
+    await Effect.runPromise(Scope.close(scopes[0]!, Exit.void));
+    expect(active).toBe(0);
 });

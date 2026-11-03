@@ -125,7 +125,7 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
             }),
     });
     const projection = { ir, errors: options.errors, upstreamErrors: true };
-    const expose = <A>(name: string, work: Effect.Effect<A, BackendError>) =>
+    const expose = <A, R>(name: string, work: Effect.Effect<A, BackendError, R>) =>
         work.pipe(
             Effect.mapError((error) =>
                 projectBackendError(

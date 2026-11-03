@@ -27,10 +27,11 @@ export interface ReplicaAttachments {
         input: ByteInput | ReadableByteInput,
         options?: AttachmentCreateOptions
     ) => Effect.Effect<AttachmentCreation, BackendError>;
+    /** The caller Scope owns this read, including cold-cache fill before consumption. */
     readonly source: (
         value: attachment,
         options?: { readonly signal?: AbortSignal }
-    ) => Effect.Effect<ByteSource, BackendError>;
+    ) => Effect.Effect<ByteSource, BackendError, Scope.Scope>;
     readonly blob: (value: attachment) => Effect.Effect<Blob, BackendError>;
     readonly metadata: (
         value: attachment,
@@ -99,7 +100,7 @@ export const makeReplicaAttachments = Effect.fnUntraced(function* (options: {
                     });
                     if (materialized.id !== id) yield* manager.bindRemoteId(id, materialized.id);
                     Object.assign(value, materialized);
-                }),
+                }).pipe(Effect.scoped),
                 owner
             );
             return { attachment: value, isMaterialized: Fiber.join(fiber) };

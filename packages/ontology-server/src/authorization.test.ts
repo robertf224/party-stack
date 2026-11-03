@@ -147,9 +147,9 @@ test("attachment reads re-find the handle in an authorized source row and declar
     };
     expect(projected.attachments?.stage).toBeUndefined();
     expect(
-        await Effect.runPromise(projected.attachments!.read(visible))
-            .then((blob) => Effect.runPromise(collectByteBlob(blob)))
-            .then((blob) => blob.text())
+        await Effect.runPromise(
+            Effect.scoped(projected.attachments!.read(visible).pipe(Effect.flatMap(collectByteBlob)))
+        ).then((blob) => blob.text())
     ).toBe("allowed");
     expect(await Effect.runPromise(projected.attachments!.metadata(visible))).toEqual({
         size: 7,
@@ -165,7 +165,9 @@ test("attachment reads re-find the handle in an authorized source row and declar
         { ...visible, source: { ...visible.source!, objectType: "Private" } },
     ];
     for (const value of forged) {
-        await expect(Effect.runPromise(projected.attachments!.read(value))).rejects.toMatchObject({
+        await expect(
+            Effect.runPromise(Effect.scoped(projected.attachments!.read(value)))
+        ).rejects.toMatchObject({
             kind: "NotFound",
         });
         await expect(Effect.runPromise(projected.attachments!.metadata(value))).rejects.toMatchObject({
@@ -173,7 +175,9 @@ test("attachment reads re-find the handle in an authorized source row and declar
         });
     }
     files = [];
-    await expect(Effect.runPromise(projected.attachments!.read(visible))).rejects.toMatchObject({
+    await expect(
+        Effect.runPromise(Effect.scoped(projected.attachments!.read(visible)))
+    ).rejects.toMatchObject({
         kind: "NotFound",
     });
     expect(read).toHaveBeenCalledOnce();

@@ -3,6 +3,7 @@ import {
     byteSource,
     byteChunks,
     collectByteBlob,
+    scopedByteSource,
     type BlobStorageService,
     type BlobRecord,
     type ByteInput,
@@ -16,7 +17,10 @@ export interface BlobManagerService {
     readonly storage: BlobStorageService;
     readonly stage: (id: string, input: ByteInput) => Effect.Effect<void, BackendError>;
     readonly bindRemoteId: (id: string, remoteId: string) => Effect.Effect<void, BackendError>;
-    readonly source: (id: string, options?: BlobReadOptions) => Effect.Effect<ByteSource, BackendError>;
+    readonly source: (
+        id: string,
+        options?: BlobReadOptions
+    ) => Effect.Effect<ByteSource, BackendError, Scope.Scope>;
     readonly read: (id: string, options?: BlobReadOptions) => Effect.Effect<Blob, BackendError>;
     readonly metadata: (
         id: string,
@@ -28,7 +32,10 @@ export interface BlobManagerOptions {
     readonly budget?: { readonly maxBytes?: number; readonly targetBytes?: number };
     readonly sweepIntervalMs?: number;
     readonly remote: {
-        readonly read: (id: string, options?: BlobReadOptions) => Effect.Effect<ByteInput, BackendError>;
+        readonly read: (
+            id: string,
+            options?: BlobReadOptions
+        ) => Effect.Effect<ByteInput, BackendError, Scope.Scope>;
         readonly metadata?: (
             id: string,
             options?: BlobMetadataOptions
@@ -63,7 +70,6 @@ const abortable = (stream: Stream.Stream<Uint8Array, unknown>, signal?: AbortSig
 export const makeBlobManagerFromStorage = Effect.fn("BlobManager.make")(function* (
     options: BlobManagerOptions & { readonly storage: BlobStorageService }
 ): Effect.fn.Return<BlobManagerService, BackendError, Scope.Scope> {
-    const context = yield* Effect.context<never>();
     const owner = yield* Scope.fork(yield* Effect.scope);
     const gcTime = options.gcTime ?? Infinity;
     if (Number.isNaN(gcTime) || gcTime < 0)
@@ -93,7 +99,7 @@ export const makeBlobManagerFromStorage = Effect.fn("BlobManager.make")(function
                 stage: (id, input) => nativeStorage.stage(id, input).pipe(Effect.tap(() => wakePressure)),
                 cache: (id, input) => nativeStorage.cache(id, input).pipe(Effect.tap(() => wakePressure)),
             };
-            const owned = <A>(work: Effect.Effect<A, BackendError>) =>
+            const owned = <A, R>(work: Effect.Effect<A, BackendError, R>) =>
                 Effect.suspend(() =>
                     closed
                         ? Effect.fail(
@@ -150,7 +156,7 @@ export const makeBlobManagerFromStorage = Effect.fn("BlobManager.make")(function
                         const queue = yield* Scope.provide(Stream.toQueue(stream, { capacity: 2 }), scope);
                         return Stream.fromQueue(queue);
                     })
-                ).pipe(Stream.provideContext(context));
+                );
             const localSource = Effect.fnUntraced(function* (
                 id: string,
                 settings?: BlobReadOptions
@@ -184,7 +190,7 @@ export const makeBlobManagerFromStorage = Effect.fn("BlobManager.make")(function
             const source = Effect.fnUntraced(function* (
                 id: string,
                 settings?: BlobReadOptions
-            ): Effect.fn.Return<ByteSource, BackendError> {
+            ): Effect.fn.Return<ByteSource, BackendError, Scope.Scope> {
                 const record = yield* boundary(storage.metadata(id));
                 if (record?.byteKey) return yield* localSource(id, settings);
                 if (record?.state === "staged")
@@ -194,7 +200,7 @@ export const makeBlobManagerFromStorage = Effect.fn("BlobManager.make")(function
                         message: "Staged blob bytes are unavailable locally.",
                         retryable: false,
                     });
-                const scope = yield* Scope.fork(owner);
+                const scope = yield* Scope.fork(yield* Effect.scope);
                 return yield* Scope.provide(
                     Effect.gen(function* () {
                         const signal = settings?.signal;
@@ -251,7 +257,7 @@ export const makeBlobManagerFromStorage = Effect.fn("BlobManager.make")(function
                                 return abortable(Stream.fromQueue(queue), signal).pipe(
                                     Stream.ensuring(Scope.close(scope, Exit.void))
                                 );
-                            }).pipe(Stream.provideContext(context)),
+                            }),
                         };
                     }),
                     scope
@@ -261,9 +267,12 @@ export const makeBlobManagerFromStorage = Effect.fn("BlobManager.make")(function
                     )
                 );
             });
-            const read = Effect.fnUntraced(function* (id: string, settings?: BlobReadOptions) {
-                return yield* boundary(collectByteBlob(yield* source(id, settings)));
-            });
+            const acquireSource = (id: string, settings?: BlobReadOptions) =>
+                scopedByteSource(source(id, settings), owner);
+            const read = (id: string, settings?: BlobReadOptions) =>
+                Effect.scoped(
+                    Effect.flatMap(acquireSource(id, settings), (source) => boundary(collectByteBlob(source)))
+                );
             const metadata = Effect.fnUntraced(function* (id: string, settings: BlobMetadataOptions = {}) {
                 const select = settings.select ?? ["size", "type", "name"];
                 let record = yield* boundary(storage.metadata(id));
@@ -297,7 +306,7 @@ export const makeBlobManagerFromStorage = Effect.fn("BlobManager.make")(function
                 storage,
                 stage: (id, input) => owned(boundary(storage.stage(id, input))),
                 bindRemoteId: (id, remoteId) => owned(boundary(storage.bindRemoteId(id, remoteId))),
-                source: (id, settings) => owned(source(id, settings)),
+                source: (id, settings) => owned(acquireSource(id, settings)),
                 read: (id, settings) => owned(read(id, settings)),
                 metadata: (id, settings) => owned(metadata(id, settings)),
             } satisfies BlobManagerService;

@@ -1,5 +1,10 @@
 import { contextPartition } from "@party-stack/ontology-spec/utils";
-import { digestBytes as digest, byteSource, sliceByteSource } from "@party-stack/ontology-storage/blobs";
+import {
+    digestBytes as digest,
+    byteSource,
+    sliceByteSource,
+    scopedByteSource,
+} from "@party-stack/ontology-storage/blobs";
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
 import { Effect, Redacted, Schema, Stream } from "effect";
 import { executeAction, resolveReadActionParameters } from "./actions.js";
@@ -185,51 +190,53 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
         attachments: {
             stage,
             read: (attachment, range) =>
-                boundary(
-                    Effect.gen(function* () {
-                        const metadata = yield* blobs.metadata(attachment.id);
-                        if (!metadata?.byteKey)
-                            return yield* new BackendError({
-                                operation: "attachment.read",
-                                kind: "NotFound",
-                                message: "Attachment not found.",
-                                retryable: false,
-                            });
-                        const offset = range?.offset ?? 0;
-                        const length = range?.length;
-                        if (
-                            !Number.isSafeInteger(offset) ||
-                            offset < 0 ||
-                            (length !== undefined && (!Number.isSafeInteger(length) || length < 0))
-                        )
-                            return yield* new BackendError({
-                                operation: "attachment.read",
-                                kind: "InvalidRequest",
-                                message: "Invalid attachment range.",
-                                retryable: false,
-                            });
-                        return {
-                            type: metadata.type ?? "application/octet-stream",
-                            name: metadata.name ?? undefined,
-                            size:
-                                metadata.size === undefined
-                                    ? undefined
-                                    : Math.min(Math.max(0, metadata.size - offset), length ?? Infinity),
-                            stream: Stream.unwrap(
-                                Effect.gen(function* () {
-                                    const content = yield* blobs.readScoped(attachment.id);
-                                    if (!content)
-                                        return yield* new BackendError({
-                                            operation: "attachment.read",
-                                            kind: "NotFound",
-                                            message: "Attachment bytes are unavailable.",
-                                            retryable: false,
-                                        });
-                                    return sliceByteSource(content, offset, length).stream;
-                                })
-                            ),
-                        };
-                    })
+                scopedByteSource(
+                    boundary(
+                        Effect.gen(function* () {
+                            const metadata = yield* blobs.metadata(attachment.id);
+                            if (!metadata?.byteKey)
+                                return yield* new BackendError({
+                                    operation: "attachment.read",
+                                    kind: "NotFound",
+                                    message: "Attachment not found.",
+                                    retryable: false,
+                                });
+                            const offset = range?.offset ?? 0;
+                            const length = range?.length;
+                            if (
+                                !Number.isSafeInteger(offset) ||
+                                offset < 0 ||
+                                (length !== undefined && (!Number.isSafeInteger(length) || length < 0))
+                            )
+                                return yield* new BackendError({
+                                    operation: "attachment.read",
+                                    kind: "InvalidRequest",
+                                    message: "Invalid attachment range.",
+                                    retryable: false,
+                                });
+                            return {
+                                type: metadata.type ?? "application/octet-stream",
+                                name: metadata.name ?? undefined,
+                                size:
+                                    metadata.size === undefined
+                                        ? undefined
+                                        : Math.min(Math.max(0, metadata.size - offset), length ?? Infinity),
+                                stream: Stream.unwrap(
+                                    Effect.gen(function* () {
+                                        const content = yield* blobs.readScoped(attachment.id);
+                                        if (!content)
+                                            return yield* new BackendError({
+                                                operation: "attachment.read",
+                                                kind: "NotFound",
+                                                message: "Attachment bytes are unavailable.",
+                                                retryable: false,
+                                            });
+                                        return sliceByteSource(content, offset, length).stream;
+                                    })
+                                ),
+                            };
+                        })
+                    )
                 ),
             metadata: (attachment) =>
                 boundary(
@@ -268,7 +275,7 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
                 uploads.push({ ...upload, blob: yield* backend.attachments!.read(upload.attachment) });
             }
             return yield* backend.applyAction({ ...invocation, attachmentUploads: uploads });
-        }),
+        }, Effect.scoped),
         blobs,
         resolveActionParameters: Effect.fn("StorageOntology.resolveParameters")(function* (
             name: string,

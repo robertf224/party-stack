@@ -9,6 +9,10 @@ export class EncryptionError extends Schema.TaggedError<EncryptionError>()("Encr
 }) {}
 
 /** Platform AES-GCM implementations may keep their key in a native crypto module. */
+// TODO(Effect 4.1): evaluate Aead + SecureRandom for the WebCrypto implementation
+// below. Preserve the envelope, namespace AAD, existing keys and Expo native keys;
+// key import/export is separate from OS credential persistence.
+// https://effect.website/blog/releases/effect/41
 export interface NativeEncryptionKey {
     readonly encrypt: (
         plaintext: Uint8Array,

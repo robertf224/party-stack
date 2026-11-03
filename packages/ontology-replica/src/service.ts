@@ -303,7 +303,7 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                         });
                 }
                 return yield* submit(submission);
-            });
+            }).pipe(Effect.scoped);
     const engine = yield* makeReplicaKernel({
         ...options,
         ...(options.source
@@ -327,7 +327,7 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                                   parameters: prepared.parameters,
                                   attachmentUploads: prepared.attachmentUploads,
                               });
-                          }),
+                          }).pipe(Effect.scoped),
                   },
               }),
         startSync: options.live !== false,

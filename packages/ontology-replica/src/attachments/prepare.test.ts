@@ -1,4 +1,4 @@
-import { classifyBackendFailure } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { o } from "@party-stack/ontology-spec";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { makeBlobStorage, exclusiveOwnerLiveness } from "@party-stack/ontology-storage/blobs";
@@ -31,10 +31,62 @@ const ir: OntologyIR = {
 };
 
 describe("prepareActionParameters", () => {
+    it.each(["NotFound", "Unavailable"] as const)(
+        "preserves %s classification before an action is submitted",
+        async (kind) => {
+            await Effect.runPromise(
+                Effect.scoped(
+                    Effect.gen(function* () {
+                        const manager = yield* makeBlobManager({
+                            remote: { read: () => Effect.die("Unexpected remote read") },
+                        });
+                        yield* manager.stage("local", new Blob(["bytes"]));
+                        const result = yield* Effect.result(
+                            prepareActionParameters({
+                                ir,
+                                actionTypeName: "uploadDocument",
+                                parameters: { file: { id: "local" } },
+                                blobManager: {
+                                    ...manager,
+                                    source: () =>
+                                        Effect.fail(
+                                            new BackendError({
+                                                operation: "attachment.read",
+                                                kind,
+                                                retryable: kind === "Unavailable",
+                                                retryAfterMs: kind === "Unavailable" ? 1234 : undefined,
+                                                message: "private-storage-detail",
+                                            })
+                                        ),
+                                },
+                            })
+                        );
+                        expect(result).toMatchObject({
+                            _tag: "Failure",
+                            failure: {
+                                kind,
+                                retryable: kind === "Unavailable",
+                                actionOutcome: "not-committed",
+                            },
+                        });
+                        expect(result._tag === "Failure" ? result.failure.retryAfterMs : undefined).toBe(
+                            kind === "Unavailable" ? 1234 : undefined
+                        );
+                        expect(JSON.stringify(result)).not.toContain("private-storage-detail");
+                    })
+                ).pipe(
+                    Effect.provide(MemoryRuntime.layer),
+                    Effect.provideService(RuntimePartition, { owner: "test", namespace: "prepare-failure" })
+                )
+            );
+        }
+    );
     it("reuses a remote handle when the replica has no local byte storage", async () => {
         const parameters = { file: { id: "remote-only" } };
         await expect(
-            Effect.runPromise(prepareActionParameters({ ir, actionTypeName: "uploadDocument", parameters }))
+            Effect.runPromise(
+                Effect.scoped(prepareActionParameters({ ir, actionTypeName: "uploadDocument", parameters }))
+            )
         ).resolves.toEqual({ parameters, attachmentUploads: [] });
     });
     it("collects staged bytes with their resolved attachment type targets", async () => {

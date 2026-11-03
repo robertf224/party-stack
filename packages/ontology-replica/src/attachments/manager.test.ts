@@ -63,7 +63,7 @@ export interface BlobManagerOptions {
 /** Test-only Promise runner over the native manager and its Scope. */
 function blobManagerClient(
     service: BlobManagerService,
-    run: <A>(effect: Effect.Effect<A, BackendError>, signal?: AbortSignal) => Promise<A>,
+    run: <A>(effect: Effect.Effect<A, BackendError, Scope.Scope>, signal?: AbortSignal) => Promise<A>,
     cleanup: () => Promise<void> = () => Promise.resolve()
 ): BlobManager {
     return {
@@ -126,7 +126,7 @@ function createBlobManager(options: BlobManagerOptions): BlobManager {
     let closing: Promise<void> | undefined;
     const cleanup = () => (closing ??= Effect.runPromise(Scope.close(owner, Exit.void)));
     const client = initialized.then((service) =>
-        blobManagerClient(service, (effect, signal) => run(effect, { signal }), cleanup)
+        blobManagerClient(service, (effect, signal) => run(Scope.provide(effect, owner), { signal }), cleanup)
     );
     const storage = initialized.then((service) => service.storage);
     const ready = initialized.then(() => undefined);
@@ -422,3 +422,48 @@ test.each(["unconsumed", "consuming"])(
         }
     }
 );
+
+test("closing a cold source scope settles its cache write and releases the read lock", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const bytes = new MemoryBlobBytesStore();
+                const storage = yield* makeBlobStorage({
+                    namespace: "scoped-cold",
+                    tables: yield* Memory.make(),
+                    bytes,
+                });
+                let active = 0;
+                const manager = yield* makeBlobManagerFromStorage({
+                    storage,
+                    remote: {
+                        read: () =>
+                            Effect.acquireRelease(
+                                Effect.sync(() => {
+                                    active++;
+                                    return { type: "text/plain", stream: Stream.never };
+                                }),
+                                () =>
+                                    Effect.sync(() => {
+                                        active--;
+                                    })
+                            ),
+                    },
+                });
+                const owner = yield* Effect.scope;
+                const first = yield* Scope.fork(owner);
+                yield* Scope.provide(manager.source("remote"), first);
+                expect(active).toBe(1);
+                yield* Scope.close(first, Exit.void);
+                expect(active).toBe(0);
+                expect((yield* storage.metadata("remote"))?.writing).toBeUndefined();
+                expect(bytes.blobs.size).toBe(0);
+                const second = yield* Scope.fork(owner);
+                yield* Scope.provide(manager.source("remote"), second).pipe(Effect.timeout("2 seconds"));
+                expect(active).toBe(1);
+                yield* Scope.close(second, Exit.void);
+                expect(active).toBe(0);
+            })
+        )
+    );
+});

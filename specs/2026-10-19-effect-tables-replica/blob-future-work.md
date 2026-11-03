@@ -147,12 +147,11 @@ Alchemy R2 is the initial Cloudflare byte implementation. A Files SDK BlobBytes
 adapter may be useful later for additional providers. Provider IO must compose
 with native metadata, retention and deletion intents rather than recreate them.
 
-## RPC byte-source acquisition lifetime
+## Scoped byte-source acquisition (completed)
 
-The protocol client's source acquisition currently consumes the ReadAttachment
-metadata header and retains a scope for the remaining stream. Consumption releases
-it, and closing the connection releases unconsumed reads. A caller that repeatedly
-acquires sources without consuming them can keep multiple reads alive until then.
-Review per-read scope/cancellation ownership during the attachment subsystem pass.
-Preserve metadata-only pushdown and cold-cache first-byte streaming; do not repair
-this by eagerly buffering files or adding a separate metadata preflight download.
+Native source reads require a caller Scope. Closing it releases an acquired but
+unconsumed RPC body, cold-cache fill and reader retention; owner shutdown also
+closes reads. The Promise SDK bridges to stream completion/cancellation and an
+optional AbortSignal. Metadata-only pushdown and first-byte delivery are preserved.
+See [the attachment review](./attachments-encryption-review.md) for ownership and
+regression coverage. Range caches and resumability remain separate future work.

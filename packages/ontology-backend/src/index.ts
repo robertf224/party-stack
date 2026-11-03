@@ -183,10 +183,11 @@ export interface BackendAttachments {
         bytes: ByteInput,
         options?: { readonly target?: AttachmentTypeDef }
     ) => Effect.Effect<attachment, BackendError>;
+    /** Keep the caller Scope open through consumption; closing it cancels an unconsumed download too. */
     readonly read: (
         value: attachment,
         options?: { readonly offset?: number; readonly length?: number }
-    ) => Effect.Effect<ByteInput, BackendError>;
+    ) => Effect.Effect<ByteInput, BackendError, Scope.Scope>;
     readonly metadata: (
         value: attachment,
         options?: { readonly select?: readonly ("size" | "type" | "name" | "dimensions")[] }

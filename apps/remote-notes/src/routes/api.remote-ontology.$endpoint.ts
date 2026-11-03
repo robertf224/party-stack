@@ -6,7 +6,8 @@ import { byteSource } from "@party-stack/ontology-storage/blobs";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import { createFileRoute } from "@tanstack/react-router";
 import Database from "better-sqlite3";
-import { Context, Effect, Layer, ManagedRuntime, Schema, Stream } from "effect";
+import { Context, Effect, Layer, ManagedRuntime, Schema } from "effect";
+import { HttpEffect, HttpServerResponse } from "effect/http";
 import { notesOntology } from "../ontology/ontology";
 
 const namespace = "remote-notes-sqlite";
@@ -78,7 +79,7 @@ async function handleRequest(request: Request): Promise<Response> {
     if (path.endsWith("/rpc")) return server.serve(request);
     if (!path.endsWith("/attachment-content")) return new Response("Not found.", { status: 404 });
     // Stable Markdown content URLs remain a finite read with the same row policy.
-    return runtime.runPromise(
+    return HttpEffect.toWebHandler(
         Effect.gen(function* () {
             const input = yield* Schema.decodeUnknownEffect(
                 Schema.fromJsonString(
@@ -98,14 +99,12 @@ async function handleRequest(request: Request): Promise<Response> {
             );
             if (!server.attachments) return yield* denied();
             const content = byteSource(yield* server.attachments.read(input.attachment));
-            return new Response(Stream.toReadableStream(content.stream), {
-                headers: {
-                    "Content-Type": content.type,
-                    ...(content.size === undefined ? {} : { "Content-Length": String(content.size) }),
-                },
+            return HttpServerResponse.stream(content.stream, {
+                contentType: content.type,
+                contentLength: content.size,
             });
-        }).pipe(Effect.catch(() => Effect.succeed(new Response("Not found.", { status: 404 }))))
-    );
+        }).pipe(Effect.catch(() => Effect.succeed(HttpServerResponse.text("Not found.", { status: 404 }))))
+    )(request);
 }
 export const Route = createFileRoute("/api/remote-ontology/$endpoint")({
     server: {

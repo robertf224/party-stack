@@ -38,7 +38,10 @@ export class NodeKeyring extends Context.Service<NodeKeyring, NodeKeyringService
     );
 }
 
-/** Load the required native binding without accessing any credential. No CLI or file fallback. */
+/** Load the required native binding without accessing any credential. No CLI or file fallback.
+ * Effect 4.1's crypto key APIs cover algorithm keys/import/export, not OS credential
+ * storage; keep this persistence boundary when adopting effect/crypto operations.
+ */
 export const make: Effect.Effect<NodeKeyringService, KeyringError> = Effect.gen(function* () {
     const native = yield* Effect.tryPromise({
         try: () => import("@napi-rs/keyring"),

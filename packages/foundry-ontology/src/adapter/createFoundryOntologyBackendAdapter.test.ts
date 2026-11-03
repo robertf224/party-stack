@@ -1,7 +1,7 @@
 import { o } from "@party-stack/ontology";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
-import { Effect, Stream, Fiber } from "effect";
+import { Effect, Stream, Fiber, Scope, Exit } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
@@ -973,11 +973,11 @@ describe("Foundry media attachments", () => {
         await expect(
             Effect.runPromise(
                 Effect.scoped(
-                    Effect.flatMap(adapter.open({}), (backend) => backend.attachments!.read(attachment))
+                    Effect.flatMap(adapter.open({}), (backend) => backend.attachments!.read(attachment)).pipe(
+                        Effect.flatMap(collectByteBlob)
+                    )
                 )
-            )
-                .then((blob) => Effect.runPromise(collectByteBlob(blob)))
-                .then((blob) => blob.text())
+            ).then((blob) => blob.text())
         ).resolves.toBe("image");
         await expect(getAttachmentMetadata(attachment, ["size", "type", "name"])).resolves.toEqual({
             size: 5,
@@ -1214,4 +1214,42 @@ it("defers client acquisition to scoped open and reports acquisition failures in
         failure: { kind: "Unauthenticated", retryable: false },
     });
     expect(createClient).toHaveBeenCalledTimes(1);
+});
+
+it("keeps Foundry download cancellation alive after headers and before body consumption", async () => {
+    let signal: AbortSignal | null | undefined;
+    const fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        signal = init?.signal;
+        return Promise.resolve(new Response(new ReadableStream()));
+    });
+    ontologyMocks.getMediaContent.mockImplementation((client: OntologyClient) =>
+        client.fetch("https://foundry.example/media")
+    );
+    const adapter = createFoundryOntologyBackendAdapter({
+        client: { fetch, ontologyRid: "ontology" } as unknown as OntologyClient,
+        watch: false,
+        ir: { types: [], objectTypes: [], linkTypes: [], actionTypes: [], queryFunctionTypes: [] },
+    });
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* adapter.open({});
+                const readScope = yield* Scope.fork(yield* Effect.scope);
+                yield* Scope.provide(
+                    backend.attachments!.read({
+                        id: encodeFoundryMediaId({
+                            mediaSetRid: "ri.mio.main.media-set.1",
+                            mediaSetViewRid: "ri.mio.main.view.2",
+                            mediaItemRid: "ri.mio.main.media-item.3",
+                        }),
+                        source: { objectType: "Task", primaryKey: "one", property: "media" },
+                    }),
+                    readScope
+                );
+                expect(signal?.aborted).toBe(false);
+                yield* Scope.close(readScope, Exit.void);
+                expect(signal?.aborted).toBe(true);
+            })
+        )
+    );
 });

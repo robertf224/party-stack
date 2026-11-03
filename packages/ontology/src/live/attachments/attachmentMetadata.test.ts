@@ -18,7 +18,7 @@ const testAttachments = async (options: { ir: OntologyIR; blobManager: BlobManag
     const attachments = await Effect.runPromise(
         Scope.provide(makeReplicaAttachments({ ir: options.ir, manager: options.blobManager }), scope)
     );
-    return createLiveOntologyAttachments({ attachments, run: (work) => Effect.runPromise(work) });
+    return createLiveOntologyAttachments({ attachments, scope, run: (work) => Effect.runPromise(work) });
 };
 
 describe("attachment metadata", () => {

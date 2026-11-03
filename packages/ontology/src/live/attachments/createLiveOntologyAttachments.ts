@@ -1,10 +1,10 @@
+import { Effect, Exit, Scope, Stream } from "effect";
 import type { AttachmentMetadata, AttachmentMetadataSelection, PartialAttachmentMetadata } from "./types.js";
 import type { BackendError } from "@party-stack/ontology-backend";
 import type { ReplicaAttachments } from "@party-stack/ontology-replica";
 import type { OntologyAttachmentCreateTarget } from "@party-stack/ontology-spec/utils";
 import type * as v from "@party-stack/ontology-spec/values";
 import type { ByteInput, ReadableByteInput, ByteSource } from "@party-stack/ontology-storage/blobs";
-import type { Effect } from "effect";
 
 export interface LiveOntologyEagerAttachmentCreation {
     attachment: v.attachment;
@@ -88,6 +88,7 @@ export interface LiveOntologyAttachments<
         ): Promise<AttachmentMetadata<Type, Selection[number]>>;
     };
     blob: (attachment: v.attachment) => Promise<Blob>;
+    /** Consume or cancel the stream, or abort the signal, to release this read before the ontology closes. */
     source: (attachment: v.attachment, options?: { readonly signal?: AbortSignal }) => Promise<ByteSource>;
 }
 
@@ -96,8 +97,63 @@ export function createLiveOntologyAttachments<
     Ontology extends AttachmentOntologyDefinition = AttachmentOntologyDefinition,
 >(options: {
     readonly attachments: ReplicaAttachments;
+    readonly scope: Scope.Scope;
     readonly run: <A>(work: Effect.Effect<A, BackendError>, signal?: AbortSignal) => Promise<A>;
 }): LiveOntologyAttachments<Ontology> {
+    const source: LiveOntologyAttachments<Ontology>["source"] = (value, settings) =>
+        options.run(
+            Effect.gen(function* () {
+                const readScope = yield* Scope.fork(options.scope);
+                return yield* Scope.provide(
+                    Effect.gen(function* () {
+                        const signal = settings?.signal;
+                        if (signal) {
+                            yield* Effect.acquireRelease(
+                                Effect.sync(() => {
+                                    const abort = () => {
+                                        Effect.runFork(Scope.close(readScope, Exit.void));
+                                    };
+                                    signal.addEventListener("abort", abort, { once: true });
+                                    if (signal.aborted) abort();
+                                    return () => signal.removeEventListener("abort", abort);
+                                }),
+                                (remove) => Effect.sync(remove)
+                            );
+                            if (signal.aborted) return yield* Effect.interrupt;
+                        }
+                        const acquired = yield* options.attachments.source(value, settings);
+                        let consumed = false;
+                        return {
+                            ...acquired,
+                            stream: Stream.suspend(() => {
+                                if (consumed)
+                                    return Stream.unwrap(
+                                        Effect.tryPromise({
+                                            try: (signal) =>
+                                                source(value, {
+                                                    signal: settings?.signal
+                                                        ? AbortSignal.any([signal, settings.signal])
+                                                        : signal,
+                                                }),
+                                            catch: (cause) => cause,
+                                        }).pipe(Effect.map((fresh) => fresh.stream))
+                                    );
+                                consumed = true;
+                                return acquired.stream.pipe(
+                                    Stream.ensuring(Scope.close(readScope, Exit.void))
+                                );
+                            }),
+                        };
+                    }),
+                    readScope
+                ).pipe(
+                    Effect.onExit((exit) =>
+                        Exit.isFailure(exit) ? Scope.close(readScope, exit) : Effect.void
+                    )
+                );
+            }),
+            settings?.signal
+        );
     return {
         create: (async (input, settings) => {
             const created = await options.run(options.attachments.create(input, settings));
@@ -105,8 +161,7 @@ export function createLiveOntologyAttachments<
             void isMaterialized?.catch(() => undefined);
             return { attachment: created.attachment, ...(isMaterialized ? { isMaterialized } : {}) };
         }) as LiveOntologyAttachments<Ontology>["create"],
-        source: (value, settings) =>
-            options.run(options.attachments.source(value, settings), settings?.signal),
+        source,
         blob: (value) => options.run(options.attachments.blob(value)),
         metadata: ((
             value: v.attachment,

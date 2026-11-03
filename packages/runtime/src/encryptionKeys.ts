@@ -18,6 +18,9 @@ export interface KeyMaterialCodec {
     readonly generate: () => Promise<string>;
     readonly import: (encoded: string) => Promise<EncryptionKey>;
 }
+// TODO(Effect 4.1): use its crypto services for generation/import where compatible.
+// Provide those services explicitly: 4.1 removes crypto from platform *Services
+// bundles. This store still owns durable active IDs and OS keyring persistence.
 const webCryptoKeys: KeyMaterialCodec = {
     generate: async () => Base64.encode(crypto.getRandomValues(new Uint8Array(32))),
     import: async (encoded) => {

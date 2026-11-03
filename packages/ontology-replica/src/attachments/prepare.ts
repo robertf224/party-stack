@@ -1,19 +1,21 @@
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { collectActionAttachments } from "@party-stack/ontology-storage/blobs";
 import { Effect } from "effect";
 import type { BlobManagerService } from "./manager.js";
 import type { AttachmentUpload as OntologyAttachmentUpload } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
-const failure = (cause: unknown) =>
-    new BackendError({
+const failure = (cause: unknown) => {
+    const error = classifyBackendFailure("attachment.prepare", cause);
+    return new BackendError({
         operation: "attachment.prepare",
-        kind: "Unavailable",
+        kind: error.kind,
         message: "Attachment bytes could not be prepared.",
-        retryable: true,
+        retryable: error.retryable,
+        retryAfterMs: error.retryAfterMs,
         actionOutcome: "not-committed",
-        cause,
     });
+};
 
 /** Collect only locally staged bytes. Provider upload/rewriting belongs to applyAction;
  * cached remote handles must not trigger downloads just because an action reuses them.

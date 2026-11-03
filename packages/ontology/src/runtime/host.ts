@@ -79,7 +79,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         );
     return {
         ...native,
-        attachments: createLiveOntologyAttachments({ attachments: native.replica.attachments, run }),
+        attachments: createLiveOntologyAttachments({ attachments: native.replica.attachments, run, scope }),
         observe: (subset, settings) => observeReplicaRows(native.replica, subset, settings),
     };
 });

@@ -15,6 +15,7 @@ import {
     byteChunks,
     readableByteSource,
     sliceByteSource,
+    scopedByteSource,
     type ByteInput,
 } from "@party-stack/ontology-storage/blobs";
 import { Effect, Stream, Schema, Redacted, type Types } from "effect";
@@ -697,27 +698,36 @@ export function createFoundryOntologyBackendAdapter(
                             );
                         }),
                     read: (value, range) =>
-                        Effect.gen(function* () {
-                            if (
-                                range &&
-                                (!Number.isSafeInteger(range.offset ?? 0) ||
-                                    (range.offset ?? 0) < 0 ||
-                                    (range.length !== undefined &&
-                                        (!Number.isSafeInteger(range.length) || range.length < 0)))
-                            )
-                                return yield* new BackendError({
-                                    operation: "attachment.read",
-                                    kind: "InvalidRequest",
-                                    message: "Invalid byte range.",
-                                    retryable: false,
-                                });
-                            const blob = yield* attempt("attachment.read", (signal) =>
-                                attachments.getAttachmentContent(value, { signal })
-                            );
-                            return range
-                                ? sliceByteSource(blob, range.offset ?? 0, range.length)
-                                : byteSource(blob);
-                        }),
+                        scopedByteSource(
+                            Effect.gen(function* () {
+                                if (
+                                    range &&
+                                    (!Number.isSafeInteger(range.offset ?? 0) ||
+                                        (range.offset ?? 0) < 0 ||
+                                        (range.length !== undefined &&
+                                            (!Number.isSafeInteger(range.length) || range.length < 0)))
+                                )
+                                    return yield* new BackendError({
+                                        operation: "attachment.read",
+                                        kind: "InvalidRequest",
+                                        message: "Invalid byte range.",
+                                        retryable: false,
+                                    });
+                                // Fetch resolves at headers; retain cancellation through body consumption.
+                                const download = yield* Effect.acquireRelease(
+                                    Effect.sync(() => new AbortController()),
+                                    (controller) => Effect.sync(() => controller.abort())
+                                );
+                                const blob = yield* attempt("attachment.read", (signal) =>
+                                    attachments.getAttachmentContent(value, {
+                                        signal: AbortSignal.any([signal, download.signal]),
+                                    })
+                                );
+                                return range
+                                    ? sliceByteSource(blob, range.offset ?? 0, range.length)
+                                    : byteSource(blob);
+                            })
+                        ),
                     metadata: (value, settings) =>
                         Effect.gen(function* () {
                             const meta = yield* attempt(
@@ -736,8 +746,15 @@ export function createFoundryOntologyBackendAdapter(
                                     name: meta.name,
                                     dimensions: meta.dimensions ?? undefined,
                                 };
+                            // Fetch resolves at headers; retain cancellation through body consumption.
+                            const download = yield* Effect.acquireRelease(
+                                Effect.sync(() => new AbortController()),
+                                (controller) => Effect.sync(() => controller.abort())
+                            );
                             const blob = yield* attempt("attachment.read", (signal) =>
-                                attachments.getAttachmentContent(value, { signal })
+                                attachments.getAttachmentContent(value, {
+                                    signal: AbortSignal.any([signal, download.signal]),
+                                })
                             );
                             const source = byteSource(blob);
                             const size =
@@ -764,7 +781,7 @@ export function createFoundryOntologyBackendAdapter(
                                 name: meta.name,
                                 dimensions: meta.dimensions ?? undefined,
                             };
-                        }),
+                        }).pipe(Effect.scoped),
                 },
             }).pipe(
                 Effect.map((native) => ({

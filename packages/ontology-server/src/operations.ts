@@ -21,6 +21,7 @@ import {
     attachmentByteSource,
     byteChunks,
     collectByteBlob,
+    scopedByteSource,
     type ByteSource,
 } from "@party-stack/ontology-storage/blobs";
 import { Effect, Exit, Option, Queue, Schema, Sink, Stream, Fiber, Scope, Layer } from "effect";
@@ -566,7 +567,7 @@ export interface ProtocolAttachments {
         input: ByteInput | ReadableByteInput,
         options?: AttachmentCreateOptions
     ) => Effect.Effect<{ readonly attachment: attachment }, BackendError>;
-    readonly source: (attachment: attachment) => Effect.Effect<ByteSource, BackendError>;
+    readonly source: (attachment: attachment) => Effect.Effect<ByteSource, BackendError, Scope.Scope>;
     readonly blob: (attachment: attachment) => Effect.Effect<Blob, BackendError>;
     readonly metadata: (
         attachment: attachment,
@@ -707,63 +708,70 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
                 return { attachment };
             }).pipe(Effect.mapError(failure)),
         source: (attachment) =>
-            Effect.gen(function* () {
-                const readScope = yield* Scope.fork(scope);
-                return yield* Effect.gen(function* () {
-                    // Read the stream's own header. A separate metadata request can
-                    // otherwise download the whole body to derive unknown size/name.
-                    const [header, tail] = yield* Scope.provide(
-                        Stream.peel(
-                            client.ReadAttachment(attachment),
-                            Sink.head<Stream.Success<ReturnType<OperationsRpcClient["ReadAttachment"]>>>()
-                        ),
-                        readScope
-                    );
-                    if (Option.isNone(header) || header.value.kind !== "metadata")
-                        return yield* failure(new Error("Missing attachment metadata."));
-                    const { kind: _kind, ...metadata } = header.value;
-                    let consumed = false;
-                    return {
-                        ...metadata,
-                        stream: Stream.suspend(() => {
-                            if (consumed)
-                                return Stream.unwrap(
-                                    attachments.source(attachment).pipe(Effect.map((source) => source.stream))
-                                );
-                            consumed = true;
-                            let received = 0;
-                            return Stream.concat(
-                                tail.pipe(
-                                    Stream.mapEffect((event) =>
+            scopedByteSource(
+                Effect.gen(function* () {
+                    const readScope = yield* Scope.fork(yield* Effect.scope);
+                    return yield* Effect.gen(function* () {
+                        // Read the stream's own header. A separate metadata request can
+                        // otherwise download the whole body to derive unknown size/name.
+                        const [header, tail] = yield* Scope.provide(
+                            Stream.peel(
+                                client.ReadAttachment(attachment),
+                                Sink.head<Stream.Success<ReturnType<OperationsRpcClient["ReadAttachment"]>>>()
+                            ),
+                            readScope
+                        );
+                        if (Option.isNone(header) || header.value.kind !== "metadata")
+                            return yield* failure(new Error("Missing attachment metadata."));
+                        const { kind: _kind, ...metadata } = header.value;
+                        let consumed = false;
+                        return {
+                            ...metadata,
+                            stream: Stream.suspend(() => {
+                                if (consumed)
+                                    return Stream.unwrap(
+                                        attachments
+                                            .source(attachment)
+                                            .pipe(Effect.map((source) => source.stream))
+                                    );
+                                consumed = true;
+                                let received = 0;
+                                return Stream.concat(
+                                    tail.pipe(
+                                        Stream.mapEffect((event) =>
+                                            Effect.gen(function* () {
+                                                if (event.kind !== "bytes")
+                                                    return yield* failure(
+                                                        new Error("Duplicate attachment metadata.")
+                                                    );
+                                                received += event.bytes.length;
+                                                if (metadata.size !== undefined && received > metadata.size)
+                                                    return yield* failure(
+                                                        new Error("Attachment exceeds its declared size.")
+                                                    );
+                                                return event.bytes;
+                                            })
+                                        )
+                                    ),
+                                    Stream.fromEffect(
                                         Effect.gen(function* () {
-                                            if (event.kind !== "bytes")
+                                            if (metadata.size !== undefined && received !== metadata.size)
                                                 return yield* failure(
-                                                    new Error("Duplicate attachment metadata.")
+                                                    new Error("Incomplete attachment download.")
                                                 );
-                                            received += event.bytes.length;
-                                            if (metadata.size !== undefined && received > metadata.size)
-                                                return yield* failure(
-                                                    new Error("Attachment exceeds its declared size.")
-                                                );
-                                            return event.bytes;
                                         })
-                                    )
-                                ),
-                                Stream.fromEffect(
-                                    Effect.gen(function* () {
-                                        if (metadata.size !== undefined && received !== metadata.size)
-                                            return yield* failure(
-                                                new Error("Incomplete attachment download.")
-                                            );
-                                    })
-                                ).pipe(Stream.drain)
-                            ).pipe(Stream.ensuring(Scope.close(readScope, Exit.void)));
-                        }).pipe(Stream.provideContext(context)),
-                    };
-                }).pipe(Effect.onError(() => Scope.close(readScope, Exit.void)));
-            }).pipe(Effect.mapError(failure)),
+                                    ).pipe(Stream.drain)
+                                ).pipe(Stream.ensuring(Scope.close(readScope, Exit.void)));
+                            }),
+                        };
+                    }).pipe(Effect.onError(() => Scope.close(readScope, Exit.void)));
+                }),
+                scope
+            ).pipe(Effect.mapError(failure)),
         blob: (attachment) =>
-            attachments.source(attachment).pipe(Effect.flatMap(collectByteBlob), Effect.mapError(failure)),
+            Effect.scoped(
+                attachments.source(attachment).pipe(Effect.flatMap(collectByteBlob), Effect.mapError(failure))
+            ),
         metadata: (attachment, opts) =>
             client.AttachmentMetadata({ attachment, select: opts?.select }).pipe(Effect.mapError(failure)),
     };

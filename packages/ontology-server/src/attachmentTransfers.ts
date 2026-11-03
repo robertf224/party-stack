@@ -3,6 +3,7 @@ import { byteSource, byteChunks, type ByteInput } from "@party-stack/ontology-st
 import { Effect, Queue, Schema, Semaphore, Stream } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
 import { RpcActivity } from "./rpcActivity.js";
+import type { Scope } from "effect";
 import type { Headers } from "effect/http/Headers";
 
 export const attachmentChunkSize = 64 * 1024;
@@ -102,7 +103,10 @@ export const attachmentTransferHandlers = <R>(
     options: AttachmentTransferPolicy<R> & {
         authorizeUpload(request: AttachmentUpload, headers: Headers): Effect.Effect<void, BackendError, R>;
         create(request: AttachmentUpload, blob: ByteInput): Effect.Effect<AttachmentValue, BackendError, R>;
-        read(attachment: AttachmentValue, headers: Headers): Effect.Effect<ByteInput, BackendError, R>;
+        read(
+            attachment: AttachmentValue,
+            headers: Headers
+        ): Effect.Effect<ByteInput, BackendError, R | Scope.Scope>;
     }
 ) => {
     const uploads = new Map<
@@ -133,6 +137,8 @@ export const attachmentTransferHandlers = <R>(
             throw new RangeError("Invalid attachment transfer limits.");
     const owner =
         options.uploadOwner ??
+        // TODO(Effect 4.1): Digest can replace this bounded header hash. Keep the
+        // resulting owner identity stable; crypto services need explicit layers.
         ((headers: Headers) =>
             Effect.tryPromise(async () => {
                 const hash = await crypto.subtle.digest(

@@ -29,12 +29,21 @@ protect bytes while they are needed.
 
 ```ts
 const { attachment } = await ontology.attachments.create(file);
-const source = await ontology.attachments.source(attachment);
+const abort = new AbortController();
+const source = await ontology.attachments.source(attachment, { signal: abort.signal });
+// Consume source.stream, or abort.abort() if the read is no longer needed.
 ```
 
 Creation accepts Blob/File and streaming inputs. A streaming input carries
 optional size, media type, and name. Unknown-length streams are supported;
 resumable uploads and range caches remain future work.
+
+Native Effect reads (`replica.attachments.source` and backend `attachments.read`)
+require a Scope kept open through consumption. Closing it cancels pending IO and
+cache-fill work, including a download whose header was read but whose bytes were
+never consumed. The Promise SDK releases reads on stream completion/cancellation,
+AbortSignal, or ontology shutdown. Use an AbortSignal when a source may be abandoned.
+`blob()` manages its read scope internally.
 
 ## Browser placement today
 

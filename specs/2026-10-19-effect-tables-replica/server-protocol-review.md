@@ -140,12 +140,9 @@ truncated NDJSON response verify the distinction; no dependency patch was introd
   Route-level advertisement may resolve the current Foundry users/objects distinction;
   assess remaining subset-dependent differences before adding negotiation machinery.
   Existing provider polling recommendations cover current Foundry user loads.
-- RPC byte-source acquisition peels the stream header before returning its ByteSource.
-  Consumption closes that read scope, and connection teardown closes abandoned reads.
-  Review a caller that repeatedly acquires sources without consuming them during the
-  attachment subsystem pass: connection ownership alone is not per-read release.
-  This is also recorded in blob-future-work.md, rather than left as an untracked
-  server review item.
+- Per-read byte-source ownership was completed in the
+  [attachment review](./attachments-encryption-review.md): caller Scope closure
+  now releases acquired but unconsumed RPC downloads independently of the connection.
 - General untrusted speculative replication, provider cursor paging, full query IVM,
   finite-query work budgets and installation partition ownership remain the previously
   recorded future work. This checkpoint introduces none of those capabilities.

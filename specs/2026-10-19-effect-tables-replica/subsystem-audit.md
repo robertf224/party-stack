@@ -367,7 +367,8 @@ and opportunities to remove duplicate or unused machinery.
    shared scalar action/query semantics, explicit lookup limits and oracle/replay
    coverage. Provider definition compilation and broader action query capabilities
    remain explicit future work.
-7. **Attachments and encrypted values:** byte streams and cold caches,
+7. **Attachments and encrypted values:** completed; see
+   [the review checklist](./attachments-encryption-review.md). Byte streams and cold caches,
    transactional metadata/mappings, reference retention and GC, decryption,
    device caches/keyrings and platform persistence consent.
 8. **Connect and installations:** connection ontology, credentials/refresh,

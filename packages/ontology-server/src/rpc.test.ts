@@ -1589,3 +1589,51 @@ test("explicit incremental configuration rejects a source without native deliver
         )
     );
 });
+
+test("a scoped attachment source cancels its unconsumed RPC download without closing the connection", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* setup();
+                let active = 0;
+                const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                    Effect.provide(
+                        ontologyRpcHandlers({
+                            backend: {
+                                ...owned,
+                                attachments: {
+                                    read: () =>
+                                        Effect.acquireRelease(
+                                            Effect.sync(() => {
+                                                active++;
+                                                return { type: "text/plain", stream: Stream.never };
+                                            }),
+                                            () =>
+                                                Effect.sync(() => {
+                                                    active--;
+                                                })
+                                        ),
+                                    metadata: () => Effect.succeed({ type: "text/plain", size: 0 }),
+                                },
+                            },
+                            ir,
+                            authorize: () => Effect.void,
+                        })
+                    )
+                );
+                const connection = yield* makeOntologyProtocolClient(client);
+                const first = yield* Scope.fork(yield* Effect.scope);
+                yield* Scope.provide(connection.operations.attachments.source({ id: "file" }), first);
+                expect(active).toBe(1);
+                yield* Scope.close(first, Exit.void);
+                yield* Effect.promise(() => vi.waitFor(() => expect(active).toBe(0)));
+                const second = yield* Scope.fork(yield* Effect.scope);
+                yield* Scope.provide(connection.operations.attachments.source({ id: "file" }), second);
+                expect(active).toBe(1);
+                yield* Scope.close(second, Exit.void);
+                yield* Effect.promise(() => vi.waitFor(() => expect(active).toBe(0)));
+                expect((yield* connection.backend.loadSubset(objectSubset("Counter"))).rows).toEqual([]);
+            })
+        )
+    );
+});
