@@ -5,7 +5,7 @@ import {
     validateQueryDocument,
     selectedProperty,
 } from "@party-stack/ontology-spec/query";
-import { certain, uncertain } from "@party-stack/ontology-spec/utils";
+import { certain, uncertain, resolveLookupReference } from "@party-stack/ontology-spec/utils";
 import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/ontology-spec/utils";
 import { Effect, Schema } from "effect";
 import { field, and, eq, ne, not, or, inArray, contains, like, ilike } from "../model.js";
@@ -142,27 +142,6 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             new Set([...seen, type.value.name])
         );
     };
-    const referenceType = (e: Expression): TypeDef | undefined => {
-        if (e.kind === "inputReference")
-            return resolve(options.inputDefinitions?.find((p) => p.name === e.value.name)?.type);
-        if (e.kind === "contextReference") {
-            const type = resolve(ir.context?.type);
-            return resolve(
-                type?.kind === "struct"
-                    ? type.value.fields.find((f) => f.name === e.value.name)?.type
-                    : undefined
-            );
-        }
-        if (e.kind === "getAt") {
-            let type = referenceType(e.value.source);
-            for (const p of e.value.path)
-                type = resolve(
-                    type?.kind === "struct" ? type.value.fields.find((f) => f.name === p)?.type : undefined
-                );
-            return type;
-        }
-        return undefined;
-    };
     const evaluate = Effect.fnUntraced(function* (
         e: Expression,
         locals: Scope = new Map()
@@ -259,10 +238,9 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             case "lookup": {
                 const key = yield* evaluate(e.value.reference, locals);
                 if (!key.certain || key.value == null) return key;
-                const type = referenceType(e.value.reference);
-                if (type?.kind !== "objectReference")
-                    return yield* fail("Lookup requires a typed object reference.");
-                const object = ir.objectTypes.find((t) => t.name === type.value.objectType)!;
+                const reference = resolveLookupReference(ir, e.value.reference, options.inputDefinitions);
+                if (!reference) return yield* fail("Lookup requires an input/context object-reference path.");
+                const object = ir.objectTypes.find((t) => t.name === reference.objectType)!;
                 const rows = yield* fetch(
                     { objectType: object.name },
                     { where: eq(field(object.primaryKey), key.value as Scalar), limit: 2 }

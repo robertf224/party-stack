@@ -1,4 +1,5 @@
 export * from "./links.js";
+export { resolveLookupReference } from "./lookup.js";
 export * from "./paths.js";
 export * from "./targets.js";
 export * from "./types.js";

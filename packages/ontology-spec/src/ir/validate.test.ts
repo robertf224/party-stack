@@ -871,8 +871,8 @@ describe("Ontology Validation", () => {
             };
 
             const errors = getErrors(validate(ontology));
-            expect(errors).toContain("Map expression source must resolve to a list.");
-            expect(errors).toContain('Unknown expression binding: "missing".');
+            expect(errors).toContain("Map source must be a list.");
+            expect(errors).toContain('Unknown lexical binding "missing".');
         });
     });
 

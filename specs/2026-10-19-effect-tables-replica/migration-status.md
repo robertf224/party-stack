@@ -211,8 +211,14 @@ tracked in [blob-future-work.md](./blob-future-work.md).
   locking and native application columns/migrations remain future work; see
   [the concurrency note](./postgres-concurrency.md).
 
-- Portable query IR/builder with correlated subqueries, relationship helpers,
-  cross-ontology references, security/demand interpretation and deeper limit pushdown.
+- Query follow-ups: full-query watching/IVM, recursive queries, richer schema-aware
+  builders/result inference and finite-read work budgets. Native action query
+  expressions (EXISTS and to-many relationship execution) remain explicit future
+  capabilities. Compiling definitions into providers needs target-specific lowering
+  to declarative rules or function-backed actions, with unsupported-feature
+  diagnostics. The portable IR, finite query execution, hierarchical authorization
+  and shared scalar action/query semantics are implemented; see the completed
+  [Query IR/authorization review](./query-authorization-review.md).
 - Ontology-owned migration history and lens/cast semantics across rows, pending
   invocations, indexes and mirrors; inspectable native SQL column layouts.
 - Bigint/long ontology kinds, CloudKit, SSR hydration and measured optimization.

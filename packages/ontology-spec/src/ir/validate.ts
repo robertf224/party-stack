@@ -1,5 +1,5 @@
 import { validatePolicy } from "../query/policy.js";
-import { isRelatedFromForeignKeySource, resolveRelatedLink } from "../utils/links.js";
+import { analyzeQueryDocument } from "../query/validate.js";
 import { nestedEncryptedIssues } from "./encrypted.js";
 import { ImageMediaTypeOptions } from "./generated/constants.js";
 import type { ValidationIssue } from "../utils/validation.js";
@@ -310,226 +310,32 @@ function resolveFieldType(
     }
 }
 
-type ExpressionValueType =
-    | TypeDef
-    | {
-          kind: "ontologyObject";
-          objectType: string;
-      }
-    | {
-          kind: "expressionList";
-          elementType: ExpressionValueType;
-      };
-
-function expressionListElement(
-    type: ExpressionValueType | undefined,
-    valueTypes: ReadonlyMap<string, TypeDef>
-): ExpressionValueType | undefined {
-    if (!type || type.kind === "ontologyObject") return undefined;
-    if (type.kind === "expressionList") return type.elementType;
-    const resolved = unwrapOptionalType(type, valueTypes);
-    return resolved?.kind === "list" ? resolved.value.elementType : undefined;
-}
-
-function expressionValueType(
-    type: ExpressionValueType,
-    objectTypes: ReadonlyMap<string, ObjectTypeDef>
-): TypeDef {
-    if (type.kind === "ontologyObject") {
-        const object = objectTypes.get(type.objectType);
-        return object
-            ? { kind: "struct", value: { fields: object.properties } }
-            : { kind: "unknown", value: {} };
-    }
-    if (type.kind === "expressionList") {
-        return { kind: "list", value: { elementType: expressionValueType(type.elementType, objectTypes) } };
-    }
-    return type;
-}
-
-function resolveExpressionType(
+/** Actions and queries share one expression checker. Only execution-context
+ * capabilities differ; provider compilation has its own target limitations. */
+function analyzeActionExpression(
     expression: Expression,
     parameters: ReadonlyMap<string, ActionParameterDef>,
     valueTypes: ReadonlyMap<string, TypeDef>,
     objectTypes: ReadonlyMap<string, ObjectTypeDef>,
     linkTypes: readonly LinkTypeDef[],
-    contextType: TypeDef | undefined,
-    locals: ReadonlyMap<string, ExpressionValueType>
-): ExpressionValueType | undefined {
-    switch (expression.kind) {
-        case "inputReference":
-            return parameters.get(expression.value.name)?.type;
-        case "contextReference":
-            return contextType
-                ? resolveFieldType(contextType, [expression.value.name], valueTypes)
-                : undefined;
-        case "localReference":
-            return locals.get(expression.value.name);
-        case "getAt": {
-            const sourceType = resolveExpressionType(
-                expression.value.source,
-                parameters,
-                valueTypes,
-                objectTypes,
-                linkTypes,
-                contextType,
-                locals
-            );
-            if (!sourceType || expression.value.path.length === 0) {
-                return undefined;
-            }
-            if (sourceType.kind === "ontologyObject") {
-                const [propertyName, ...rest] = expression.value.path;
-                const property = objectTypes
-                    .get(sourceType.objectType)
-                    ?.properties.find((candidate) => candidate.name === propertyName);
-                return property ? resolveFieldType(property.type, rest, valueTypes) : undefined;
-            }
-            return sourceType.kind === "expressionList"
-                ? undefined
-                : resolveFieldType(sourceType, expression.value.path, valueTypes);
-        }
-        case "lookup": {
-            const referenceType = resolveExpressionType(
-                expression.value.reference,
-                parameters,
-                valueTypes,
-                objectTypes,
-                linkTypes,
-                contextType,
-                locals
-            );
-            const resolved =
-                referenceType?.kind === "ontologyObject" || referenceType?.kind === "expressionList"
-                    ? undefined
-                    : referenceType
-                      ? unwrapOptionalType(referenceType, valueTypes)
-                      : undefined;
-            return resolved?.kind === "objectReference"
-                ? {
-                      kind: "ontologyObject",
-                      objectType: resolved.value.objectType,
-                  }
-                : undefined;
-        }
-        case "related": {
-            const sourceType = resolveExpressionType(
-                expression.value.source,
-                parameters,
-                valueTypes,
-                objectTypes,
-                linkTypes,
-                contextType,
-                locals
-            );
-            if (sourceType?.kind !== "ontologyObject") {
-                return undefined;
-            }
-            const link = resolveRelatedLink(
-                {
-                    objectTypes: [...objectTypes.values()],
-                    linkTypes: [...linkTypes],
-                },
-                sourceType.objectType,
-                expression.value.link
-            );
-            if (!link) return undefined;
-            const foreignKeyOnSource = isRelatedFromForeignKeySource(
-                link,
-                sourceType.objectType,
-                expression.value.link
-            );
-            const targetType: ExpressionValueType = {
-                kind: "ontologyObject",
-                objectType: foreignKeyOnSource ? link.target.objectType : link.source.objectType,
-            };
-            return !foreignKeyOnSource && link.cardinality === "many"
-                ? { kind: "expressionList", elementType: targetType }
-                : targetType;
-        }
-        case "struct":
-            return {
-                kind: "struct",
-                value: {
-                    fields: expression.value.fields.map((field) => ({
-                        name: field.name,
-                        displayName: field.name,
-                        type: (() => {
-                            const resolved = resolveExpressionType(
-                                field.value,
-                                parameters,
-                                valueTypes,
-                                objectTypes,
-                                linkTypes,
-                                contextType,
-                                locals
-                            );
-                            return resolved && resolved.kind !== "ontologyObject"
-                                ? expressionValueType(resolved, objectTypes)
-                                : {
-                                      kind: "unknown" as const,
-                                      value: {},
-                                  };
-                        })(),
-                    })),
-                },
-            };
-        case "map": {
-            const sourceType = resolveExpressionType(
-                expression.value.source,
-                parameters,
-                valueTypes,
-                objectTypes,
-                linkTypes,
-                contextType,
-                locals
-            );
-            const elementType = expressionListElement(sourceType, valueTypes);
-            if (!elementType) return undefined;
-            const bodyLocals = new Map(locals);
-            bodyLocals.set(expression.value.binding, elementType);
-            const bodyType = resolveExpressionType(
-                expression.value.body,
-                parameters,
-                valueTypes,
-                objectTypes,
-                linkTypes,
-                contextType,
-                bodyLocals
-            );
-            return bodyType ? { kind: "expressionList", elementType: bodyType } : undefined;
-        }
-        case "literal":
-            return { kind: "unknown", value: {} };
-        case "uuid":
-            return { kind: "string", value: {} };
-        case "now":
-            return { kind: "timestamp", value: {} };
-        case "eq":
-        case "ne":
-        case "lt":
-        case "lte":
-        case "gt":
-        case "gte":
-        case "in":
-        case "contains":
-        case "like":
-        case "ilike":
-        case "add":
-        case "subtract":
-        case "multiply":
-        case "divide":
-        case "and":
-        case "or":
-        case "concat":
-        case "coalesce":
-        case "not":
-        case "case":
-        case "exists":
-            return undefined;
-    }
+    contextType: TypeDef | undefined
+) {
+    const analysis = analyzeQueryDocument(
+        {
+            types: [...valueTypes].map(([name, type]) => ({ name, type })),
+            objectTypes: [...objectTypes.values()],
+            linkTypes: [...linkTypes],
+            actionTypes: [],
+            queryFunctionTypes: [],
+            context: contextType ? { type: contextType } : undefined,
+        },
+        {
+            select: [{ kind: "field", value: { name: "expression", expression } }],
+        },
+        { inputs: [...parameters.values()], execution: "action", untypedContext: !contextType }
+    );
+    return { type: analysis.expressionTypes.get(expression), issues: analysis.issues };
 }
-
 function validateExpression(
     expression: Expression,
     parameters: ReadonlyMap<string, ActionParameterDef>,
@@ -537,192 +343,16 @@ function validateExpression(
     valueTypes: ReadonlyMap<string, TypeDef>,
     objectTypes: ReadonlyMap<string, ObjectTypeDef>,
     linkTypes: readonly LinkTypeDef[],
-    contextType: TypeDef | undefined,
-    locals: ReadonlyMap<string, ExpressionValueType> = new Map()
+    contextType: TypeDef | undefined
 ): ValidationIssue[] {
-    switch (expression.kind) {
-        case "inputReference": {
-            const parameter = parameters.get(expression.value.name);
-            if (!parameter) {
-                return [
-                    {
-                        message: `Unknown action parameter: "${expression.value.name}".`,
-                        path: [...path, "name"],
-                    },
-                ];
-            }
-            return [];
-        }
-        case "contextReference":
-            if (!contextType) {
-                return [];
-            }
-            return resolveFieldType(contextType, [expression.value.name], valueTypes)
-                ? []
-                : [
-                      {
-                          message: `Unknown context value: "${expression.value.name}".`,
-                          path: [...path, "name"],
-                      },
-                  ];
-        case "localReference": {
-            const local = locals.get(expression.value.name);
-            if (!local) {
-                return [
-                    {
-                        message: `Unknown expression binding: "${expression.value.name}".`,
-                        path: [...path, "name"],
-                    },
-                ];
-            }
-            return [];
-        }
-        case "getAt":
-        case "lookup":
-        case "related": {
-            const childKey = expression.kind === "lookup" ? "reference" : "source";
-            const child = expression.kind === "lookup" ? expression.value.reference : expression.value.source;
-            const errors = validateExpression(
-                child,
-                parameters,
-                [...path, childKey],
-                valueTypes,
-                objectTypes,
-                linkTypes,
-                contextType,
-                locals
-            );
-            if (expression.kind === "getAt" && expression.value.path.length === 0) {
-                errors.push({
-                    message: "Get-at expression paths must not be empty.",
-                    path: [...path, "path"],
-                });
-            }
-            const resolved = resolveExpressionType(
-                expression,
-                parameters,
-                valueTypes,
-                objectTypes,
-                linkTypes,
-                contextType,
-                locals
-            );
-            if (!resolved) {
-                errors.push({
-                    message:
-                        expression.kind === "getAt"
-                            ? "Get-at expression source and path must resolve structurally."
-                            : expression.kind === "lookup"
-                              ? "Object lookup references must resolve to an object reference."
-                              : "Related expression must resolve to a named ontology link.",
-                    path,
-                });
-            }
-            return errors;
-        }
-        case "struct": {
-            const errors: ValidationIssue[] = [];
-            const names = new Set<string>();
-            for (let index = 0; index < expression.value.fields.length; index++) {
-                const field = expression.value.fields[index]!;
-                if (names.has(field.name)) {
-                    errors.push({
-                        message: `Duplicate struct expression field: "${field.name}".`,
-                        path: [...path, "fields", index, "name"],
-                    });
-                }
-                names.add(field.name);
-                errors.push(
-                    ...validateExpression(
-                        field.value,
-                        parameters,
-                        [...path, "fields", index, "value"],
-                        valueTypes,
-                        objectTypes,
-                        linkTypes,
-                        contextType,
-                        locals
-                    )
-                );
-            }
-            return errors;
-        }
-        case "map": {
-            const errors = validateExpression(
-                expression.value.source,
-                parameters,
-                [...path, "source"],
-                valueTypes,
-                objectTypes,
-                linkTypes,
-                contextType,
-                locals
-            );
-            const sourceType = resolveExpressionType(
-                expression.value.source,
-                parameters,
-                valueTypes,
-                objectTypes,
-                linkTypes,
-                contextType,
-                locals
-            );
-            const elementType = expressionListElement(sourceType, valueTypes);
-            if (sourceType && !elementType) {
-                errors.push({
-                    message: "Map expression source must resolve to a list.",
-                    path: [...path, "source"],
-                });
-            }
-            if (!expression.value.binding) {
-                errors.push({
-                    message: "Map expression binding must not be empty.",
-                    path: [...path, "binding"],
-                });
-            }
-            const bodyLocals = new Map(locals);
-            bodyLocals.set(expression.value.binding, elementType ?? { kind: "unknown", value: {} });
-            errors.push(
-                ...validateExpression(
-                    expression.value.body,
-                    parameters,
-                    [...path, "body"],
-                    valueTypes,
-                    objectTypes,
-                    linkTypes,
-                    contextType,
-                    bodyLocals
-                )
-            );
-            return errors;
-        }
-        case "uuid":
-        case "now":
-        case "literal":
-            return [];
-        case "eq":
-        case "ne":
-        case "lt":
-        case "lte":
-        case "gt":
-        case "gte":
-        case "in":
-        case "contains":
-        case "like":
-        case "ilike":
-        case "add":
-        case "subtract":
-        case "multiply":
-        case "divide":
-        case "and":
-        case "or":
-        case "concat":
-        case "coalesce":
-        case "not":
-        case "case":
-        case "exists":
-            return [{ message: "Query expressions are not supported in action defaults yet.", path }];
-    }
+    return analyzeActionExpression(
+        expression,
+        parameters,
+        valueTypes,
+        objectTypes,
+        linkTypes,
+        contextType
+    ).issues.map((issue) => ({ ...issue, path: [...path, ...(issue.path?.slice(4) ?? [])] }));
 }
 
 function unwrapOptionalType(type: TypeDef, valueTypes: ReadonlyMap<string, TypeDef>): TypeDef | undefined {
@@ -760,6 +390,11 @@ function areDefaultTypesCompatible(
             )
         );
     }
+    if (
+        ["integer", "float", "double"].includes(targetType.kind) &&
+        ["integer", "float", "double"].includes(sourceType.kind)
+    )
+        return true;
     if (targetType.kind !== sourceType.kind) return false;
     if (targetType.kind === "objectReference" && sourceType.kind === "objectReference") {
         return targetType.value.objectType === sourceType.value.objectType;
@@ -904,35 +539,24 @@ function validateAction(
         );
 
         if (parameter.defaultValue) {
-            errors.push(
-                ...validateExpression(
-                    parameter.defaultValue,
-                    parameters,
-                    [...parameterPath, "defaultValue"],
-                    valueTypes,
-                    objectTypes,
-                    linkTypes,
-                    contextType
-                )
-            );
-            const sourceType = resolveExpressionType(
+            const analysis = analyzeActionExpression(
                 parameter.defaultValue,
                 parameters,
                 valueTypes,
                 objectTypes,
                 linkTypes,
-                contextType,
-                new Map()
+                contextType
             );
+            errors.push(
+                ...analysis.issues.map((issue) => ({
+                    ...issue,
+                    path: [...parameterPath, "defaultValue", ...(issue.path?.slice(4) ?? [])],
+                }))
+            );
+            const sourceType = analysis.type;
             if (
                 sourceType &&
-                sourceType.kind !== "ontologyObject" &&
-                !areDefaultTypesCompatible(
-                    parameter.type,
-                    expressionValueType(sourceType, objectTypes),
-                    valueTypes,
-                    objectTypes
-                )
+                !areDefaultTypesCompatible(parameter.type, sourceType, valueTypes, objectTypes)
             ) {
                 errors.push({
                     message: `Default value for "${parameter.name}" has an incompatible type.`,

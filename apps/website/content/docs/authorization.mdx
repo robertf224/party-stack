@@ -88,6 +88,21 @@ Owned execution performs bindings, checks, reference validation, and mutation in
 one storage transaction. A projected provider executes its own authoritative
 transaction after the server's checks. Its existing permissions still apply.
 
+Queries and action defaults/assignments share scalar expressions: comparisons,
+arithmetic, boolean logic, membership, string patterns, concatenation, coalescing
+and `caseExpression`. Boolean logic, coalescing and CASE short circuit. Action
+UUID/time expressions use deterministic replay values when replaying a submission;
+finite query plans reject clock/random expressions. Query-bearing `exists` is
+supported in queries and policy checks, but is not yet supported in portable action
+defaults/assignments.
+Partial parameter resolution leaves computed defaults unset until their required
+inputs are available; known conditional branches can resolve independently.
+
+`lookup` accepts explicitly typed input/context object-reference paths, including
+paths through optional structs. Use `related` for declared row relationships;
+scalar foreign-key properties are not implicitly object references. Unsupported
+lookup forms fail semantic validation before reading data.
+
 A Gateway can replace an upstream ontology's context and policy with a token-specific
 contract, such as `{ approval }`. A cached proxy can share a trusted provider cache;
 policy enforcement wraps the final read path, including cache hits. Each caller gets

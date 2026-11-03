@@ -447,9 +447,12 @@ describe("evaluateExpression", () => {
     });
 
     it("preserves an undefined optional map source", async () => {
+        const optionalIr = structuredClone(ir);
+        const entries = optionalIr.actionTypes[0]!.parameters.find((p) => p.name === "entries")!;
+        entries.type = o.optional({ type: entries.type });
         await expect(
             evaluateExpression({
-                ir,
+                ir: optionalIr,
                 actionTypeName: "assign",
                 expression: o.Expression.map({
                     source: o.Expression.inputReference({

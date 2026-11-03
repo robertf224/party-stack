@@ -1,3 +1,4 @@
+import { booleanValue, evaluateOperator } from "@party-stack/ontology-spec/query";
 import {
     getAtPath,
     setAtPath,
@@ -6,9 +7,11 @@ import {
     unwrapValueType,
     resolveRelatedLink,
     isRelatedFromForeignKeySource,
+    resolveLookupReference,
+    certain,
 } from "@party-stack/ontology-spec/utils";
 import { eq, field } from "@party-stack/ontology-storage";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { BackendError } from "./errors.js";
 import { executeQuery } from "./query.js";
@@ -21,6 +24,7 @@ import type {
     TypeDef,
     QueryDocument,
 } from "@party-stack/ontology-spec";
+import type { Uncertain } from "@party-stack/ontology-spec/utils";
 import type { Key } from "@party-stack/ontology-storage";
 
 export type ActionMutator = (
@@ -45,6 +49,16 @@ export interface ActionExecutionOptions {
 }
 const failure = (message: string, kind: BackendError["kind"] = "InvalidRequest", cause?: unknown) =>
     new BackendError({ operation: "action.execute", kind, retryable: false, message, cause });
+const scalar = <A>(compute: () => A) =>
+    Effect.try({
+        try: compute,
+        catch: (cause) =>
+            failure(
+                cause instanceof Error ? cause.message : "Invalid expression values.",
+                "InvalidRequest",
+                cause
+            ),
+    });
 const defect = (cause: unknown) =>
     Effect.fail(
         cause instanceof BackendError ? cause : failure("Action execution failed.", "Internal", cause)
@@ -62,6 +76,10 @@ class Loaded {
         readonly value: Record<string, unknown>
     ) {}
 }
+/** Internal partial-default evaluation; never part of the backend error contract. */
+class UnresolvedInput extends Schema.TaggedError<UnresolvedInput>()("UnresolvedActionInput", {
+    parameter: Schema.String,
+}) {}
 const unwrapped = (value: unknown): unknown => {
     if (value instanceof Reference) return value.key;
     if (value instanceof Loaded) return value.value;
@@ -95,17 +113,18 @@ export const actionExpressions = (options: {
     };
     const resolveParameter = Effect.fnUntraced(function* (
         name: string
-    ): Effect.fn.Return<unknown, BackendError> {
+    ): Effect.fn.Return<unknown, BackendError | UnresolvedInput> {
         if (parameters[name] !== undefined) return parameters[name];
         const parameter = action?.parameters.find((p) => p.name === name);
         if (!parameter?.defaultValue) return undefined;
         if (resolving.has(name))
             return yield* failure(`Circular action parameter default for "${name}".`, "InvalidConfiguration");
         resolving.add(name);
-        return yield* evaluate(parameter.defaultValue, ["parameter", name]).pipe(
+        return yield* raw(parameter.defaultValue, ["parameter", name], new Map()).pipe(
+            Effect.map(unwrapped),
             Effect.tap((value) =>
                 Effect.sync(() => {
-                    parameters[name] = value;
+                    if (value !== undefined) parameters[name] = value;
                 })
             ),
             Effect.ensuring(Effect.sync(() => resolving.delete(name)))
@@ -115,7 +134,7 @@ export const actionExpressions = (options: {
         e: Expression,
         location: readonly (string | number)[],
         locals: ReadonlyMap<string, unknown>
-    ): Effect.fn.Return<unknown, BackendError> {
+    ): Effect.fn.Return<unknown, BackendError | UnresolvedInput> {
         const child = (node: Expression, segment: string) => raw(node, [...location, segment], locals);
         switch (e.kind) {
             case "literal":
@@ -127,6 +146,8 @@ export const actionExpressions = (options: {
                 const parameter = action?.parameters.find((p) => p.name === e.value.name);
                 if (!parameter) return yield* failure(`Unknown action parameter "${e.value.name}".`);
                 const { type, isOptional } = unwrapType(resolveType(ir, parameter.type));
+                if (value === undefined && !isOptional)
+                    return yield* new UnresolvedInput({ parameter: parameter.name });
                 return type.kind === "objectReference"
                     ? new Reference(type.value.objectType, value, isOptional)
                     : value;
@@ -146,11 +167,12 @@ export const actionExpressions = (options: {
                 return getAtPath(source instanceof Loaded ? source.value : source, e.value.path);
             }
             case "lookup": {
-                const reference = yield* child(e.value.reference, "reference");
-                if (!(reference instanceof Reference))
-                    return yield* failure("Lookup requires an object reference.");
-                if (reference.key == null) return undefined;
-                const key = yield* keyOf(reference.key);
+                const reference = resolveLookupReference(ir, e.value.reference, action?.parameters);
+                if (!reference)
+                    return yield* failure("Lookup requires an input/context object-reference path.");
+                const valueKey = unwrapped(yield* child(e.value.reference, "reference"));
+                if (valueKey == null) return undefined;
+                const key = yield* keyOf(valueKey);
                 const value = yield* tx.get(reference.objectType, key);
                 if (!value && !reference.optional)
                     return yield* failure(`Missing loaded "${reference.objectType}" object.`, "NotFound");
@@ -228,20 +250,61 @@ export const actionExpressions = (options: {
                         request.replay ? Temporal.Instant.from(request.replay.now) : Temporal.Now.instant(),
                     catch: (cause) => failure("Invalid replay time.", "InvalidRequest", cause),
                 });
-            default:
-                return yield* failure(
-                    "Query expressions require a query execution context.",
-                    "NotImplemented"
-                );
+            case "case": {
+                for (const [index, branch] of e.value.branches.entries()) {
+                    const condition = unwrapped(
+                        yield* raw(branch.condition, [...location, "branch", index, "condition"], locals)
+                    );
+                    if (yield* scalar(() => booleanValue(condition)))
+                        return yield* raw(branch.result, [...location, "branch", index, "result"], locals);
+                }
+                return yield* child(e.value.else, "else");
+            }
+            case "exists":
+                return yield* failure("EXISTS is not supported in action expressions yet.", "NotImplemented");
+            default: {
+                const nodes =
+                    e.kind === "not"
+                        ? [e.value.expression]
+                        : "expressions" in e.value
+                          ? e.value.expressions
+                          : [e.value.left, e.value.right];
+                const values: Uncertain<unknown>[] = [];
+                for (const [index, node] of nodes.entries()) {
+                    const resolved = yield* raw(node, [...location, "operand", index], locals);
+                    const value = unwrapped(resolved);
+                    // Preserve reference/entity identity for subsequent traversal.
+                    if (e.kind === "coalesce" && value != null) return resolved;
+                    values.push(certain(value));
+                    if (
+                        (e.kind === "and" || e.kind === "or") &&
+                        (yield* scalar(() => booleanValue(value))) === (e.kind === "or")
+                    )
+                        break;
+                }
+                const result = yield* scalar(() => evaluateOperator(e.kind, values));
+                // All action inputs are concrete; uncertainty belongs to draft/query evaluation.
+                if (!result.certain) return yield* failure("Action expression depends on unavailable data.");
+                return result.value;
+            }
         }
     });
     const evaluate = (expression: Expression, location: readonly (string | number)[] = []) =>
-        raw(expression, location, new Map()).pipe(Effect.map(unwrapped), Effect.catchDefect(defect));
+        raw(expression, location, new Map()).pipe(
+            Effect.map(unwrapped),
+            Effect.catchTag("UnresolvedActionInput", (error) =>
+                Effect.fail(failure(`Missing action parameter "${error.parameter}".`))
+            ),
+            Effect.catchDefect(defect)
+        );
     return {
         evaluate,
         resolve: Effect.gen(function* () {
             if (!action) return yield* failure("Action is unavailable.", "NotFound");
-            for (const parameter of action.parameters) yield* resolveParameter(parameter.name);
+            for (const parameter of action.parameters)
+                yield* resolveParameter(parameter.name).pipe(
+                    Effect.catchTag("UnresolvedActionInput", () => Effect.void)
+                );
             return parameters;
         }).pipe(Effect.catchDefect(defect)),
     };

@@ -362,9 +362,11 @@ and opportunities to remove duplicate or unused machinery.
 6. **Query IR and authorization:** expression/query boundaries, context and
    partitioning, schema projection, action bindings/checks, rewrite rules and
    eager/property-test oracles.
-   The [review in progress](./query-authorization-review.md) records draft EXISTS,
-   structural predicate lowering and nested grant-discovery regressions, plus
-   remaining expression-execution and builder-ergonomics checks.
+   The [completed functional review](./query-authorization-review.md) records draft
+   EXISTS, structural predicate lowering and nested grant-discovery regressions,
+   shared scalar action/query semantics, explicit lookup limits and oracle/replay
+   coverage. Provider definition compilation and broader action query capabilities
+   remain explicit future work.
 7. **Attachments and encrypted values:** byte streams and cold caches,
    transactional metadata/mappings, reference retention and GC, decryption,
    device caches/keyrings and platform persistence consent.

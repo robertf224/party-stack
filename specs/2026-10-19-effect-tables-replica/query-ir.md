@@ -1,7 +1,8 @@
-# Query IR direction
+# Query IR and execution boundaries
 
-This note separates the implemented query/policy primitives from server integration
-that is still underway. It is not yet an end-to-end public query/server API.
+The portable query/policy IR, finite server execution and hierarchical authorization
+are implemented. The [functional review](./query-authorization-review.md) records
+the current boundaries, correctness fixes and remaining future capabilities.
 
 The [October 28 initial proposal](./query-ir-proposal.md) develops this direction
 with Streamline project-admin and Post Approval token examples, authorized-view
@@ -74,8 +75,8 @@ Query extends Subset's where/orderBy/page fields with from/select, using shared
 schema field definitions without a nested subset wrapper.
 Expression operators are top-level variants with unary/binary/variadic payloads;
 case and selectCase have distinct tags and recursive multi-branch groups. Flat
-joins are deferred. Storage lowering still needs to consume the shared Subset;
-the existing driver query representation continues to execute current loads.
+joins are deferred. Object demand/provider boundaries consume the shared logical
+Subset; lowering retains a compact physical query representation inside storage.
 Scope/type/provenance validation, finite execution, hierarchical policy evaluation,
 server definition projection and native same-transaction action checks are implemented.
 The stateless server binds the caller's typed context after authentication and wraps

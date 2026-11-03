@@ -1,5 +1,6 @@
 import { o } from "../ir/generated/builders.js";
 import { isRelatedFromForeignKeySource, resolveRelatedLink } from "../utils/links.js";
+import { resolveLookupReference } from "../utils/lookup.js";
 import type {
     Expression,
     FieldDef,
@@ -34,12 +35,15 @@ export function selectedProperty(expression: Expression): { binding: string; pro
         : undefined;
 }
 
-export function validateQueryDocument(
+/** Shared semantic analysis; action validation additionally permits clock/random
+ * expressions. Kept internal to spec; public query validation stays query-only. */
+export function analyzeQueryDocument(
     ir: OntologyIR,
     document: QueryDocument,
-    options: QueryValidationOptions = {}
-): ValidationIssue[] {
+    options: QueryValidationOptions & { execution?: "action" } = {}
+) {
     const issues: ValidationIssue[] = [];
+    const expressionTypes = new WeakMap<Expression, TypeDef>();
     let visited = 0;
     const maxNodes = options.maxNodes ?? 10_000;
     const maxDepth = options.maxDepth ?? 64;
@@ -116,13 +120,23 @@ export function validateQueryDocument(
             return same(left.value.elementType, right.value.elementType);
         const x = identity(a).kind,
             y = identity(b).kind;
-        return x === "unknown" || y === "unknown" || x === y || (isNumeric(a) && isNumeric(b));
+        return (
+            x === "unknown" ||
+            y === "unknown" ||
+            x === y ||
+            (isNumeric(identity(a)) && isNumeric(identity(b)))
+        );
     };
     const expect = (type: TypeDef, kind: string, path: Path) => {
         if (![kind, "unknown"].includes(resolve(type).kind)) issue(`Expected a ${kind} expression.`, path);
     };
     function expression(e: Expression, scope: Scope, path: Path): TypeDef {
         if (!admit(path)) return unknown;
+        const type = inferExpression(e, scope, path);
+        expressionTypes.set(e, type);
+        return type;
+    }
+    function inferExpression(e: Expression, scope: Scope, path: Path): TypeDef {
         const child = (value: Expression, key: string | number) =>
             expression(value, scope, [...path, "value", key]);
         switch (e.kind) {
@@ -166,6 +180,11 @@ export function validateQueryDocument(
                     issue("Object lookup requires an object reference.", path);
                     return unknown;
                 }
+                if (!resolveLookupReference(ir, e.value.reference, options.inputs ?? document.inputs))
+                    issue(
+                        "Lookup requires an input/context object-reference path; use related for row relationships.",
+                        path
+                    );
                 const object = objectType(source.value.objectType);
                 if (!object) issue("Unknown lookup object type.", path);
                 return object ? objectValue(object) : unknown;
@@ -202,10 +221,9 @@ export function validateQueryDocument(
                 const source = resolve(child(e.value.source, "source"));
                 if (source.kind !== "list" && !(source.kind === "unknown" && options.untypedSources)) {
                     issue("Map source must be a list.", path);
-                    return unknown;
                 }
-                if (scope.has(e.value.binding))
-                    issue("Map binding shadows an existing lexical binding.", path);
+                if (!e.value.binding || scope.has(e.value.binding))
+                    issue("Map binding is empty or shadows an existing lexical binding.", path);
                 return o.list({
                     elementType: expression(
                         e.value.body,
@@ -219,9 +237,14 @@ export function validateQueryDocument(
             }
             case "uuid":
             case "now":
+                if (options.execution === "action") return e.kind === "uuid" ? o.string({}) : o.timestamp({});
                 issue("Clock and random expressions are not permitted in query plans.", path);
                 return unknown;
             case "exists":
+                if (options.execution === "action") {
+                    issue("EXISTS is not supported in action expressions yet.", path);
+                    return boolean;
+                }
                 query(e.value.query, scope, [...path, "value", "query"]);
                 return boolean;
             case "not":
@@ -256,7 +279,9 @@ export function validateQueryDocument(
                 if (e.kind === "concat") values.forEach((v) => expect(v, "string", path));
                 else if (values.some((v) => !same(values[0]!, v)))
                     issue("COALESCE operands have incompatible types.", path);
-                return e.kind === "concat" ? o.string({}) : (values[0] ?? unknown);
+                return e.kind === "concat"
+                    ? o.string({})
+                    : (values.find((t) => resolve(t).kind !== "unknown") ?? unknown);
             }
             default: {
                 const left = resolve(child(e.value.left, "left"));
@@ -275,7 +300,25 @@ export function validateQueryDocument(
                     if (!isNumeric(left) || !isNumeric(right))
                         issue("Arithmetic requires numeric operands.", path);
                     return o.double({});
-                } else if (!same(left, right)) issue("Comparison operands have incompatible types.", path);
+                } else {
+                    if (
+                        ["lt", "lte", "gt", "gte"].includes(e.kind) &&
+                        [left, right].some(
+                            (t) =>
+                                ![
+                                    "string",
+                                    "integer",
+                                    "float",
+                                    "double",
+                                    "date",
+                                    "timestamp",
+                                    "unknown",
+                                ].includes(identity(t).kind)
+                        )
+                    )
+                        issue("Ordered comparisons require compatible scalar operands.", path);
+                    if (!same(left, right)) issue("Comparison operands have incompatible types.", path);
+                }
                 return boolean;
             }
         }
@@ -380,5 +423,13 @@ export function validateQueryDocument(
     )
         issue("Duplicate query input name.", ["inputs"]);
     selections(document.select, new Map(), ["select"]);
-    return issues;
+    return { issues, expressionTypes };
+}
+
+export function validateQueryDocument(
+    ir: OntologyIR,
+    document: QueryDocument,
+    options: QueryValidationOptions = {}
+): ValidationIssue[] {
+    return analyzeQueryDocument(ir, document, options).issues;
 }

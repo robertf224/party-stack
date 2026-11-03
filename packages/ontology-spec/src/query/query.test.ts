@@ -223,7 +223,7 @@ describe("portable Query IR grammar", () => {
         ).toThrow(/select/);
     });
 
-    it("does not silently enable query expressions in existing action defaults", () => {
+    it("keeps query-bearing EXISTS explicit while scalar expressions are shared", () => {
         const definition = {
             types: [],
             objectTypes: [],
@@ -249,7 +249,7 @@ describe("portable Query IR grammar", () => {
             kind: "err",
             value: expect.arrayContaining([
                 expect.objectContaining({
-                    message: "Query expressions are not supported in action defaults yet.",
+                    message: "EXISTS is not supported in action expressions yet.",
                 }),
             ]),
         });

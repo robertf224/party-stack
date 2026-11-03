@@ -88,6 +88,92 @@ const ir: OntologyIR = {
 };
 
 describe("secured ontology projection", () => {
+    it("preserves a coalesced default when a declared optional context value is absent", () => {
+        const fallback = o.Expression.coalesce({
+            expressions: [
+                o.Expression.contextReference({ name: "label" }),
+                o.Expression.literal({ value: "Untitled" }),
+            ],
+        });
+        const optionalContextIR: OntologyIR = {
+            ...ir,
+            context: {
+                type: o.struct({
+                    fields: [
+                        { name: "label", displayName: "Label", type: o.optional({ type: o.string({}) }) },
+                    ],
+                }),
+            },
+            actionTypes: [
+                {
+                    name: "create",
+                    displayName: "Create",
+                    logic: [],
+                    parameters: [
+                        { name: "title", displayName: "Title", type: o.string({}), defaultValue: fallback },
+                    ],
+                },
+            ],
+        };
+        const projected = projectOntologyDefinition({
+            ir: optionalContextIR,
+            context: {},
+            allowedObjectTypeProperties: { Note: ["id", "title"] },
+        });
+        expect(projected.actionTypes[0]!.parameters[0]!.defaultValue).toEqual(fallback);
+    });
+    it("guards defaults loaded through typed context reference paths", () => {
+        const lookup = o.Expression.lookup({
+            reference: o.Expression.getAt({
+                source: o.Expression.contextReference({ name: "selection" }),
+                path: ["note"],
+            }),
+        });
+        const contextIR: OntologyIR = {
+            ...ir,
+            context: {
+                type: o.struct({
+                    fields: [
+                        {
+                            name: "selection",
+                            displayName: "Selection",
+                            type: o.struct({
+                                fields: [
+                                    {
+                                        name: "note",
+                                        displayName: "Note",
+                                        type: o.objectReference({ objectType: "Note" }),
+                                    },
+                                ],
+                            }),
+                        },
+                    ],
+                }),
+            },
+            actionTypes: [
+                {
+                    name: "inspect",
+                    displayName: "Inspect",
+                    logic: [],
+                    parameters: ["title", "secret"].map((name) => ({
+                        name,
+                        displayName: name,
+                        type: o.string({}),
+                        defaultValue: o.Expression.getAt({ source: lookup, path: [name] }),
+                    })),
+                },
+            ],
+        };
+        const projected = projectOntologyDefinition({
+            ir: contextIR,
+            context: { selection: { note: "n1" } },
+            allowedObjectTypeProperties: { Note: ["id", "title"] },
+        });
+        expect(projected.actionTypes[0]!.parameters[0]!.defaultValue).toEqual(
+            contextIR.actionTypes[0]!.parameters[0]!.defaultValue
+        );
+        expect(projected.actionTypes[0]!.parameters[1]!.defaultValue).toBeUndefined();
+    });
     it("hides fixed parameters and strips hidden context assignments", () => {
         const projected = projectOntologyDefinition({
             ir,

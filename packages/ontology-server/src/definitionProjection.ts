@@ -1,4 +1,8 @@
-import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/ontology-spec/utils";
+import {
+    isRelatedFromForeignKeySource,
+    resolveRelatedLink,
+    resolveLookupReference,
+} from "@party-stack/ontology-spec/utils";
 import type {
     ActionLogicStep,
     ActionTypeDef,
@@ -105,19 +109,11 @@ function getExpressionObjectType(
     expression: Expression
 ): string | undefined {
     if (expression.kind === "lookup") {
-        const reference = expression.value.reference;
-        if (reference.kind !== "inputReference") {
-            return undefined;
-        }
-        const parameter = getActionType(ir, actionName).parameters.find(
-            (candidate) => candidate.name === reference.value.name
-        );
-        if (!parameter) return undefined;
-        let type = resolveType(ir, parameter.type);
-        while (type.kind === "optional") {
-            type = resolveType(ir, type.value.type);
-        }
-        return type.kind === "objectReference" ? type.value.objectType : undefined;
+        return resolveLookupReference(
+            ir,
+            expression.value.reference,
+            getActionType(ir, actionName).parameters
+        )?.objectType;
     }
     if (expression.kind === "related") {
         const sourceObjectType = getExpressionObjectType(ir, actionName, expression.value.source);
@@ -150,8 +146,21 @@ function projectExpression(opts: {
     projectFixedParameterValues: boolean;
 }): Expression | undefined {
     switch (opts.expression.kind) {
-        case "contextReference":
-            return hasPath(opts.context, [opts.expression.value.name]) ? opts.expression : undefined;
+        case "contextReference": {
+            const { name } = opts.expression.value;
+            // Declared context is the public contract. An absent optional value
+            // is still available as undefined (e.g. COALESCE's fallback).
+            let type = opts.ir.context?.type;
+            while (type) {
+                type = resolveType(opts.ir, type);
+                if (type.kind !== "optional") break;
+                type = type.value.type;
+            }
+            const visible = type
+                ? type.kind === "struct" && type.value.fields.some((field) => field.name === name)
+                : hasPath(opts.context, [name]);
+            return visible ? opts.expression : undefined;
+        }
         case "literal":
         case "uuid":
         case "now":
