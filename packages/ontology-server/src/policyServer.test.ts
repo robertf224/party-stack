@@ -2,6 +2,7 @@ import { executeAction } from "@party-stack/ontology-backend/actions";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { CurrentExecutionContext } from "@party-stack/ontology-backend/policy";
 import { makeStorageBackend } from "@party-stack/ontology-backend/storage";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { makeReplica } from "@party-stack/ontology-replica";
 import { o } from "@party-stack/ontology-spec";
 import {
@@ -302,7 +303,7 @@ test("generated action updates preserve unread properties and untouched nested f
                 secret: "private",
                 profile: { visible: "New", hidden: "keep" },
             });
-            expect((yield* view.backend.loadSubset({ objectType: "Item" })).rows[0]?.value).toEqual({
+            expect((yield* view.backend.loadSubset(objectSubset("Item"))).rows[0]?.value).toEqual({
                 id: "a",
                 title: "New",
             });
@@ -471,7 +472,7 @@ test("an incomplete provider subset cannot establish an authorization grant or a
         projectOntologyBackend({ backend, ir: definition(), context: principal })
     );
     expect(
-        await Effect.runPromise(Effect.result(view.backend.loadSubset({ objectType: "Item" })))
+        await Effect.runPromise(Effect.result(view.backend.loadSubset(objectSubset("Item"))))
     ).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidResponse" } });
 });
 
@@ -529,7 +530,7 @@ test("HTTP cached-proxy views guard warm shared data independently for each prin
                         partitions.push(contextPartition(connection.ir!, connection.context!));
                         expect(connection.context?.user).toBe(user);
                         expect(connection.backend.changes).toBeUndefined();
-                        const rows = yield* connection.backend.loadSubset({ objectType: "Item" });
+                        const rows = yield* connection.backend.loadSubset(objectSubset("Item"));
                         expect(rows.rows.map((r) => r.value)).toEqual([
                             {
                                 id: user === "alice" ? "a" : "b",
@@ -728,22 +729,20 @@ test("a token gateway replaces upstream context and policy, strips bindings and 
                         expect(action.parameters[1]!.defaultValue).toBeUndefined();
                         expect(action.logic).toEqual([]);
                         expect(
-                            (yield* client.backend.loadSubset({ objectType: "PostApproval" })).rows.map(
+                            (yield* client.backend.loadSubset(objectSubset("PostApproval"))).rows.map(
                                 (row) => row.key
                             )
                         ).toEqual([approval]);
                         expect(
-                            (yield* client.backend.loadSubset({ objectType: "Person" })).rows.map(
+                            (yield* client.backend.loadSubset(objectSubset("Person"))).rows.map(
                                 (row) => row.value
                             )
                         ).toEqual([{ id: `person-${approval}`, name: `Person ${approval}` }]);
                         expect(
-                            (yield* client.backend.loadSubset({ objectType: "Bid" })).rows.map(
-                                (row) => row.key
-                            )
+                            (yield* client.backend.loadSubset(objectSubset("Bid"))).rows.map((row) => row.key)
                         ).toEqual([`bid-${approval}`]);
                         expect(
-                            (yield* client.backend.loadSubset({ objectType: "Post" })).rows.map(
+                            (yield* client.backend.loadSubset(objectSubset("Post"))).rows.map(
                                 (row) => row.key
                             )
                         ).toEqual(["anywhere"]);

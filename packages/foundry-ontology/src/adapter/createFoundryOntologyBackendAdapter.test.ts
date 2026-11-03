@@ -1,4 +1,5 @@
 import { o } from "@party-stack/ontology";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { Effect, Stream } from "effect";
 import { Temporal } from "temporal-polyfill";
@@ -328,7 +329,7 @@ describe("Foundry live behavior", () => {
             Effect.scoped(
                 Effect.gen(function* () {
                     const backend = yield* adapter.open!({});
-                    yield* Effect.forkScoped(Stream.runDrain(backend.watchSubset!({ objectType: "Task" })!), {
+                    yield* Effect.forkScoped(Stream.runDrain(backend.watchSubset!(objectSubset("Task"))!), {
                         startImmediately: true,
                     });
                     yield* Effect.promise(() =>

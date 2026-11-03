@@ -2,6 +2,7 @@ import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
 import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunner";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { makeReplica } from "@party-stack/ontology-replica";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
@@ -43,7 +44,7 @@ const increment = (tx: OwnedTransaction) =>
         yield* tx.put("Counter", { id: "one", count: Number(row?.count ?? 0) + 1 });
     });
 const openPort = Effect.fnUntraced(function* (
-    source: OntologySource,
+    source: OntologySource | undefined,
     backend?: import("@party-stack/ontology-backend").OntologyBackendService
 ) {
     const channel = new MessageChannel();
@@ -296,7 +297,7 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                     ["action"]
                 );
                 expect((yield* second!.get("Counter", "one"))?.count).toBe(2);
-                expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(1);
+                expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(1);
                 yield* owner.syncOnce;
                 for (const tab of tabs) {
                     yield* tab.syncOnce;
@@ -320,8 +321,15 @@ test("closing one port releases its demands without closing the shared source", 
                     mutators: { increment },
                 });
                 let leases = 0;
+                const parent = yield* makeReplica({
+                    namespace: "lease-parent",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend,
+                    mutators: { increment },
+                });
                 const source = {
-                    ...backend.protocol,
+                    ...replicaStateSource(parent),
                     demand: () =>
                         Effect.acquireRelease(
                             Effect.sync(() => {
@@ -342,13 +350,14 @@ test("closing one port releases its demands without closing the shared source", 
                 yield* Scope.close(firstScope, Exit.void);
                 yield* Effect.promise(() => vi.waitFor(() => expect(leases).toBe(1)));
                 const session = yield* speculativeSource(second).openClient();
-                const result = yield* speculativeSource(second).submit({
+                yield* speculativeSource(second).submit({
                     session,
                     sequence: 1,
                     invocation: { id: "survivor", name: "increment", parameters: {} },
                     optimistic: true,
                 });
-                expect(result.state.objects[0]?.base[0]?.value.count).toBe(1);
+                yield* parent.outbox.wait("survivor");
+                expect((yield* source.read(session)).state.objects[0]?.base[0]?.value.count).toBe(1);
             })
         )
     );
@@ -408,7 +417,8 @@ test("bootstrap failures reach the worker handshake as typed errors", async () =
                     })
                 );
                 yield* serveOntologyWorker({
-                    source: owned.protocol,
+                    backend: owned,
+                    ir,
                     authorize: () => Effect.void,
                     errors: "forward",
                     ready: Effect.fail(
@@ -472,7 +482,7 @@ test("streams attachment transfers over MessagePorts into a source-only backend"
                             }),
                     },
                 };
-                const connection = yield* openPort(owned.protocol, backend);
+                const connection = yield* openPort(undefined, backend);
                 const data = new Uint8Array(170_000).map((_, index) => index % 251);
                 const { attachment } = yield* connection.operations.attachments.create(
                     new Blob([data], { type: "image/png" }),

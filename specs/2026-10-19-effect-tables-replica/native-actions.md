@@ -34,8 +34,8 @@ are separate stages; their attempts are not interchangeable.
   determines whether that acceptance survives a crash. For an adapter-backed
   Replica without a protocol parent, acceptance means local queue admission.
 - **Confirmed** means upstream commitment has been observed and local receipt
-  read-back/journal settlement has completed. An accepted-only receipt cannot
-  satisfy this wait.
+  read-back/journal settlement has completed. Ordinary adapter receipts represent
+  commitment; internal parent acceptance alone cannot satisfy this wait.
 
 The collection-facing outbox exposes both observations:
 

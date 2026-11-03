@@ -1,4 +1,5 @@
 import { o, type Lens } from "@party-stack/ontology";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { eq, field } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -70,10 +71,9 @@ describe("createFoundryUsersIntegration", () => {
             Effect.scoped(
                 Effect.gen(function* () {
                     const backend = yield* adapter.open!({ user: "user-1" });
-                    return yield* backend.loadSubset({
-                        objectType: "User",
-                        query: { where: eq(field("id"), "user-1") },
-                    });
+                    return yield* backend.loadSubset(
+                        objectSubset("User", { where: eq(field("id"), "user-1") })
+                    );
                 })
             )
         );

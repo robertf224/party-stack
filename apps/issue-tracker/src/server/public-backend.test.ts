@@ -1,11 +1,12 @@
 import { makeBetterAuthStorage } from "@party-stack/better-auth/storage";
 import { o, type OntologyIR } from "@party-stack/ontology";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { makeOntologyServer } from "@party-stack/ontology-server";
 import { field, ilike } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { betterAuth } from "better-auth";
-import { Effect, Stream } from "effect";
+import { Effect, Stream, Fiber } from "effect";
 import { expect, it } from "vite-plus/test";
 import ontology from "../ontology/ontology";
 import { serverOntology, authModels } from "./ontology";
@@ -38,7 +39,7 @@ it("searches canonical profiles and projects snapshots and journal changes befor
                 mutators: {},
             });
             const backend = publicBackend(owned, visible);
-            const before = yield* backend.loadSubset({ objectType: "User" });
+            const before = yield* backend.loadSubset(objectSubset("User"));
             yield* owned.storage.transaction((tx) =>
                 Effect.gen(function* () {
                     yield* tx.put("User", { id: "ada", givenName: "Ada", privateField: "private metadata" });
@@ -50,25 +51,19 @@ it("searches canonical profiles and projects snapshots and journal changes befor
                     yield* tx.put("Session", { id: "session", token: "private token" });
                 })
             );
-            const search = yield* backend.loadSubset({
-                objectType: "User",
-                query: { where: ilike(field("givenName"), "%gr%") },
-            });
+            const search = yield* backend.loadSubset(
+                objectSubset("User", { where: ilike(field("givenName"), "%gr%") })
+            );
             expect(search.rows).toEqual([{ key: "grace", value: { id: "grace", givenName: "Grace" } }]);
             const page = yield* backend.changes!.pull({ cursor: before.cursor });
             expect(page.commits[0]?.changes).toEqual([
                 { kind: "put", objectType: "User", key: "ada", value: { id: "ada", givenName: "Ada" } },
                 { kind: "put", objectType: "User", key: "grace", value: { id: "grace", givenName: "Grace" } },
             ]);
-            expect((yield* Effect.result(backend.loadSubset({ objectType: "Session" })))._tag).toBe(
-                "Failure"
-            );
+            expect((yield* Effect.result(backend.loadSubset(objectSubset("Session"))))._tag).toBe("Failure");
             expect(
                 (yield* Effect.result(
-                    backend.loadSubset({
-                        objectType: "User",
-                        query: { where: ilike(field("privateField"), "%") },
-                    })
+                    backend.loadSubset(objectSubset("User", { where: ilike(field("privateField"), "%") }))
                 ))._tag
             ).toBe("Failure");
             yield* owned.storage.transaction((tx) => tx.delete("Session", "session"));
@@ -102,8 +97,10 @@ it("publishes real Better Auth sign-up as a public User change while hiding acco
                         },
                     },
                 });
-                const before = yield* backend.loadSubset({ objectType: "User" });
-                const notifications = yield* owned.protocol.subscribeChanges!;
+                const before = yield* backend.loadSubset(objectSubset("User"));
+                const notification = yield* Effect.forkScoped(Stream.runHead(owned.changes!.watch!), {
+                    startImmediately: true,
+                });
                 const signed = yield* Effect.promise(() =>
                     auth.api.signUpEmail({
                         body: {
@@ -115,7 +112,7 @@ it("publishes real Better Auth sign-up as a public User change while hiding acco
                         },
                     })
                 );
-                yield* Stream.runHead(notifications).pipe(Effect.timeout("1 second"));
+                yield* Fiber.join(notification).pipe(Effect.timeout("1 second"));
                 const page = yield* backend.changes!.pull({ cursor: before.cursor });
                 const changes = page.commits.flatMap((commit) => commit.changes);
                 expect(changes).toEqual([
@@ -131,10 +128,9 @@ it("publishes real Better Auth sign-up as a public User change while hiding acco
                         },
                     },
                 ]);
-                const profiles = yield* backend.loadSubset({
-                    objectType: "User",
-                    query: { where: ilike(field("givenName"), "%lin%") },
-                });
+                const profiles = yield* backend.loadSubset(
+                    objectSubset("User", { where: ilike(field("givenName"), "%lin%") })
+                );
                 expect(profiles.rows.map((row) => row.value)).toEqual([
                     changes[0]!.kind === "put" ? changes[0]!.value : undefined,
                 ]);

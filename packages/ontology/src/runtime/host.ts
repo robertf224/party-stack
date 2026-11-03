@@ -6,8 +6,9 @@ import { actionMutators } from "./transactions.js";
 import type { LiveOntology, LiveOntologyWrites } from "../live/LiveOntology.js";
 import type { OntologyBackendAdapter } from "../live/OntologyBackendAdapter.js";
 import type { ConnectionMonitor } from "@party-stack/connect";
-import type { BackendError, BackendSubset, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
+import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { ReplicaOptions, ReplicaService } from "@party-stack/ontology-replica";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { Row } from "@party-stack/ontology-storage";
@@ -43,7 +44,7 @@ export interface ReplicaHostService {
     readonly backend: OntologyBackendService;
     readonly attachments: LiveOntology["attachments"];
     readonly observe: (
-        subset: BackendSubset,
+        subset: CompiledSubset,
         options?: { readonly persistedOnly?: boolean }
     ) => Stream.Stream<readonly Row<Record<string, unknown>>[], BackendError>;
 }

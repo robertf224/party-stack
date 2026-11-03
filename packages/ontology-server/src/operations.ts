@@ -10,7 +10,7 @@ import {
 } from "@party-stack/ontology-backend";
 import {
     ActionRequestSchema,
-    BackendSubsetCodec,
+    ObjectSubsetCodec,
     protocolValueCodec,
 } from "@party-stack/ontology-backend/protocol";
 import { ReplicaStatusSchema, makeReplicaMonitor } from "@party-stack/ontology-replica";
@@ -36,6 +36,7 @@ import { projectValidationReport, type ErrorProjectionOptions } from "./errorPro
 import type { AttachmentTransferPolicy } from "./attachmentTransfers.js";
 import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { AttachmentCreateOptions } from "@party-stack/ontology-replica";
+import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { attachment } from "@party-stack/ontology-spec/values";
 import type { ByteInput, ReadableByteInput } from "@party-stack/ontology-storage/blobs";
 import type { TraceStore, TraceRecord } from "@party-stack/runtime/tracing";
@@ -85,13 +86,13 @@ const HelperRpcs = RpcGroup.make(
         error: BackendError,
     }),
     Rpc.make("LoadSubset", {
-        payload: BackendSubsetCodec,
+        payload: ObjectSubsetCodec,
         success: protocolValueCodec(BackendSnapshotSchema),
         error: BackendError,
     }),
     Rpc.make("WatchChanges", { success: Schema.Literal("invalidate"), error: BackendError, stream: true }),
     Rpc.make("WatchSubset", {
-        payload: BackendSubsetCodec,
+        payload: ObjectSubsetCodec,
         success: Schema.Literal("invalidate"),
         error: BackendError,
         stream: true,
@@ -174,7 +175,7 @@ export type OntologyOperationRequest =
     | { readonly operation: "PullChanges"; readonly cursor?: string; readonly limit?: number }
     | {
           readonly operation: "LoadSubset" | "WatchSubset";
-          readonly subset: import("@party-stack/ontology-backend").BackendSubset;
+          readonly subset: ObjectSubset;
       }
     | {
           readonly operation: "ApplyAction";
@@ -325,7 +326,9 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                 if (!options.backend) return yield* missing("LoadSubset");
                 const snapshot = yield* options.backend.loadSubset(subset);
                 const ir = options.ir ?? options.replica?.ir;
-                const objectType = ir?.objectTypes.find((type) => type.name === subset.objectType);
+                const objectType = ir?.objectTypes.find(
+                    (type) => type.name === subset.from.source.objectType
+                );
                 return !ir || !objectType
                     ? snapshot
                     : {

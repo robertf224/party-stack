@@ -1,4 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -8,7 +9,7 @@ import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { makeReplica, replicaStateSource } from "./testing.js";
 import type { ConnectionState } from "@party-stack/connect";
-import type { OntologyBackendService } from "@party-stack/ontology-backend";
+import type { OntologyBackendService, ActionReceipt } from "@party-stack/ontology-backend";
 import type { OwnedTransaction } from "@party-stack/ontology-backend/owned";
 
 const ir: OntologyIR = {
@@ -184,59 +185,72 @@ test("journal failure retries on its recovery deadline rather than the data poll
     );
 });
 
-test("accepted work waits for evidence instead of waking on query polling or an outbox heartbeat", async () => {
-    await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                let receiptApplications = 0,
-                    reads = 0,
-                    writes = 0;
-                const accepted = yield* Deferred.make<void>();
-                const replica = yield* makeReplica({
-                    namespace: "accepted-events",
-                    ir,
-                    connectivity,
-                    tables: yield* Memory.make(),
-                    pollIntervalMs: 100,
-                    objectCacheGc: false,
-                    execute: () => Effect.void,
-                    onReceipt: () =>
-                        Effect.gen(function* () {
-                            receiptApplications++;
-                            yield* Deferred.succeed(accepted, undefined);
-                        }),
-                    backend: {
-                        ...quiet,
-                        refresh: () => ({ pollIntervalMs: 100 }),
-                        loadSubset: () =>
-                            Effect.sync(() => {
-                                reads++;
-                                return { rows: [], complete: true };
+test.each(["accepted", "mismatched identity"] as const)(
+    "an invalid provider receipt (%s) blocks without polling-driven resubmission",
+    async (invalid) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    let receiptApplications = 0,
+                        reads = 0,
+                        writes = 0;
+                    const accepted = yield* Deferred.make<void>();
+                    const replica = yield* makeReplica({
+                        namespace: "accepted-events",
+                        ir,
+                        connectivity,
+                        tables: yield* Memory.make(),
+                        pollIntervalMs: 100,
+                        objectCacheGc: false,
+                        execute: () => Effect.void,
+                        onReceipt: () =>
+                            Effect.gen(function* () {
+                                receiptApplications++;
+                                yield* Deferred.succeed(accepted, undefined);
                             }),
-                        applyAction: (request) =>
-                            Effect.sync(() => {
-                                writes++;
-                                return { operationId: request.id, outcome: "accepted" as const };
-                            }),
-                    },
-                });
-                yield* replica.demand({ objectType: "Item" });
-                yield* replica.enqueue({ id: "one", name: "write", parameters: {} });
-                yield* Deferred.await(accepted);
-                yield* TestClock.adjust(10_000);
-                yield* replica.invalidate(["Item"]);
-                yield* replica.syncSubset({ objectType: "Item" });
-                expect(reads).toBeGreaterThan(1);
-                expect(receiptApplications).toBe(1);
-                expect(writes).toBe(1);
-                // Explicit verified commit evidence wakes confirmation without another submission.
-                yield* replica.reconcile("one", { operationId: "one", outcome: "committed", affected: [] });
-                expect((yield* replica.awaitAction("one"))?.outcome).toBe("committed");
-                expect(writes).toBe(1);
-            })
-        ).pipe(Effect.provide(TestClock.layer()))
-    );
-});
+                        backend: {
+                            ...quiet,
+                            refresh: () => ({ pollIntervalMs: 100 }),
+                            loadSubset: () =>
+                                Effect.sync(() => {
+                                    reads++;
+                                    return { rows: [], complete: true };
+                                }),
+                            applyAction: (request) =>
+                                Effect.sync(() => {
+                                    writes++;
+                                    Effect.runSync(Deferred.succeed(accepted, undefined));
+                                    return {
+                                        operationId: invalid === "accepted" ? request.id : "someone-else",
+                                        outcome: invalid === "accepted" ? "accepted" : "committed",
+                                    } as unknown as ActionReceipt;
+                                }),
+                        },
+                    });
+                    yield* replica.demand({ objectType: "Item" });
+                    yield* replica.enqueue({ id: "one", name: "write", parameters: {} });
+                    yield* Deferred.await(accepted);
+                    expect(yield* Effect.result(replica.awaitAction("one"))).toMatchObject({
+                        _tag: "Failure",
+                        failure: { kind: "InvalidResponse", actionOutcome: "unknown" },
+                    });
+                    yield* TestClock.adjust(10_000);
+                    yield* replica.invalidate(["Item"]);
+                    yield* replica.syncSubset({ objectType: "Item" });
+                    expect(reads).toBeGreaterThan(1);
+                    expect(receiptApplications).toBe(0);
+                    expect(writes).toBe(1);
+                    expect((yield* replica.pending)[0]).toMatchObject({
+                        state: "blocked",
+                        failure: "InvalidResponse",
+                        failureOutcome: "unknown",
+                    });
+                    expect(writes).toBe(1);
+                })
+            ).pipe(Effect.provide(TestClock.layer()))
+        );
+    }
+);
 
 test("queued retry wakes on its persisted deadline even when data polling is much slower", async () => {
     await Effect.runPromise(
@@ -305,17 +319,19 @@ test("row GC progresses during submission and retains that action's dependencies
                         }),
                     backend: {
                         ...quiet,
-                        loadSubset: (subset) =>
-                            Effect.succeed({
-                                complete: true,
-                                rows: evaluateQuery(
-                                    [
-                                        { key: "one", value: { id: "one", count } },
-                                        { key: "unused", value: { id: "unused", count: 0 } },
-                                    ],
-                                    subset.query
-                                ),
-                            }),
+                        loadSubset: (request) =>
+                            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                                Effect.succeed({
+                                    complete: true,
+                                    rows: evaluateQuery(
+                                        [
+                                            { key: "one", value: { id: "one", count } },
+                                            { key: "unused", value: { id: "unused", count: 0 } },
+                                        ],
+                                        subset.query
+                                    ),
+                                })
+                            ),
                         applyAction: (request) =>
                             Effect.gen(function* () {
                                 yield* Deferred.succeed(entered, undefined);

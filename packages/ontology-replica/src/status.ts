@@ -1,6 +1,6 @@
 import { ConnectionStateSchema } from "@party-stack/connect";
 import { SourceQueryPlanSchema, BackendErrorKindSchema } from "@party-stack/ontology-backend";
-import { BackendSubsetSchema } from "@party-stack/ontology-backend/protocol";
+import { CompiledSubsetSchema } from "@party-stack/ontology-backend/protocol";
 import { Cause, Clock, Effect, Exit, Fiber, Option, PubSub, Schema, Stream } from "effect";
 import type { BackendError } from "@party-stack/ontology-backend";
 import type { Scope } from "effect";
@@ -13,7 +13,7 @@ export const ReplicaLoadSchema = Schema.Struct({
     traceId: Schema.optional(Schema.String),
     operation: Schema.Literals(["loadSubset", "pullChanges"]),
     reason: Schema.Literals(["demand", "refresh", "receipt", "repair", "journal"]),
-    subset: Schema.optional(BackendSubsetSchema),
+    subset: Schema.optional(CompiledSubsetSchema),
     startedAt: Schema.Number,
     finishedAt: Schema.optional(Schema.Number),
     outcome: Schema.Literals(["running", ...Outcome.literals]),
@@ -95,7 +95,7 @@ export const ReplicaStatusSchema = Schema.Struct({
     ),
     demands: Schema.Array(
         Schema.Struct({
-            ...BackendSubsetSchema.fields,
+            ...CompiledSubsetSchema.fields,
             references: Schema.Number,
             idleUntil: Schema.optional(Schema.Number),
             watchers: Schema.Number,
@@ -104,7 +104,7 @@ export const ReplicaStatusSchema = Schema.Struct({
             revision: Schema.Number,
             installed: Schema.Number,
             /** Coverage reused by the last completed demand check; diagnostic only. */
-            coveredBy: Schema.optional(BackendSubsetSchema),
+            coveredBy: Schema.optional(CompiledSubsetSchema),
             coverageProof: Schema.optional(
                 Schema.Struct({
                     reason: Schema.Literals(["collection", "query", "primary-key"]),

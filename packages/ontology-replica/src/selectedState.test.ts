@@ -159,7 +159,7 @@ test("membership changes at the same source revision are fenced and old views ca
                     namespace: "views",
                     ir,
                     tables: yield* Memory.make(),
-                    source: f.owned.protocol,
+                    source: replicaStateSource(f.parent),
                     execute,
                     startSync: false,
                     outbox: { retryDelayMs: 0 },
@@ -183,7 +183,7 @@ test("membership changes at the same source revision are fenced and old views ca
     );
 });
 
-test("the owned source also transfers only selected rows", async () => {
+test("the committed owned backend transfers only selected rows", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -192,16 +192,16 @@ test("the owned source also transfers only selected rows", async () => {
                     namespace: "direct",
                     ir,
                     tables: yield* Memory.make(),
-                    source: f.owned.protocol,
+                    backend: f.owned,
                     execute,
-                    startSync: false,
+                    startSync: true,
                     outbox: { retryDelayMs: 0 },
                     objectCacheGc: false,
                 });
-                yield* child.retainLocal("Item", window);
+                yield* child.demand({ objectType: "Item", query: window });
                 yield* child.syncOnce;
                 expect(keys(yield* child.loadSubset("Item"))).toEqual(["a", "b"]);
-                expect((yield* child.parentState)?.objects[0]?.base).toHaveLength(2);
+                expect((yield* child.snapshotState).objects[0]?.base).toHaveLength(2);
                 expect(yield* child.get("Item", "z")).toBeUndefined();
             })
         )
@@ -398,11 +398,21 @@ test("protocol base preserves encrypted caches without mixing confirmed and inhe
                 yield* owned.storage.transaction((tx) =>
                     tx.put("Item", { id: "a", group: "first", rank: 1, secret: value })
                 );
+                const parent = yield* makeReplica({
+                    namespace: "secret-parent",
+                    ir: definition,
+                    tables: yield* Memory.make(),
+                    backend: owned,
+                    execute,
+                    startSync: false,
+                });
+                yield* parent.demand({ objectType: "Item" });
+                yield* parent.syncOnce;
                 const child = yield* makeReplica({
                     namespace: "secret-child",
                     ir: definition,
                     tables: yield* Memory.make(),
-                    source: owned.protocol,
+                    source: replicaStateSource(parent),
                     execute,
                     startSync: false,
                 });

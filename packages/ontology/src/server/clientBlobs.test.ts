@@ -4,6 +4,7 @@ import {
     type OntologyIR,
     type OntologyMutatorRegistry,
 } from "@party-stack/ontology";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { ontologyServerHandlers } from "@party-stack/ontology-server";
 import {
     makeOntologyProtocolClient,
@@ -90,9 +91,9 @@ test("an owned RPC parent accepts locally staged child attachments through its c
                     child.attachments.create(new Blob(["committed bytes"]))
                 );
                 yield* Effect.promise(() => child.actions.save!({ id: "one", file: attachment }));
-                expect((yield* backend.loadSubset({ objectType: "Item" })).rows[0]?.value.file).toMatchObject(
-                    { id: attachment.id }
-                );
+                expect((yield* backend.loadSubset(objectSubset("Item"))).rows[0]?.value.file).toMatchObject({
+                    id: attachment.id,
+                });
                 const content = yield* backend
                     .attachments!.read(attachment)
                     .pipe(Effect.flatMap(collectByteBlob));
@@ -228,7 +229,7 @@ test("a speculative client stages locally, transfers before acceptance, and stre
                 expect(childBytes.blobs.size).toBe(1);
                 expect(parentBytes.blobs.size).toBe(0);
                 yield* Effect.promise(() => child.actions.save!({ id: "one", file: created.attachment }));
-                expect((yield* owned.loadSubset({ objectType: "Item" })).rows[0]?.value.file).toMatchObject({
+                expect((yield* owned.loadSubset(objectSubset("Item"))).rows[0]?.value.file).toMatchObject({
                     id: created.attachment.id,
                 });
                 expect(parentBytes.blobs.size).toBe(1);

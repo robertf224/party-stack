@@ -1,8 +1,8 @@
 import { applyLensToObject, o } from "@party-stack/ontology";
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
-import { Effect, Schema } from "effect";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
+import { Effect } from "effect";
 import type { OntologyIR } from "@party-stack/ontology";
-import type { Predicate, Query } from "@party-stack/ontology-storage";
 
 /** The demo's public schema is a projection of its complete server schema.
  * Apply that projection to snapshots AND the journal before granting full-view replication.
@@ -22,29 +22,9 @@ export function publicBackend(backend: OntologyBackendService, ir: OntologyIR): 
     const rejected = () =>
         new BackendError({
             operation: "public-view",
-            kind: "ValidationFailed",
+            kind: "Forbidden",
             message: "Operation is outside the public ontology view.",
             retryable: false,
-        });
-    const check = (name: string, query?: Query) =>
-        Effect.try({
-            try: () => {
-                const object = ir.objectTypes.find((object) => object.name === name);
-                if (!object) throw rejected();
-                const allowed = new Set(object.properties.map((property) => property.name));
-                const field = (operand: unknown) => {
-                    if (isField(operand) && !allowed.has(operand.path[0]!)) throw rejected();
-                };
-                const predicate = (value: Predicate): void => {
-                    if (value.op === "and" || value.op === "or") return value.predicates.forEach(predicate);
-                    if (value.op === "not") return predicate(value.predicate);
-                    field(value.left);
-                    if ("right" in value) field(value.right);
-                };
-                if (query?.where) predicate(query.where);
-                query?.orderBy?.forEach((order) => field(order.field));
-            },
-            catch: () => rejected(),
         });
     const call = <A>(allowed: boolean, effect: Effect.Effect<A, BackendError>) =>
         allowed ? effect : Effect.fail(rejected());
@@ -52,10 +32,10 @@ export function publicBackend(backend: OntologyBackendService, ir: OntologyIR): 
         name: backend.name,
         sourceId: backend.sourceId,
         supportsIdempotency: backend.supportsIdempotency,
-        loadSubset: (subset) =>
+        loadSubset: (request) =>
             Effect.gen(function* () {
-                yield* check(subset.objectType, subset.query);
-                const snapshot = yield* backend.loadSubset(subset);
+                const subset = yield* compileObjectSubset(ir, request).pipe(Effect.mapError(rejected));
+                const snapshot = yield* backend.loadSubset(request);
                 return {
                     ...snapshot,
                     rows: snapshot.rows.map((row) => ({
@@ -95,6 +75,3 @@ export function publicBackend(backend: OntologyBackendService, ir: OntologyIR): 
         encrypted: backend.encrypted,
     };
 }
-const isField = Schema.is(
-    Schema.Struct({ _tag: Schema.Literal("Field"), path: Schema.Array(Schema.String) })
-);

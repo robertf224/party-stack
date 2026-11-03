@@ -1,3 +1,5 @@
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import {
     context,
@@ -49,29 +51,31 @@ test("attachment reads re-find the handle in an authorized source row and declar
         applyAction: () => Effect.die("Unexpected action"),
         queryFunction: () => Effect.void,
         attachments: { read, metadata, stage },
-        loadSubset: (subset) =>
-            Effect.succeed({
-                complete: true,
-                rows: evaluateQuery(
-                    [
-                        {
-                            key: "hidden",
-                            value: { id: "hidden", owner: "bob", files: [{ id: "hidden-file" }] },
-                        },
-                        {
-                            key: "visible",
-                            value: {
-                                id: "visible",
-                                owner: "alice",
-                                files,
-                                private: { id: "secret" },
-                                title: "visible-file",
+        loadSubset: (request) =>
+            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                Effect.succeed({
+                    complete: true,
+                    rows: evaluateQuery(
+                        [
+                            {
+                                key: "hidden",
+                                value: { id: "hidden", owner: "bob", files: [{ id: "hidden-file" }] },
                             },
-                        },
-                    ],
-                    subset.query ?? {}
-                ),
-            }),
+                            {
+                                key: "visible",
+                                value: {
+                                    id: "visible",
+                                    owner: "alice",
+                                    files,
+                                    private: { id: "secret" },
+                                    title: "visible-file",
+                                },
+                            },
+                        ],
+                        subset.query ?? {}
+                    ),
+                })
+            ),
     };
     ir.context = { type: o.struct({ fields: [{ name: "user", displayName: "User", type: o.string({}) }] }) };
     ir.policy = {
@@ -165,17 +169,19 @@ test("projection filters rows before limits, blocks hidden-field probes, and own
         name: "test",
         sourceId: "test",
         supportsIdempotency: false,
-        loadSubset: (subset) =>
-            Effect.succeed({
-                rows: evaluateQuery(
-                    [
-                        { key: "hidden", value: { id: "hidden", owner: "bob", private: "secret" } },
-                        { key: "visible", value: { id: "visible", owner: "alice", private: "secret" } },
-                    ],
-                    subset.query ?? {}
-                ),
-                complete: true,
-            }),
+        loadSubset: (request) =>
+            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                Effect.succeed({
+                    rows: evaluateQuery(
+                        [
+                            { key: "hidden", value: { id: "hidden", owner: "bob", private: "secret" } },
+                            { key: "visible", value: { id: "visible", owner: "alice", private: "secret" } },
+                        ],
+                        subset.query ?? {}
+                    ),
+                    complete: true,
+                })
+            ),
         applyAction: (invocation) =>
             Effect.sync(() => {
                 applied = invocation;
@@ -217,17 +223,15 @@ test("projection filters rows before limits, blocks hidden-field probes, and own
     expect(view.ir.actionTypes[0]?.parameters.map((parameter) => parameter.name)).toEqual(["id"]);
     await Effect.runPromise(
         Effect.gen(function* () {
-            expect(
-                (yield* view.backend.loadSubset({ objectType: "Item", query: { limit: 1 } })).rows
-            ).toEqual([{ key: "visible", value: { id: "visible", owner: "alice" } }]);
-            expect(
-                yield* Effect.result(
-                    view.backend.loadSubset({
-                        objectType: "Item",
-                        query: { where: eq(field("private"), "secret") },
-                    })
-                )
-            ).toMatchObject({ _tag: "Failure", failure: { kind: "NotFound" } });
+            expect((yield* view.backend.loadSubset(objectSubset("Item", { limit: 1 }))).rows).toEqual([
+                { key: "visible", value: { id: "visible", owner: "alice" } },
+            ]);
+            const hiddenProbe = yield* view.backend
+                .loadSubset(objectSubset("Item", { where: eq(field("private"), "secret") }))
+                .pipe(Effect.flip);
+            expect(hiddenProbe.kind).toBe("NotFound");
+            expect(hiddenProbe.issues).toBeUndefined();
+            expect(hiddenProbe.cause).toBeUndefined();
             const receipt = yield* view.backend.applyAction({
                 id: "one",
                 name: "save",
@@ -302,20 +306,25 @@ test("parameter resolution uses projected defaults and authorized row/property r
         name: "test",
         sourceId: "test",
         supportsIdempotency: false,
-        loadSubset: (subset) =>
-            Effect.succeed({
-                complete: true,
-                rows: evaluateQuery(
-                    [
-                        {
-                            key: "visible",
-                            value: { id: "visible", owner: "alice", private: "never-disclose" },
-                        },
-                        { key: "hidden", value: { id: "hidden", owner: "bob", private: "never-disclose" } },
-                    ],
-                    subset.query ?? {}
-                ),
-            }),
+        loadSubset: (request) =>
+            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                Effect.succeed({
+                    complete: true,
+                    rows: evaluateQuery(
+                        [
+                            {
+                                key: "visible",
+                                value: { id: "visible", owner: "alice", private: "never-disclose" },
+                            },
+                            {
+                                key: "hidden",
+                                value: { id: "hidden", owner: "bob", private: "never-disclose" },
+                            },
+                        ],
+                        subset.query ?? {}
+                    ),
+                })
+            ),
         applyAction: (invocation) =>
             Effect.sync(() => {
                 invoked = true;

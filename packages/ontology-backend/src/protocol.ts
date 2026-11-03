@@ -2,9 +2,11 @@ import { QuerySchema } from "@party-stack/ontology-storage";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema, SchemaGetter, SchemaIssue } from "effect";
 import { ClientLeaseSchema, ClientSessionSchema } from "./clients.js";
+import { ObjectSubsetSchema, ObjectSelectionSchema } from "./subset.js";
 import { ActionReceiptSchema, BackendErrorKindSchema, ValidationIssueSchema } from "./index.js";
 import type { ClientLease, ClientSession, ClientToken } from "./clients.js";
-import type { ActionRequest, ActionReceipt, BackendError, BackendSubset } from "./index.js";
+import type { ActionRequest, ActionReceipt, BackendError } from "./index.js";
+import type { CompiledSubset } from "./subset.js";
 import type { Row } from "@party-stack/ontology-storage";
 import type { Override } from "@party-stack/ontology-storage/overlay";
 import type { Scope, Stream } from "effect";
@@ -55,7 +57,7 @@ export interface ReplicaStateSnapshot {
  * inspection is privileged and must be authorized independently of row access.
  */
 export interface StateSelection {
-    readonly subsets: readonly BackendSubset[];
+    readonly subsets: readonly CompiledSubset[];
     readonly actionIds: readonly string[];
     readonly inspectActions?: boolean;
 }
@@ -65,7 +67,7 @@ export interface ClientView {
 }
 
 export interface ClientState {
-    readonly coverage?: readonly { readonly subset: BackendSubset; readonly complete: boolean }[];
+    readonly coverage?: readonly { readonly subset: CompiledSubset; readonly complete: boolean }[];
     readonly state: ReplicaStateSnapshot;
     readonly client: ClientLease;
 }
@@ -110,7 +112,7 @@ export interface OntologySource {
     ) => Effect.Effect<void, BackendError>;
     /** Acceptance only; selected delivery carries the resulting state. */
     readonly accept?: (request: ClientSubmission) => Effect.Effect<void, BackendError>;
-    readonly demand: (subset: BackendSubset) => Effect.Effect<void, BackendError, Scope.Scope>;
+    readonly demand: (subset: CompiledSubset) => Effect.Effect<void, BackendError, Scope.Scope>;
     readonly subscribeChanges: Effect.Effect<Stream.Stream<void, BackendError>, BackendError, Scope.Scope>;
     readonly submit: (request: ClientSubmission) => Effect.Effect<ClientState, BackendError>;
     readonly acknowledge: (
@@ -175,12 +177,12 @@ export const PendingActionSchema = Schema.Struct({
         Schema.Struct({ clientId: Schema.NonEmptyString, sequence: PositiveCounter })
     ),
 });
-export const BackendSubsetSchema = Schema.Struct({
+export const CompiledSubsetSchema = Schema.Struct({
     objectType: Schema.NonEmptyString,
     query: Schema.optional(QuerySchema),
 });
 export const StateSelectionSchema = Schema.Struct({
-    subsets: Schema.Array(BackendSubsetSchema),
+    subsets: Schema.Array(CompiledSubsetSchema),
     actionIds: Schema.Array(Schema.NonEmptyString),
     inspectActions: Schema.optional(Schema.Boolean),
 });
@@ -215,7 +217,7 @@ const ClientStateSchema = Schema.Struct({
     state: ReplicaStateSnapshotSchema,
     client: ClientLeaseSchema,
     coverage: Schema.optional(
-        Schema.Array(Schema.Struct({ subset: BackendSubsetSchema, complete: Schema.Boolean }))
+        Schema.Array(Schema.Struct({ subset: CompiledSubsetSchema, complete: Schema.Boolean }))
     ),
 });
 const ClientSubmissionSchema = Schema.Struct({
@@ -253,6 +255,9 @@ export const protocolValueCodec = <A>(schema: Schema.Codec<A>): Schema.Codec<A, 
 export const ClientStateCodec = protocolValueCodec(ClientStateSchema);
 export const ClientSubmissionCodec = protocolValueCodec(ClientSubmissionSchema);
 export const ClientViewCodec = protocolValueCodec(ClientViewSchema);
-export const BackendSubsetCodec = protocolValueCodec(BackendSubsetSchema);
+export const CompiledSubsetCodec = protocolValueCodec(CompiledSubsetSchema);
 
 export const StateSelectionCodec = protocolValueCodec(StateSelectionSchema);
+
+export const ObjectSubsetCodec = protocolValueCodec(ObjectSubsetSchema);
+export const ObjectSelectionCodec = protocolValueCodec(ObjectSelectionSchema);

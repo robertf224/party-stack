@@ -186,10 +186,11 @@ export function createSalesforceOntologyBackendAdapter(opts: {
 
     return {
         name: "salesforce",
-        open: () =>
+        open: (context) =>
             Effect.succeed(
                 makeSalesforceBackend({
                     client: opts.client,
+                    context,
                     ir: opts.ir,
                     decodeObject: (objectType, object) => codec.decodeObject(objectType, object),
                     submitAction,

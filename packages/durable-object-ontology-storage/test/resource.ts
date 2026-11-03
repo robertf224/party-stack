@@ -1,4 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { connectOntologyHttp } from "@party-stack/ontology-server/rpc/http";
 import { sqliteOntologyConformanceIR } from "@party-stack/ontology/testing/sqlite";
 import { Bucket } from "alchemy/Cloudflare/R2/Bucket";
@@ -229,7 +230,7 @@ export const runOntologyResource: (
             return reopenedFetch(request);
         })
     );
-    const snapshot = yield* restored.backend.loadSubset({ objectType: "Note" });
+    const snapshot = yield* restored.backend.loadSubset(objectSubset("Note"));
     return {
         encryptionConfigured: definition.encryptionConfigured(),
         name: definition.namespace.name,

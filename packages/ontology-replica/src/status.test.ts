@@ -1,4 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, field, ilike, evaluateQuery } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -391,11 +392,13 @@ test("watch-maintained whole-collection coverage explains search reuse without a
                         applyAction: () => Effect.die("Unexpected invocation"),
                         queryFunction: () => Effect.void,
                         watchSubset: () => Stream.never,
-                        loadSubset: (subset) =>
-                            Effect.sync(() => {
-                                requests++;
-                                return { rows: evaluateQuery(rows, subset.query ?? {}), complete: true };
-                            }),
+                        loadSubset: (request) =>
+                            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                                Effect.sync(() => {
+                                    requests++;
+                                    return { rows: evaluateQuery(rows, subset.query ?? {}), complete: true };
+                                })
+                            ),
                     },
                 });
                 const all = yield* Scope.make();
@@ -453,11 +456,13 @@ test.each([true, false])(
                             applyAction: () => Effect.die("Unexpected invocation"),
                             queryFunction: () => Effect.void,
                             watchSubset: () => Stream.never,
-                            loadSubset: (subset) =>
-                                Effect.sync(() => {
-                                    requests.push(subset.query?.where);
-                                    return { rows: evaluateQuery(rows, subset.query ?? {}), complete };
-                                }),
+                            loadSubset: (request) =>
+                                Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                                    Effect.sync(() => {
+                                        requests.push(subset.query?.where);
+                                        return { rows: evaluateQuery(rows, subset.query ?? {}), complete };
+                                    })
+                                ),
                         },
                     });
                     const broad = { objectType: "Item", query: { where: ilike(field("id"), "hi%") } };

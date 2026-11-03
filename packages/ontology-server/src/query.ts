@@ -1,4 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { Effect } from "effect";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { QueryReader } from "@party-stack/ontology-backend/query";
@@ -8,7 +9,7 @@ import type { OntologyIR } from "@party-stack/ontology-spec";
 export const backendQueryReader = (ir: OntologyIR, backend: OntologyBackendService): QueryReader => ({
     ir,
     loadSubset: (objectType, query) =>
-        backend.loadSubset({ objectType, query }).pipe(
+        backend.loadSubset(objectSubset(objectType, query)).pipe(
             Effect.flatMap((snapshot) =>
                 snapshot.complete
                     ? Effect.succeed(snapshot.rows)

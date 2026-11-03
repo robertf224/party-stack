@@ -1,13 +1,15 @@
 import { isUnknownActionOutcome } from "@party-stack/ontology-backend";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { tableUsage } from "@party-stack/ontology-storage/tables";
 import { alwaysOnlineConnectivity } from "@party-stack/runtime";
 import type { ConnectionMonitor } from "@party-stack/connect";
 import type { DeliveryPosition } from "@party-stack/ontology-backend/delivery";
+import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { NetworkConnectivity } from "@party-stack/runtime";
 import type { Scope } from "effect";
 export { makeCachedProxy } from "./proxy.js";
-import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure, ActionReceiptSchema } from "@party-stack/ontology-backend";
 import { clientRegistry } from "@party-stack/ontology-backend/clients";
 import {
     acknowledgeDelivery,
@@ -54,7 +56,19 @@ import {
     deleteVisible,
 } from "@party-stack/ontology-storage/overlay";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Clock, Deferred, Effect, Exit, PubSub, Queue, Schema, Semaphore, Stream, Tracer } from "effect";
+import {
+    Clock,
+    Deferred,
+    Effect,
+    Exit,
+    PubSub,
+    Queue,
+    Redacted,
+    Schema,
+    Semaphore,
+    Stream,
+    Tracer,
+} from "effect";
 import { hasWindow, isWholeCollection, primaryKeyLookup } from "./coverage.js";
 import { cachedCopy, withCachedCopy, encryptedCacheCodec, preserveCachedCopies } from "./encryptedCache.js";
 import { makeReplicaDiagnostics } from "./status.js";
@@ -70,12 +84,7 @@ import { superviseWatch } from "./watch.js";
 export type { DemandPolicy } from "./demandCache.js";
 import { affectsCoverage, markQuery, retentionQuery } from "./retention.js";
 import { trackVisible, observeRows, type VisibleCommit, type ReplicaRowsBatch } from "./visible.js";
-import type {
-    ActionRequest,
-    ActionReceipt,
-    BackendSubset,
-    OntologyBackendService,
-} from "@party-stack/ontology-backend";
+import type { ActionRequest, ActionReceipt, OntologyBackendService } from "@party-stack/ontology-backend";
 import type {
     ClientLease,
     ClientPolicy,
@@ -128,7 +137,7 @@ interface Position {
 }
 interface Coverage {
     complete?: boolean;
-    subset: BackendSubset;
+    subset: CompiledSubset;
     snapshotCursor?: string;
     barrierCursor?: string;
     rowKeys?: readonly Key[];
@@ -162,7 +171,7 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly visibleChanges: Effect.Effect<Stream.Stream<void>, BackendError, Scope.Scope>;
     readonly hasCoverage: (
         tx: ReadTransaction,
-        subset: BackendSubset
+        subset: CompiledSubset
     ) => Effect.Effect<boolean, OntologyStorageError>;
 
     readonly ir: OntologyIR;
@@ -177,7 +186,7 @@ export interface ReplicaService extends OwnedReadTransaction {
     /** Reads the confirmed baseline without optimistic overrides. Neither read path acquires remote demand. */
     readonly confirmed: OwnedReadTransaction;
     readonly snapshotSubset: (
-        subset: BackendSubset,
+        subset: CompiledSubset,
         confirmed?: boolean
     ) => Effect.Effect<import("@party-stack/ontology-backend").BackendSnapshot, BackendError>;
     /** Private device-encrypted copies, stored on existing base rows. Never creates or retains rows. */
@@ -297,7 +306,7 @@ export interface ReplicaService extends OwnedReadTransaction {
         id: string,
         options?: { allowUnknownOutcome?: boolean }
     ) => Effect.Effect<void, BackendError>;
-    readonly demand: (subset: BackendSubset) => Effect.Effect<void, BackendError, Scope.Scope>;
+    readonly demand: (subset: CompiledSubset) => Effect.Effect<void, BackendError, Scope.Scope>;
     readonly retainLocal: (
         objectType: string,
         query?: Query
@@ -308,7 +317,7 @@ export interface ReplicaService extends OwnedReadTransaction {
     /** Explicit full checkpoint: refresh state and process pending actions. Not a read-readiness API. */
     readonly syncOnce: Effect.Effect<void, BackendError>;
     /** Refresh state only, reporting this subset's load failure. Never submits actions. */
-    readonly syncSubset: (subset: BackendSubset) => Effect.Effect<void, BackendError>;
+    readonly syncSubset: (subset: CompiledSubset) => Effect.Effect<void, BackendError>;
     readonly invalidate: (objectTypes?: readonly string[]) => Effect.Effect<void, BackendError>;
     readonly ensureIndex: (objectType: string, index: Index) => Effect.Effect<void, BackendError>;
     readonly collectGarbage: (options?: ObjectCacheSweepOptions) => Effect.Effect<number, BackendError>;
@@ -357,7 +366,7 @@ const maintenanceIntervalMs = 60_000;
 const boundary = <A, E, R>(work: Effect.Effect<A, E, R>) =>
     work.pipe(Effect.mapError((cause) => classifyBackendFailure("replica.storage", cause)));
 const identity = (type: string, key: Key) => JSON.stringify([type, key]);
-const canonicalSubset = (subset: BackendSubset): BackendSubset => {
+const canonicalSubset = (subset: CompiledSubset): CompiledSubset => {
     // Optional query/order settings can be omitted by wire schemas. Undefined
     // predicate operands remain meaningful and must retain their identity.
     const defined = (value: object) =>
@@ -385,8 +394,8 @@ const canonicalSubset = (subset: BackendSubset): BackendSubset => {
         query,
     };
 };
-const subsetKey = (subset: BackendSubset) =>
-    Table.make<BackendSubset>({ name: "subset-identity" }).encode(canonicalSubset(subset));
+const subsetKey = (subset: CompiledSubset) =>
+    Table.make<CompiledSubset>({ name: "subset-identity" }).encode(canonicalSubset(subset));
 
 // Keep a bounded identity witness, not another retained copy of the parent's rows.
 const snapshotDigest = Effect.fnUntraced(function* (snapshot: ReplicaStateSnapshot) {
@@ -626,7 +635,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const actionRows = Table.make<{ action: string; objectType: string; key: Key; identity: string }>({
         name: name("action-rows"),
     });
-    const actionQueries = Table.make<{ action: string; subset: BackendSubset }>({
+    const actionQueries = Table.make<{ action: string; subset: CompiledSubset }>({
         name: name("action-queries"),
     });
     const sweep = Table.make<{ after?: Cursor; reclaiming?: boolean }>({ name: name("sweep") });
@@ -653,7 +662,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const demands = new Map<
         string,
         {
-            subset: BackendSubset;
+            subset: CompiledSubset;
             count: number;
             released: Deferred.Deferred<void>;
             revision: number;
@@ -662,7 +671,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             watched?: boolean;
             loadFailure?: { readonly revision: number; readonly error: BackendError };
             watchFailure?: BackendError;
-            coveredBy?: BackendSubset;
+            coveredBy?: CompiledSubset;
             pollIntervalMs?: number;
             pollDisabled?: boolean;
             coverageProof?: ReplicaStatus["demands"][number]["coverageProof"];
@@ -733,7 +742,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     );
     const wake = wakeState.pipe(Effect.andThen(wakeOutbox));
     const access = <A, E, R>(work: Effect.Effect<A, E, R>) => open.pipe(Effect.andThen(boundary(work)));
-    const retain = (objectType: string, kind: "remote" | "reader", key: string, subset?: BackendSubset) =>
+    const retain = (objectType: string, kind: "remote" | "reader", key: string, subset?: CompiledSubset) =>
         Effect.acquireRelease(
             rootGate.withPermits(1)(
                 boundary(
@@ -875,7 +884,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const replay = Effect.fn("Replica.replay")(function* (tx: Transaction, entry: PendingAction) {
         const staged = new Map<string, { type: string; key: Key; value?: ObjectValue }>();
         const keys = new Map<string, { objectType: string; key: Key }>();
-        const queries = new Map<string, BackendSubset>();
+        const queries = new Map<string, CompiledSubset>();
         const rememberKey = (objectType: string, key: Key) =>
             keys.set(identity(objectType, key), { objectType, key });
         let active = true;
@@ -1168,10 +1177,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 )
             ),
     });
-    const loadSubset = (subset: BackendSubset, reason: ReplicaLoad["reason"]) =>
+    const loadSubset = (subset: CompiledSubset, reason: ReplicaLoad["reason"]) =>
         diagnostics.load(
             { operation: "loadSubset", reason, subset },
-            adapter!.loadSubset(subset),
+            adapter!.loadSubset(objectSubset(subset.objectType, subset.query)),
             (snapshot) => ({
                 rows: snapshot.rows.length,
                 fetchedRows: snapshot.fetchedRows,
@@ -1180,7 +1189,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             })
         );
     const prepareSnapshot = Effect.fn("Replica.loadSnapshot")(function* (
-        subset: BackendSubset,
+        subset: CompiledSubset,
         keys?: readonly Key[],
         requireComplete = false,
         reason: ReplicaLoad["reason"] = "demand"
@@ -1284,7 +1293,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             });
     });
     const installSnapshot = Effect.fn("Replica.installSnapshot")(function* (
-        subset: BackendSubset,
+        subset: CompiledSubset,
         reason: ReplicaLoad["reason"]
     ) {
         const write = yield* prepareSnapshot(subset, undefined, false, reason);
@@ -1417,10 +1426,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         if (!first) return;
         // Establish the new starting cursor before loading selected snapshots. Their
         // existing per-subset barriers prevent catch-up from overwriting newer data.
-        const anchor = yield* backend.loadSubset({ objectType: first.name, query: { limit: 0 } });
+        const anchor = yield* backend.loadSubset(objectSubset(first.name, { limit: 0 }));
         if (!anchor.cursor)
             return yield* fault("NotImplemented", "History recovery requires coordinated snapshot cursors.");
-        const requests = new Map<string, BackendSubset>();
+        const requests = new Map<string, CompiledSubset>();
         for (const demand of demands.values()) requests.set(subsetKey(demand.subset), demand.subset);
         for (const [type, store] of views) {
             const keys = (yield* boundary(tables.query(store.base))).map((row) => row.key);
@@ -1731,7 +1740,38 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 head = claimed;
                 yield* notify;
                 const result = yield* Effect.result(
-                    backend.applyAction(head.invocation).pipe(Effect.withSpan("Replica.dispatch"))
+                    backend.applyAction(head.invocation).pipe(
+                        Effect.flatMap((receipt) =>
+                            Schema.decodeUnknownEffect(ActionReceiptSchema)(receipt).pipe(
+                                Effect.mapError(
+                                    (cause) =>
+                                        new BackendError({
+                                            operation: "applyAction",
+                                            kind: "InvalidResponse",
+                                            message: "The provider returned an invalid action receipt.",
+                                            retryable: false,
+                                            actionOutcome: "unknown",
+                                            cause: Redacted.make(cause),
+                                        })
+                                ),
+                                Effect.flatMap((receipt) =>
+                                    receipt.operationId === head.invocation.id
+                                        ? Effect.succeed(receipt)
+                                        : Effect.fail(
+                                              new BackendError({
+                                                  operation: "applyAction",
+                                                  kind: "InvalidResponse",
+                                                  message:
+                                                      "Backend returned a receipt for another operation.",
+                                                  retryable: false,
+                                                  actionOutcome: "unknown",
+                                              })
+                                          )
+                                )
+                            )
+                        ),
+                        Effect.withSpan("Replica.dispatch")
+                    )
                 );
                 if (result._tag === "Failure") {
                     const error = result.failure;
@@ -1751,11 +1791,6 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 }
                 receipt = result.success;
                 newlyReceived = true;
-                if (receipt.operationId !== head.invocation.id)
-                    return yield* fault(
-                        "InvalidResponse",
-                        "Backend returned a receipt for another invocation."
-                    );
                 // Normally mappings and acknowledgement share one commit. If a local mapping
                 // conflicts, preserve the remote evidence separately so recovery never re-invokes.
                 yield* boundary(
@@ -1795,9 +1830,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 );
                 if (remains) return { confirmationPending: true }; // Retry this receipt's catch-up, not submission.
                 yield* notify;
-            } else if (receipt.outcome === "committed") {
+            } else {
                 yield* confirmReceipt(head, receipt);
-            } else return; // Keep accepted operations durable until an authoritative acknowledgement arrives.
+            }
         }
     });
     const sync = Effect.fn("Replica.sync", { root: true })(function* (requested?: string) {
@@ -1822,7 +1857,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
 
         const covered = Effect.fnUntraced(function* (
             tx: ReadTransaction,
-            subset: BackendSubset,
+            subset: CompiledSubset,
             records: readonly Row<Coverage>[],
             cursor?: string
         ) {
@@ -1835,7 +1870,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 const live = demands.get(subsetKey(record.subset));
                 const maxAge =
                     options.demand?.refresh?.maxCoverageAgeMs ??
-                    backend.refresh?.(record.subset)?.maxCoverageAgeMs ??
+                    backend.refresh?.(objectSubset(record.subset.objectType, record.subset.query))
+                        ?.maxCoverageAgeMs ??
                     60_000;
                 const liveWatch =
                     live &&
@@ -2239,8 +2275,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         return yield* access(
             options.tables.transaction((tx) =>
                 Effect.gen(function* () {
-                    const subsets = new Map<string, BackendSubset>();
-                    const include = (subset: BackendSubset) =>
+                    const subsets = new Map<string, CompiledSubset>();
+                    const include = (subset: CompiledSubset) =>
                         subsets.set(subsetKey(subset), canonicalSubset(subset));
                     for (const row of yield* tx.query(roots, { where: eq(field("owner"), rootOwner) }))
                         if (options.source || row.value.kind === "remote")
@@ -2311,8 +2347,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         subsets: [...subsets.entries()]
                             .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
                             .map(([, subset]) => subset),
-                        actionIds: [...actionIds].sort(),
-                        ...(inspectActions ? { inspectActions: true } : {}),
+                        // Committed delivery contains rows only. Local action inspection must not
+                        // replace its generation or rewrite metadata on a retained frame.
+                        actionIds: options.source ? [...actionIds].sort() : [],
+                        ...(options.source && inspectActions ? { inspectActions: true } : {}),
                     };
                     const identity = Table.make({ name: "view-identity" }).encode(selection);
                     const current = yield* position(tx);
@@ -2764,7 +2802,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 })
             ),
     });
-    const acquireDemand = Effect.fnUntraced(function* (subset: BackendSubset) {
+    const acquireDemand = Effect.fnUntraced(function* (subset: CompiledSubset) {
         yield* view(subset.objectType);
         const prepared = yield* Effect.try({
             try: () => {
@@ -2772,7 +2810,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 const properties = new Set(
                     definitions.get(subset.objectType)!.properties.map((property) => property.name)
                 );
-                const codec = Table.make<BackendSubset>({ name: "subset-copy" });
+                const codec = Table.make<CompiledSubset>({ name: "subset-copy" });
                 return {
                     indexes: indexesForQuery(subset.query ?? {}, properties),
                     key: subsetKey(subset),
@@ -2797,9 +2835,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             return;
         }
         if (options.live === false) return;
-        const watched = adapter!.watchSubset?.(copy);
+        const watched = adapter!.watchSubset?.(objectSubset(copy.objectType, copy.query));
         const configuredInterval =
-            options.demand?.refresh?.pollIntervalMs ?? adapter!.refresh?.(copy)?.pollIntervalMs ?? false;
+            options.demand?.refresh?.pollIntervalMs ??
+            adapter!.refresh?.(objectSubset(copy.objectType, copy.query))?.pollIntervalMs ??
+            false;
         const demand = demands.get(key)!;
         demand.watched = Boolean(watched);
         demand.pollDisabled = !watched && configuredInterval === false;
@@ -2835,7 +2875,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 firstWatch = false;
                                 return hints;
                             }
-                            return adapter!.watchSubset?.(copy) ?? hints;
+                            return adapter!.watchSubset?.(objectSubset(copy.objectType, copy.query)) ?? hints;
                         })
                     ),
                 canRun: canSync,
@@ -2863,7 +2903,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             { startImmediately: true }
         );
     });
-    const demandCodec = Table.make<BackendSubset>({ name: "demand" });
+    const demandCodec = Table.make<CompiledSubset>({ name: "demand" });
     const demandCache = yield* makeDemandCache({
         policy: options.demand,
         acquire: (key) => acquireDemand(demandCodec.decode(key)),
@@ -2981,7 +3021,15 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 const session = source ? yield* sessionFor(source) : undefined;
                 const subscription = source?.subscribe
                     ? yield* source.subscribe(session!, selected, undefined, resume)
-                    : yield* adapter!.subscribeSelection!(selected.selection, undefined, resume);
+                    : yield* adapter!.subscribeSelection!(
+                          {
+                              subsets: selected.selection.subsets.map((s) =>
+                                  objectSubset(s.objectType, s.query)
+                              ),
+                          },
+                          undefined,
+                          resume
+                      );
                 return {
                     generation: selected.generation,
                     session,

@@ -1,12 +1,12 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend, type OwnedTransaction } from "@party-stack/ontology-backend/owned";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect } from "effect";
 import { expect, test } from "vitest";
 import { makeReplica } from "./testing.js";
 import type { ActionRequest } from "@party-stack/ontology-backend";
-import type { ClientSubmission, OntologySource } from "@party-stack/ontology-backend/protocol";
 
 const ir: OntologyIR = {
     types: [],
@@ -46,13 +46,14 @@ test("the ordinary memory Replica connects directly to owned storage and preserv
                     namespace: "child",
                     tables: yield* Memory.make(),
                     ir,
-                    source: owned.protocol,
+                    backend: owned,
                     execute,
                     startSync: false,
+                    outbox: { retryDelayMs: 0 },
                     objectCacheGc: false,
                 });
                 yield* child.retainLocal("Counter");
-                yield* child.refreshParent(owned.protocol);
+                yield* child.syncOnce;
                 for (let sequence = 1; sequence <= 10; sequence++) {
                     const id = `action-${sequence}`;
                     yield* child.enqueue(action(id));
@@ -62,10 +63,8 @@ test("the ordinary memory Replica connects directly to owned storage and preserv
                     expect(yield* child.pending).toEqual([]);
                     expect((yield* child.confirmed.get("Counter", "one"))?.count).toBe(sequence);
                     expect((yield* child.actionStatus(id)).receipt?.outcome).toBe("committed");
-                    expect((yield* child.parentState)?.pending).toEqual([]);
-                    expect((yield* child.parentState)?.completed).toEqual([]);
                 }
-                expect((yield* owned.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(10);
+                expect((yield* owned.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(10);
             })
         )
     );
@@ -82,11 +81,12 @@ test("lost owned-source replies recover from committed state without repeating t
                     mutators: { increment: execute },
                 });
                 let submissions = 0;
-                const source: OntologySource = {
-                    ...owned.protocol,
-                    submit: Effect.fnUntraced(function* (request: ClientSubmission) {
+                const backend = {
+                    ...owned,
+                    applyAction: Effect.fnUntraced(function* (request: ActionRequest) {
                         submissions++;
-                        yield* owned.protocol.submit(request);
+                        const receipt = yield* owned.applyAction(request);
+                        if (submissions > 1) return receipt;
                         return yield* new BackendError({
                             operation: "transport",
                             kind: "Unavailable",
@@ -99,18 +99,19 @@ test("lost owned-source replies recover from committed state without repeating t
                     namespace: "child",
                     tables: yield* Memory.make(),
                     ir,
-                    source,
+                    backend,
                     execute,
                     startSync: false,
+                    outbox: { retryDelayMs: 0 },
                     objectCacheGc: false,
                 });
                 yield* child.retainLocal("Counter");
-                yield* child.refreshParent(source);
+                yield* child.syncOnce;
                 yield* child.enqueue(action("one"));
                 expect((yield* Effect.result(child.syncOnce))._tag).toBe("Failure");
                 expect((yield* child.pending)[0]?.state).toBe("queued");
                 yield* child.syncOnce;
-                expect(submissions).toBe(1);
+                expect(submissions).toBe(2);
                 expect(yield* child.pending).toEqual([]);
                 expect((yield* child.get("Counter", "one"))?.count).toBe(1);
                 expect((yield* child.receipt("one"))?.outcome).toBe("committed");

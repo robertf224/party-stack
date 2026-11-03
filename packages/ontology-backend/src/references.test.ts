@@ -3,6 +3,7 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect } from "effect";
 import { expect, test } from "vitest";
 import { makeOwnedBackend } from "./owned.js";
+import { objectSubset } from "./subset.js";
 
 const ir: OntologyIR = {
     types: [],
@@ -51,7 +52,7 @@ test("reference validation is rechecked in the commit transaction and returns pa
                 certain: false,
             });
             yield* owned.storage.transaction((tx) => tx.delete("Project", "project"));
-            const before = yield* owned.loadSubset({ objectType: "Issue" });
+            const before = yield* owned.loadSubset(objectSubset("Issue"));
             const failure = yield* Effect.result(
                 owned.applyAction({ id: "same-action", name: "create", parameters: { project: "project" } })
             );

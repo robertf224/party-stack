@@ -1,5 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { makeReplica } from "@party-stack/ontology-replica";
 import { makeOntologyServer } from "@party-stack/ontology-server";
 import { connectOntologyHttp } from "@party-stack/ontology-server/rpc/http";
@@ -120,7 +121,7 @@ export const runProxyScenario = Effect.fnUntraced(function* (
             const { cache, connect } = yield* open();
             const denied = yield* Effect.result(connect("wrong"));
             const client = yield* connect("test");
-            const subset = { objectType: "Item" };
+            const subset = objectSubset("Item");
             yield* client.backend.loadSubset(subset);
             yield* client.backend.loadSubset(subset);
             const initialLoads = loads;
@@ -150,7 +151,7 @@ export const runProxyScenario = Effect.fnUntraced(function* (
                 ? yield* cache.collectGarbage({ minUnusedAgeMs: 0, maxCandidates: 10 })
                 : 0;
             const client = yield* connect("test");
-            const snapshot = yield* client.backend.loadSubset({ objectType: "Item" });
+            const snapshot = yield* client.backend.loadSubset(objectSubset("Item"));
             return {
                 count: snapshot.rows[0]?.value.count,
                 pending: cache ? (yield* cache.outbox.entries).length : 0,

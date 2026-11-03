@@ -1,7 +1,8 @@
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect, Stream } from "effect";
-import type { BackendSubset, BackendError } from "@party-stack/ontology-backend";
+import type { BackendError } from "@party-stack/ontology-backend";
+import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { Row } from "@party-stack/ontology-storage";
 
@@ -12,7 +13,7 @@ type QuerySource = Pick<ReplicaService, "observeSubset"> & {
 /** Each observer owns a demand/read lease and composes atomic local row batches. */
 export function observeReplicaRows(
     replica: QuerySource,
-    subset: BackendSubset,
+    subset: CompiledSubset,
     options?: { readonly persistedOnly?: boolean }
 ): Stream.Stream<readonly Row<Record<string, unknown>>[], BackendError> {
     return Stream.unwrap(

@@ -4,10 +4,29 @@ import { QuerySchema } from "@party-stack/ontology-storage";
 import { Effect, Predicate as EffectPredicate, Schema } from "effect";
 import { BackendError } from "./errors.js";
 import { queryExecutor } from "./query.js";
-import type { BackendSubset } from "./index.js";
 import type { OntologyIR, Expression } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { Operand, Predicate, Query, Field } from "@party-stack/ontology-storage";
+
+export interface CompiledSubset {
+    readonly objectType: string;
+    readonly query?: Query;
+}
+/** Portable provider input. Full selections are rejected instead of silently discarded. */
+export const ObjectSubsetSchema = Schema.declare<ObjectSubset>(
+    (input): input is ObjectSubset =>
+        EffectPredicate.isObject(input) &&
+        !Object.hasOwn(input, "select") &&
+        Schema.is(QueryDocumentSchema)({
+            select: [
+                {
+                    kind: "sub",
+                    value: { name: "objects", cardinality: "many", query: { ...input, select: [] } },
+                },
+            ],
+        })
+);
+export const ObjectSelectionSchema = Schema.Struct({ subsets: Schema.Array(ObjectSubsetSchema) });
 
 /** Infrastructure adapter for existing physical provider/transaction readers. */
 export const objectSubset = (objectType: string, scan: Query = {}, binding = "row"): ObjectSubset => {
@@ -49,10 +68,10 @@ export const compileObjectSubset = Effect.fnUntraced(function* (
     ir: OntologyIR,
     subset: ObjectSubset,
     context?: Record<string, unknown>
-): Effect.fn.Return<BackendSubset, BackendError> {
+): Effect.fn.Return<CompiledSubset, BackendError> {
     if (EffectPredicate.isObject(subset) && Object.hasOwn(subset, "select"))
         return yield* new BackendError({
-            operation: "demand.compile",
+            operation: "subset.compile",
             kind: "NotImplemented",
             retryable: false,
             message: "Query selections require query-result demand, which is not implemented yet.",
@@ -63,7 +82,7 @@ export const compileObjectSubset = Effect.fnUntraced(function* (
         Effect.mapError(
             (cause) =>
                 new BackendError({
-                    operation: "demand.compile",
+                    operation: "subset.compile",
                     kind: "InvalidRequest",
                     retryable: false,
                     message: "Invalid object subset.",
@@ -74,7 +93,7 @@ export const compileObjectSubset = Effect.fnUntraced(function* (
     const selection = document.select[0]!;
     if (selection.kind !== "sub")
         return yield* new BackendError({
-            operation: "demand.compile",
+            operation: "subset.compile",
             kind: "InvalidRequest",
             retryable: false,
             message: "Invalid object subset selection.",
@@ -82,7 +101,7 @@ export const compileObjectSubset = Effect.fnUntraced(function* (
     subset = selection.value.query;
     const unsupported = () =>
         new BackendError({
-            operation: "demand.compile",
+            operation: "subset.compile",
             kind: "NotImplemented",
             retryable: false,
             message:
@@ -92,7 +111,7 @@ export const compileObjectSubset = Effect.fnUntraced(function* (
         try: () => q.validateQueryDocument(ir, document),
         catch: (cause) =>
             new BackendError({
-                operation: "demand.compile",
+                operation: "subset.compile",
                 kind: "InvalidConfiguration",
                 retryable: false,
                 message: "Invalid ontology query environment.",
@@ -101,7 +120,7 @@ export const compileObjectSubset = Effect.fnUntraced(function* (
     });
     if (issues.length || subset.from.source.ontology)
         return yield* new BackendError({
-            operation: "demand.compile",
+            operation: "subset.compile",
             kind: "InvalidRequest",
             retryable: false,
             message: "Invalid object subset.",
@@ -138,7 +157,7 @@ export const compileObjectSubset = Effect.fnUntraced(function* (
         Effect.mapError(
             (cause) =>
                 new BackendError({
-                    operation: "demand.compile",
+                    operation: "subset.compile",
                     kind: "InvalidRequest",
                     retryable: false,
                     message: "Invalid subset window or operands.",
@@ -146,5 +165,8 @@ export const compileObjectSubset = Effect.fnUntraced(function* (
                 })
         )
     );
-    return { objectType: subset.from.source.objectType, query };
+    return {
+        objectType: subset.from.source.objectType,
+        ...(Object.values(query).some((value) => value !== undefined) ? { query } : {}),
+    };
 });

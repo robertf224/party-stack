@@ -1,5 +1,7 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, field } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -116,7 +118,7 @@ test("offline enqueue, restart, ordered rebase and reconnect never require netwo
                 yield* reopened.syncOnce;
                 expect(yield* reopened.pending).toEqual([]);
                 expect((yield* reopened.confirmed.get("Counter", "shared"))?.count).toBe(4);
-                expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(4);
+                expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(4);
             })
         )
     );
@@ -350,7 +352,7 @@ test("a deduplicated receipt already behind the local journal head settles witho
                 expect(yield* replica.pending).toEqual([]);
                 expect((yield* replica.receipt(invocation.id))?.outcome).toBe("committed");
                 expect((yield* replica.get("Counter", "shared"))?.count).toBe(2);
-                expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(2);
+                expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(2);
             })
         )
     );
@@ -510,7 +512,7 @@ test("another principal's colliding journal invocation ID cannot acknowledge our
                 expect(dispatches).toBe(1);
                 expect(yield* replica.pending).toEqual([]);
                 expect((yield* replica.get("Counter", "shared"))?.count).toBe(2);
-                expect((yield* bob.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(2);
+                expect((yield* bob.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(2);
             })
         )
     );
@@ -597,7 +599,7 @@ test("watch-only filtered snapshots repair rows that leave a filter without trea
                     },
                 });
                 const hints = yield* PubSub.unbounded<void>();
-                const requests: import("@party-stack/ontology-backend").BackendSubset[] = [];
+                const requests: import("@party-stack/ontology-backend/subset").CompiledSubset[] = [];
                 const replica = yield* makeReplica({
                     namespace: "filtered-watcher-local",
                     ir,
@@ -608,11 +610,13 @@ test("watch-only filtered snapshots repair rows that leave a filter without trea
                         ...server,
                         changes: undefined,
                         watchSubset: () => Stream.fromPubSub(hints),
-                        loadSubset: (subset) =>
-                            Effect.suspend(() => {
-                                requests.push(subset);
-                                return server.loadSubset(subset);
-                            }),
+                        loadSubset: (request) =>
+                            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                                Effect.suspend(() => {
+                                    requests.push(subset);
+                                    return server.loadSubset(request);
+                                })
+                            ),
                     },
                 });
                 yield* server.applyAction({
@@ -848,7 +852,7 @@ test("expired journal history rebuilds selected base while preserving and execut
                 expect(submissions).toBe(1);
                 expect(yield* replica.pending).toEqual([]);
                 expect((yield* replica.get("Counter", "shared"))?.count).toBe(4);
-                expect((yield* owned.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(4);
+                expect((yield* owned.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(4);
             })
         )
     );
@@ -928,27 +932,31 @@ test("one nonretryable subset cannot starve another subset or the outbox", async
                         sourceId: "fixture",
                         supportsIdempotency: true,
                         refresh: () => ({ pollIntervalMs: false }),
-                        loadSubset: (subset) =>
-                            Effect.suspend(() => {
-                                const key = JSON.stringify(subset.query).includes('"bad"') ? "bad" : "good";
-                                requests.push(key);
-                                if (key === "bad" && forbidden)
-                                    return Effect.fail(
-                                        new BackendError({
-                                            operation: "loadSubset",
-                                            kind: "Forbidden",
-                                            message: "Denied",
-                                            retryable: false,
-                                        })
-                                    );
-                                return Effect.succeed({
-                                    rows: evaluateQuery(
-                                        [{ key, value: { id: key, count: 1 } }],
-                                        subset.query
-                                    ),
-                                    complete: true,
-                                });
-                            }),
+                        loadSubset: (request) =>
+                            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                                Effect.suspend(() => {
+                                    const key = JSON.stringify(subset.query).includes('"bad"')
+                                        ? "bad"
+                                        : "good";
+                                    requests.push(key);
+                                    if (key === "bad" && forbidden)
+                                        return Effect.fail(
+                                            new BackendError({
+                                                operation: "loadSubset",
+                                                kind: "Forbidden",
+                                                message: "Denied",
+                                                retryable: false,
+                                            })
+                                        );
+                                    return Effect.succeed({
+                                        rows: evaluateQuery(
+                                            [{ key, value: { id: key, count: 1 } }],
+                                            subset.query
+                                        ),
+                                        complete: true,
+                                    });
+                                })
+                            ),
                         applyAction: (request) =>
                             Effect.succeed({ operationId: request.id, outcome: "committed", affected: [] }),
                         queryFunction: () => Effect.void,

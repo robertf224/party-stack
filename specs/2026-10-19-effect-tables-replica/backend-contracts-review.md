@@ -9,7 +9,7 @@ and removed the server dependency on the application SDK.
 
 - [x] Inventory the common backend contract, optional capabilities and actual callers
 - [x] Inventory owned, Foundry, Salesforce and metadata implementations
-- [ ] Resolve public contract feedback before changing signatures
+- [x] Resolve public contract feedback before changing signatures
 - [ ] Complete action/default/validation/receipt and error-channel audit
 - [ ] Complete owned transaction, journal, idempotency and retention audit
 - [ ] Complete provider pushdown, snapshot completeness and cancellation audit
@@ -23,7 +23,7 @@ reading their implementations. Earlier subsystem tests remain useful evidence.
 ## Contract inventory
 
 The current source of truth is packages/ontology-backend/src/index.ts:
-OntologyBackendService, BackendSubset, BackendSnapshot, ActionRequest,
+OntologyBackendService, ObjectSelection, BackendSnapshot, ActionRequest,
 ActionReceipt, BackendChangePage, BackendAttachments and BackendEncryptedValues.
 The common service is already Effect-native. Closing an acquisition Scope owns
 backend resources; returned watchers are Effect Streams.
@@ -31,7 +31,7 @@ backend resources; returned watchers are Effect Streams.
 | Area                     | Current contract                                     | Meaning                                                                                                                                                    |
 | ------------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Identity                 | name, sourceId, supportsIdempotency                  | Stable source identity and durable keyed retry guarantee; not authentication or a live connection ID.                                                      |
-| Reads                    | loadSubset(BackendSubset)                            | Return rows exactly matching the requested filter/order/window. Complete means the requested window is complete, not the entire type.                      |
+| Reads                    | loadSubset(ObjectSubset)                             | Return rows exactly matching the requested filter/order/window. Complete means the requested window is complete, not the entire type.                      |
 | Demand notifications     | watchSubset(subset)                                  | Optional per-subset invalidation hints. The function itself can return undefined for unsupported types.                                                    |
 | Durable changes          | changes.pull, changes.watch                          | Pull committed change pages using opaque cursors; watch only wakes pull.                                                                                   |
 | Selected delivery        | subscribeSelection, acknowledgeDelivery              | Optional retained snapshot/patch delivery with explicit ACKs and resume positions.                                                                         |
@@ -42,12 +42,14 @@ backend resources; returned watchers are Effect Streams.
 | Encrypted properties     | encrypted.decrypt                                    | Explicit portable plaintext response and optional ciphertext identity evidence; local caching belongs to Replica.                                          |
 | Maintenance              | maintenance                                          | Optional bounded storage cleanup; its enclosing host schedules execution.                                                                                  |
 
-BackendSubset currently contains objectType plus ontology-storage's compact Query.
-It is not the spec ObjectSubset accepted by public replica demand. The backend
-subset helpers lower supported logical expressions and windows to this execution
-form. There is no optional native full-QueryDocument backend hook today. Server
-finite queries use the shared executor over subset readers; owned transactions can
-add exact grouped-window reads.
+Provider inputs now use spec `ObjectSubset`, including notifications, refresh
+recommendations and ordinary committed selected delivery. `ObjectSelection` contains
+only these subsets, without speculative action inspection fields. The internal
+`CompiledSubset` execution form lives in the subset lowerer, alongside the adapter
+from compact storage predicates. Native providers lower supported expressions and
+windows once at their boundary. There is no native full-QueryDocument backend hook
+today. Server finite queries use the shared executor over subset readers; owned
+transactions can add exact grouped-window reads.
 
 ## Implementation inventory
 
@@ -76,27 +78,39 @@ Foundry's synthetic admin-user branch is covered too.
 
 Targeted package builds/checks/tests passed: Foundry 178 tests and Salesforce 50.
 
-## Open contract feedback
+## Approved contract changes
 
-1. **Subset representation.** Keep the compact execution request at the adapter
-   boundary, or move public adapter inputs to spec ObjectSubset and lower supported
-   forms in native provider implementations? This is independent of adding full
-   query-result watching or provider QueryDocument execution. Unsupported plans
-   must remain explicit rather than silently widening the requested result.
-2. **Accepted provider receipts.** ActionReceipt.outcome currently permits both
-   committed and accepted. Repository providers only emit committed. An accepted
-   receipt with a matching future journal cursor can settle, but there is no
-   general asynchronous-provider completion/status hook; an accepted receipt with
-   no confirmation path stays pending. Parent acceptance already has its own
-   speculative protocol. Decide whether to narrow ordinary receipts for v0 or
-   explicitly model asynchronous provider operations.
-3. **Owned speculative facade.** OwnedBackendService.protocol and
-   collectClientGarbage expose ordered client-submission bookkeeping in addition
-   to the ordinary committed backend/delivery path. No non-test repository caller
-   uses .protocol. Removing this public facade and porting authority fixtures to
-   ordinary committed delivery would simplify the distinction between authority
-   and intermediate Replica servers. Independent snapshot/reference oracles
-   should remain tests rather than production compatibility paths.
+- Provider reads, watches, refresh recommendations and committed selected-delivery
+  requests use spec `ObjectSubset`. Physical storage queries remain an internal
+  lowering detail; unsupported expressions fail explicitly. Full query-result
+  watching is separate future work.
+- Ordinary `ActionReceipt` means committed. Intermediate parent acceptance remains
+  in the speculative protocol. Async provider jobs need the capability described
+  below before they can be introduced. Malformed receipts and mismatched operation
+  identities follow normal failed-dispatch bookkeeping with an unknown outcome;
+  they cannot strand an entry in `sending` or trigger blind resubmission.
+- Removed the unused `OwnedBackendService.protocol` facade, its extra ordered
+  submission/result tables and `collectClientGarbage`. Owned authorities retain
+  their transactional receipts/journal and committed delivery. Intermediate
+  fixtures use an actual Replica; ordinary authority fixtures use the committed
+  backend contract. Delivery retention is configured with `delivery`, without an
+  unrelated speculative-client policy on owned backend construction.
+
+## Delivery regression and test ownership
+
+Removing action-inspection fields from committed provider selections exposed a
+local generation bug. Outbox inspection/admission changed the child's view generation
+even when its requested rows stayed the same. The parent correctly replayed its
+unacknowledged batch, but the child stamped it with the new local generation and
+rejected its changed frame hash. Committed selections now derive their generation
+from row demand only; speculative parents still include action interests. Actual
+pending-action row dependencies still contribute demanded subsets in both modes.
+
+A regression in ontology-replica replays the same unacknowledged batch after local
+outbox admission and inspection, without depending on SQLite or the SDK. Existing
+SDK integration checks still cover Promise actions, TanStack wiring, authoring
+wrappers and value hydration. Detailed replication/storage behavior belongs in the
+owning lower package rather than being tested only through LiveOntology.
 
 ## Implementation cleanup candidates
 
@@ -108,9 +122,6 @@ Targeted package builds/checks/tests passed: Foundry 178 tests and Salesforce 50
 - Hook-specific ApplyActionError/ValidateActionError/LoadSubsetError aliases exist,
   but OntologyBackendService still declares broad BackendError everywhere. Decide
   the intended allowable failures, then wire the narrower types to actual hooks.
-- The committed selected-delivery hook currently takes StateSelection, including
-  action-inspection fields that belong to speculative state. Audit and narrow the
-  ordinary row-selection contract while reviewing the owned speculative facade.
 - Unknown action names, missing provider metadata, provider validation failures,
   malformed provider responses and unsupported operations need distinct errors;
   NonRetryableError currently collapses some of these cases into ValidationFailed.
@@ -118,3 +129,14 @@ Targeted package builds/checks/tests passed: Foundry 178 tests and Salesforce 50
   a CDC watch nor a recommended polling interval. Do not describe it as automatic.
 - Finish source-identity, malformed-row and exact completeness checks across data
   and metadata bindings before claiming this subsystem review complete.
+
+## Asynchronous provider operations — future work
+
+Ordinary provider receipts represent committed operations in v0. Intermediate-parent
+acceptance remains in the speculative replication protocol and its native wait API.
+A future asynchronous-provider capability should return a durable operation handle
+and expose status polling, optionally a completion stream. Replica must persist the
+handle before polling/watching, retain attachment dependencies, and reconcile a final
+receipt or surface a terminal failure without resubmitting the initial request.
+Provider operation IDs and caller idempotency IDs remain distinct. Define recovery,
+status retention and refresh deadlines before reintroducing an accepted provider result.

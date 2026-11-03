@@ -82,6 +82,44 @@ test("reordered IN values share demand and do not replace the delivery selection
     );
 });
 
+test("local action interests preserve committed delivery generation and replay an unacknowledged batch", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* setup();
+                const replica = yield* makeReplica({
+                    namespace: "committed-action-interest",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend: owned,
+                    execute: () => Effect.void,
+                    startSync: false,
+                });
+                yield* replica.demand({ objectType: "Counter" });
+                const firstScope = yield* Scope.make();
+                const first = yield* Scope.provide(replica.openParentDelivery(), firstScope);
+                const pull = yield* Scope.provide(Stream.toPull(first.subscription.frames), firstScope);
+                const frames = yield* pull;
+                expect(frames).toHaveLength(1);
+                const installed = yield* replica.receiveDelivery(frames[0]!);
+                expect(installed?.duplicate).toBe(false);
+                yield* Scope.close(firstScope, Exit.void);
+                yield* replica.retainActions();
+                yield* replica.enqueue(action("local"));
+                expect(yield* replica.parentDeliveryGeneration).toBe(first.generation);
+                const reopened = yield* replica.openParentDelivery();
+                const resumePull = yield* Stream.toPull(reopened.subscription.frames);
+                const replay = yield* resumePull;
+                expect(replay).toEqual(frames);
+                const repeated = yield* replica.receiveDelivery(replay[0]!);
+                expect(repeated?.duplicate).toBe(true);
+                yield* reopened.subscription.acknowledge(repeated!.position);
+                expect((yield* replica.pending).map((entry) => entry.invocation.id)).toEqual(["local"]);
+            })
+        )
+    );
+});
+
 test("multipart delivery settles a rejection after cross-client writes", async () => {
     await Effect.runPromise(
         Effect.scoped(

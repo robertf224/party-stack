@@ -1,11 +1,13 @@
 import { ActionReceiptSchema, BackendError } from "@party-stack/ontology-backend";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
 import { evaluateQuery, field, inArray } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Effect, Exit, Fiber, Schema, Scope } from "effect";
 import { expect, test } from "vitest";
 import { makeReplica } from "./testing.js";
-import type { ActionReceipt, BackendSubset, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { ActionReceipt, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
@@ -32,7 +34,7 @@ test("partial synthetic receipt identities survive restart and do not hide autom
         Effect.scoped(
             Effect.gen(function* () {
                 const tables = yield* Memory.make();
-                const requests: BackendSubset[] = [];
+                const requests: CompiledSubset[] = [];
                 let invocations = 0;
                 let available = false;
                 const definition: OntologyIR = {
@@ -54,29 +56,31 @@ test("partial synthetic receipt identities survive restart and do not hide autom
                             invocations++;
                             return receipt;
                         }),
-                    loadSubset: (subset) =>
-                        Effect.suspend(() => {
-                            requests.push(subset);
-                            if (!available)
-                                return Effect.fail(
-                                    new BackendError({
-                                        operation: "read",
-                                        kind: "Unavailable",
-                                        retryable: true,
-                                        message: "Offline",
-                                    })
-                                );
-                            return Effect.succeed({
-                                complete: true,
-                                rows:
-                                    subset.objectType === "Counter"
-                                        ? [
-                                              { key: "one", value: { id: "one", count: 2 } },
-                                              { key: "trigger", value: { id: "trigger", count: 7 } },
-                                          ]
-                                        : [{ key: "mirror", value: { id: "mirror", count: 99 } }],
-                            });
-                        }),
+                    loadSubset: (request) =>
+                        Effect.flatMap(compileObjectSubset(definition, request), (subset) =>
+                            Effect.suspend(() => {
+                                requests.push(subset);
+                                if (!available)
+                                    return Effect.fail(
+                                        new BackendError({
+                                            operation: "read",
+                                            kind: "Unavailable",
+                                            retryable: true,
+                                            message: "Offline",
+                                        })
+                                    );
+                                return Effect.succeed({
+                                    complete: true,
+                                    rows:
+                                        subset.objectType === "Counter"
+                                            ? [
+                                                  { key: "one", value: { id: "one", count: 2 } },
+                                                  { key: "trigger", value: { id: "trigger", count: 7 } },
+                                              ]
+                                            : [{ key: "mirror", value: { id: "mirror", count: 99 } }],
+                                });
+                            })
+                        ),
                     queryFunction: () => Effect.void,
                 };
                 const options = {
@@ -117,18 +121,20 @@ test("receipt targets read only changed identities and publish read-back with ov
                     { key: "one", value: { id: "one", count: 1 } },
                     { key: "unrelated", value: { id: "unrelated", count: 5 } },
                 ];
-                const requests: BackendSubset[] = [];
+                const requests: CompiledSubset[] = [];
                 const observed: (number | undefined)[] = [];
                 let replica: Effect.Success<ReturnType<typeof makeReplica>> | undefined;
                 const backend: OntologyBackendService = {
                     name: "test",
                     sourceId: "test",
                     supportsIdempotency: false,
-                    loadSubset: (subset) =>
-                        Effect.sync(() => {
-                            requests.push(subset);
-                            return { rows: evaluateQuery(rows, subset.query), complete: true };
-                        }),
+                    loadSubset: (request) =>
+                        Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                            Effect.sync(() => {
+                                requests.push(subset);
+                                return { rows: evaluateQuery(rows, subset.query), complete: true };
+                            })
+                        ),
                     applyAction: (invocation) =>
                         Effect.sync(() => {
                             rows = [{ key: "one", value: { id: "one", count: 2 } }, rows[1]!];
@@ -262,11 +268,13 @@ test("a complete identity read-back can remove a deleted object without evicting
                     name: "test",
                     sourceId: "test",
                     supportsIdempotency: false,
-                    loadSubset: (subset) =>
-                        Effect.succeed({
-                            rows: evaluateQuery(deleted ? [rows[1]!] : rows, subset.query),
-                            complete: true,
-                        }),
+                    loadSubset: (request) =>
+                        Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                            Effect.succeed({
+                                rows: evaluateQuery(deleted ? [rows[1]!] : rows, subset.query),
+                                complete: true,
+                            })
+                        ),
                     applyAction: (invocation) =>
                         Effect.sync(() => {
                             deleted = true;
@@ -308,28 +316,30 @@ test("restart confirms a saved receipt before active demand can publish the remo
                 let remoteCount = 1;
                 let fail = false;
                 let invocations = 0;
-                const reads: BackendSubset[] = [];
+                const reads: CompiledSubset[] = [];
                 const backend: OntologyBackendService = {
                     name: "test",
                     sourceId: "restart-demand",
                     supportsIdempotency: false,
-                    loadSubset: (subset) =>
-                        Effect.suspend(() => {
-                            reads.push(subset);
-                            return fail
-                                ? Effect.fail(
-                                      new BackendError({
-                                          operation: "read",
-                                          kind: "Unavailable",
-                                          message: "Offline",
-                                          retryable: true,
-                                      })
-                                  )
-                                : Effect.succeed({
-                                      complete: true,
-                                      rows: [{ key: "one", value: { id: "one", count: remoteCount } }],
-                                  });
-                        }),
+                    loadSubset: (request) =>
+                        Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                            Effect.suspend(() => {
+                                reads.push(subset);
+                                return fail
+                                    ? Effect.fail(
+                                          new BackendError({
+                                              operation: "read",
+                                              kind: "Unavailable",
+                                              message: "Offline",
+                                              retryable: true,
+                                          })
+                                      )
+                                    : Effect.succeed({
+                                          complete: true,
+                                          rows: [{ key: "one", value: { id: "one", count: remoteCount } }],
+                                      });
+                            })
+                        ),
                     applyAction: (invocation) =>
                         Effect.sync(() => {
                             invocations++;
@@ -408,7 +418,11 @@ test.each([false, true])(
                                 calls++;
                                 yield* Deferred.succeed(entered, undefined);
                                 if (hold) yield* Effect.never;
-                                return { operationId: invocation.id, outcome: "accepted" as const };
+                                return {
+                                    operationId: invocation.id,
+                                    outcome: "committed" as const,
+                                    affected: [],
+                                };
                             }),
                     };
                     const options = {
@@ -432,13 +446,17 @@ test.each([false, true])(
                     hold = false;
                     const reopened = yield* makeReplica(options);
                     yield* reopened.syncOnce;
-                    expect((yield* reopened.pending)[0]).toMatchObject({
-                        state: supportsIdempotency ? "acknowledged" : "blocked",
-                        attempts: supportsIdempotency ? 2 : 1,
-                    });
+                    if (supportsIdempotency) {
+                        expect(yield* reopened.pending).toEqual([]);
+                        expect((yield* reopened.snapshotState).completed[0]?.attempts).toBe(2);
+                    } else
+                        expect((yield* reopened.pending)[0]).toMatchObject({ state: "blocked", attempts: 1 });
                     yield* reopened.syncOnce;
                     expect(calls).toBe(supportsIdempotency ? 2 : 1);
-                    expect((yield* reopened.pending)[0]?.attempts).toBe(calls);
+                    expect(
+                        (yield* reopened.snapshotState)[supportsIdempotency ? "completed" : "pending"][0]
+                            ?.attempts
+                    ).toBe(calls);
                 })
             )
         );
@@ -478,7 +496,8 @@ test("retry attempts advance once per submission, and acceptance never resets or
                                       )
                                     : Effect.succeed({
                                           operationId: invocation.id,
-                                          outcome: "accepted" as const,
+                                          outcome: "committed" as const,
+                                          affected: [],
                                       });
                             }),
                     },
@@ -487,15 +506,16 @@ test("retry attempts advance once per submission, and acceptance never resets or
                 expect((yield* Effect.result(replica.syncOnce))._tag).toBe("Failure");
                 expect((yield* replica.pending)[0]).toMatchObject({ state: "queued", attempts: 1 });
                 yield* replica.syncOnce;
-                expect((yield* replica.pending)[0]).toMatchObject({
+                expect(yield* replica.pending).toEqual([]);
+                expect((yield* replica.snapshotState).completed[0]).toMatchObject({
                     state: "acknowledged",
                     attempts: 2,
-                    receipt: { outcome: "accepted" },
+                    receipt: { outcome: "committed" },
                 });
                 yield* replica.syncOnce;
                 expect(calls).toBe(2);
-                expect((yield* replica.pending)[0]?.attempts).toBe(2);
-                expect((yield* replica.pending)[0]?.failure).toBeUndefined();
+                expect((yield* replica.snapshotState).completed[0]?.attempts).toBe(2);
+                expect((yield* replica.snapshotState).completed[0]?.failure).toBeUndefined();
             })
         )
     );

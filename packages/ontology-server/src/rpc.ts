@@ -6,13 +6,14 @@ import {
 } from "@party-stack/ontology-backend/clients";
 import { DeliveryFrameCodec, DeliveryPositionSchema } from "@party-stack/ontology-backend/delivery";
 import {
-    BackendSubsetCodec,
+    CompiledSubsetCodec,
     ClientStateCodec,
     ClientSubmissionCodec,
     ClientViewCodec,
-    StateSelectionCodec,
+    ObjectSelectionCodec,
     protocolValueCodec,
 } from "@party-stack/ontology-backend/protocol";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { OntologyIRSchema } from "@party-stack/ontology-spec/effect";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { digestBytes } from "@party-stack/ontology-storage/blobs";
@@ -35,9 +36,10 @@ import {
 import { RpcActivity } from "./rpcActivity.js";
 import { makeRpcBackend } from "./rpcBackend.js";
 import type { AttachmentTransferPolicy } from "./attachmentTransfers.js";
-import type { BackendSubset } from "@party-stack/ontology-backend";
+import type { ObjectSelection } from "@party-stack/ontology-backend";
 import type { ClientSession, ClientToken } from "@party-stack/ontology-backend/clients";
 import type { ClientSubmission, ClientView, OntologySource } from "@party-stack/ontology-backend/protocol";
+import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { TraceStore } from "@party-stack/runtime/tracing";
 import type { Headers } from "effect/http/Headers";
@@ -63,7 +65,7 @@ const Description = Schema.Struct({
 const ReplicaRpcs = RpcGroup.make(
     Rpc.make("Describe", { success: Description, error: BackendError }),
     Rpc.make("SubscribeSelection", {
-        payload: { selection: StateSelectionCodec, resume: Schema.optional(DeliveryPositionSchema) },
+        payload: { selection: ObjectSelectionCodec, resume: Schema.optional(DeliveryPositionSchema) },
         success: DeliveryFrameCodec,
         error: BackendError,
         stream: true,
@@ -104,7 +106,7 @@ const ReplicaRpcs = RpcGroup.make(
         error: BackendError,
     }),
     Rpc.make("Demand", {
-        payload: BackendSubsetCodec,
+        payload: CompiledSubsetCodec,
         success: Schema.Literal("ready"),
         error: BackendError,
         stream: true,
@@ -157,7 +159,7 @@ export type OntologyRpcRequest =
     | { readonly operation: "Submit" | "Accept"; readonly submission: ClientSubmission }
     | {
           readonly operation: "SubscribeSelection";
-          readonly selection: import("@party-stack/ontology-backend/protocol").StateSelection;
+          readonly selection: ObjectSelection;
       }
     | { readonly operation: "SubscribeState"; readonly session: ClientSession; readonly view: ClientView }
     | {
@@ -172,7 +174,7 @@ export type OntologyRpcRequest =
           readonly through: number;
           readonly viewGeneration?: number;
       }
-    | { readonly operation: "Demand"; readonly subset: BackendSubset };
+    | { readonly operation: "Demand"; readonly subset: CompiledSubset };
 
 /** Bind to an authenticated source/principal partition. Authorization is mandatory:
  * granting domain row access alone does not authorize action parameters or base
@@ -325,7 +327,7 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                                 operationOptions.backend?.watchSubset ||
                                 options.ir?.objectTypes.some(
                                     (type) =>
-                                        typeof operationOptions.backend?.refresh?.({ objectType: type.name })
+                                        typeof operationOptions.backend?.refresh?.(objectSubset(type.name))
                                             ?.pollIntervalMs === "number"
                                 )
                             ),

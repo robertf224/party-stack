@@ -3,7 +3,7 @@ import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, Option, Queue, Schema, Stream } from "effect";
 import { ClientLeaseSchema } from "./clients.js";
-import { BackendSubsetSchema, PendingActionSchema, protocolValueCodec } from "./protocol.js";
+import { CompiledSubsetSchema, PendingActionSchema, protocolValueCodec } from "./protocol.js";
 import { BackendError, classifyBackendFailure } from "./index.js";
 import type { Row } from "@party-stack/ontology-storage";
 import type { TablesService, Transaction, ReadTransaction } from "@party-stack/ontology-storage/tables";
@@ -45,7 +45,7 @@ export const DeliveryMetadataSchema = Schema.Struct({
     generation: Schema.Int,
     revision: Schema.Int,
     cursor: Schema.optional(Schema.String),
-    coverage: Schema.Array(Schema.Struct({ subset: BackendSubsetSchema, complete: Schema.Boolean })),
+    coverage: Schema.Array(Schema.Struct({ subset: CompiledSubsetSchema, complete: Schema.Boolean })),
     client: Schema.optional(ClientLeaseSchema),
 });
 export type DeliveryMetadata = Schema.Schema.Type<typeof DeliveryMetadataSchema>;

@@ -10,6 +10,7 @@ import {
     actionReferenceIssues,
 } from "@party-stack/ontology-backend/policy";
 import { queryExecutor, executeQuery } from "@party-stack/ontology-backend/query";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { validatePolicy } from "@party-stack/ontology-spec/query";
 import { contextPartition, resolveType } from "@party-stack/ontology-spec/utils";
@@ -178,14 +179,22 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
         name: backend.name,
         sourceId: backend.sourceId,
         supportsIdempotency: backend.supportsIdempotency,
-        loadSubset: (subset) =>
+        loadSubset: (request) =>
             expose(
                 "loadSubset",
-                withRead((source) =>
-                    policyView(source, context).pipe(
-                        Effect.flatMap((view) => view.tx.loadSubset(subset.objectType, subset.query)),
-                        Effect.map((rows) => ({ rows, complete: true }))
-                    )
+                withRead(
+                    Effect.fnUntraced(function* (source) {
+                        // Paths outside the projected schema are unavailable, without exposing validation details.
+                        const subset = yield* compileObjectSubset(ir, request, context).pipe(
+                            Effect.mapError((error) =>
+                                error.kind === "InvalidRequest" ? unavailable("loadSubset") : error
+                            )
+                        );
+                        return yield* policyView(source, context).pipe(
+                            Effect.flatMap((view) => view.tx.loadSubset(subset.objectType, subset.query)),
+                            Effect.map((rows) => ({ rows, complete: true }))
+                        );
+                    })
                 )
             ),
         applyAction: (request) =>

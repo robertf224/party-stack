@@ -1,5 +1,6 @@
 import * as PgClient from "@effect/sql-pg/PgClient";
 import { makeOwnedBackend, type OwnedTransaction } from "@party-stack/ontology-backend/owned";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { Table, field } from "@party-stack/ontology-storage/tables";
 import { Deferred, Effect, Exit, Fiber, Redacted } from "effect";
@@ -239,7 +240,7 @@ test("owned journal follows publication order, supports snapshot catch-up, and d
                     Effect.timeout("3 seconds"),
                     Effect.onError(() => Deferred.succeed(release, undefined))
                 );
-            const snapshot = yield* backend.loadSubset({ objectType: "Counter" });
+            const snapshot = yield* backend.loadSubset(objectSubset("Counter"));
             expect(snapshot.rows.map((row) => row.key)).toEqual(["fast"]);
             yield* Deferred.succeed(release, undefined);
             const late = yield* Fiber.join(slow);
@@ -253,7 +254,7 @@ test("owned journal follows publication order, supports snapshot catch-up, and d
             );
             expect(first).toEqual(second);
             expect(
-                (yield* backend.loadSubset({ objectType: "Counter" })).rows.find((row) => row.key === "same")
+                (yield* backend.loadSubset(objectSubset("Counter"))).rows.find((row) => row.key === "same")
                     ?.value.count
             ).toBe(1);
             yield* backend.storage.transaction((tx) =>
@@ -274,7 +275,7 @@ test("owned journal follows publication order, supports snapshot catch-up, and d
                 { concurrency: 8 }
             );
             expect(parallelAttempts).toBe(16);
-            const rows = (yield* backend.loadSubset({ objectType: "Counter" })).rows;
+            const rows = (yield* backend.loadSubset(objectSubset("Counter"))).rows;
             expect(
                 rows.filter((row) => String(row.key).startsWith("parallel-") && row.value.count === 1)
             ).toHaveLength(16);
@@ -422,7 +423,7 @@ test("journal compaction preserves the head after all entries expire", async () 
                 const next = JSON.parse(receipt.cursor!).revision as number;
                 expect(next).toBeGreaterThan(revision);
                 revision = next;
-                const snapshot = yield* backend.loadSubset({ objectType: "Counter" });
+                const snapshot = yield* backend.loadSubset(objectSubset("Counter"));
                 expect(JSON.parse(snapshot.cursor!).revision).toBe(revision);
                 expect((yield* backend.changes!.pull({ cursor: snapshot.cursor })).commits).toEqual([]);
             }

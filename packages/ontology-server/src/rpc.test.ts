@@ -1,6 +1,8 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { makeReplica } from "@party-stack/ontology-replica";
+import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
@@ -54,6 +56,24 @@ const setup = Effect.fnUntraced(function* () {
                 }),
         },
     });
+});
+
+const openParent = Effect.fnUntraced(function* (backend: Effect.Success<ReturnType<typeof setup>>) {
+    const parent = yield* makeReplica({
+        namespace: "rpc-parent",
+        ir,
+        tables: yield* Memory.make(),
+        backend,
+        mutators: {
+            increment: (tx) =>
+                Effect.gen(function* () {
+                    const row = yield* tx.get("Counter", "one");
+                    yield* tx.put("Counter", { id: "one", count: Number(row?.count ?? 0) + 1 });
+                }),
+        },
+    });
+    yield* parent.demand.acquire({ from: { source: { objectType: "Counter" }, binding: "row" } });
+    return { parent, source: replicaStateSource(parent) };
 });
 
 test.each(["owned", "proxy", "cached-proxy", "replica"] as const)(
@@ -164,11 +184,12 @@ test("domain RPC carries selected state, resumable ordered actions and acknowled
         Effect.scoped(
             Effect.gen(function* () {
                 const owned = yield* setup();
+                const { parent, source: parentSource } = yield* openParent(owned);
                 const operations: string[] = [];
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyRpcHandlers({
-                            source: owned.protocol,
+                            source: parentSource,
                             authorize: (request) =>
                                 Effect.sync(() => {
                                     operations.push(request.operation);
@@ -192,8 +213,12 @@ test("domain RPC carries selected state, resumable ordered actions and acknowled
                     optimistic: true,
                     view,
                 };
-                const delivered = yield* speculativeSource(source).submit(request);
-                expect((yield* speculativeSource(source).submit(request)).state).toEqual(delivered.state);
+                yield* speculativeSource(source).submit(request);
+                yield* parent.outbox.wait("one");
+                const delivered = yield* speculativeSource(source).read(session, view);
+                expect((yield* speculativeSource(source).submit(request)).state.objects).toEqual(
+                    delivered.state.objects
+                );
                 expect(delivered.state.objects[0]?.base[0]?.value.count).toBe(1);
                 expect(delivered.state.completed[0]?.receipt?.outcome).toBe("committed");
                 yield* speculativeSource(source).acknowledge(
@@ -202,10 +227,12 @@ test("domain RPC carries selected state, resumable ordered actions and acknowled
                     delivered.client.deliveredThrough,
                     view.generation
                 );
-                expect((yield* speculativeSource(source).read(session, view)).state.completed).toEqual([]);
-                expect((yield* Effect.result(speculativeSource(source).submit(request)))._tag).toBe(
-                    "Failure"
-                );
+                expect(
+                    (yield* speculativeSource(source).read(session, view)).state.completed[0]?.receipt
+                        ?.operationId
+                ).toBe("one");
+                yield* speculativeSource(source).submit(request);
+                expect((yield* owned.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(1);
                 const resumed = yield* speculativeSource(source).openClient(session.client);
                 expect(resumed.acceptedThrough).toBe(1);
                 expect(resumed.connectionId).not.toBe(session.connectionId);
@@ -266,9 +293,10 @@ test("RPC demand leases and change subscriptions close with the client scope", a
         Effect.scoped(
             Effect.gen(function* () {
                 const owned = yield* setup();
+                const { source: parentSource } = yield* openParent(owned);
                 let leases = 0;
                 const source: OntologySource = {
-                    ...owned.protocol,
+                    ...parentSource,
                     demand: () =>
                         Effect.acquireRelease(
                             Effect.sync(() => {
@@ -322,6 +350,7 @@ test("HTTP RPC preserves values/authentication and reacquires interrupted stream
         Effect.scoped(
             Effect.gen(function* () {
                 const owned = yield* setup();
+                const { parent, source: parentSource } = yield* openParent(owned);
                 let leases = 0;
                 let acquisitions = 0;
                 const special = {
@@ -332,9 +361,9 @@ test("HTTP RPC preserves values/authentication and reacquires interrupted stream
                 };
                 const handler = yield* makeOntologyHttpHandler({
                     source: {
-                        ...owned.protocol,
+                        ...parentSource,
                         read: (session, view) =>
-                            owned.protocol.read(session, view).pipe(
+                            parentSource.read(session, view).pipe(
                                 Effect.map((result) => ({
                                     ...result,
                                     state: {
@@ -394,6 +423,7 @@ test("HTTP RPC preserves values/authentication and reacquires interrupted stream
                         invocation: { id: "one", name: "increment", parameters: {} },
                         optimistic: true,
                     });
+                    yield* parent.outbox.wait("one");
                     const state = yield* speculativeSource(remote).read(session);
                     expect(state.state.objects[0]?.base[0]?.value.special).toEqual(special);
                     const consumer = yield* Scope.make();
@@ -454,13 +484,14 @@ test("RPC authorization runs before source operations, including demand and chan
         Effect.scoped(
             Effect.gen(function* () {
                 const owned = yield* setup();
-                const read = vi.fn(owned.protocol.read);
-                const submit = vi.fn(owned.protocol.submit);
-                const demand = vi.fn(owned.protocol.demand);
+                const { source: parentSource } = yield* openParent(owned);
+                const read = vi.fn(parentSource.read);
+                const submit = vi.fn(parentSource.submit);
+                const demand = vi.fn(parentSource.demand);
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyRpcHandlers({
-                            source: { ...owned.protocol, read, submit, demand },
+                            source: { ...parentSource, read, submit, demand },
                             authorize: (request) =>
                                 request.operation === "Describe" || request.operation === "OpenClient"
                                     ? Effect.void
@@ -535,6 +566,7 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
         Effect.scoped(
             Effect.gen(function* () {
                 const owned = yield* setup();
+                const { source: parentSource } = yield* openParent(owned);
                 const backend = {
                     ...owned,
                     queryFunction: (_name: string, parameters: Record<string, unknown>) =>
@@ -586,7 +618,7 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                     cache: { objects: false },
                 });
                 const handler = yield* makeOntologyHttpHandler({
-                    source: owned.protocol,
+                    source: parentSource,
                     replica,
                     backend,
                     traces,
@@ -761,7 +793,7 @@ test("stateless backend calls use the same HTTP server without opening a replica
                         parameters: {},
                     });
                     expect(receipt.outcome).toBe("committed");
-                    const snapshot = yield* backend.loadSubset({ objectType: "Counter" });
+                    const snapshot = yield* backend.loadSubset(objectSubset("Counter"));
                     expect(snapshot.rows[0]?.value.count).toBe(1);
                     expect(yield* backend.validateAction!("increment", {})).toEqual({ certain: false });
                     const changes = yield* backend.changes!.pull({});
@@ -821,7 +853,7 @@ test("authorization makes an owned server read-only and defects never escape as 
                         failure: { kind: "Forbidden", actionOutcome: "not-committed" },
                     });
                     expect(JSON.stringify(denied)).not.toContain("private policy");
-                    const defect = yield* Effect.result(backend.loadSubset({ objectType: "Counter" }));
+                    const defect = yield* Effect.result(backend.loadSubset(objectSubset("Counter")));
                     expect(defect).toMatchObject({
                         _tag: "Failure",
                         failure: { kind: "Internal", actionOutcome: "unknown" },
@@ -833,7 +865,7 @@ test("authorization makes an owned server read-only and defects never escape as 
                         handleRequest(new Request(input, init))
                     )
                 );
-                expect((yield* owned.loadSubset({ objectType: "Counter" })).rows).toEqual([]);
+                expect((yield* owned.loadSubset(objectSubset("Counter"))).rows).toEqual([]);
             })
         )
     );
@@ -863,9 +895,7 @@ test("a replica server keeps its committed facet separate from speculative publi
                 yield* Effect.gen(function* () {
                     const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
                     expect(connection.backend.changes).toBeDefined();
-                    expect((yield* connection.backend.loadSubset({ objectType: "Counter" })).rows).toEqual(
-                        []
-                    );
+                    expect((yield* connection.backend.loadSubset(objectSubset("Counter"))).rows).toEqual([]);
                     const source = speculativeSource(connection);
                     const session = yield* source.openClient();
                     const selected = yield* source.read(session, {
@@ -884,7 +914,7 @@ test("a replica server keeps its committed facet separate from speculative publi
                     )
                 );
                 expect(yield* replicaController(replica).pending).toHaveLength(1);
-                expect((yield* owned.loadSubset({ objectType: "Counter" })).rows).toEqual([]);
+                expect((yield* owned.loadSubset(objectSubset("Counter"))).rows).toEqual([]);
             })
         )
     );
@@ -974,9 +1004,9 @@ test("only replica servers advertise speculative state; owned and proxy roles ex
                             })
                         );
                         expect(connection.backend.changes).toBeDefined();
-                        expect(
-                            (yield* connection.backend.loadSubset({ objectType: "Counter" })).complete
-                        ).toBe(true);
+                        expect((yield* connection.backend.loadSubset(objectSubset("Counter"))).complete).toBe(
+                            true
+                        );
                     }).pipe(
                         Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
                             handleRequest(new Request(input, init))
@@ -1024,7 +1054,7 @@ test("committed RPC subset watching preserves provider hints and releases its sc
                 expect(connection.backend.watchSubset).toBeDefined();
                 const subscription = yield* Scope.make();
                 yield* Scope.provide(
-                    Stream.runDrain(connection.backend.watchSubset!({ objectType: "Counter" })!).pipe(
+                    Stream.runDrain(connection.backend.watchSubset!(objectSubset("Counter"))!).pipe(
                         Effect.forkScoped
                     ),
                     subscription
@@ -1067,7 +1097,7 @@ test.each([
                         })
                     )
                 );
-                const result = yield* Effect.result(client.LoadSubset({ objectType: "Counter" }));
+                const result = yield* Effect.result(client.LoadSubset(objectSubset("Counter")));
                 expect(result).toMatchObject({
                     _tag: "Failure",
                     failure: { _tag: "BackendError", kind, retryable: false },
@@ -1132,8 +1162,7 @@ test.each(
                             yield* Effect.scoped(
                                 Effect.gen(function* () {
                                     const subscription = yield* connection.backend.subscribeSelection!({
-                                        subsets: [{ objectType: "Counter" }],
-                                        actionIds: [],
+                                        subsets: [objectSubset("Counter")],
                                     });
                                     const pull = yield* Stream.toPull(subscription.frames);
                                     for (;;) {
@@ -1241,8 +1270,7 @@ test("snapshot endpoints reject direct incremental calls and retain subset inval
                     Stream.runDrain(
                         client.SubscribeSelection({
                             selection: {
-                                subsets: [{ objectType: "Counter" }],
-                                actionIds: [],
+                                subsets: [objectSubset("Counter")],
                             },
                         })
                     )
@@ -1257,9 +1285,7 @@ test("snapshot endpoints reject direct incremental calls and retain subset inval
                     failure: { kind: "NotImplemented" },
                 });
                 expect(
-                    yield* Stream.runCollect(
-                        client.WatchSubset({ objectType: "Counter" }).pipe(Stream.take(1))
-                    )
+                    yield* Stream.runCollect(client.WatchSubset(objectSubset("Counter")).pipe(Stream.take(1)))
                 ).toEqual(["invalidate"]);
             })
         )

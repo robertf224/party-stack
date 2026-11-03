@@ -1,5 +1,7 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, field, evaluateQuery } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -37,7 +39,7 @@ const quietBackend: OntologyBackendService = {
     queryFunction: () => Effect.void,
     refresh: () => ({ pollIntervalMs: false }),
 };
-const subsetFor = (key: string) => ({ objectType: "Item", query: { where: eq(field("id"), key) } });
+const subsetFor = (key: string) => objectSubset("Item", { where: eq(field("id"), key) });
 
 test("cached demand renews its idle TTL and evicts the oldest idle lease at capacity", async () => {
     await Effect.runPromise(
@@ -62,15 +64,15 @@ test("cached demand renews its idle TTL and evicts the oldest idle lease at capa
                 yield* TestClock.adjust(10_000);
                 yield* proxy.loadSubset(subsetFor("c"));
                 expect((yield* replica.status).demands.map((demand) => demand.query)).toEqual([
-                    subsetFor("a").query,
-                    subsetFor("c").query,
+                    { where: eq(field("id"), "a") },
+                    { where: eq(field("id"), "c") },
                 ]);
                 // A's original deadline was 60s. Reuse at 20s renewed it to 80s.
                 yield* TestClock.adjust(30_000);
                 expect((yield* replica.status).demands).toHaveLength(2);
                 yield* TestClock.adjust(20_000);
                 expect((yield* replica.status).demands.map((demand) => demand.query)).toEqual([
-                    subsetFor("c").query,
+                    { where: eq(field("id"), "c") },
                 ]);
                 yield* TestClock.adjust(10_000);
                 expect((yield* replica.status).demands).toEqual([]);
@@ -113,13 +115,13 @@ test("cached demand never evicts a subset while its request is reading", async (
                     failure: { kind: "RateLimited" },
                 });
                 expect((yield* replica.status).demands.map((demand) => demand.query)).toEqual([
-                    subsetFor("a").query,
+                    { where: eq(field("id"), "a") },
                 ]);
                 yield* Deferred.succeed(release, undefined);
                 yield* Fiber.join(request);
                 yield* proxy.loadSubset(subsetFor("b"));
                 expect((yield* replica.status).demands.map((demand) => demand.query)).toEqual([
-                    subsetFor("b").query,
+                    { where: eq(field("id"), "b") },
                 ]);
             })
         )
@@ -162,7 +164,7 @@ test("cached proxy shares demand, forwards writes, and never enqueues them local
                     replica,
                     backend,
                 });
-                const subset = { objectType: "Item" };
+                const subset = objectSubset("Item");
                 yield* proxy.loadSubset(subset);
                 yield* proxy.loadSubset(subset);
                 expect(loads).toBe(1);
@@ -218,7 +220,7 @@ test("cached proxy never promotes an incomplete source snapshot to complete cove
                     startSync: false,
                 });
                 const proxy = yield* makeCachedProxy({ replica, backend });
-                const snapshot = yield* proxy.loadSubset({ objectType: "Item" });
+                const snapshot = yield* proxy.loadSubset(objectSubset("Item"));
                 expect(snapshot.complete).toBe(false);
                 expect(snapshot.rows).toHaveLength(1);
             })
@@ -272,7 +274,7 @@ test.each(["unknown", "rejected", "interrupted"] as const)(
                         demand: { idleRetentionMs: 60_000, refresh: { pollIntervalMs: 5_000 } },
                     });
                     const proxy = yield* makeCachedProxy({ replica, backend });
-                    expect((yield* proxy.loadSubset({ objectType: "Item" })).rows[0]?.value.count).toBe(0);
+                    expect((yield* proxy.loadSubset(objectSubset("Item"))).rows[0]?.value.count).toBe(0);
                     const action = proxy.applyAction({ id: "one", name: "save", parameters: {} });
                     if (outcome === "interrupted") {
                         const exit = yield* Fiber.await(yield* Effect.forkChild(action));
@@ -284,13 +286,13 @@ test.each(["unknown", "rejected", "interrupted"] as const)(
                         });
                     }
                     // A failed call promises no read-after-write barrier or eager repair.
-                    expect((yield* proxy.loadSubset({ objectType: "Item" })).rows[0]?.value.count).toBe(0);
+                    expect((yield* proxy.loadSubset(objectSubset("Item"))).rows[0]?.value.count).toBe(0);
                     expect(reads).toBe(1);
                     yield* TestClock.adjust(4_999);
                     expect(reads).toBe(1);
                     yield* TestClock.adjust(1);
                     yield* Deferred.await(refreshed);
-                    expect((yield* proxy.loadSubset({ objectType: "Item" })).rows[0]?.value.count).toBe(
+                    expect((yield* proxy.loadSubset(objectSubset("Item"))).rows[0]?.value.count).toBe(
                         outcome === "rejected" ? 0 : 1
                     );
                     expect(reads).toBe(2);
@@ -343,24 +345,28 @@ test.each(targetCases)(
                     const reads: string[] = [];
                     const backend: OntologyBackendService = {
                         ...quietBackend,
-                        loadSubset: (subset) =>
-                            Effect.sync(() => {
-                                reads.push(subset.objectType);
-                                return {
-                                    complete: true,
-                                    rows: evaluateQuery(
-                                        ["one", "two"].map((id) => ({
-                                            key: id,
-                                            value: {
-                                                id,
-                                                count:
-                                                    id === "one" ? (counts.get(subset.objectType) ?? 0) : 0,
-                                            },
-                                        })),
-                                        subset.query
-                                    ),
-                                };
-                            }),
+                        loadSubset: (request) =>
+                            Effect.flatMap(compileObjectSubset(definition, request), (subset) =>
+                                Effect.sync(() => {
+                                    reads.push(subset.objectType);
+                                    return {
+                                        complete: true,
+                                        rows: evaluateQuery(
+                                            ["one", "two"].map((id) => ({
+                                                key: id,
+                                                value: {
+                                                    id,
+                                                    count:
+                                                        id === "one"
+                                                            ? (counts.get(subset.objectType) ?? 0)
+                                                            : 0,
+                                                },
+                                            })),
+                                            subset.query
+                                        ),
+                                    };
+                                })
+                            ),
                         applyAction: (request) =>
                             Effect.sync(() => {
                                 for (const type of changed) counts.set(type, 1);
@@ -378,10 +384,7 @@ test.each(targetCases)(
                     });
                     const proxy = yield* makeCachedProxy({ replica, backend });
                     const subsets = ["Item", "Other"].flatMap((objectType) =>
-                        ["one", "two"].map((id) => ({
-                            ...subsetFor(id),
-                            objectType,
-                        }))
+                        ["one", "two"].map((id) => objectSubset(objectType, { where: eq(field("id"), id) }))
                     );
                     for (const subset of subsets) yield* proxy.loadSubset(subset);
                     reads.length = 0;
@@ -389,7 +392,7 @@ test.each(targetCases)(
                     for (const subset of subsets) {
                         const row = (yield* proxy.loadSubset(subset)).rows[0]!;
                         expect(row.value.count).toBe(
-                            row.key === "one" && changed.includes(subset.objectType) ? 1 : 0
+                            row.key === "one" && changed.includes(subset.from.source.objectType) ? 1 : 0
                         );
                     }
                     expect(reads).toEqual(refresh);
@@ -453,15 +456,15 @@ test("cache invalidation failures preserve the receipt, block stale reads and re
                     },
                     backend,
                 });
-                yield* proxy.loadSubset({ objectType: "Item" });
+                yield* proxy.loadSubset(objectSubset("Item"));
                 expect(yield* proxy.applyAction({ id: "one", name: "save", parameters: {} })).toMatchObject({
                     outcome: "committed",
                 });
-                expect(yield* Effect.result(proxy.loadSubset({ objectType: "Item" }))).toMatchObject({
+                expect(yield* Effect.result(proxy.loadSubset(objectSubset("Item")))).toMatchObject({
                     _tag: "Failure",
                     failure: { kind: "Unavailable" },
                 });
-                expect((yield* proxy.loadSubset({ objectType: "Item" })).rows[0]?.value.count).toBe(1);
+                expect((yield* proxy.loadSubset(objectSubset("Item"))).rows[0]?.value.count).toBe(1);
                 expect(writes).toBe(1);
                 expect(yield* replica.pending).toEqual([]);
             })

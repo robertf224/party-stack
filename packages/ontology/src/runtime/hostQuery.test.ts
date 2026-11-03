@@ -2,7 +2,7 @@ import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { Deferred, Effect, Fiber, PubSub, Stream } from "effect";
 import { expect, test } from "vite-plus/test";
 import { observeReplicaRows } from "./hostQuery.js";
-import type { BackendSubset } from "@party-stack/ontology-backend";
+import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 
 test("query streams do not miss a commit racing the initial snapshot and release demand", async () => {
@@ -12,7 +12,7 @@ test("query streams do not miss a commit racing the initial snapshot and release
                 const events = yield* PubSub.sliding<void>(1);
                 let revision = 0;
                 let leases = 0;
-                const subset: BackendSubset = { objectType: "Note", query: { limit: 1 } };
+                const subset: CompiledSubset = { objectType: "Note", query: { limit: 1 } };
                 const requested: ObjectSubset[] = [];
                 const stream = observeReplicaRows(
                     {

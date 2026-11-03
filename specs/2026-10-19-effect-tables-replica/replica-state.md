@@ -569,18 +569,18 @@ action dependencies. Selection evaluates composed parent-visible rows, including
 window entrants/exits, rather than independently limiting confirmed rows and
 overrides. It transfers requested action identities; broader action inspection is
 an explicit trusted interest. Full `snapshotState` remains available for inspection.
-Selected membership is replaced completely on refresh; retained delta batches and
-cursor resume are not implemented. Protocol children use ordinary row GC and
+Selected membership is installed atomically. Retained incremental delivery batches
+and acknowledged positions support resume while the delivery state is retained;
+expired history requires a fresh selected snapshot. Protocol children use ordinary row GC and
 local BlobStorage, with their parent as the remote attachment provider. Only
 intermediate servers need this speculative extension; authoritative servers and
 proxies expose the normal committed adapter contract without child sessions.
 
 The transport-independent `OntologySource` contract lives in
-`ontology-backend/protocol`. `makeOwnedBackend(...).protocol` exposes an authoritative
-source without constructing a Replica or upstream outbox. Its ordered submission,
-mutation, journal and client acceptance commit together. Per-client result details
-can be acknowledged/expired without forgetting the accepted sequence watermark.
-This path does not add arbitrary-ID records to the legacy raw receipt table.
+`ontology-backend/protocol` and exposes speculative Replica state. Owned authorities
+use the ordinary committed backend contract, with transactional action receipts,
+change journals and selected row delivery. They do not expose speculative child
+submission bookkeeping. Only a real intermediate Replica needs that extension.
 
 Each selected view has a monotonically increasing generation. Changing membership
 at the same source revision remains observable. Old responses cannot overwrite a

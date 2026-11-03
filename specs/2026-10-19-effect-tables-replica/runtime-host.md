@@ -72,8 +72,9 @@ The service needs to distinguish three pieces of progress:
 - An upstream receipt/cursor establishes progress at that source. A local visible
   revision cannot be substituted for an upstream cursor or commitment.
 
-The existing `accepted`/`committed` receipt outcomes are useful vocabulary, but do
-not yet express this complete multi-host lifecycle. In particular, the source that
+Ordinary adapter receipts now represent commitment only. Parent acceptance belongs
+to the speculative state protocol rather than being an adapter receipt outcome.
+The source that
 accepted responsibility must be identifiable, and acceptance needs a durable
 action-status subscription/recovery path. A durable visible-state feed must record
 optimistic updates and their later correction, or explicitly require a replacement

@@ -1,7 +1,8 @@
 import { Context, Schema } from "effect";
 import type { AttachmentTypeDef } from "@party-stack/ontology-spec";
+import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { attachment, Encrypted } from "@party-stack/ontology-spec/values";
-import type { Key, Query, Row } from "@party-stack/ontology-storage";
+import type { Key, Row } from "@party-stack/ontology-storage";
 import type { ByteInput } from "@party-stack/ontology-storage/blobs";
 import type { Scope, Effect, Stream } from "effect";
 
@@ -34,9 +35,8 @@ export type {
 } from "./errors.js";
 import { BackendError } from "./errors.js";
 
-export interface BackendSubset {
-    readonly objectType: string;
-    readonly query?: Query;
+export interface ObjectSelection {
+    readonly subsets: readonly ObjectSubset[];
 }
 export interface BackendSnapshot {
     readonly rows: readonly Row<Record<string, unknown>>[];
@@ -102,8 +102,8 @@ export interface ActionRequest {
 export interface ActionReceipt {
     /** The submitted ActionRequest.id, also supplied as the application's idempotencyKey. */
     readonly operationId: string;
-    /** Accepted remote actions may still require read-back before optimistic state can settle. */
-    readonly outcome: "committed" | "accepted";
+    /** Provider commitment is recorded before local read-back/reconciliation. Parent acceptance is separate. */
+    readonly outcome: "committed";
     readonly cursor?: string;
     /** Optional upstream execution ID. Never substitutes for our stable retry identity. */
     readonly providerOperationId?: string;
@@ -134,7 +134,7 @@ export const ObjectChangeSchema = Schema.Union([
 ]);
 export const ActionReceiptSchema = Schema.Struct({
     operationId: Schema.String,
-    outcome: Schema.Literals(["committed", "accepted"]),
+    outcome: Schema.Literal("committed"),
     cursor: Schema.optional(Schema.String),
     providerOperationId: Schema.optional(Schema.String),
     affected: Schema.optional(
@@ -211,10 +211,10 @@ export interface OntologyBackendService {
     readonly supportsIdempotency: boolean;
     /** Indexed bounded local maintenance; an enclosing server scope schedules it. */
     readonly maintenance?: Effect.Effect<void, BackendError>;
-    readonly loadSubset: (subset: BackendSubset) => Effect.Effect<BackendSnapshot, BackendError>;
+    readonly loadSubset: (subset: ObjectSubset) => Effect.Effect<BackendSnapshot, BackendError>;
     /** Optional selected committed rows. Closing the Scope releases demand; delivery state expires by policy. */
     readonly subscribeSelection?: (
-        selection: import("./protocol.js").StateSelection,
+        selection: ObjectSelection,
         policy?: import("./delivery.js").DeliveryPolicy,
         resume?: import("./delivery.js").DeliveryPosition
     ) => Effect.Effect<import("./delivery.js").DeliverySubscription, BackendError, Scope.Scope>;
@@ -229,10 +229,10 @@ export interface OntologyBackendService {
     /** Demand-scoped invalidation hints, independent of a durable journal. Undefined
      * means this subset needs polling. Reconnect must invalidate to repair missed events.
      */
-    readonly watchSubset?: (subset: BackendSubset) => Stream.Stream<void, BackendError> | undefined;
+    readonly watchSubset?: (subset: ObjectSubset) => Stream.Stream<void, BackendError> | undefined;
     /** Recommended demand refresh defaults. Caller configuration wins; healthy
      * watches/journals keep coverage current independently of snapshot age. */
-    readonly refresh?: (subset: BackendSubset) =>
+    readonly refresh?: (subset: ObjectSubset) =>
         | {
               readonly pollIntervalMs?: number | false;
               readonly maxCoverageAgeMs?: number;

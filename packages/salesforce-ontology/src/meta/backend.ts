@@ -1,4 +1,5 @@
-import { BackendError, type OntologyBackendService, type BackendSubset } from "@party-stack/ontology-backend";
+import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
@@ -9,6 +10,7 @@ import { loadSalesforceActionTypes } from "./loadActions.js";
 import { describeSObjects } from "./loadEntities.js";
 import { loadSalesforceQueryFunctionTypes } from "./loadQueryFunctions.js";
 import type { CreateSalesforceMetaOntologyBackendAdapterOpts } from "./createSalesforceMetaOntologyBackendAdapter.js";
+import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 
 const failure = (cause: unknown) =>
     cause instanceof BackendError
@@ -38,7 +40,8 @@ export function makeSalesforceMetadataBackend(
         supportsIdempotency: false,
         applyAction: () => unsupported("applyAction"),
         queryFunction: () => unsupported("queryFunction"),
-        loadSubset: Effect.fn("SalesforceMetadata.loadSubset")(function* (subset: BackendSubset) {
+        loadSubset: Effect.fn("SalesforceMetadata.loadSubset")(function* (request: ObjectSubset) {
+            const subset = yield* compileObjectSubset(metaOntology, request, undefined);
             const type = metaOntology.objectTypes.find((type) => type.name === subset.objectType);
             if (!type)
                 return yield* new BackendError({

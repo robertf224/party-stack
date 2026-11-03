@@ -1,16 +1,13 @@
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { evaluateQuery, QuerySchema } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema, Redacted } from "effect";
 import { searchSalesforceObjects } from "./salesforceObjectSearch.js";
 import { quoteSoqlIdentifier, serializeSoqlLiteral } from "./soql.js";
-import type {
-    ActionRequest,
-    ActionReceipt,
-    BackendSubset,
-    OntologyBackendService,
-} from "@party-stack/ontology-backend";
+import type { ActionRequest, ActionReceipt, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { SalesforceClient } from "@party-stack/salesforce-client";
 
 const KeySchema = Schema.Union([Schema.String, Schema.Finite]);
@@ -19,6 +16,7 @@ const KeySchema = Schema.Union([Schema.String, Schema.Finite]);
 export function makeSalesforceBackend(options: {
     readonly client: SalesforceClient;
     readonly ir: OntologyIR;
+    readonly context?: Record<string, unknown>;
     readonly decodeObject: (objectType: string, object: Record<string, unknown>) => Record<string, unknown>;
     readonly submitAction: (
         name: string,
@@ -53,7 +51,8 @@ export function makeSalesforceBackend(options: {
         name: "salesforce",
         sourceId: `salesforce:${options.client.instanceUrl}`,
         supportsIdempotency: false,
-        loadSubset: Effect.fn("Salesforce.loadSubset")(function* (subset: BackendSubset) {
+        loadSubset: Effect.fn("Salesforce.loadSubset")(function* (request: ObjectSubset) {
+            const subset = yield* compileObjectSubset(options.ir, request, options.context);
             yield* Effect.annotateCurrentSpan("objectType", subset.objectType);
             yield* Schema.decodeUnknownEffect(QuerySchema)(subset.query ?? {}).pipe(
                 Effect.mapError(

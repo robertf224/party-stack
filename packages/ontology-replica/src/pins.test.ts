@@ -1,5 +1,7 @@
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { executeQuery } from "@party-stack/ontology-backend/query";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
 import { evaluateQuery } from "@party-stack/ontology-storage";
@@ -13,7 +15,8 @@ import fc from "fast-check";
 import { expect, test } from "vitest";
 import { replicaStateSource } from "./infrastructure.js";
 import { makeReplica } from "./service.js";
-import type { BackendSubset, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
+import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { QueryDocument } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
@@ -71,24 +74,29 @@ const fixture = Effect.fnUntraced(function* () {
             { id: "two", project: "b" },
         ],
     };
-    const loads: BackendSubset[] = [];
+    const loads: CompiledSubset[] = [];
     const backend: OntologyBackendService = {
         name: "fixture",
         sourceId: "fixture",
         supportsIdempotency: false,
         applyAction: () => Effect.die("Unexpected action"),
         queryFunction: () => Effect.void,
-        loadSubset: (subset) =>
-            Effect.sync(() => {
-                loads.push(subset);
-                return {
-                    complete: true,
-                    rows: evaluateQuery(
-                        (data[subset.objectType] ?? []).map((value) => ({ key: value.id as string, value })),
-                        subset.query
-                    ),
-                };
-            }),
+        loadSubset: (request) =>
+            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                Effect.sync(() => {
+                    loads.push(subset);
+                    return {
+                        complete: true,
+                        rows: evaluateQuery(
+                            (data[subset.objectType] ?? []).map((value) => ({
+                                key: value.id as string,
+                                value,
+                            })),
+                            subset.query
+                        ),
+                    };
+                })
+            ),
     };
     return { tables, network: connectivity, data, loads, backend };
 });
@@ -224,13 +232,15 @@ test("replacing a pin cancels its pending acquisition and cannot install the obs
                     cache: { objects: false },
                     backend: {
                         ...f.backend,
-                        loadSubset: (subset) =>
-                            JSON.stringify(subset.query).includes('"b"')
-                                ? Deferred.succeed(entered, undefined).pipe(
-                                      Effect.andThen(Effect.never),
-                                      Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))
-                                  )
-                                : f.backend.loadSubset(subset),
+                        loadSubset: (request) =>
+                            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                                JSON.stringify(subset.query).includes('"b"')
+                                    ? Deferred.succeed(entered, undefined).pipe(
+                                          Effect.andThen(Effect.never),
+                                          Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))
+                                      )
+                                    : f.backend.loadSubset(request)
+                            ),
                     },
                 });
                 yield* replica.demand.setPin(document("b"));
@@ -273,7 +283,7 @@ test("pinned membership agrees with finite entity recomputation across varied co
                                 ir,
                                 loadSubset: (type, scan) =>
                                     Effect.map(
-                                        f.backend.loadSubset({ objectType: type, query: scan }),
+                                        f.backend.loadSubset(objectSubset(type, scan)),
                                         (snapshot) => snapshot.rows
                                     ),
                             },

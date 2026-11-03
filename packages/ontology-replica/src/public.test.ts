@@ -1,3 +1,4 @@
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
 import { evaluateQuery } from "@party-stack/ontology-storage";
@@ -6,7 +7,8 @@ import { makeNetworkConnectivity, MemoryRuntime, RuntimePartition } from "@party
 import { Effect, Exit, Scope, Layer, Stream } from "effect";
 import { expect, test } from "vitest";
 import { makeReplica, Replica, ReplicaUpstream } from "./index.js";
-import type { BackendSubset } from "@party-stack/ontology-backend";
+import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
+
 const ir: OntologyIR = {
     types: [],
     linkTypes: [],
@@ -52,7 +54,7 @@ test("logical demand waits for its snapshot, releases its scope and rejects unsu
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const calls: BackendSubset[] = [];
+                const calls: CompiledSubset[] = [];
                 const replica = yield* makeReplica({
                     namespace: "public-demand",
                     ir,
@@ -65,20 +67,22 @@ test("logical demand waits for its snapshot, releases its scope and rejects unsu
                         applyAction: () => Effect.die("A read cannot submit actions"),
                         queryFunction: () => Effect.void,
                         refresh: () => ({ pollIntervalMs: false }),
-                        loadSubset: (subset) =>
-                            Effect.sync(() => {
-                                calls.push(subset);
-                                return {
-                                    complete: true,
-                                    rows: evaluateQuery(
-                                        [1, 2, 3].map((count) => ({
-                                            key: String(count),
-                                            value: { id: String(count), count },
-                                        })),
-                                        subset.query
-                                    ),
-                                };
-                            }),
+                        loadSubset: (request) =>
+                            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                                Effect.sync(() => {
+                                    calls.push(subset);
+                                    return {
+                                        complete: true,
+                                        rows: evaluateQuery(
+                                            [1, 2, 3].map((count) => ({
+                                                key: String(count),
+                                                value: { id: String(count), count },
+                                            })),
+                                            subset.query
+                                        ),
+                                    };
+                                })
+                            ),
                     },
                 });
                 const consumer = yield* Scope.make();
@@ -142,17 +146,19 @@ test.each([true, false])(
                             supportsIdempotency: true,
                             queryFunction: () => Effect.void,
                             refresh: () => ({ pollIntervalMs: false }),
-                            loadSubset: (subset) =>
-                                Effect.sync(() => {
-                                    loads++;
-                                    return {
-                                        complete: true,
-                                        rows: evaluateQuery(
-                                            [...remote].map(([key, value]) => ({ key, value })),
-                                            subset.query
-                                        ),
-                                    };
-                                }),
+                            loadSubset: (request) =>
+                                Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                                    Effect.sync(() => {
+                                        loads++;
+                                        return {
+                                            complete: true,
+                                            rows: evaluateQuery(
+                                                [...remote].map(([key, value]) => ({ key, value })),
+                                                subset.query
+                                            ),
+                                        };
+                                    })
+                                ),
                             applyAction: (request) =>
                                 Effect.sync(() => {
                                     submissions++;
@@ -262,7 +268,7 @@ test("native parameter resolution acquires narrow demand for a cold object looku
                         },
                     ],
                 };
-                const loads: BackendSubset[] = [];
+                const loads: CompiledSubset[] = [];
                 const replica = yield* makeReplica({
                     ir: definition,
                     namespace: "resolve-cold",
@@ -274,20 +280,22 @@ test("native parameter resolution acquires narrow demand for a cold object looku
                         sourceId: "fixture",
                         supportsIdempotency: false,
                         applyAction: () => Effect.die("Resolving defaults cannot submit"),
-                        loadSubset: (subset) =>
-                            Effect.sync(() => {
-                                loads.push(subset);
-                                return {
-                                    complete: true,
-                                    rows: evaluateQuery(
-                                        [
-                                            { key: "one", value: { id: "one", count: 7 } },
-                                            { key: "two", value: { id: "two", count: 99 } },
-                                        ],
-                                        subset.query
-                                    ),
-                                };
-                            }),
+                        loadSubset: (request) =>
+                            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                                Effect.sync(() => {
+                                    loads.push(subset);
+                                    return {
+                                        complete: true,
+                                        rows: evaluateQuery(
+                                            [
+                                                { key: "one", value: { id: "one", count: 7 } },
+                                                { key: "two", value: { id: "two", count: 99 } },
+                                            ],
+                                            subset.query
+                                        ),
+                                    };
+                                })
+                            ),
                     },
                 });
                 expect(yield* replica.get("Item", "one")).toBeUndefined();

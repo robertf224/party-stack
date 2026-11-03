@@ -5,6 +5,7 @@ import { Effect, Cause, Fiber } from "effect";
 import { describe, expect, it, vi, test } from "vite-plus/test";
 import { executeAction } from "./actions.js";
 import { makeOwnedBackend } from "./owned.js";
+import { objectSubset } from "./subset.js";
 
 describe("executeAction", () => {
     it("assigns stable temporary string keys to optimistic creates", async () => {
@@ -149,7 +150,7 @@ test.each(["defect", "interrupt"] as const)(
                         const exit = yield* Fiber.await(fiber);
                         expect(exit._tag === "Failure" && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
                     }
-                    expect((yield* backend.loadSubset({ objectType: "Item" })).rows).toEqual([]);
+                    expect((yield* backend.loadSubset(objectSubset("Item"))).rows).toEqual([]);
                     expect((yield* backend.changes!.pull({})).commits).toEqual([]);
                 })
             )

@@ -1,4 +1,5 @@
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq as storageEq, evaluateQuery, field } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -89,8 +90,8 @@ test("mutator queries lazily read transaction-local persisted rows and earlier w
                 ),
                 { concurrency: "unbounded" }
             );
-            expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(5);
-            expect((yield* backend.loadSubset({ objectType: "Audit" })).rows).toHaveLength(5);
+            expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(5);
+            expect((yield* backend.loadSubset(objectSubset("Audit"))).rows).toHaveLength(5);
             expect(
                 Result.isFailure(
                     yield* Effect.result(
@@ -98,7 +99,7 @@ test("mutator queries lazily read transaction-local persisted rows and earlier w
                     )
                 )
             ).toBe(true);
-            expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(5);
+            expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(5);
         })
     );
 });
@@ -178,7 +179,7 @@ test("action null clears optional properties while omitted inputs preserve exist
                 name: "create",
                 parameters: { id: "one", label: null },
             });
-            expect((yield* backend.loadSubset({ objectType: "Note" })).rows[0]?.value).toEqual({
+            expect((yield* backend.loadSubset(objectSubset("Note"))).rows[0]?.value).toEqual({
                 id: "one",
                 label: undefined,
                 payload: null,
@@ -189,13 +190,13 @@ test("action null clears optional properties while omitted inputs preserve exist
                 parameters: { note: "one", label: "Present" },
             });
             yield* backend.applyAction({ id: "omit", name: "update", parameters: { note: "one" } });
-            expect((yield* backend.loadSubset({ objectType: "Note" })).rows[0]?.value.label).toBe("Present");
+            expect((yield* backend.loadSubset(objectSubset("Note"))).rows[0]?.value.label).toBe("Present");
             yield* backend.applyAction({
                 id: "clear",
                 name: "update",
                 parameters: { note: "one", label: null },
             });
-            expect((yield* backend.loadSubset({ objectType: "Note" })).rows[0]?.value.label).toBeUndefined();
+            expect((yield* backend.loadSubset(objectSubset("Note"))).rows[0]?.value.label).toBeUndefined();
         })
     );
 });

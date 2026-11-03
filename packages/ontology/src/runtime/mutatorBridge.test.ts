@@ -1,4 +1,5 @@
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { eq } from "@tanstack/db";
@@ -105,9 +106,9 @@ test.each([
                         expect(after.settings).toEqual(expected);
                     });
                     yield* backend.applyAction({ id: "edit", name: "edit", parameters: {} });
-                    expect(
-                        (yield* backend.loadSubset({ objectType: "Task" })).rows[0]?.value.settings
-                    ).toEqual(expected);
+                    expect((yield* backend.loadSubset(objectSubset("Task"))).rows[0]?.value.settings).toEqual(
+                        expected
+                    );
                 })
             )
         );
@@ -126,7 +127,7 @@ test("invalid structural paths fail without publishing partial writes", async ()
                         ._tag
                 ).toBe("Failure");
                 expect(
-                    (yield* backend.loadSubset({ objectType: "Task" })).rows[0]?.value.settings
+                    (yield* backend.loadSubset(objectSubset("Task"))).rows[0]?.value.settings
                 ).toBeUndefined();
             })
         )
@@ -145,7 +146,7 @@ test("concurrent Promise creates serialize their existence check and roll back a
                 expect(
                     yield* Effect.result(backend.applyAction({ id: "edit", name: "edit", parameters: {} }))
                 ).toMatchObject({ _tag: "Failure", failure: { kind: "Conflict" } });
-                expect((yield* backend.loadSubset({ objectType: "Task" })).rows.map((r) => r.key)).toEqual([
+                expect((yield* backend.loadSubset(objectSubset("Task"))).rows.map((r) => r.key)).toEqual([
                     "one",
                 ]);
             })

@@ -1,6 +1,8 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { clientRegistry } from "@party-stack/ontology-backend/clients";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -67,11 +69,16 @@ const fixture = Effect.fnUntraced(function* () {
         name: "authoritative",
         sourceId: "authoritative",
         supportsIdempotency: false,
-        loadSubset: (subset) =>
-            Effect.sync(() => ({
-                complete: true,
-                rows: evaluateQuery([{ key: "one", value: { id: "one", count: serverCount } }], subset.query),
-            })),
+        loadSubset: (request) =>
+            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                Effect.sync(() => ({
+                    complete: true,
+                    rows: evaluateQuery(
+                        [{ key: "one", value: { id: "one", count: serverCount } }],
+                        subset.query
+                    ),
+                }))
+            ),
         applyAction: (action) =>
             Effect.sync(() => {
                 submitted.push(action.id);
@@ -735,14 +742,22 @@ test("an expired parent session renews without losing queued work or reusing its
                     namespace: "expired-parent",
                     ir,
                     tables: yield* Memory.make(),
-                    clients: { sessionIdleTimeoutMs: 100 },
                     mutators: { increment: execute },
+                });
+                const parent = yield* makeReplica({
+                    namespace: "expired-parent-replica",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend: owned,
+                    execute,
+                    clients: { sessionIdleTimeoutMs: 100 },
+                    startSync: false,
                 });
                 const child = yield* makeReplica({
                     namespace: "expired-child",
                     ir,
                     tables: yield* Memory.make(),
-                    source: owned.protocol,
+                    source: replicaStateSource(parent),
                     execute,
                     objectCacheGc: false,
                     startSync: false,
@@ -751,12 +766,16 @@ test("an expired parent session renews without losing queued work or reusing its
                 yield* child.syncOnce;
                 yield* child.enqueue(invocation("first", 1));
                 yield* child.syncOnce;
+                yield* parent.syncOnce;
+                yield* child.syncOnce;
                 yield* TestClock.adjust(101);
                 yield* child.enqueue(invocation("second", 2));
                 yield* child.syncOnce;
+                yield* parent.syncOnce;
+                yield* child.syncOnce;
                 expect(yield* child.pending).toEqual([]);
                 expect(yield* count(child)).toBe(3);
-                expect((yield* owned.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(3);
+                expect((yield* owned.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(3);
             })
         ).pipe(Effect.provide(TestClock.layer()))
     );

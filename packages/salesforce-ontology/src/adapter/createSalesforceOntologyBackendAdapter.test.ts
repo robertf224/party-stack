@@ -1,4 +1,5 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { eq, field, inArray, like } from "@party-stack/ontology-storage";
 import { SalesforceApiError } from "@party-stack/salesforce-client";
 import { Effect, Fiber } from "effect";
@@ -511,15 +512,14 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         });
         queryMore.mockResolvedValue({ done: true, records: [{ Id: "three", Name: "match A" }] });
         const snapshot = await runNative(createAdapter(), (backend) =>
-            backend.loadSubset({
-                objectType: "Account",
-                query: {
+            backend.loadSubset(
+                objectSubset("Account", {
                     where: like(field("Name"), "match%"),
                     orderBy: [{ field: field("Name"), direction: "asc" }],
                     offset: 1,
                     limit: 1,
-                },
-            })
+                })
+            )
         );
         expect(snapshot).toEqual({
             complete: true,
@@ -534,10 +534,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         const key = "one' OR Name != '";
         query.mockResolvedValue({ done: true, records: [{ Id: key, Name: "Acme" }] });
         const snapshot = await runNative(createAdapter(), (backend) =>
-            backend.loadSubset({
-                objectType: "Account",
-                query: { where: inArray(field("Id"), [key, key]) },
-            })
+            backend.loadSubset(objectSubset("Account", { where: inArray(field("Id"), [key, key]) }))
         );
         expect(snapshot.rows.map((row) => row.key)).toEqual([key]);
         expect(query).toHaveBeenCalledExactlyOnceWith(
@@ -545,7 +542,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         );
         query.mockClear();
         await runNative(createAdapter(), (backend) =>
-            backend.loadSubset({ objectType: "Account", query: { where: eq(field("Id"), "one") } })
+            backend.loadSubset(objectSubset("Account", { where: eq(field("Id"), "one") }))
         );
         expect(query).toHaveBeenCalledExactlyOnceWith("SELECT Id, Name FROM Account WHERE Id IN ('one')");
     });
@@ -553,7 +550,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
     it("does not issue SOQL for empty key demand", async () => {
         expect(
             await runNative(createAdapter(), (backend) =>
-                backend.loadSubset({ objectType: "Account", query: { where: inArray(field("Id"), []) } })
+                backend.loadSubset(objectSubset("Account", { where: inArray(field("Id"), []) }))
             )
         ).toEqual({ rows: [], fetchedRows: 0, complete: true });
         expect(query).not.toHaveBeenCalled();
@@ -566,7 +563,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
         ]) {
             query.mockResolvedValue(response);
             const result = await runNative(createAdapter(), (backend) =>
-                Effect.result(backend.loadSubset({ objectType: "Account" }))
+                Effect.result(backend.loadSubset(objectSubset("Account")))
             );
             expect(result).toMatchObject({
                 _tag: "Failure",
@@ -607,9 +604,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             Effect.scoped(
                 Effect.gen(function* () {
                     const backend = yield* createAdapter().open({});
-                    return yield* Effect.result(
-                        backend.loadSubset({ objectType: "Account", query: { limit: -1 } })
-                    );
+                    return yield* Effect.result(backend.loadSubset(objectSubset("Account", { limit: -1 })));
                 })
             )
         );
@@ -633,7 +628,7 @@ describe("createSalesforceOntologyBackendAdapter", () => {
             Effect.scoped(
                 Effect.gen(function* () {
                     const backend = yield* adapter.open!({});
-                    yield* backend.loadSubset({ objectType: "Account" });
+                    yield* backend.loadSubset(objectSubset("Account"));
                 })
             )
         );

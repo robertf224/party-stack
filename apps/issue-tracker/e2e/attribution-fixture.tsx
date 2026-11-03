@@ -1,5 +1,6 @@
 import { createLiveOntology, o, type OntologyIR } from "@party-stack/ontology";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { OntologyDevtoolsPanel } from "@party-stack/ontology-devtools";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { MemoryRuntime } from "@party-stack/runtime";
@@ -58,28 +59,30 @@ const ontology = await createLiveOntology<Definition>({
                 // This fixture specifically exercises finite-load pushdown diagnostics.
                 subscribeSelection: undefined,
                 acknowledgeDelivery: undefined,
-                loadSubset: (query) =>
-                    Effect.suspend(() => {
-                        loads++;
-                        return backend.loadSubset(query).pipe(
-                            Effect.map((snapshot) => ({
-                                ...snapshot,
-                                pushdown: {
-                                    source: "Fixture storage",
-                                    predicates: query.query?.where
-                                        ? [{ path: [], execution: "source" as const }]
-                                        : [],
-                                    sorting: "none" as const,
-                                    pagination: "none" as const,
-                                    rechecksFilter: false,
-                                    native: {
-                                        language: "json",
-                                        text: JSON.stringify(query.query ?? {}, null, 2),
+                loadSubset: (request) =>
+                    Effect.flatMap(compileObjectSubset(ir, request), (query) =>
+                        Effect.suspend(() => {
+                            loads++;
+                            return backend.loadSubset(request).pipe(
+                                Effect.map((snapshot) => ({
+                                    ...snapshot,
+                                    pushdown: {
+                                        source: "Fixture storage",
+                                        predicates: query.query?.where
+                                            ? [{ path: [], execution: "source" as const }]
+                                            : [],
+                                        sorting: "none" as const,
+                                        pagination: "none" as const,
+                                        rechecksFilter: false,
+                                        native: {
+                                            language: "json",
+                                            text: JSON.stringify(query.query ?? {}, null, 2),
+                                        },
                                     },
-                                },
-                            }))
-                        );
-                    }),
+                                }))
+                            );
+                        })
+                    ),
             }),
     }),
 });

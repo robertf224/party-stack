@@ -7,6 +7,7 @@ import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect, Result, Deferred, Fiber } from "effect";
 import { expect, test } from "vitest";
 import { makeOwnedBackend, type OwnedTransaction } from "./owned.js";
+import { objectSubset } from "./subset.js";
 import { BackendError } from "./index.js";
 
 const ir: OntologyIR = {
@@ -87,15 +88,15 @@ test("owned commits atomically persist rows, receipts, and ordered source-scoped
                 backend.applyAction({ ...invocation, parameters: { id: "counter", amount: 2 } })
             );
             expect(Result.isFailure(conflict) && conflict.failure.kind).toBe("Conflict");
-            const snapshot = yield* backend.loadSubset({ objectType: "Counter" });
+            const snapshot = yield* backend.loadSubset(objectSubset("Counter"));
             expect(snapshot.rows).toEqual([{ key: "counter", value: { id: "counter", count: 1 } }]);
             expect(snapshot.cursor).toBe(receipt.cursor);
             const failed = yield* Effect.result(
                 backend.applyAction({ id: "failed", name: "fail", parameters: { id: "ignored", amount: 1 } })
             );
             expect(Result.isFailure(failed)).toBe(true);
-            expect((yield* backend.loadSubset({ objectType: "Other" })).rows).toEqual([]);
-            expect((yield* backend.loadSubset({ objectType: "Counter" })).rows).toEqual(snapshot.rows);
+            expect((yield* backend.loadSubset(objectSubset("Other"))).rows).toEqual([]);
+            expect((yield* backend.loadSubset(objectSubset("Counter"))).rows).toEqual(snapshot.rows);
             const all = yield* backend.changes!.pull({});
             expect(all.commits).toEqual([
                 {
@@ -150,7 +151,7 @@ test("concurrent actions read their transaction state and journal pagination nev
                 ),
                 { concurrency: "unbounded" }
             );
-            expect((yield* backend.loadSubset({ objectType: "Counter" })).rows[0]?.value.count).toBe(12);
+            expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(12);
             let cursor: string | undefined;
             const ids: string[] = [];
             do {
@@ -257,7 +258,7 @@ test("owned action transactions reject uploads collected before commit and retai
                 yield* Deferred.succeed(finish, undefined);
                 const collectedFirst = yield* Fiber.join(action);
                 expect(Result.isFailure(collectedFirst)).toBe(true);
-                expect((yield* backend.loadSubset({ objectType: "Asset" })).rows).toEqual([]);
+                expect((yield* backend.loadSubset(objectSubset("Asset"))).rows).toEqual([]);
                 expect(yield* blobs.metadata("photo")).toBeUndefined();
                 // No successful receipt was recorded: the same invocation can upload again.
                 const committedFirst = yield* backend.applyAction({
@@ -287,7 +288,7 @@ test("trusted integrations share the action journal and preserve callback errors
                 tables,
                 mutators: {},
             });
-            const before = yield* backend.loadSubset({ objectType: "Counter" });
+            const before = yield* backend.loadSubset(objectSubset("Counter"));
             const value = yield* backend.storage.transaction((tx) =>
                 Effect.gen(function* () {
                     yield* tx.put("Counter", { id: "one", count: 1 });
@@ -360,7 +361,7 @@ test("a failed journal append rolls back the integration's object writes", async
                 tables,
                 mutators: {},
             });
-            const before = yield* backend.loadSubset({ objectType: "Counter" });
+            const before = yield* backend.loadSubset(objectSubset("Counter"));
             rejectJournal = true;
             const exit = yield* Effect.exit(
                 backend.storage.transaction((tx) => tx.put("Counter", { id: "one", count: 1 }))
@@ -369,7 +370,7 @@ test("a failed journal append rolls back the integration's object writes", async
             rejectJournal = false;
             expect(yield* backend.storage.read((tx) => tx.get("Counter", "one"))).toBeUndefined();
             expect((yield* backend.changes!.pull({ cursor: before.cursor })).commits).toEqual([]);
-            expect((yield* backend.loadSubset({ objectType: "Counter" })).cursor).toBe(before.cursor);
+            expect((yield* backend.loadSubset(objectSubset("Counter"))).cursor).toBe(before.cursor);
             yield* backend.storage.transaction((tx) => tx.put("Counter", { id: "one", count: 1 }));
             expect((yield* backend.changes!.pull({ cursor: before.cursor })).commits).toHaveLength(1);
         })

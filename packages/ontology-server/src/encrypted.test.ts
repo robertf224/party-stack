@@ -1,6 +1,7 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { makeReplica } from "@party-stack/ontology-replica";
+import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, field, literal, selectField, sub } from "@party-stack/ontology-spec/query";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -55,7 +56,6 @@ test("Effect HTTP RPC explicitly authorizes decrypt and preserves plaintext repr
                 const { owned, decrypt } = yield* setup();
                 let allowed = false;
                 const handler = yield* makeOntologyHttpHandler({
-                    source: owned.protocol,
                     backend: owned,
                     authorize: (request) =>
                         request.operation !== "Decrypt" || allowed
@@ -124,7 +124,7 @@ test("memory clients forward cache policy to their persistent ontology owner", a
                 });
                 const replica = { ...owner, decrypt };
                 const handler = yield* makeOntologyHttpHandler({
-                    source: owned.protocol,
+                    source: replicaStateSource(owner),
                     replica,
                     authorize: () => Effect.void,
                 });
@@ -222,7 +222,7 @@ test("cancelling decrypt RPC aborts the persistent owner's operation", async () 
                         ),
                 };
                 const handler = yield* makeOntologyHttpHandler({
-                    source: owned.protocol,
+                    source: replicaStateSource(owner),
                     replica,
                     authorize: () => Effect.void,
                 });

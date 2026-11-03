@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR, type TypeDef } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Tables } from "@party-stack/ontology-storage/tables";
@@ -266,7 +267,7 @@ for (const sqlite of [false, true])
 
         it("journals auth transactions as one batch and persists that history across backend reconstruction", async () => {
             const { adapter, backend, runtime, tables, namespace } = await setup(sqlite);
-            const before = await runtime.runPromise(backend.loadSubset({ objectType: "Person" }));
+            const before = await runtime.runPromise(backend.loadSubset(objectSubset("Person")));
             let id = "";
             await adapter.transaction(async (tx) => {
                 const row = await tx.create<{ id: string }>({ model: "user", data: user() });
@@ -312,7 +313,7 @@ for (const sqlite of [false, true])
 
         it("rolls back every callback write and rejects a transaction handle used after settlement", async () => {
             const { adapter, backend, runtime } = await setup(sqlite);
-            const before = await runtime.runPromise(backend.loadSubset({ objectType: "Person" }));
+            const before = await runtime.runPromise(backend.loadSubset(objectSubset("Person")));
             let transaction!: Parameters<Parameters<typeof adapter.transaction>[0]>[0];
             const marker = new Error("rollback fixture");
             await expect(

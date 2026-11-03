@@ -7,8 +7,9 @@ import { Effect, Exit, Queue, Schema, Scope, Semaphore, Stream, PubSub, Cause } 
 import { Fiber } from "effect";
 import { retentionQuery } from "./retention.js";
 import type { ReplicaService } from "./engine.js";
-import type { BackendSubset, BackendAttachments } from "@party-stack/ontology-backend";
+import type { BackendAttachments } from "@party-stack/ontology-backend";
 import type { QueryEntity } from "@party-stack/ontology-backend/query";
+import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { QueryDocument, OntologyIR } from "@party-stack/ontology-spec";
 import type { BlobStorageService } from "@party-stack/ontology-storage/blobs";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
@@ -88,10 +89,10 @@ export const makeQueryPin = Effect.fn("Replica.queryPin")(function* (options: {
             if (!current) return;
             const desired = current.desired;
             const candidate = yield* Scope.fork(parent);
-            const acquired = new Map<string, BackendSubset>();
+            const acquired = new Map<string, CompiledSubset>();
             let retained = false;
-            const acquire = Effect.fnUntraced(function* (subset: BackendSubset) {
-                const key = Table.make<BackendSubset>({ name: "scan" }).encode(subset);
+            const acquire = Effect.fnUntraced(function* (subset: CompiledSubset) {
+                const key = Table.make<CompiledSubset>({ name: "scan" }).encode(subset);
                 if (!acquired.has(key)) {
                     yield* Scope.provide(engine.demand(subset), candidate);
                     acquired.set(key, subset);
@@ -172,7 +173,7 @@ export const makeQueryPin = Effect.fn("Replica.queryPin")(function* (options: {
                                 );
                             }
                         }
-                        const missing = new Map<string, BackendSubset>();
+                        const missing = new Map<string, CompiledSubset>();
                         const dependencies = new Map<string, { objectType: string; key: string | number }>();
                         const installed = yield* engine.localTransaction((tx, read) =>
                             Effect.gen(function* () {
@@ -183,7 +184,7 @@ export const makeQueryPin = Effect.fn("Replica.queryPin")(function* (options: {
                                     loadSubset: (objectType, query) =>
                                         Effect.gen(function* () {
                                             const subset = { objectType, query };
-                                            const key = Table.make<BackendSubset>({ name: "scan" }).encode(
+                                            const key = Table.make<CompiledSubset>({ name: "scan" }).encode(
                                                 subset
                                             );
                                             if (

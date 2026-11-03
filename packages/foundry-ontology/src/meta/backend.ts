@@ -1,5 +1,6 @@
 import { ActionTypesV2 } from "@osdk/foundry.ontologies";
-import { BackendError, type OntologyBackendService, type BackendSubset } from "@party-stack/ontology-backend";
+import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import { evaluateQuery, type Predicate } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
@@ -14,6 +15,7 @@ import { loadFoundryMetaOntology } from "./loadEntities.js";
 import { getQueryFunctionTypes, listQueryFunctionTypes } from "./loadQueryFunctions.js";
 import type { ActionTypeSearchJsonQueryV2 } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
+import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 
 const failure = (operation: string, cause: unknown) =>
     cause instanceof BackendError
@@ -106,7 +108,8 @@ export function makeFoundryMetadataBackend(options: {
         applyAction: () => unsupported("applyAction"),
         queryFunction: () => unsupported("queryFunction"),
         refresh: () => ({ pollIntervalMs: options.refetchInterval ?? false }),
-        loadSubset: Effect.fn("FoundryMetadata.loadSubset")(function* (subset: BackendSubset) {
+        loadSubset: Effect.fn("FoundryMetadata.loadSubset")(function* (request: ObjectSubset) {
+            const subset = yield* compileObjectSubset(metaOntology, request, undefined);
             const type = metaOntology.objectTypes.find((type) => type.name === subset.objectType);
             if (!type)
                 return yield* new BackendError({

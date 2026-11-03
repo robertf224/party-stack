@@ -1,3 +1,4 @@
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { Effect } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 import { createFoundryMetaOntologyBackendAdapter } from "./createFoundryMetaOntologyBackendAdapter.js";
@@ -17,7 +18,7 @@ describe("native metadata binding", () => {
                 Effect.scoped(
                     Effect.gen(function* () {
                         const backend = yield* binding.open({});
-                        expect(backend.refresh?.({ objectType: "ObjectType" })?.pollIntervalMs).toBe(
+                        expect(backend.refresh?.(objectSubset("ObjectType"))?.pollIntervalMs).toBe(
                             refetchInterval ?? false
                         );
                         expect(

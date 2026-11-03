@@ -1,5 +1,6 @@
 import { makeObjectSetWatcher } from "@party-stack/foundry-object-set-watcher";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { evaluateQuery, QuerySchema } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema, Stream, Redacted } from "effect";
@@ -11,11 +12,11 @@ import type {
     OntologyBackendService,
     ActionRequest,
     ActionReceipt,
-    BackendSubset,
     SourceQueryPlan,
 } from "@party-stack/ontology-backend";
 import type { BackendSnapshot } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { Query } from "@party-stack/ontology-storage";
 
 const KeySchema = Schema.Union([Schema.String, Schema.Finite]);
@@ -73,7 +74,8 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                   ),
         attachments: options.attachments,
         encrypted: options.encrypted,
-        loadSubset: Effect.fn("Foundry.loadSubset")(function* (subset: BackendSubset) {
+        loadSubset: Effect.fn("Foundry.loadSubset")(function* (request: ObjectSubset) {
+            const subset = yield* compileObjectSubset(options.ir, request, options.context);
             yield* Effect.annotateCurrentSpan("objectType", subset.objectType);
             yield* Schema.decodeUnknownEffect(QuerySchema)(subset.query ?? {}).pipe(
                 Effect.mapError(
@@ -212,31 +214,37 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
             } satisfies ActionReceipt;
         }),
         // Admin users have no ontology websocket feed; the Replica owns this polling lifetime.
-        refresh: (subset: BackendSubset) =>
-            subset.objectType === options.users?.objectType ? { pollIntervalMs: 60_000 } : undefined,
+        refresh: (subset: ObjectSubset) =>
+            subset.from.source.objectType === options.users?.objectType
+                ? { pollIntervalMs: 60_000 }
+                : undefined,
         watchSubset: watcher
-            ? (subset: BackendSubset) =>
-                  subset.objectType === options.users?.objectType
+            ? (request: ObjectSubset) =>
+                  request.from.source.objectType === options.users?.objectType
                       ? undefined
-                      : watcher
-                            .subscribe(
-                                subsetFilter(subset.query?.where)
-                                    ? {
-                                          type: "filter",
-                                          objectSet: { type: "base", objectType: subset.objectType },
-                                          where: subsetFilter(subset.query?.where)!,
-                                      }
-                                    : { type: "base", objectType: subset.objectType }
+                      : Stream.unwrap(
+                            Effect.map(compileObjectSubset(options.ir, request, options.context), (subset) =>
+                                watcher
+                                    .subscribe(
+                                        subsetFilter(subset.query?.where)
+                                            ? {
+                                                  type: "filter",
+                                                  objectSet: { type: "base", objectType: subset.objectType },
+                                                  where: subsetFilter(subset.query?.where)!,
+                                              }
+                                            : { type: "base", objectType: subset.objectType }
+                                    )
+                                    .pipe(
+                                        Stream.mapEffect((message) =>
+                                            message.type === "state" &&
+                                            (message.status === "qos" || message.status === "error")
+                                                ? Effect.fail(unavailable(message.status))
+                                                : Effect.void
+                                        ),
+                                        Stream.mapError(unavailable)
+                                    )
                             )
-                            .pipe(
-                                Stream.mapEffect((message) =>
-                                    message.type === "state" &&
-                                    (message.status === "qos" || message.status === "error")
-                                        ? Effect.fail(unavailable(message.status))
-                                        : Effect.void
-                                ),
-                                Stream.mapError(unavailable)
-                            )
+                        )
             : undefined,
     };
 });

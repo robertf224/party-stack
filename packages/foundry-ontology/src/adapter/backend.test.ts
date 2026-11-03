@@ -1,3 +1,4 @@
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
 import { and, contains, eq, field, inArray, ilike, like, or } from "@party-stack/ontology-storage";
 import { Effect, Exit, Scope, Stream, Fiber } from "effect";
@@ -21,7 +22,13 @@ const ir: OntologyIR = {
             displayName: "Issue",
             pluralDisplayName: "Issues",
             primaryKey: "id",
-            properties: [{ name: "id", displayName: "Id", type: o.string({}) }],
+            properties: [
+                { name: "id", displayName: "Id", type: o.string({}) },
+                { name: "project", displayName: "Project", type: o.string({}) },
+                { name: "title", displayName: "Title", type: o.string({}) },
+                { name: "rank", displayName: "Rank", type: o.integer({}) },
+                { name: "tags", displayName: "Tags", type: o.list({ elementType: o.string({}) }) },
+            ],
         },
     ],
 };
@@ -58,7 +65,7 @@ test("native snapshots stay native with a users integration, and watcher resourc
             )
         );
         expect(subscribe).not.toHaveBeenCalled();
-        expect(await Effect.runPromise(backend.loadSubset({ objectType: "Issue" }))).toEqual({
+        expect(await Effect.runPromise(backend.loadSubset(objectSubset("Issue")))).toEqual({
             complete: true,
             fetchedRows: 1,
             pushdown: {
@@ -72,15 +79,15 @@ test("native snapshots stay native with a users integration, and watcher resourc
             rows: [{ key: "one", value: { id: "one" } }],
         });
 
-        expect(backend.watchSubset?.({ objectType: "User" })).toBeUndefined();
-        expect(backend.refresh?.({ objectType: "User" })?.pollIntervalMs).toBe(60_000);
-        expect(backend.refresh?.({ objectType: "Issue" })?.pollIntervalMs).toBeUndefined();
+        expect(backend.watchSubset?.(objectSubset("User"))).toBeUndefined();
+        expect(backend.refresh?.(objectSubset("User"))?.pollIntervalMs).toBe(60_000);
+        expect(backend.refresh?.(objectSubset("Issue"))?.pollIntervalMs).toBeUndefined();
         expect(subscribe).not.toHaveBeenCalled();
         let invalidations = 0;
         await Effect.runPromise(
             Scope.provide(
                 Effect.forkScoped(
-                    Stream.runForEach(backend.watchSubset!({ objectType: "Issue" })!, () =>
+                    Stream.runForEach(backend.watchSubset!(objectSubset("Issue"))!, () =>
                         Effect.sync(() => {
                             invalidations++;
                         })
@@ -164,10 +171,9 @@ test("identity subsets use the shared search path with an IN predicate and propa
                     decodeObject: (_type, value) => value,
                 });
                 expect(
-                    yield* backend.loadSubset({
-                        objectType: "Issue",
-                        query: { where: inArray(field("id"), ["one", "gone", "one"]) },
-                    })
+                    yield* backend.loadSubset(
+                        objectSubset("Issue", { where: inArray(field("id"), ["one", "gone", "one"]) })
+                    )
                 ).toEqual({
                     complete: true,
                     fetchedRows: 1,
@@ -195,10 +201,7 @@ test("identity subsets use the shared search path with an IN predicate and propa
                 mocks.fetch.mockRejectedValue({ statusCode: 403 });
                 expect(
                     (yield* Effect.result(
-                        backend.loadSubset({
-                            objectType: "Issue",
-                            query: { where: inArray(field("id"), ["one"]) },
-                        })
+                        backend.loadSubset(objectSubset("Issue", { where: inArray(field("id"), ["one"]) }))
                     ))._tag
                 ).toBe("Failure");
             })
@@ -251,7 +254,7 @@ test("a denied or QoS-limited watcher fails explicitly so Replica can fall back 
                     decodeObject: (_type, value) => value,
                 });
                 const fiber = yield* Effect.forkScoped(
-                    Stream.runDrain(backend.watchSubset!({ objectType: "Issue" })!)
+                    Stream.runDrain(backend.watchSubset!(objectSubset("Issue"))!)
                 );
                 const result = yield* Effect.result(Fiber.join(fiber));
                 expect(result._tag === "Failure" && result.failure.kind).toBe("Unavailable");
@@ -290,7 +293,10 @@ test("HTTP reads and watches use the same conservative subset filter while windo
                         limit: 1,
                     },
                 };
-                backend.watchSubset!(subset);
+                yield* Effect.forkScoped(
+                    Stream.runDrain(backend.watchSubset!(objectSubset(subset.objectType, subset.query))!),
+                    { startImmediately: true }
+                );
                 const filter = {
                     type: "and",
                     value: [
@@ -307,7 +313,7 @@ test("HTTP reads and watches use the same conservative subset filter while windo
                     objectSet: { type: "base", objectType: "Issue" },
                     where: filter,
                 });
-                const snapshot = yield* backend.loadSubset(subset);
+                const snapshot = yield* backend.loadSubset(objectSubset(subset.objectType, subset.query));
                 expect(snapshot.rows.map((row) => row.key)).toEqual(["a"]);
                 expect(snapshot.fetchedRows).toBe(3);
                 expect(snapshot.pushdown).toEqual({
@@ -336,8 +342,11 @@ test("HTTP reads and watches use the same conservative subset filter while windo
                         offset: 1,
                     },
                 };
-                backend.watchSubset!(search);
-                const searched = yield* backend.loadSubset(search);
+                yield* Effect.forkScoped(
+                    Stream.runDrain(backend.watchSubset!(objectSubset(search.objectType, search.query))!),
+                    { startImmediately: true }
+                );
+                const searched = yield* backend.loadSubset(objectSubset(search.objectType, search.query));
                 expect(searched.rows.map((row) => row.key)).toEqual(["title"]);
                 expect(searched.pushdown?.predicates).toEqual([
                     { path: [0], execution: "candidate" },
@@ -377,7 +386,7 @@ test("invalid subset windows fail in the typed channel before provider IO", asyn
                 });
                 for (const objectType of ["Issue", "User"]) {
                     const result = yield* Effect.result(
-                        backend.loadSubset({ objectType, query: { limit: -1 } })
+                        backend.loadSubset(objectSubset(objectType, { limit: -1 }))
                     );
                     expect(result).toMatchObject({
                         _tag: "Failure",

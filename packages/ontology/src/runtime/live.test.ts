@@ -1,4 +1,5 @@
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { MemoryBlobBytesStore, Runtimes } from "@party-stack/runtime";
@@ -213,7 +214,7 @@ test("LiveOntology persists and restores offline projections, exposes local-only
                 expect(await Effect.runPromise(replicaController(reopened.storage!).pending)).toEqual([])
             );
             expect(
-                (await Effect.runPromise(backend.loadSubset({ objectType: "Note" }))).rows[0]?.value.title
+                (await Effect.runPromise(backend.loadSubset(objectSubset("Note")))).rows[0]?.value.title
             ).toBe("Offline");
         } finally {
             await reopened.cleanup();

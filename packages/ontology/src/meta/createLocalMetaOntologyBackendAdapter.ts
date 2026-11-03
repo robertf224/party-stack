@@ -1,4 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
@@ -31,45 +32,49 @@ export function createLocalMetaOntologyBackendAdapter(ir: OntologyIR): OntologyB
                 name: "local-metadata",
                 sourceId: "local-metadata",
                 supportsIdempotency: false,
-                loadSubset: (subset) =>
-                    Effect.suspend(() => {
-                        const rows: Record<string, readonly object[]> = {
-                            Ontology: [
-                                {
-                                    id: "ontology",
-                                    displayName: ir.displayName,
-                                    description: ir.description,
-                                    context: ir.context,
-                                    policy: ir.policy,
-                                },
-                            ],
-                            ObjectType: objectTypes,
-                            ValueType: ir.types,
-                            LinkType: ir.linkTypes,
-                            ActionType: actionTypes,
-                            QueryFunctionType: ir.queryFunctionTypes,
-                        };
-                        const type = metaOntology.objectTypes.find((type) => type.name === subset.objectType);
-                        if (!type)
-                            return Effect.fail(
-                                new BackendError({
-                                    operation: "loadSubset",
-                                    kind: "InvalidRequest",
-                                    message: "Unknown metadata object type.",
-                                    retryable: false,
-                                })
+                loadSubset: (request) =>
+                    Effect.flatMap(compileObjectSubset(metaOntology, request), (subset) =>
+                        Effect.suspend(() => {
+                            const rows: Record<string, readonly object[]> = {
+                                Ontology: [
+                                    {
+                                        id: "ontology",
+                                        displayName: ir.displayName,
+                                        description: ir.description,
+                                        context: ir.context,
+                                        policy: ir.policy,
+                                    },
+                                ],
+                                ObjectType: objectTypes,
+                                ValueType: ir.types,
+                                LinkType: ir.linkTypes,
+                                ActionType: actionTypes,
+                                QueryFunctionType: ir.queryFunctionTypes,
+                            };
+                            const type = metaOntology.objectTypes.find(
+                                (type) => type.name === subset.objectType
                             );
-                        return Effect.succeed({
-                            rows: evaluateQuery(
-                                rows[subset.objectType]!.map((row) => ({
-                                    key: (row as Record<string, unknown>)[type.primaryKey] as string,
-                                    value: row as Record<string, unknown>,
-                                })),
-                                subset.query ?? {}
-                            ),
-                            complete: true,
-                        });
-                    }),
+                            if (!type)
+                                return Effect.fail(
+                                    new BackendError({
+                                        operation: "loadSubset",
+                                        kind: "InvalidRequest",
+                                        message: "Unknown metadata object type.",
+                                        retryable: false,
+                                    })
+                                );
+                            return Effect.succeed({
+                                rows: evaluateQuery(
+                                    rows[subset.objectType]!.map((row) => ({
+                                        key: (row as Record<string, unknown>)[type.primaryKey] as string,
+                                        value: row as Record<string, unknown>,
+                                    })),
+                                    subset.query ?? {}
+                                ),
+                                complete: true,
+                            });
+                        })
+                    ),
                 applyAction: () =>
                     Effect.fail(
                         new BackendError({

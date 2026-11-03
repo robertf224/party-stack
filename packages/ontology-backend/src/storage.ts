@@ -65,7 +65,7 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
     });
     const backend: OwnedBackendService = yield* makeOwnedBackend({
         namespace: options.namespace,
-        clients: options.clients,
+        delivery: options.delivery,
         history: options.history,
         resultRetentionMs: options.resultRetentionMs,
         ir: options.ir,

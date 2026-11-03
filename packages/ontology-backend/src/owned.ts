@@ -5,8 +5,6 @@ import {
     makeOntologyStorage,
     OntologyStorageError,
     makeStorageModel,
-    and,
-    eq,
     field,
     lte,
     indexesForQuery,
@@ -14,10 +12,10 @@ import {
 import { digestBytes, byteSource } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, PubSub, Schema, Stream } from "effect";
-import { clientRegistry } from "./clients.js";
 import { acknowledgeDelivery, makeDelivery, scanSelectedRows, collectDeliveryGarbage } from "./delivery.js";
-import { CurrentActionAuthorization, CurrentQueryAuthorization } from "./policy.js";
+import { CurrentActionAuthorization, CurrentQueryAuthorization, CurrentExecutionContext } from "./policy.js";
 import { actionReferenceIssues } from "./references.js";
+import { compileObjectSubset } from "./subset.js";
 import {
     classifyBackendFailure,
     schemaValidationIssues,
@@ -25,7 +23,7 @@ import {
     ActionReceiptSchema,
     BackendCommitSchema,
 } from "./index.js";
-import type { ClientPolicy } from "./clients.js";
+import type { DeliveryPolicy } from "./delivery.js";
 import type {
     ActionRequest,
     ActionReceipt,
@@ -33,7 +31,6 @@ import type {
     ObjectChange,
     OntologyBackendService,
 } from "./index.js";
-import type { ClientSubmission, OntologySource, PendingAction } from "./protocol.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type {
     Index,
@@ -92,7 +89,7 @@ export interface OwnedBackendOptions {
     readonly blobs?: import("@party-stack/ontology-storage/blobs").BlobStorageService;
     /** A trusted principal binding; invocation IDs are deduplicated within this authority scope. */
     readonly actionScope?: string;
-    readonly clients?: ClientPolicy;
+    readonly delivery?: DeliveryPolicy;
     /** Bounded replay history. Cursors behind this floor require a fresh snapshot. */
     readonly history?: { readonly maxCommits?: number; readonly maxAgeMs?: number };
     /** Infinity retains results indefinitely; finite windows bound idempotency. */
@@ -118,9 +115,6 @@ export interface OwnedBackendOptions {
 }
 export interface OwnedBackendService extends OntologyBackendService {
     readonly storage: OwnedStorageService;
-    /** Trusted protocol composition without an intermediate Replica or outbox. */
-    readonly protocol: OntologySource;
-    readonly collectClientGarbage: Effect.Effect<number, BackendError>;
 }
 const fault = (operation: string, kind: BackendError["kind"], message: string, cause?: unknown) =>
     new BackendError({ operation, kind, message, retryable: false, cause });
@@ -462,8 +456,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     const invokeIn = Effect.fnUntraced(function* (
         native: StorageTransaction,
         prepared: { invocation: ActionRequest; identity: string; receiptKey: string },
-        commitUploads: Effect.Effect<void, BackendError>,
-        retainReceipt: boolean
+        commitUploads: Effect.Effect<void, BackendError>
     ) {
         const { invocation } = prepared;
         const action = options.ir.actionTypes.find((candidate) => candidate.name === invocation.name);
@@ -477,9 +470,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         if (!invocation.id)
             return yield* fault("applyAction", "InvalidRequest", "Actions require a stable invocation ID.");
         const fingerprint = prepared.identity;
-        const previous = retainReceipt
-            ? yield* tables.get(receipts, prepared.receiptKey, { forUpdate: true })
-            : undefined;
+        const previous = yield* tables.get(receipts, prepared.receiptKey, { forUpdate: true });
         if (previous && previous.completedAt > (yield* Clock.currentTimeMillis) - resultRetentionMs) {
             if (previous.fingerprint !== fingerprint)
                 return yield* fault(
@@ -533,60 +524,21 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             outcome: "committed",
             cursor: yield* append(changes, invocation.id),
         };
-        if (retainReceipt)
-            yield* tables.put(receipts, prepared.receiptKey, {
-                fingerprint,
-                receipt,
-                completedAt: yield* Clock.currentTimeMillis,
-            });
+        yield* tables.put(receipts, prepared.receiptKey, {
+            fingerprint,
+            receipt,
+            completedAt: yield* Clock.currentTimeMillis,
+        });
         return {
             receipt,
             changed: true,
-            touchedTypes: [...new Set([...changes.values()].map((change) => change.objectType))],
         };
     });
-    const clientNamespace = JSON.stringify(["owned", options.namespace, options.actionScope ?? "system"]);
-    const results = Table.make<{ clientId: string; sequence: number; entry: PendingAction }>({
-        name: JSON.stringify(["backend", clientNamespace, "client-results"]),
-    });
-    const control = Table.make<{ revision: number }>({
-        name: JSON.stringify(["backend", clientNamespace, "protocol-head"]),
-    });
-    const bumpControl = Effect.gen(function* () {
-        const revision = ((yield* tables.get(control, "head"))?.revision ?? 0) + 1;
-        if (!Number.isSafeInteger(revision))
-            return yield* fault("protocol", "Unavailable", "Protocol revision exhausted.");
-        yield* tables.put(control, "head", { revision });
-    });
-    const clients = clientRegistry(clientNamespace, source, options.clients, {
-        onExpire: Effect.fnUntraced(function* (tx, clientId) {
-            const expired = yield* tx.query(results, { where: eq(field("clientId"), clientId) });
-            for (const row of expired) yield* tx.delete(results, row.key);
-            if (expired.length) yield* bumpControl;
-        }),
-    });
-    yield* boundary(
-        tables.transaction((tx) =>
-            Effect.gen(function* () {
-                yield* clients.initialize(tx);
-                yield* tx.ensureIndex(results, { name: "clientId", field: field("clientId") });
-                yield* tx.ensureIndex(results, {
-                    name: "operationId",
-                    field: field("entry", "invocation", "id"),
-                });
-            })
-        )
-    );
-    const collectClientGarbage = boundary(tables.transaction((tx) => clients.expire(tx))).pipe(
-        Effect.tap((expired) => (expired.length ? PubSub.publish(wakes, undefined) : Effect.void)),
-        Effect.map((expired) => expired.length)
-    );
     yield* boundary(
         tables.transaction((tx) =>
             Effect.gen(function* () {
                 yield* tx.ensureIndex(receipts, { name: "completedAt", field: field("completedAt") });
                 yield* tx.ensureIndex(journal, { name: "committedAt", field: field("committedAt") });
-                yield* tx.ensureIndex(results, { name: "completedAt", field: field("entry", "completedAt") });
             })
         )
     );
@@ -595,19 +547,10 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     const hasGarbage = tables.read((tx) =>
         Effect.gen(function* () {
             const now = yield* Clock.currentTimeMillis;
-            if ((yield* tx.query(clients.clients, { where: lte(field("expiresAt"), now), limit: 1 })).length)
-                return true;
             if (Number.isFinite(resultRetentionMs)) {
                 if (
                     (yield* tx.query(receipts, {
                         where: lte(field("completedAt"), now - resultRetentionMs),
-                        limit: 1,
-                    })).length
-                )
-                    return true;
-                if (
-                    (yield* tx.query(results, {
-                        where: lte(field("entry", "completedAt"), now - resultRetentionMs),
                         limit: 1,
                     })).length
                 )
@@ -628,7 +571,6 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             needed
                 ? tables.transaction((tx) =>
                       Effect.gen(function* () {
-                          yield* clients.expire(tx);
                           const now = yield* Clock.currentTimeMillis;
                           if (Number.isFinite(resultRetentionMs)) {
                               for (const row of yield* tx.query(receipts, {
@@ -636,11 +578,6 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                                   limit: 100,
                               }))
                                   yield* tx.delete(receipts, row.key);
-                              for (const row of yield* tx.query(results, {
-                                  where: lte(field("entry", "completedAt"), now - resultRetentionMs),
-                                  limit: 100,
-                              }))
-                                  yield* tx.delete(results, row.key);
                           }
                           if (
                               options.history?.maxAgeMs !== undefined &&
@@ -668,203 +605,49 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 : Effect.void
         )
     );
-    const subscribeSelection: NonNullable<OntologyBackendService["subscribeSelection"]> = (
-        selection,
-        policy,
-        resume
-    ) =>
-        makeDelivery({
-            tables,
-            namespace: options.namespace,
-            policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
-            resume,
-            binding: JSON.stringify([source, schemaHash]),
-            identity: JSON.stringify(selection),
-            changes: PubSub.subscribe(wakes).pipe(Effect.map(Stream.fromSubscription)),
-            capture: (_tx, emit) =>
-                boundary(
-                    Effect.gen(function* () {
-                        for (const subset of selection.subsets) {
-                            const store = yield* object(subset.objectType);
-                            yield* scanSelectedRows(
-                                (query) => boundary(storage.query(store, query)),
-                                subset.query,
-                                (row) => emit({ kind: "base", objectType: subset.objectType, ...row })
-                            );
-                        }
-                        const revision = yield* current;
-                        return {
-                            sourceId: source,
-                            schemaHash,
-                            generation: 1,
-                            revision: revision + 1,
-                            cursor: cursor(revision),
-                            coverage: selection.subsets.map((subset) => ({ subset, complete: true })),
-                        };
-                    })
-                ),
-        });
-    const protocol: OntologySource = {
-        sourceId: source,
-        supportsIdempotency: true,
-        openClient: (resume) => boundary(tables.transaction((tx) => clients.open(tx, resume))),
-        demand: (subset) =>
-            boundary(
-                storage.read((native) =>
-                    read(native).loadSubset(subset.objectType, { ...subset.query, limit: 0 })
-                )
-            ).pipe(Effect.asVoid),
-        subscribeChanges: PubSub.subscribe(wakes).pipe(Effect.map(Stream.fromSubscription)),
-        read: (session, view) =>
-            boundary(
-                storage.transaction((native) =>
-                    Effect.gen(function* () {
-                        yield* clients.select(tables, session, view);
-                        for (const subset of view?.selection.subsets ?? []) yield* object(subset.objectType);
-                        const revision =
-                            (yield* current) + ((yield* tables.get(control, "head"))?.revision ?? 0) + 1;
-                        if (!Number.isSafeInteger(revision))
-                            return yield* fault("protocol", "Unavailable", "Protocol revision exhausted.");
-                        const objects = [];
-                        for (const [objectType, store] of Object.entries(model.objects)) {
-                            const rows = new Map<Key, { key: Key; value: Record<string, unknown> }>();
-                            const subsets = view
-                                ? view.selection.subsets.filter((subset) => subset.objectType === objectType)
-                                : [{ objectType, query: undefined }];
-                            for (const subset of subsets)
-                                for (const row of yield* native.query(store, subset.query))
-                                    rows.set(row.key, row);
-                            objects.push({ objectType, base: [...rows.values()], overrides: [] });
-                        }
-                        const selectedResults = new Map<string, PendingAction>();
-                        if (!view || view.selection.inspectActions)
-                            for (const row of yield* tables.query(results))
-                                selectedResults.set(row.value.entry.invocation.id, row.value.entry);
-                        else
-                            for (const id of view.selection.actionIds)
-                                for (const row of yield* tables.query(results, {
-                                    where: eq(field("entry", "invocation", "id"), id),
-                                }))
-                                    selectedResults.set(id, row.value.entry);
-                        const state = {
-                            sourceId: source,
-                            revision,
-                            definition: definitionSignature,
-                            ...(view ? { view: { generation: view.generation } } : {}),
-                            objects,
-                            pending: [],
-                            completed: [...selectedResults.values()],
-                        };
-                        return { state, client: yield* clients.deliver(tables, session, revision) };
-                    })
-                )
-            ),
-        submit: Effect.fn("OwnedBackend.submitClient")(function* (request: ClientSubmission) {
-            if (!request.invocation.id || request.invocation.attachmentUploads?.length)
-                return yield* fault(
-                    "protocol",
-                    "InvalidRequest",
-                    "Protocol submissions require an invocation ID and staged attachment handles."
-                );
-            if (
-                request.view &&
-                !request.view.selection.inspectActions &&
-                !request.view.selection.actionIds.includes(request.invocation.id)
-            )
-                return yield* fault(
-                    "protocol",
-                    "InvalidRequest",
-                    "The submission view must include its action outcome."
-                );
-            const prepared = yield* prepare(request.invocation);
-            const fingerprint = Table.make<unknown>({ name: "submission-identity" }).encode({
-                invocation: request.invocation,
-                optimistic: request.optimistic,
-            });
-            const admission = yield* boundary(
-                storage.transaction((native) =>
-                    Effect.gen(function* () {
-                        yield* clients.select(tables, request.session, request.view);
-                        for (const subset of request.view?.selection.subsets ?? [])
-                            yield* read(native).loadSubset(subset.objectType, { ...subset.query, limit: 0 });
-                        return yield* clients.admit(
-                            tables,
-                            request.session,
-                            request.sequence,
-                            fingerprint,
-                            () =>
-                                Effect.gen(function* () {
-                                    const committed = yield* invokeIn(native, prepared, Effect.void, false);
-                                    const entry: PendingAction = {
-                                        invocation: request.invocation,
-                                        requestIdentity: Table.make<ActionRequest>({
-                                            name: "identity",
-                                        }).encode(request.invocation),
-                                        createdAt: yield* Clock.currentTimeMillis,
-                                        completedAt: yield* Clock.currentTimeMillis,
-                                        sequence: request.sequence,
-                                        state: "acknowledged",
-                                        optimistic: request.optimistic,
-                                        attempts: 1,
-                                        receipt: committed.receipt,
-                                        touchedTypes: committed.touchedTypes ?? [],
-                                    };
-                                    yield* tables.put(
-                                        results,
-                                        JSON.stringify([request.session.client.clientId, request.sequence]),
-                                        {
-                                            clientId: request.session.client.clientId,
-                                            sequence: request.sequence,
-                                            entry,
-                                        }
-                                    );
-                                })
-                        );
-                    })
-                )
+    const subscribeSelection: NonNullable<OntologyBackendService["subscribeSelection"]> = Effect.fnUntraced(
+        function* (selection, policy, resume) {
+            const context = yield* CurrentExecutionContext;
+            const subsets = yield* Effect.forEach(selection.subsets, (subset) =>
+                compileObjectSubset(options.ir, subset, context)
             );
-            if (!admission.duplicate) yield* PubSub.publish(wakes, undefined);
-            yield* collectGarbage.pipe(
-                Effect.catch((error) =>
-                    Effect.logWarning("Ontology maintenance failed", { kind: error.kind })
-                )
-            );
-            return yield* protocol.read(request.session, request.view);
-        }),
-        acknowledge: Effect.fn("OwnedBackend.acknowledgeClient")(
-            function* (session, revision, through, viewGeneration) {
-                const removed = yield* boundary(
-                    tables.transaction((tx) =>
+            return yield* makeDelivery({
+                tables,
+                namespace: options.namespace,
+                policy: { ...options.delivery, ...policy },
+                resume,
+                binding: JSON.stringify([source, schemaHash]),
+                identity: JSON.stringify(selection),
+                changes: PubSub.subscribe(wakes).pipe(Effect.map(Stream.fromSubscription)),
+                capture: (_tx, emit) =>
+                    boundary(
                         Effect.gen(function* () {
-                            const record = yield* clients.acknowledge(
-                                tx,
-                                session,
-                                revision,
-                                through,
-                                viewGeneration
-                            );
-                            const settled = yield* tx.query(results, {
-                                where: and(
-                                    eq(field("clientId"), record.client.clientId),
-                                    lte(field("sequence"), record.acknowledgedThrough)
-                                ),
-                            });
-                            for (const row of settled) yield* tx.delete(results, row.key);
-                            if (settled.length) yield* bumpControl;
-                            return settled.length;
+                            for (const subset of subsets) {
+                                const store = yield* object(subset.objectType);
+                                yield* scanSelectedRows(
+                                    (query) => boundary(storage.query(store, query)),
+                                    subset.query,
+                                    (row) => emit({ kind: "base", objectType: subset.objectType, ...row })
+                                );
+                            }
+                            const revision = yield* current;
+                            return {
+                                sourceId: source,
+                                schemaHash,
+                                generation: 1,
+                                revision: revision + 1,
+                                cursor: cursor(revision),
+                                coverage: subsets.map((subset) => ({ subset, complete: true })),
+                            };
                         })
-                    )
-                );
-                if (removed) yield* PubSub.publish(wakes, undefined);
-            }
-        ),
-    };
+                    ),
+            });
+        }
+    );
     return {
         name: "owned",
         storage: trustedStorage,
         sourceId: source,
-        protocol,
-        collectClientGarbage,
         maintenance: collectGarbage.pipe(
             Effect.andThen(collectDeliveryGarbage(tables, options.namespace)),
             Effect.asVoid
@@ -872,9 +655,14 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         supportsIdempotency: true,
         subscribeSelection,
         acknowledgeDelivery: (position) => acknowledgeDelivery(tables, options.namespace, position),
-        loadSubset: (subset) =>
+        loadSubset: (request) =>
             boundary(
                 Effect.gen(function* () {
+                    const subset = yield* compileObjectSubset(
+                        options.ir,
+                        request,
+                        yield* CurrentExecutionContext
+                    );
                     const object = model.objects[subset.objectType];
                     if (object)
                         for (const index of indexesForQuery(
@@ -912,7 +700,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                       )
                 : Effect.void;
             const result = yield* boundary(
-                storage.transaction((native) => invokeIn(native, prepared, commitUploads, true))
+                storage.transaction((native) => invokeIn(native, prepared, commitUploads))
             );
             if (result.changed) yield* PubSub.publish(wakes, undefined);
             // Keep cleanup throughput proportional to writes, in addition to idle maintenance.
