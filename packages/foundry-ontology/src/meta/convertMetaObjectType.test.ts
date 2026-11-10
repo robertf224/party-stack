@@ -35,10 +35,6 @@ describe("convertFoundryMetaObjectType", () => {
     it("maps runtime identifiers and the title property", () => {
         const result = convertFoundryMetaObjectType({
             objectType: objectType(),
-            linkTypes: [],
-            implementsInterfaces: [],
-            implementsInterfaces2: {},
-            sharedPropertyTypeMapping: {},
         });
 
         expect(result).toMatchObject({
@@ -93,10 +89,6 @@ describe("convertFoundryMetaObjectType", () => {
         expect(
             convertFoundryMetaObjectType({
                 objectType: source,
-                linkTypes: [],
-                implementsInterfaces: [],
-                implementsInterfaces2: {},
-                sharedPropertyTypeMapping: {},
             })
         ).toMatchObject({
             icon: undefined,

@@ -64,7 +64,7 @@ export function policyProperties(ir: OntologyIR) {
             }
         }
     }
-    roots(ir.policy?.read.select ?? []);
+    roots(ir.policy?.objects.select ?? []);
     return { allowed, guaranteed };
 }
 function filterFields(query: Scan): Set<string> {
@@ -82,7 +82,7 @@ function filterFields(query: Scan): Set<string> {
     return result;
 }
 export interface PolicyViewOptions {
-    readonly extraRead?: QueryDocument;
+    readonly additionalObjects?: QueryDocument;
     readonly inputs?: Record<string, unknown>;
     readonly inputDefinitions?: readonly import("@party-stack/ontology-spec").FieldDef[];
 }
@@ -111,14 +111,14 @@ export function evaluatePolicyView(
             message: "An explicit ontology policy is required.",
             retryable: false,
         });
-    const documents = [ir.policy.read, ...(options?.extraRead ? [options.extraRead] : [])];
+    const documents = [ir.policy.objects, ...(options?.additionalObjects ? [options.additionalObjects] : [])];
     const properties = policyProperties(
-        options?.extraRead
+        options?.additionalObjects
             ? {
                   ...ir,
                   policy: {
                       ...ir.policy,
-                      read: { select: [...ir.policy.read.select, ...options.extraRead.select] },
+                      objects: { select: [...ir.policy.objects.select, ...options.additionalObjects.select] },
                   },
               }
             : ir

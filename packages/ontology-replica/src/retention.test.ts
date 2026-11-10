@@ -1,10 +1,11 @@
+import { it } from "@effect/vitest";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o } from "@party-stack/ontology-spec";
 import { eq, field, gte } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Effect, Scope, Exit, Result } from "effect";
+import { Effect, Scope, Exit, Result, Deferred } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { makeReplica } from "./testing.js";
@@ -29,6 +30,49 @@ const ir: OntologyIR = {
         },
     ],
 };
+
+test("closing a replica releases local inspection roots even when the consumer scope outlives it", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const owner = yield* Scope.fork(yield* Effect.scope);
+                const consumer = yield* Scope.fork(yield* Effect.scope);
+                const backend = yield* makeOwnedBackend({
+                    ir,
+                    namespace: "inspection-source",
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                let storageClosed = false;
+                const replica = yield* Scope.provide(
+                    makeReplica({
+                        ir,
+                        namespace: "inspection-root",
+                        startSync: false,
+                        execute: () => Effect.void,
+                        backend,
+                        tables: {
+                            ...tables,
+                            delete: (table, key) =>
+                                storageClosed
+                                    ? Effect.die("Inspection release used closed storage")
+                                    : tables.delete(table, key),
+                        },
+                    }),
+                    owner
+                );
+                yield* Scope.provide(replica.retainLocal("Row"), consumer);
+                const roots = Table.make({ name: JSON.stringify(["replica", "inspection-root", "roots"]) });
+                expect(yield* tables.query(roots)).toHaveLength(1);
+                yield* Scope.close(owner, Exit.void);
+                expect(yield* tables.query(roots)).toEqual([]);
+                storageClosed = true;
+                yield* Scope.close(consumer, Exit.void);
+            })
+        )
+    );
+});
 const setup = Effect.fnUntraced(function* (execute: ReplicaOptions["execute"] = () => Effect.void) {
     const tables = yield* Memory.make();
     const server = yield* makeOwnedBackend({
@@ -210,41 +254,67 @@ test("blocked replays keep previous dependencies, partial reads, and newly match
     );
 });
 
-test("automatic bounded collection belongs to the replica scope and preserves a narrow demand", async () => {
-    await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                const { options } = yield* setup();
-                let transactions = 0;
-                const owner = yield* Scope.make();
-                const replica = yield* Scope.provide(
-                    makeReplica({
-                        ...options,
-                        startSync: true,
-                        pollIntervalMs: 1_000_000,
-                        objectCacheGc: { sweepIntervalMs: 10, minUnusedAgeMs: 0, maxCandidates: 2 },
-                        tables: {
-                            ...options.tables,
-                            transaction: (body) =>
-                                Effect.suspend(() => {
-                                    transactions++;
-                                    return options.tables.transaction(body);
-                                }),
-                        },
-                    }),
-                    owner
-                );
-                yield* Scope.provide(replica.retainLocal("Row", { where: eq(field("id"), "row0") }), owner);
-                yield* TestClock.adjust(100);
-                expect((yield* replica.loadSubset("Row")).map((row) => row.key)).toEqual(["row0"]);
-                yield* Scope.close(owner, Exit.void);
-                const closedAt = transactions;
-                yield* TestClock.adjust(30);
-                expect(transactions).toBe(closedAt);
-            })
-        ).pipe(Effect.provide(TestClock.layer()))
-    );
-});
+it.effect("automatic bounded collection belongs to the replica scope and preserves a narrow demand", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            const { options } = yield* setup();
+            let transactions = 0;
+            const deliveryInstalled = yield* Deferred.make<void>();
+            const incomingState = JSON.stringify([
+                JSON.stringify(["replica", options.namespace, "upstream"]),
+                "incoming-delivery",
+                "state",
+            ]);
+            const owner = yield* Scope.make();
+            const replica = yield* Scope.provide(
+                makeReplica({
+                    ...options,
+                    startSync: true,
+                    pollIntervalMs: 1_000_000,
+                    objectCacheGc: { sweepIntervalMs: 10, minUnusedAgeMs: 0, maxCandidates: 2 },
+                    tables: {
+                        ...options.tables,
+                        transaction: (body) =>
+                            Effect.gen(function* () {
+                                transactions++;
+                                let installed = false;
+                                const result = yield* options.tables.transaction((tx) =>
+                                    body({
+                                        ...tx,
+                                        put: (table, key, value) =>
+                                            tx.put(table, key, value).pipe(
+                                                Effect.tap(() =>
+                                                    Effect.sync(() => {
+                                                        if (
+                                                            table.name === incomingState &&
+                                                            key === "installed"
+                                                        )
+                                                            installed = true;
+                                                    })
+                                                )
+                                            ),
+                                    })
+                                );
+                                if (installed) yield* Deferred.succeed(deliveryInstalled, undefined);
+                                return result;
+                            }),
+                    },
+                }),
+                owner
+            );
+            yield* Scope.provide(replica.retainLocal("Row", { where: eq(field("id"), "row0") }), owner);
+            // Startup delivery shares the table gate with GC. Its first atomic
+            // install must finish before virtual sweep deadlines are advanced.
+            yield* Deferred.await(deliveryInstalled);
+            yield* TestClock.adjust(100);
+            expect((yield* replica.loadSubset("Row")).map((row) => row.key)).toEqual(["row0"]);
+            yield* Scope.close(owner, Exit.void);
+            const closedAt = transactions;
+            yield* TestClock.adjust(30);
+            expect(transactions).toBe(closedAt);
+        })
+    )
+);
 
 test("owner restart discards abandoned query leases while retaining pins and pending action dependencies", async () => {
     await Effect.runPromise(

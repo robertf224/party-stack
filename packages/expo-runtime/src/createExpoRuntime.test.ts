@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { Runtime } from "@party-stack/runtime";
+import { Table } from "@party-stack/ontology-storage/tables";
+import { Runtime, Runtimes, collectByteBlob } from "@party-stack/runtime";
 import { RuntimePartition } from "@party-stack/runtime";
 import { acquireRuntime } from "@party-stack/runtime/testing";
 import { runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { Deferred, Effect, Fiber, Layer, Stream } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { make, layer as platformLayer } from "./createExpoRuntime.js";
+import { make, expoRuntime, layer as platformLayer } from "./index.js";
 const createExpoRuntime = (owner: string, namespace: string) =>
     make().pipe(Effect.provideService(RuntimePartition, { owner, namespace }));
 const layer = (partition: { owner: string; namespace: string }) =>
@@ -19,6 +20,15 @@ const state = vi.hoisted(() => ({
     disconnect: vi.fn(),
     clear: vi.fn(),
     directory: vi.fn(),
+    secrets: vi.fn(),
+    authenticate: vi.fn(),
+    generateKey: vi.fn(() => Promise.resolve("native-key")),
+    importKey: vi.fn(() =>
+        Promise.resolve({
+            encrypt: async (bytes: Uint8Array) => bytes,
+            decrypt: async (bytes: Uint8Array) => bytes,
+        })
+    ),
     availableDiskSpace: 4096,
 }));
 vi.mock("expo-file-system", () => ({
@@ -50,13 +60,22 @@ vi.mock("./ExpoFileSystemBlobBytesStore.js", () => ({
         clear = () => Effect.sync(state.clear);
     },
 }));
-vi.mock("./ExpoKeyMaterialStore.js", () => ({ makeKeyMaterialStore: () => ({}) }));
-vi.mock("./createExpoBrowserAuthentication.js", () => ({ createExpoBrowserAuthentication: () => ({}) }));
+vi.mock("./encryptionKeys.js", () => ({
+    nativeKeyCodec: { generate: state.generateKey, import: state.importKey },
+}));
+vi.mock("./ExpoKeyMaterialStore.js", () => ({ makeKeyMaterialStore: state.secrets }));
+vi.mock("./createExpoBrowserAuthentication.js", () => ({
+    createExpoBrowserAuthentication: () => ({ start: state.authenticate }),
+}));
 
 describe("createExpoRuntime", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         state.events = [];
+        state.secrets.mockReturnValue({});
+        state.authenticate.mockImplementation(() =>
+            Effect.succeed({ open: () => Effect.succeed({ callbackUrl: "notes://callback" }) })
+        );
         state.close.mockImplementation(async () => {
             await Promise.resolve();
             state.events.push("closed");
@@ -174,4 +193,53 @@ describe("createExpoRuntime", () => {
         expect(state.disconnect).toHaveBeenCalledOnce();
         expect(state.close).not.toHaveBeenCalled();
     });
+});
+
+it("public memory runtime retains native capabilities without acquiring persistent storage", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const runtimes = yield* Runtimes;
+                expect(state.open).not.toHaveBeenCalled();
+                expect(state.directory).not.toHaveBeenCalled();
+                const authentication = yield* runtimes.browserAuthentication!.start({
+                    redirectUrl: "notes://callback",
+                });
+                expect(yield* authentication.open("https://example.com/oauth")).toEqual({
+                    callbackUrl: "notes://callback",
+                });
+                const first = yield* runtimes.acquire({ owner: "device", namespace: "connect" });
+                const same = yield* runtimes.acquire({ owner: "device", namespace: "connect" });
+                const other = yield* runtimes.acquire({ owner: "device", namespace: "notes" });
+                expect(first).toBe(same);
+                expect(yield* first.connectivity.online).toBe(true);
+                expect(first.browserAuthentication).toBeDefined();
+                expect(first.encryptionKeyring).toBeDefined();
+                const active = yield* first.encryptionKeyring!.active;
+                expect((yield* first.encryptionKeyring!.active).id).toBe(active.id);
+                expect(yield* first.encryptionKeyring!.get(active.id)).toBeDefined();
+                expect(yield* other.encryptionKeyring!.get(active.id)).toBeUndefined();
+                expect(state.generateKey).toHaveBeenCalledOnce();
+                expect(yield* first.capacity!.storage).toBeUndefined();
+                const table = Table.make<{ title: string }>({ name: "memory-runtime-probe" });
+                yield* first.tables.put(table, "one", { title: "Local" });
+                expect(yield* first.tables.get(table, "one")).toEqual({ title: "Local" });
+                expect(yield* other.tables.get(table, "one")).toBeUndefined();
+                yield* first.bytes.write("file", new Blob(["memory attachment"]));
+                const bytes = yield* first.bytes.read("file");
+                if (!bytes) return yield* Effect.die("Missing memory attachment");
+                const blob = yield* collectByteBlob(bytes);
+                expect(yield* Effect.promise(() => blob.text())).toBe("memory attachment");
+                expect(yield* other.bytes.read("file")).toBeUndefined();
+                yield* first.destroy;
+            }).pipe(Effect.provide(expoRuntime({ storage: "memory" })))
+        )
+    );
+    expect(state.authenticate).toHaveBeenCalledOnce();
+    expect(state.disconnect).toHaveBeenCalledTimes(2);
+    expect(state.open).not.toHaveBeenCalled();
+    expect(state.close).not.toHaveBeenCalled();
+    expect(state.delete).not.toHaveBeenCalled();
+    expect(state.directory).not.toHaveBeenCalled();
+    expect(state.secrets).not.toHaveBeenCalled();
 });

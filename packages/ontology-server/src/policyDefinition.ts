@@ -135,13 +135,16 @@ export const projectPolicyDefinition = Effect.fnUntraced(function* (options: {
         return selected;
     });
     const policy = ir.policy!;
-    const read = { ...policy.read, select: yield* specialize(policy.read.select) };
+    const objects = { ...policy.objects, select: yield* specialize(policy.objects.select) };
     const actions = [];
     for (const rule of policy.actions ?? []) if ((yield* condition(rule.check)) !== false) actions.push(rule);
     const queries = [];
     for (const rule of policy.queryFunctions ?? [])
         if ((yield* condition(rule.check)) !== false) queries.push(rule);
-    const specialized: OntologyIR = { ...ir, policy: { ...policy, read, actions, queryFunctions: queries } };
+    const specialized: OntologyIR = {
+        ...ir,
+        policy: { ...policy, objects, actions, queryFunctions: queries },
+    };
     const properties = policyProperties(specialized);
     const fixed: FixedActionParameterValues = Object.fromEntries(
         actions.map((a) => [

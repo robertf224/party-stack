@@ -21,28 +21,39 @@ function normalizeBaseUrl(baseUrl: string): string {
     return normalized.toString();
 }
 
-export function createClient(context: Optional<Client, "fetch">): Client {
+export type ClientOptions =
+    | Optional<Client, "fetch">
+    | (Omit<Client, "tokenProvider" | "createWebSocket"> & {
+          tokenProvider?: never;
+          createWebSocket?: Client["createWebSocket"];
+      });
+export function createClient(context: ClientOptions): Client {
     const baseUrl = normalizeBaseUrl(context.baseUrl);
+    // Authenticated egress owns credentials. SDK code must use its fetch/WebSocket,
+    // rather than requesting a token separately or injecting a placeholder credential.
+    const tokenProvider =
+        context.tokenProvider ??
+        (() =>
+            Promise.reject(
+                new Error("This client uses authenticated egress; direct token access is unavailable.")
+            ));
     const fetchImpl =
         context.fetch ??
         createFoundryFetch({
             baseUrl,
-            tokenProvider: context.tokenProvider,
+            tokenProvider,
         });
     return {
         baseUrl,
         fetch: createFetchOrThrow(fetchImpl),
-        tokenProvider: context.tokenProvider,
+        tokenProvider,
         createWebSocket:
             context.createWebSocket ??
-            createFoundryWebSocket({
-                baseUrl,
-                tokenProvider: context.tokenProvider,
-            }),
+            (context.tokenProvider ? createFoundryWebSocket({ baseUrl, tokenProvider }) : undefined),
     };
 }
 
-export function createOntologyClient(context: Optional<OntologyClient, "fetch">): OntologyClient {
+export function createOntologyClient(context: ClientOptions & { ontologyRid: string }): OntologyClient {
     return {
         ...createClient(context),
         ontologyRid: context.ontologyRid,

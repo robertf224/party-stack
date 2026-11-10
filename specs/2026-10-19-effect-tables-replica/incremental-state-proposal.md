@@ -92,7 +92,7 @@ const open = createConnectedLiveOntology({
     ir,
     connection, // Effect from connectOntologyWorker/HTTP, with transport supplied.
     runtime: WebRuntime.layer({ owner: userId, namespace, storage: "memory" }),
-    writes: { defaultMode: "outbox", defaultVisibility: "optimistic", mutators },
+    writes: { defaultVisibility: "optimistic", mutators },
 });
 
 const serve = serveOpenedOntologyWorker({

@@ -29,6 +29,15 @@ describe("createClient", () => {
         expect(client.createWebSocket).toBe(createWebSocket);
     });
 
+    it("accepts authenticated egress without exposing a token or constructing an unauthenticated socket", async () => {
+        const fetch = vi.fn(() => Promise.resolve(new Response()));
+        const client = createClient({ baseUrl: "https://foundry.example.com", fetch });
+        await client.fetch("https://foundry.example.com/api");
+        expect(fetch).toHaveBeenCalledOnce();
+        expect(client.createWebSocket).toBeUndefined();
+        await expect(client.tokenProvider()).rejects.toThrow("authenticated egress");
+    });
+
     it("uses tokenProvider when creating its default fetch", async () => {
         const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
             void input;

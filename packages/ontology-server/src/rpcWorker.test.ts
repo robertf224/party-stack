@@ -5,18 +5,19 @@ import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import { eq, field, literal, selectField, sub } from "@party-stack/ontology-spec/query";
 import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { expect, test, vi } from "vite-plus/test";
 import { replicaController } from "../../ontology-replica/lib/internal.js";
 import { makeReplica } from "../../ontology-replica/lib/service.js";
-import { connectOntologyWorker, serveOntologyWorker, serveOpenedOntologyWorker } from "./rpcWorker.js";
-import type { OntologyConnection } from "./rpc.js";
+import { makeOntologyWorkerClient, serveOntologyWorker, serveOpenedOntologyWorker } from "./rpcWorker.js";
+import type { OntologyClient } from "./rpc.js";
 import type { OwnedTransaction } from "@party-stack/ontology-backend/owned";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 
-const speculativeSource = (connection: OntologyConnection) => {
+const speculativeSource = (connection: OntologyClient) => {
     if (connection.replication.kind !== "speculative") throw new Error("Expected speculative replication.");
     return connection.replication.source;
 };
@@ -59,10 +60,12 @@ const openPort = Effect.fnUntraced(function* (
             channel.port2.close();
         })
     );
-    yield* serveOntologyWorker({ source, backend, authorize: () => Effect.void }).pipe(
+    yield* serveOntologyWorker({ enableRealtime: true, source, backend, authorize: () => Effect.void }).pipe(
         Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1))
     );
-    return yield* connectOntologyWorker().pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)));
+    return yield* makeOntologyWorkerClient()
+        .pipe(Effect.flatMap((server) => server.ontology()))
+        .pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)));
 });
 
 test("multipart worker delivery carries a rejection after successful actions from two clients", async () => {
@@ -183,6 +186,7 @@ test("worker composition serves during delayed acquisition and releases its open
                 const gate = yield* Deferred.make<void>();
                 const started = yield* Deferred.make<void>();
                 const host = yield* serveOpenedOntologyWorker({
+                    enableRealtime: true,
                     open: Effect.gen(function* () {
                         yield* Deferred.succeed(started, undefined);
                         yield* Deferred.await(gate);
@@ -190,19 +194,34 @@ test("worker composition serves during delayed acquisition and releases its open
                         return { replica: owner, backend };
                     }),
                     errors: "forward",
-                    authorize: () => Effect.void,
+                    dangerouslyAllowInternalAccess: true,
                 }).pipe(
                     Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1)),
                     Effect.forkScoped
                 );
                 yield* Deferred.await(started);
-                const connecting = yield* connectOntologyWorker().pipe(
-                    Effect.provide(BrowserWorker.layer(() => channel.port2)),
-                    Effect.forkScoped
-                );
+                const connecting = yield* makeOntologyWorkerClient()
+                    .pipe(Effect.flatMap((server) => server.ontology()))
+                    .pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)), Effect.forkScoped);
                 expect(cleanup).not.toHaveBeenCalled();
                 yield* Deferred.succeed(gate, undefined);
                 const source = yield* Fiber.join(connecting);
+                // Describe and finite helpers must resolve the same late-bound facade.
+                expect(source.description.queries).toBe(true);
+                expect(source.description.ir).toEqual(ir);
+                expect((yield* source.backend.loadSubset(objectSubset("Counter"))).rows).toMatchObject([
+                    { key: "one", value: { id: "one", count: 1 } },
+                ]);
+                expect(
+                    yield* source.operations.query({
+                        select: [
+                            sub("counters", {
+                                from: { source: { objectType: "Counter" }, binding: "counter" },
+                                select: [selectField("count", field("counter", "count"))],
+                            }),
+                        ],
+                    })
+                ).toEqual({ counters: [{ count: 1 }] });
                 const session = yield* speculativeSource(source).openClient();
                 const batch = yield* speculativeSource(source).read(session, {
                     generation: 1,
@@ -212,6 +231,90 @@ test("worker composition serves during delayed acquisition and releases its open
                 expect(cleanup).not.toHaveBeenCalled();
                 yield* Fiber.interrupt(host);
                 expect(cleanup).toHaveBeenCalledTimes(1);
+            })
+        )
+    );
+});
+
+test("private worker commands preserve a declared IR policy", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const channel = new MessageChannel();
+                yield* Effect.addFinalizer(() =>
+                    Effect.sync(() => {
+                        channel.port1.close();
+                        channel.port2.close();
+                    })
+                );
+                const policyIr: OntologyIR = {
+                    ...ir,
+                    policy: {
+                        objects: {
+                            select: [
+                                sub("counters", {
+                                    from: { source: { objectType: "Counter" }, binding: "c" },
+                                    where: eq(field("c", "id"), literal("one")),
+                                    select: [selectField("id", field("c", "id"))],
+                                }),
+                            ],
+                        },
+                        actions: [{ actionType: "increment", check: literal(false) }],
+                    },
+                };
+                const backend = yield* makeOwnedBackend({
+                    namespace: "policy-worker-backend",
+                    ir: policyIr,
+                    tables: yield* Memory.make(),
+                    mutators: { increment },
+                });
+                yield* backend.storage.transaction((tx) =>
+                    Effect.forEach(["one", "two"], (id) => tx.put("Counter", { id, count: 42 }), {
+                        discard: true,
+                    })
+                );
+                const replica = yield* makeReplica({
+                    namespace: "policy-worker-owner",
+                    ir: policyIr,
+                    tables: yield* Memory.make(),
+                    backend,
+                    mutators: { increment },
+                    live: false,
+                });
+                let internalCalls = 0;
+                yield* serveOpenedOntologyWorker({
+                    enableRealtime: true,
+                    dangerouslyAllowInternalAccess: true,
+                    open: Effect.succeed({
+                        replica,
+                        backend,
+                        deleteLocalData: Effect.sync(() => {
+                            internalCalls++;
+                        }),
+                    }),
+                }).pipe(
+                    Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1)),
+                    Effect.forkScoped
+                );
+                const client = yield* makeOntologyWorkerClient()
+                    .pipe(Effect.flatMap((server) => server.ontology()))
+                    .pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)));
+                expect(client.replication.kind).toBe("committed");
+                expect(client.backend.changes).toBeUndefined();
+                expect(client.backend.subscribeSelection).toBeUndefined();
+                expect(client.ir!.objectTypes[0]!.properties.map((p) => p.name)).toEqual(["id"]);
+                expect((yield* client.backend.loadSubset(objectSubset("Counter"))).rows).toEqual([
+                    { key: "one", value: { id: "one" } },
+                ]);
+                const result = yield* Effect.result(
+                    client.backend.applyAction({ id: "denied", name: "increment", parameters: {} })
+                );
+                expect(result).toMatchObject({ _tag: "Failure", failure: { kind: "NotFound" } });
+                yield* client.operations.deleteLocalData;
+                expect(internalCalls).toBe(1);
+                expect(
+                    (yield* backend.loadSubset(objectSubset("Counter"))).rows.map((row) => row.value.count)
+                ).toEqual([42, 42]);
             })
         )
     );
@@ -232,6 +335,7 @@ test.each(["failure", "defect"] as const)(
                         })
                     );
                     yield* serveOpenedOntologyWorker({
+                        enableRealtime: true,
                         open: Effect.gen(function* () {
                             yield* Effect.addFinalizer(() => Effect.sync(cleanup));
                             if (kind === "defect")
@@ -244,13 +348,15 @@ test.each(["failure", "defect"] as const)(
                             });
                         }),
                         errors: "forward",
-                        authorize: () => Effect.void,
+                        dangerouslyAllowInternalAccess: true,
                     }).pipe(
                         Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1)),
                         Effect.forkScoped
                     );
                     const result = yield* Effect.result(
-                        connectOntologyWorker().pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)))
+                        makeOntologyWorkerClient()
+                            .pipe(Effect.flatMap((server) => server.ontology()))
+                            .pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)))
                     );
                     expect(result).toMatchObject({
                         _tag: "Failure",
@@ -301,7 +407,7 @@ test("two memory tabs hand off actions to one owner through native MessagePorts"
                         cache: { objects: false },
                         live: false,
                     });
-                    yield* replicaController(tab).retainLocal("Counter");
+                    yield* replicaController(tab).demand({ objectType: "Counter" });
                     yield* tab.syncOnce;
                     tabs.push(tab);
                 }
@@ -406,8 +512,10 @@ test("worker startup times out and releases its transport before choosing a fall
                     })
                 );
                 const result = yield* Effect.result(
-                    connectOntologyWorker({ connectionTimeoutMs: 10 }).pipe(
-                        Effect.provide(BrowserWorker.layer(() => channel.port2))
+                    Effect.scoped(
+                        makeOntologyWorkerClient({ connectionTimeoutMs: 10 })
+                            .pipe(Effect.flatMap((server) => server.ontology()))
+                            .pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)))
                     )
                 );
                 expect(result).toMatchObject({
@@ -443,6 +551,7 @@ test("bootstrap failures reach the worker handshake as typed errors", async () =
                     })
                 );
                 yield* serveOntologyWorker({
+                    enableRealtime: true,
                     backend: owned,
                     ir,
                     authorize: () => Effect.void,
@@ -457,12 +566,51 @@ test("bootstrap failures reach the worker handshake as typed errors", async () =
                     ),
                 }).pipe(Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1)));
                 const result = yield* Effect.result(
-                    connectOntologyWorker().pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)))
+                    makeOntologyWorkerClient()
+                        .pipe(Effect.flatMap((server) => server.ontology()))
+                        .pipe(Effect.provide(BrowserWorker.layer(() => channel.port2)))
                 );
                 expect(result).toMatchObject({
                     _tag: "Failure",
                     failure: { kind: "ValidationFailed", message: "Principal partition is unavailable." },
                 });
+            })
+        )
+    );
+});
+
+test("a ready worker can initialize its ontology beyond the transport handshake deadline", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeOwnedBackend({
+                    namespace: "slow-bootstrap",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                const channel = new MessageChannel();
+                yield* Effect.addFinalizer(() =>
+                    Effect.sync(() => {
+                        channel.port1.close();
+                        channel.port2.close();
+                    })
+                );
+                const initialized = yield* Deferred.make<void>();
+                yield* serveOntologyWorker({
+                    enableRealtime: true,
+                    backend,
+                    ir,
+                    authorize: () => Effect.void,
+                    ready: Deferred.await(initialized),
+                }).pipe(Effect.provide(BrowserWorkerRunner.layerMessagePort(channel.port1)));
+                const client = yield* makeOntologyWorkerClient({ connectionTimeoutMs: 20 }).pipe(
+                    Effect.provide(BrowserWorker.layer(() => channel.port2))
+                );
+                const opening = yield* client.ontology().pipe(Effect.forkScoped);
+                yield* Effect.sleep(50);
+                yield* Deferred.succeed(initialized, undefined);
+                expect((yield* Fiber.join(opening)).ir).toEqual(ir);
             })
         )
     );

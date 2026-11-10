@@ -4,7 +4,7 @@ import { eq, field } from "@party-stack/ontology-storage";
 import { byteSource } from "@party-stack/ontology-storage/blobs";
 import { Effect, Stream } from "effect";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { createFoundryOntologyBackendAdapter } from "../adapter/createFoundryOntologyBackendAdapter.js";
+import { makeFoundryOntologyBackend } from "../adapter/makeFoundryOntologyBackend.js";
 import { createFoundryUsersIntegration } from "./createFoundryUsersIntegration.js";
 import { foundryUserProfilePictureAttachment } from "./foundryUser.js";
 import { createFoundryUserObjectType } from "./foundryUser.js";
@@ -52,7 +52,7 @@ describe("createFoundryUsersIntegration", () => {
         mocks.search.mockResolvedValue({ data: [] });
         mocks.list.mockResolvedValue({ data: [user] });
         mocks.getBatch.mockResolvedValue({ data: { [user.id]: user } });
-        const adapter = createFoundryOntologyBackendAdapter({
+        const adapter = makeFoundryOntologyBackend({
             client: {
                 baseUrl: "https://foundry.example",
                 ontologyRid: "ontology",
@@ -71,7 +71,7 @@ describe("createFoundryUsersIntegration", () => {
         const snapshot = await Effect.runPromise(
             Effect.scoped(
                 Effect.gen(function* () {
-                    const backend = yield* adapter.open!({ user: "user-1" });
+                    const backend = yield* adapter;
                     return yield* backend.loadSubset(
                         objectSubset("User", { where: eq(field("id"), "user-1") })
                     );

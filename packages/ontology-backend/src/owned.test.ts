@@ -4,7 +4,7 @@ import { byteSource } from "@party-stack/ontology-storage/blobs";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect, Result, Deferred, Fiber, Scope, Exit } from "effect";
+import { Effect, Result, Deferred, Fiber, Scope, Exit, Stream } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { expect, test } from "vitest";
 import { makeOwnedBackend, type OwnedTransaction } from "./owned.js";
@@ -42,6 +42,32 @@ const rejected = () =>
         message: "Expected rejection",
         retryable: false,
     });
+
+test("closing an owned backend releases watches opened by independent request scopes", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owner = yield* Scope.make();
+                const backend = yield* Scope.provide(
+                    makeOwnedBackend({
+                        namespace: "watch-owner",
+                        ir,
+                        tables: yield* Memory.make(),
+                        mutators: {},
+                        maintenance: false,
+                    }),
+                    owner
+                );
+                const watch = yield* backend.changes!.watch!;
+                const watching = yield* Stream.runDrain(watch).pipe(
+                    Effect.forkScoped({ startImmediately: true })
+                );
+                yield* Scope.close(owner, Exit.void);
+                yield* Fiber.await(watching).pipe(Effect.timeout("1 second"));
+            })
+        )
+    );
+});
 
 test("owned commits atomically persist rows, receipts, and ordered source-scoped change batches", async () => {
     await Effect.runPromise(
@@ -176,7 +202,7 @@ test("owned action transactions reject uploads collected before commit and retai
                 const blobs = yield* makeBlobStorage({
                     namespace: "owned-uploads",
                     tables,
-                    mode: "authoritative",
+                    attachmentBytesRetentionMode: "authoritative",
                     bytes: {
                         read: (key) =>
                             Effect.sync(() => {
@@ -484,6 +510,49 @@ test("action results commit with edits and survive receipt recovery without reex
                 expect(
                     (yield* reopened.loadSubset(objectSubset("Counter"))).rows.map((row) => row.key)
                 ).toEqual(["one"]);
+            })
+        )
+    );
+});
+
+test("acquired owned watches buffer commits before stream consumption", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeOwnedBackend({
+                    namespace: "eager-watch",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: {
+                        increment: (tx, invocation) =>
+                            tx.put("Counter", {
+                                id: invocation.parameters.id,
+                                count: invocation.parameters.amount,
+                            }),
+                    },
+                    maintenance: false,
+                });
+                const scope = yield* Scope.fork(yield* Effect.scope);
+                const watch = yield* Scope.provide(backend.changes!.watch!, scope);
+                // No stream pull or consumer fiber exists yet. Registration must already
+                // buffer this wake, and the sliding publisher must never await consumption.
+                for (let i = 0; i < 3; i++)
+                    yield* backend.applyAction({
+                        id: `invocation-${i}`,
+                        name: "increment",
+                        parameters: { id: "one", amount: i },
+                    });
+                expect(yield* Stream.runHead(watch).pipe(Effect.timeout("1 second"))).toMatchObject({
+                    _tag: "Some",
+                    value: undefined,
+                });
+                yield* Scope.close(scope, Exit.void);
+                yield* backend.applyAction({
+                    id: "after-release",
+                    name: "increment",
+                    parameters: { id: "one", amount: 4 },
+                });
+                expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(4);
             })
         )
     );

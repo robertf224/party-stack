@@ -1,5 +1,6 @@
 import { fromBlueprintIconName } from "@party-stack/icons-blueprint";
 import { Temporal } from "temporal-polyfill";
+import { FOUNDRY_CURRENT_USER_CONTEXT_FIELD } from "../context.js";
 import { toOntologyActionTypeName } from "../utils/actionTypeName.js";
 import {
     convertOmsActionParameterDefaults,
@@ -28,7 +29,6 @@ import type {
 } from "@party-stack/ontology-spec";
 import type { ActionType as MetaActionType } from "@party-stack/ontology-spec/meta";
 
-const FOUNDRY_CURRENT_USER_CONTEXT_PATH = ["user"];
 const FOUNDRY_UUID_PARAMETER_PREFIX = "__uuid_";
 const FOUNDRY_NOW_PARAMETER_NAME = "__now";
 const FOUNDRY_LIST_ITEM_BINDING = "item";
@@ -627,7 +627,7 @@ function convertLogicRuleArgument(
         case "currentUser":
             return {
                 kind: "contextReference",
-                value: { name: FOUNDRY_CURRENT_USER_CONTEXT_PATH[0]! },
+                value: { name: FOUNDRY_CURRENT_USER_CONTEXT_FIELD },
             };
         default:
             throw new Error(`Unsupported Foundry action argument "${argument.type}".`);

@@ -37,8 +37,7 @@ there is a receipt or an explicit recovery decision. Paused work does not expire
 import { BackendError } from "@party-stack/ontology-backend";
 
 try {
-    // Both modes await confirmation. "direct" additionally requires connectivity.
-    await ontology.actions.createIssue(parameters, { mode: "direct" });
+    await ontology.actions.createIssue(parameters, { visibility: "confirmed" });
     closeForm();
 } catch (error) {
     if (error instanceof BackendError && error.kind === "ValidationFailed") {
@@ -57,21 +56,17 @@ error. A bounded terminal result delivers it across SharedWorker/tab boundaries 
 the existing resultRetentionMs policy. It is not an executable outbox entry. Corrected
 form submissions use a new invocation. Issue-tracker uses this policy.
 
-An offline form can use mode:"outbox" to allow offline admission. Its action Promise
-stays pending until authoritative confirmation and local reconciliation, possibly much
-later. Visibility does not change that waiting contract. For an optimistic UI:
+Actions queue while offline. Their Promises stay pending until authoritative
+confirmation and local reconciliation, possibly much later. Visibility does not
+change that waiting contract. For an optimistic UI:
 
 ```ts
-void ontology.actions
-    .createIssue(parameters, { visibility: "optimistic", mode: "outbox" })
-    .catch(showActionErrorToast);
+void ontology.actions.createIssue(parameters, { visibility: "optimistic" }).catch(showActionErrorToast);
 closeForm();
 ```
 
-No manual enqueue is needed. Expected failures reject with BackendError; direct
-admission while offline is Unavailable with actionOutcome:"not-committed" and
-does not enqueue anything. A lost response after dispatch may instead have an unknown
-outcome. Low-level outbox.enqueue still exposes accepted/completed observations for
+No manual enqueue is needed. Expected failures reject with BackendError. A lost
+response after dispatch may have an unknown outcome. Low-level outbox.enqueue still exposes accepted/completed observations for
 administrative and recovery tools. The ordinary action API has one confirmation Promise.
 
 For apps using failureStrategy:"pause", a definitely rejected action remains pending.

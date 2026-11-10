@@ -1,13 +1,11 @@
 ---
-"@party-stack/coordination": minor
 "@party-stack/runtime": minor
 "@party-stack/ontology-replica": minor
 "@party-stack/foundry-object-set-watcher": minor
 "@party-stack/foundry-ontology": minor
 "@party-stack/salesforce-ontology": minor
 "@party-stack/ontology-backend": minor
-"@party-stack/connections": minor
-"@party-stack/oauth": minor
+"@party-stack/connect": minor
 "@party-stack/web-runtime": minor
 "@party-stack/node-runtime": minor
 "@party-stack/expo-runtime": minor

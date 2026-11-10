@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import { QuerySchema } from "@party-stack/ontology-storage";
@@ -31,7 +32,9 @@ export function makeSalesforceBackend(options: {
 }): OntologyBackendService {
     const failure = classifyBackendFailure;
     const clientFor = (signal: AbortSignal) => options.client.withSignal?.(signal) ?? options.client;
-    return {
+    return makeOntologyBackend({
+        ir: options.ir,
+        context: options.context,
         name: "salesforce",
         sourceId: `salesforce:${options.client.instanceUrl}`,
         supportsIdempotency: false,
@@ -152,5 +155,5 @@ export function makeSalesforceBackend(options: {
         }),
         // The client's CDC API cannot yet report stream health/reconnect gaps.
         // Callers can configure Replica polling; this binding does not enable it automatically.
-    };
+    });
 }

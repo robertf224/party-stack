@@ -1,5 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { validate } from "@party-stack/ontology-spec";
+import { o, validate } from "@party-stack/ontology-spec";
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Clock, Effect } from "effect";
@@ -27,7 +27,7 @@ test("Connect actions use journaled ontology state and return no credentials", a
                     tables,
                     namespace: "connect-backend",
                     values: { ...values, evict: () => Effect.void },
-                    provider: () =>
+                    oauth: () =>
                         Effect.succeed({
                             authorizationUrl: ({ state }) =>
                                 Effect.succeed(`https://auth.example/authorize?state=${state}`),
@@ -37,32 +37,32 @@ test("Connect actions use journaled ontology state and return no credentials", a
                                     return {
                                         accessToken: "private-access",
                                         refreshToken: "private-refresh",
-                                        providerSubjectId: "provider-user",
+                                        userId: "oauth-user",
                                     };
                                 }),
                             refresh: () =>
                                 Effect.succeed({
                                     accessToken: "new-access",
-                                    providerSubjectId: "provider-user",
+                                    userId: "oauth-user",
                                 }),
                             clientCredentials: Effect.succeed({
                                 accessToken: "service-access",
-                                providerSubjectId: "provider-user",
+                                userId: "oauth-user",
                             }),
                         }),
                 });
                 yield* store.transaction(
                     Effect.gen(function* () {
-                        yield* store.put("Installation", {
-                            id: "installation",
+                        yield* store.put("ServiceInstance", {
+                            id: "serviceInstance",
                             title: "Example",
-                            providerId: "example",
+                            service: "example",
                             instanceUrl: "https://example.com",
                         });
-                        yield* store.put("OAuthConnector", {
-                            id: "connector",
+                        yield* store.put("OAuthApplication", {
+                            id: "application",
                             title: "Example",
-                            installation: "installation",
+                            serviceInstance: "serviceInstance",
                             flow: "authorization-code",
                             clientId: "app",
                         });
@@ -73,7 +73,7 @@ test("Connect actions use journaled ontology state and return no credentials", a
                     id: "begin-1",
                     name: "beginAuthorization",
                     parameters: {
-                        connectorId: "connector",
+                        applicationId: "application",
                         principalId: "principal",
                         redirectUrl: "https://app.example/callback",
                     },
@@ -142,6 +142,92 @@ test("Connect actions use journaled ontology state and return no credentials", a
                     _tag: "Failure",
                     failure: { kind: "ValidationFailed", actionOutcome: "not-committed" },
                 });
+            })
+        )
+    );
+});
+
+test("application workflows require declared actions and validate parameters and results", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const key = yield* Effect.promise(() =>
+                    crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"])
+                );
+                const values = {
+                    ...makeEncryptedValues("workflow", {
+                        active: Effect.succeed({ id: "key", key }),
+                        get: () => Effect.succeed(key),
+                    }),
+                    evict: () => Effect.void,
+                };
+                const options = { tables, namespace: "workflow", values, maintenance: false as const };
+                for (const name of ["undeclared", "beginAuthorization"]) {
+                    expect(
+                        yield* Effect.result(
+                            makeConnectBackend({
+                                ...options,
+                                actionHandlers: { [name]: () => Effect.void },
+                            })
+                        )
+                    ).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidConfiguration" } });
+                }
+                let calls = 0;
+                const { backend } = yield* makeConnectBackend({
+                    ...options,
+                    ir: {
+                        ...connectOntology,
+                        actionTypes: [
+                            ...connectOntology.actionTypes,
+                            { name: "toString", displayName: "Unimplemented", parameters: [], logic: [] },
+                            {
+                                name: "workflow",
+                                displayName: "Workflow",
+                                parameters: [{ name: "name", displayName: "Name", type: o.string({}) }],
+                                logic: [],
+                                returnType: o.string({}),
+                            },
+                        ],
+                    },
+                    actionHandlers: {
+                        workflow: (request) =>
+                            Effect.sync(() => {
+                                calls++;
+                                return request.parameters.name === "invalid-result"
+                                    ? 123
+                                    : request.parameters.name;
+                            }),
+                    },
+                });
+                expect(
+                    yield* Effect.result(backend.applyAction({ id: "bad", name: "workflow", parameters: {} }))
+                ).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "ValidationFailed", actionOutcome: "not-committed" },
+                });
+                expect(
+                    yield* Effect.result(
+                        backend.applyAction({ id: "inherited", name: "toString", parameters: {} })
+                    )
+                ).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "NotImplemented", actionOutcome: "not-committed" },
+                });
+                expect(calls).toBe(0);
+                expect(
+                    yield* backend.applyAction({ id: "ok", name: "workflow", parameters: { name: "done" } })
+                ).toMatchObject({ outcome: "committed", result: "done" });
+                expect(
+                    yield* Effect.result(
+                        backend.applyAction({
+                            id: "result",
+                            name: "workflow",
+                            parameters: { name: "invalid-result" },
+                        })
+                    )
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidResponse" } });
+                expect(calls).toBe(2);
             })
         )
     );

@@ -1,6 +1,6 @@
 import { Context, Schema } from "effect";
 import { ObjectSubsetSchema } from "./subsetSchema.js";
-import type { AttachmentTypeDef, OntologyIR } from "@party-stack/ontology-spec";
+import type { AttachmentTypeDef, QueryDocument } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { attachment, Encrypted } from "@party-stack/ontology-spec/values";
 import type { Key, Row } from "@party-stack/ontology-storage";
@@ -35,6 +35,7 @@ export type {
     LoadSubsetError,
 } from "./errors.js";
 import { BackendError } from "./errors.js";
+export { makeOntologyBackend } from "./query.js";
 
 export interface ObjectSelection {
     readonly subsets: readonly ObjectSubset[];
@@ -218,17 +219,10 @@ export interface BackendEncryptedValues {
         value: Encrypted<unknown>
     ) => Effect.Effect<import("./encrypted.js").DecryptedValue, BackendError>;
 }
-/** Scoped acquisition contract shared by provider adapters and application composition. */
-export interface OntologyBackendAdapter {
-    readonly name: string;
-    readonly open: (
-        context: Record<string, unknown>
-    ) => Effect.Effect<OntologyBackendService, BackendError, Scope.Scope>;
-}
-/** Authoring factory; resource acquisition and provider IO belong in open. */
-export type OntologyBackendAdapterProvider<
-    Context extends Record<string, unknown> = Record<string, unknown>,
-> = (ir: OntologyIR, context: Context) => OntologyBackendAdapter | Promise<OntologyBackendAdapter>;
+/** A reset requests repair after starting/restarting a watch; it does not
+ * assert that data changed. Ordinary void hints always invalidate coverage.
+ */
+export type SubsetWatchEvent = void | "reset";
 
 export interface OntologyBackendService {
     readonly name: string;
@@ -246,6 +240,14 @@ export interface OntologyBackendService {
      * Consumers use the shared subset normalizer before applying requested windows.
      */
     readonly loadSubset: (subset: ObjectSubset) => Effect.Effect<BackendSnapshot, BackendError>;
+    /** Finite Query IR execution using this binding's trusted context and read path.
+     * Provider adapters may evaluate through subset loads; owned storage uses one
+     * read transaction. Callers supply query inputs, never authentication context.
+     */
+    readonly query: (
+        document: QueryDocument,
+        options?: { readonly inputs?: Record<string, unknown> }
+    ) => Effect.Effect<Record<string, unknown>, BackendError>;
     /** Optional selected committed rows. Closing the Scope releases demand; delivery state expires by policy. */
     readonly subscribeSelection?: (
         selection: ObjectSelection,
@@ -260,12 +262,17 @@ export interface OntologyBackendService {
         name: string,
         parameters: Record<string, unknown>
     ) => Effect.Effect<Record<string, unknown>, BackendError>;
-    /** Demand-scoped invalidation hints, independent of a durable journal. Undefined
-     * means this subset needs polling. Reconnect must invalidate to repair missed events.
+    /** Acquire a demand-scoped watch before reading its snapshot. Completion proves
+     * registration and buffering are active, even before the returned stream is pulled.
+     * The acquiring Scope owns registration and release. Undefined means polling.
+     * Reconnect within the same stream must fail or emit reset/invalidation;
+     * reacquisition establishes a new readiness boundary for a fresh read.
      * Must cover every change relevant to the requested subset; broader watches
      * may emit extra hints. It does not maintain broader fulfilledSubset coverage.
      */
-    readonly watchSubset?: (subset: ObjectSubset) => Stream.Stream<void, BackendError> | undefined;
+    readonly watchSubset?: (
+        subset: ObjectSubset
+    ) => Effect.Effect<Stream.Stream<SubsetWatchEvent, BackendError>, BackendError, Scope.Scope> | undefined;
     /** Recommended demand refresh defaults. Caller configuration wins; healthy
      * watches/journals keep coverage current independently of snapshot age. */
     readonly refresh?: (subset: ObjectSubset) =>
@@ -289,8 +296,10 @@ export interface OntologyBackendService {
             readonly cursor?: string;
             readonly limit?: number;
         }) => Effect.Effect<BackendChangePage, BackendError>;
-        /** Wake-up hints only. Call pull to recover durable changes after reconnect or restart. */
-        readonly watch?: Stream.Stream<void, BackendError>;
+        /** Acquire registered, buffered wake-up hints in the caller's Scope before
+         * pulling durable changes. Stream consumption does not initiate registration.
+         * Call pull to recover changes after reconnect or restart. */
+        readonly watch?: Effect.Effect<Stream.Stream<void, BackendError>, BackendError, Scope.Scope>;
     };
     readonly attachments?: BackendAttachments;
     readonly encrypted?: BackendEncryptedValues;

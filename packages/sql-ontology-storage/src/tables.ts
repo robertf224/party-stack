@@ -262,6 +262,17 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
                                     )
                                 )
                             ),
+                        keys: (table, options) =>
+                            check(
+                                coordinate(
+                                    coordination?.predicate(table),
+                                    run(
+                                        sql<{
+                                            row_key: string;
+                                        }>`SELECT row_key FROM ${sql(rows)} WHERE table_name=${table} ${options.after === undefined ? sql.literal("") : sql`AND row_key>${options.after}`} ORDER BY row_key ${options.limit === undefined ? sql.literal("") : sql`LIMIT ${options.limit}`}`
+                                    ).pipe(Effect.map((result) => result.map((row) => row.row_key)))
+                                )
+                            ),
                         rows: (table) =>
                             check(
                                 coordinate(

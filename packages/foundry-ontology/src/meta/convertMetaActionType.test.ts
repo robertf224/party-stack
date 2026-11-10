@@ -401,7 +401,7 @@ describe("convertFoundryMetaActionType parameter validation", () => {
         });
     });
 
-    it("maps Foundry current user arguments to the canonical user context", () => {
+    it("maps Foundry current user arguments to the canonical userId context", () => {
         const metadata = actionType({});
         metadata.fullLogicRules = [
             {
@@ -427,7 +427,7 @@ describe("convertFoundryMetaActionType parameter validation", () => {
                             value: {
                                 kind: "contextReference",
                                 value: {
-                                    name: "user",
+                                    name: "userId",
                                 },
                             },
                         },

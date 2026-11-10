@@ -1,4 +1,9 @@
-import { BackendError, projectBackendError, schemaValidationIssues } from "@party-stack/ontology-backend";
+import {
+    BackendError,
+    classifyBackendFailure,
+    projectBackendError,
+    schemaValidationIssues,
+} from "@party-stack/ontology-backend";
 import { resolveReadActionParameters } from "@party-stack/ontology-backend/actions";
 import {
     authorizeAction,
@@ -9,32 +14,38 @@ import {
     policyIndexes,
     actionReferenceIssues,
 } from "@party-stack/ontology-backend/policy";
-import { queryExecutor, executeQuery, backendQueryReader } from "@party-stack/ontology-backend/query";
-import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
+import { queryExecutor, executeQuery } from "@party-stack/ontology-backend/query";
+import {
+    objectSubset,
+    resolveSubsetSnapshot,
+    compileObjectSubset,
+} from "@party-stack/ontology-backend/subset";
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { validatePolicy } from "@party-stack/ontology-spec/query";
 import { contextPartition, resolveType } from "@party-stack/ontology-spec/utils";
-import { collectAttachments } from "@party-stack/ontology-storage/blobs";
+import { field, inArray } from "@party-stack/ontology-storage";
+import { attachmentByteSource, collectAttachments } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Effect, Schema, Stream } from "effect";
+import { Cause, Effect, Exit, Schema, Scope, Stream } from "effect";
 import { projectOntologyDefinition } from "./definitionProjection.js";
 import { errorContext, projectValidationReport } from "./errorProjection.js";
 import { projectPolicyDefinition, validateContext } from "./policyDefinition.js";
+import { policyWatches } from "./policyWatches.js";
+import { receiptPolicyProof } from "./receiptPolicy.js";
 import type {
     ActionRequest,
-    ErrorProjection,
+    ActionReceipt,
     OntologyBackendService,
     ValidationReport,
 } from "@party-stack/ontology-backend";
 import type { OwnedReadTransaction, OwnedStorageService } from "@party-stack/ontology-backend/owned";
 import type { QueryReader } from "@party-stack/ontology-backend/query";
-import type { OntologyIR, QueryDocument } from "@party-stack/ontology-spec";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 
 export interface OntologyProjectionOptions {
     readonly backend: OntologyBackendService;
     readonly ir: OntologyIR;
     readonly context: Record<string, unknown>;
-    readonly errors?: ErrorProjection;
 }
 const unavailable = (operation: string) =>
     new BackendError({
@@ -64,7 +75,7 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
                 retryable: false,
             }),
     });
-    const options = { ...input, ir: sourceIr };
+    const options = { ...input, ir: sourceIr, errors: "projected" as const };
     const { backend } = options;
     const issues = validatePolicy(options.ir);
     if (!options.ir.policy || issues.length)
@@ -77,7 +88,27 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
         });
     const context = yield* validateContext(options.ir, options.context);
     const storage = "storage" in backend ? (backend.storage as OwnedStorageService) : undefined;
-    const sourceReader = backendQueryReader(options.ir, backend);
+    const sourceReader: QueryReader = {
+        ir: options.ir,
+        loadSubset: (type, query) => {
+            const subset = objectSubset(type, query);
+            return backend.loadSubset(subset).pipe(
+                Effect.flatMap((snapshot) => resolveSubsetSnapshot(options.ir, subset, snapshot)),
+                Effect.flatMap(({ snapshot }) =>
+                    snapshot.complete
+                        ? Effect.succeed(snapshot.rows)
+                        : Effect.fail(
+                              new BackendError({
+                                  operation: "query",
+                                  kind: "InvalidResponse",
+                                  retryable: false,
+                                  message: "Query evaluation requires a complete subset snapshot.",
+                              })
+                          )
+                )
+            );
+        },
+    };
     const definition = yield* projectPolicyDefinition({ ...options, context, reader: sourceReader });
     const ir = definition.ir;
     const boundIr = definition.specialized;
@@ -103,6 +134,59 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
                   })
               )
             : work(reader);
+    const proveIdentity = receiptPolicyProof(boundIr, context);
+    const projectAffected = Effect.fn("Ontology.projectReceipt")(function* (
+        affected: NonNullable<ActionReceipt["affected"]>
+    ) {
+        const targets = affected.filter((target) =>
+            ir.objectTypes.some((type) => type.name === target.objectType)
+        );
+        const fallback = targets.map(({ objectType, keys }) => ({
+            objectType,
+            ...(keys?.length === 0 ? { keys: [] } : {}),
+        }));
+        if (!targets.length) return fallback;
+        // Additional invocation reads do not grant visibility to receipt IDs.
+        // Only the caller's base object policy can justify exposing these keys.
+        return yield* Effect.gen(function* () {
+            const proofs = yield* Effect.forEach(targets, (target) =>
+                Effect.forEach(target.keys ?? [], (key) => proveIdentity(target.objectType, key))
+            );
+            if (targets.every((target, i) => !target.keys || proofs[i]!.every(Boolean))) return targets;
+            return yield* withRead(
+                Effect.fnUntraced(function* (source) {
+                    const view = yield* policyView(source, context);
+                    return yield* Effect.forEach(
+                        targets,
+                        Effect.fnUntraced(function* (target, index) {
+                            if (!target.keys) return { objectType: target.objectType };
+                            const object = ir.objectTypes.find((type) => type.name === target.objectType)!;
+                            const visible = new Set(target.keys.filter((_, i) => proofs[index]![i]));
+                            const unresolved = target.keys.filter((key) => !visible.has(key));
+                            for (let offset = 0; offset < unresolved.length; offset += 128) {
+                                const rows = yield* view.tx.loadSubset(target.objectType, {
+                                    where: inArray(
+                                        field(object.primaryKey),
+                                        unresolved.slice(offset, offset + 128)
+                                    ),
+                                });
+                                for (const row of rows) visible.add(row.key);
+                            }
+                            return target.keys.every((key) => visible.has(key))
+                                ? { objectType: target.objectType, keys: target.keys }
+                                : { objectType: target.objectType };
+                        })
+                    );
+                })
+            );
+        }).pipe(
+            Effect.catchCause((cause) =>
+                // An optional proof must not turn a committed action into a failed
+                // submission. Missing/deleted/hidden keys retain type-wide read-back.
+                Cause.hasInterrupts(cause) ? Effect.failCause(cause) : Effect.succeed(fallback)
+            )
+        );
+    });
     const schemas = yield* Effect.try({
         try: () => compileEffectSchemas(options.ir),
         catch: () =>
@@ -124,16 +208,15 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
             }),
     });
     const projection = { ir, errors: options.errors, upstreamErrors: true };
-    const expose = <A, R>(name: string, work: Effect.Effect<A, BackendError, R>) =>
-        work.pipe(
-            Effect.mapError((error) =>
-                projectBackendError(
-                    error.kind === "Forbidden" ? unavailable(name) : error,
-                    options.errors,
-                    errorContext(projection, name)
-                )
-            )
+    const watches = policyWatches(backend, boundIr);
+    const projectFailure = (name: string, error: BackendError) =>
+        projectBackendError(
+            error.kind === "Forbidden" ? unavailable(name) : error,
+            options.errors,
+            errorContext(projection, name)
         );
+    const expose = <A, R>(name: string, work: Effect.Effect<A, BackendError, R>) =>
+        work.pipe(Effect.mapError((error) => projectFailure(name, error)));
     const authorized = Effect.fnUntraced(function* (
         source: QueryReader,
         name: string,
@@ -169,7 +252,7 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
         }).evaluate(rule.check);
         if (!permitted(check)) return yield* unavailable("queryFunction");
         return (yield* policyView(source, context, {
-            extraRead: rule.read,
+            additionalObjects: rule.additionalObjects,
             inputs: parameters,
             inputDefinitions: query.parameters,
         })).tx;
@@ -178,6 +261,21 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
         name: backend.name,
         sourceId: backend.sourceId,
         supportsIdempotency: backend.supportsIdempotency,
+        query: (document, settings) =>
+            expose(
+                "query",
+                withRead(
+                    Effect.fnUntraced(function* (source) {
+                        const view = yield* policyView(source, context);
+                        return yield* executeQuery(document, {
+                            reader: { ...view.reader, ir },
+                            context: definition.context,
+                            inputs: settings?.inputs,
+                            canReadProperty: view.canReadProperty,
+                        }).pipe(Effect.map((result) => result.value));
+                    })
+                )
+            ),
         loadSubset: (request) =>
             expose(
                 "loadSubset",
@@ -257,11 +355,7 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
                         outcome: receipt.outcome,
                         result: receipt.result,
                         attachmentIdMappings: receipt.attachmentIdMappings,
-                        affected: receipt.affected
-                            ?.filter((target) =>
-                                ir.objectTypes.some((type) => type.name === target.objectType)
-                            )
-                            .map((target) => ({ objectType: target.objectType })),
+                        affected: receipt.affected && (yield* projectAffected(receipt.affected)),
                         affectedComplete: receipt.affectedComplete,
                     };
                 })
@@ -388,17 +482,28 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
         watchSubset:
             backend.watchSubset || backend.changes?.watch
                 ? (subset) => {
-                      const watched = backend.watchSubset?.(subset) ?? backend.changes?.watch;
+                      const watched = watches.watch(subset);
                       if (!watched) return undefined;
-                      return Stream.unwrap(
-                          Effect.gen(function* () {
-                              yield* projected.loadSubset(subset);
-                              return watched;
-                          })
-                      );
+                      return Effect.gen(function* () {
+                          const scope = yield* Scope.fork(yield* Effect.scope);
+                          return yield* Scope.provide(
+                              Effect.gen(function* () {
+                                  const stream = yield* watched;
+                                  yield* projected.loadSubset(subset);
+                                  return stream.pipe(
+                                      Stream.mapError((error) => projectFailure("watchSubset", error))
+                                  );
+                              }),
+                              scope
+                          ).pipe(
+                              Effect.onExit((exit) =>
+                                  Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void
+                              )
+                          );
+                      }).pipe(Effect.mapError((error) => projectFailure("watchSubset", error)));
                   }
                 : undefined,
-        refresh: (subset) => backend.refresh?.(subset),
+        refresh: watches.refresh,
     };
     const sourceRow = Effect.fnUntraced(function* (
         source: { objectType: string; primaryKey: string | number; property: string } | undefined
@@ -429,7 +534,18 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
                         )
                     )
                         return yield* unavailable("attachment.read");
-                    return yield* backend.attachments!.read(value, settings);
+                    const source = attachmentByteSource(yield* backend.attachments!.read(value, settings));
+                    return {
+                        ...source,
+                        stream: source.stream.pipe(
+                            Stream.mapError((cause) =>
+                                projectFailure(
+                                    "attachment.read",
+                                    classifyBackendFailure("attachment.read", cause)
+                                )
+                            )
+                        ),
+                    };
                 })
             ),
         metadata: (
@@ -503,20 +619,5 @@ export const projectOntologyBackend = Effect.fn("Ontology.projectBackend")(funct
             ].includes(request.operation)
                 ? Effect.void
                 : Effect.fail(unavailable(request.operation)),
-        query: (document: QueryDocument, inputs?: Record<string, unknown>) =>
-            expose(
-                "query",
-                withRead(
-                    Effect.fnUntraced(function* (source) {
-                        const view = yield* policyView(source, context);
-                        return yield* executeQuery(document, {
-                            reader: { ...view.reader, ir },
-                            context: definition.context,
-                            inputs,
-                            canReadProperty: view.canReadProperty,
-                        }).pipe(Effect.map((result) => result.value));
-                    })
-                )
-            ),
     };
 });

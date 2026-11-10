@@ -107,7 +107,7 @@ export const runBlobContract = Effect.fnUntraced(function* (tables: TablesServic
                 namespace: "blob-authoritative",
                 tables,
                 bytes,
-                mode: "authoritative",
+                attachmentBytesRetentionMode: "authoritative",
             });
             const ownedModel = yield* makeStorageModel({ namespace: "blob-authoritative", ir });
             const owned = makeOntologyStorage(ownedModel, tables, { blobs: authoritative });

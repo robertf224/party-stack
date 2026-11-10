@@ -1,7 +1,11 @@
 # Ontology devtools
 
-`createOntologyDevtoolsPlugin({ ontology })` inspects a LiveOntology. Object inspection
-uses persisted collections; opening the inspector does not create backend demand.
+The inspector reads a LiveOntology's locally cached collections. Opening it does
+not create backend demand.
+
+`createOntologyDevtoolsPlugin({ ontology })` mounts the inspector in TanStack
+DevTools. Use `ontologyDevtoolsTrigger` for the shared 48-pixel Party Stack trigger,
+or embed `OntologyDevtoolsPanel` directly in your own UI.
 
 ## Style isolation
 
@@ -16,6 +20,15 @@ devtools shell's clipping while keeping their styles private. The highlight keep
 its low stacking order beneath the panel. Both roots retain the React context;
 closing the panel removes its overlay host and subscriptions. The panel is mounted
 on the client, so server rendering does not access browser DOM APIs.
+
+## Pinned
+
+Pinned shows the saved offline query as a collapsible tree, including nested
+selections, captured bindings, conditions, ordering and page windows. Its status
+reports readiness, errors, attachment-byte retention and whether an earlier graph
+is retained during replacement. It observes `ontology.pins`; a tab targeting a
+parent replica shows that parent's pin. Opening the view does not set a pin or
+acquire additional object demand. Queries uses the same renderer for portable subsets.
 
 ## Tracing
 
@@ -177,6 +190,6 @@ Execution attempt counts survive receipt persistence and confirmation retries.
 
 Issue-tracker mounts the app and devtools once in a shared pathless route layout.
 All Issues and Project routes change parameters within that shell. The plugin list
-is memoized for the live ontology, preserving the selected devtools tab and trace
+is memoized for the live ontology, preserving the selected inspector tab and trace
 source during navigation. A full document reload or an ontology replacement still
 creates a new view.

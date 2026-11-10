@@ -1,0 +1,23 @@
+---
+title: Encrypted values
+description: Decrypt an encrypted property and optionally cache it on the device.
+---
+
+Encrypted properties contain opaque handles. Read their plaintext through the
+ontology so the authority can enforce decryption permissions.
+
+## Read an encrypted property
+
+```ts
+const secret = await ontology.decrypt(connection.accessToken);
+
+// Opt into keeping an encrypted local copy for later reads.
+const cached = await ontology.decrypt(connection.accessToken, { cache: true });
+```
+
+Decryption happens at the authority. Optional cached plaintext is encrypted with
+the device's key before local storage. The default is `cache: false`.
+
+Persistent web keys require `persistEncryptionKeys: true` on the owning web
+runtime. Same-origin JavaScript can use those keys; this is not an application
+lock or a password-manager security boundary.

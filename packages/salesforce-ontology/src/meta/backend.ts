@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import {
     BackendError,
     classifyBackendFailure,
@@ -12,12 +13,30 @@ import { convertSalesforceMetaObjectType } from "./convertMetaObjectType.js";
 import { loadSalesforceActionTypes } from "./loadActions.js";
 import { describeSObjects } from "./loadEntities.js";
 import { loadSalesforceQueryFunctionTypes } from "./loadQueryFunctions.js";
-import type { CreateSalesforceMetaOntologyBackendAdapterOpts } from "./createSalesforceMetaOntologyBackendAdapter.js";
+import type { SalesforceCrudActionTypeSelection } from "../crud.js";
+import type { SalesforceClient } from "@party-stack/salesforce-client";
+export interface SalesforceMetadataBackendOptions {
+    client: SalesforceClient;
+    /**
+     * Optional allowlist of sObject API names for metadata loading.
+     * Useful for scoped form pulls without describing the entire org.
+     */
+    objectTypeNames?: string[];
+    /** Optional allowlist of autolaunched Flow API names. */
+    flowActionTypeNames?: string[];
+    /** Standard Salesforce operations modeled as mutating actions. */
+    standardActionTypeNames?: string[];
+    /** Standard Salesforce operations modeled as query functions. */
+    standardQueryFunctionTypeNames?: string[];
+    /** Explicit CRUD actions to synthesize from sObject describe metadata. */
+    crudActionTypes?: readonly SalesforceCrudActionTypeSelection[];
+}
+
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 
 const failure = (cause: unknown) => classifyBackendFailure("metadata.load", cause);
 export function makeSalesforceMetadataBackend(
-    options: CreateSalesforceMetaOntologyBackendAdapterOpts
+    options: SalesforceMetadataBackendOptions
 ): OntologyBackendService {
     const unsupported = (operation: string) =>
         Effect.fail(
@@ -28,7 +47,8 @@ export function makeSalesforceMetadataBackend(
                 retryable: false,
             })
         );
-    return {
+    return makeOntologyBackend({
+        ir: metaOntology,
         name: "salesforce-metadata",
         sourceId: `salesforce-metadata:${options.client.instanceUrl}`,
         supportsIdempotency: false,
@@ -106,5 +126,5 @@ export function makeSalesforceMetadataBackend(
                 }),
             };
         }),
-    };
+    });
 }

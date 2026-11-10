@@ -1,4 +1,5 @@
 import { makeOntologyServer } from "@party-stack/ontology-server";
+import { makeOntologyHttpHandler } from "@party-stack/ontology-server/rpc/http";
 import { ReadWriteBucket } from "alchemy/Cloudflare/R2/ReadWriteBucket";
 import { ReadWriteBucketBinding } from "alchemy/Cloudflare/R2/ReadWriteBucketBinding";
 import { ReadSecret, ReadSecretBinding, Secret, Store } from "alchemy/Cloudflare/SecretsStore";
@@ -11,7 +12,7 @@ import { Clock, Effect, Schema } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { makeAlchemyOntology } from "./backend.js";
 import type { AlchemyOntologyOptions } from "./backend.js";
-import type { OntologyRpcServerOptions } from "@party-stack/ontology-server/rpc";
+import type { OntologyAuthenticate, OntologyInternalAccess } from "@party-stack/ontology-server";
 import type { EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
 import type { Bucket } from "alchemy/Cloudflare/R2/Bucket";
 import type { ReadSecretClient } from "alchemy/Cloudflare/SecretsStore";
@@ -30,7 +31,11 @@ export interface OntologyDurableObjectOptions extends Omit<AlchemyOntologyOption
     readonly bucket: Bucket | Effect.Effect<Bucket, never, PlatformServices>;
     /** Defaults to the resource name. Instances remain isolated by their DO IDs. */
     readonly ontologyId?: string;
-    readonly authorize: OntologyRpcServerOptions["authorize"];
+    readonly authenticate: OntologyAuthenticate;
+    /** Opt into downstream watches and replication sessions. */
+    readonly enableRealtime?: boolean;
+    /** Enables endpoint-wide diagnostics/admin commands. Never bypasses the IR policy. */
+    readonly dangerouslyAllowInternalAccess?: OntologyInternalAccess;
     /** Supply existing versioned secrets instead of provisioning the default key. Mutually exclusive with encryptionKeyring. */
     readonly encryptionKeys?: AlchemyEncryptionKeys;
     /** Defaults to an hourly bounded pass with the shared one-hour orphan grace. */
@@ -121,12 +126,15 @@ export function OntologyDurableObject(
                     bucket,
                     ontologyId: options.ontologyId ?? name,
                 }).pipe(Effect.orDie);
-                const { handleRequest } = yield* makeOntologyServer({
+                const server = yield* makeOntologyServer({
                     kind: "owned",
                     backend,
                     ir: options.ir,
-                    authorize: options.authorize,
+                    authenticate: options.authenticate,
+                    enableRealtime: options.enableRealtime,
+                    dangerouslyAllowInternalAccess: options.dangerouslyAllowInternalAccess,
                 }).pipe(Effect.orDie);
+                const handleRequest = yield* makeOntologyHttpHandler(server);
                 const schedule =
                     gc === false
                         ? Effect.void

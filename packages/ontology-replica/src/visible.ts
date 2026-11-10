@@ -1,5 +1,5 @@
 import { evaluateQuery } from "@party-stack/ontology-storage";
-import { getVisible } from "@party-stack/ontology-storage/overlay";
+import { getVisible, getVisibleMany } from "@party-stack/ontology-storage/overlay";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Stream } from "effect";
 import type { BackendError } from "@party-stack/ontology-backend";
@@ -16,6 +16,10 @@ export interface VisibleCommit {
     readonly changes: readonly { objectType: string; key: Key; value?: Value }[];
 }
 export interface ReplicaRowsBatch {
+    /** Global local-visible revision represented by these rows and membership.
+     * This is independent of upstream revisions and coverage readiness.
+     */
+    readonly revision: number;
     readonly reset: boolean;
     readonly rows: readonly Row<Value>[];
     readonly removed: readonly Key[];
@@ -33,23 +37,42 @@ export function trackVisible(tx: Transaction, views: ReadonlyMap<string, Overlay
             if (table) tableTypes.set(table.name, type);
     let reset = false;
     let bytes = 0;
-    const touch = Effect.fnUntraced(function* (table: Table<unknown>, key: Key) {
-        const objectType = tableTypes.get(table.name);
-        if (reset || !objectType) return;
+    const remember = (objectType: string, key: Key, value: Value | undefined) => {
         const id = JSON.stringify([objectType, key]);
         if (before.has(id)) return;
-        const value = yield* getVisible(tx, views.get(objectType)!, key);
         const encoded = value === undefined ? undefined : codec.encode(value);
         bytes += new TextEncoder().encode(encoded ?? "").length;
         if (before.size >= 4096 || bytes > 1024 * 1024) {
             reset = true;
             before.clear();
         } else before.set(id, { objectType, key, encoded });
+    };
+    const touch = Effect.fnUntraced(function* (table: Table<unknown>, key: Key) {
+        const objectType = tableTypes.get(table.name);
+        if (reset || !objectType || before.has(JSON.stringify([objectType, key]))) return;
+        remember(objectType, key, yield* getVisible(tx, views.get(objectType)!, key));
     });
     const wrapped: Transaction = {
         ...tx,
+        insert: (table, key, value) =>
+            touch(table as Table<unknown>, key).pipe(Effect.andThen(tx.insert(table, key, value))),
         put: (table, key, value) =>
             touch(table as Table<unknown>, key).pipe(Effect.andThen(tx.put(table, key, value))),
+        putMany: (table, rows) =>
+            Effect.gen(function* () {
+                const objectType = tableTypes.get(table.name);
+                if (!reset && objectType) {
+                    const keys = rows
+                        .map((row) => row.key)
+                        .filter((key) => !before.has(JSON.stringify([objectType, key])));
+                    const values = yield* getVisibleMany(tx, views.get(objectType)!, keys);
+                    for (const key of keys) {
+                        if (reset) break;
+                        remember(objectType, key, values.get(key));
+                    }
+                }
+                yield* tx.putMany(table, rows);
+            }),
         delete: (table, key) =>
             touch(table as Table<unknown>, key).pipe(Effect.andThen(tx.delete(table, key))),
         clear: (table) =>
@@ -69,8 +92,17 @@ export function trackVisible(tx: Transaction, views: ReadonlyMap<string, Overlay
         tx: wrapped,
         finish: Effect.gen(function* () {
             const changes: VisibleCommit["changes"][number][] = [];
+            const keys = new Map<string, Key[]>();
             for (const entry of before.values()) {
-                const value = yield* getVisible(tx, views.get(entry.objectType)!, entry.key);
+                const group = keys.get(entry.objectType) ?? [];
+                group.push(entry.key);
+                keys.set(entry.objectType, group);
+            }
+            const after = new Map<string, Map<Key, Value | undefined>>();
+            for (const [objectType, ids] of keys)
+                after.set(objectType, yield* getVisibleMany(tx, views.get(objectType)!, ids));
+            for (const entry of before.values()) {
+                const value = after.get(entry.objectType)?.get(entry.key);
                 const encoded = value === undefined ? undefined : codec.encode(value);
                 if (encoded !== entry.encoded) {
                     bytes += new TextEncoder().encode(encoded ?? "").length;
@@ -82,7 +114,7 @@ export function trackVisible(tx: Transaction, views: ReadonlyMap<string, Overlay
                 }
             }
             return { reset, changes: reset ? [] : changes };
-        }),
+        }).pipe(Effect.withSpan("Replica.visible.finish")),
     };
 }
 
@@ -117,16 +149,17 @@ export function observeRows(options: {
             const window =
                 query.limit !== undefined || query.offset !== undefined || query.after !== undefined;
             return Stream.concat(
-                Stream.make({ reset: true, rows: initial.rows, removed: [] }),
+                Stream.make({ revision, reset: true, rows: initial.rows, removed: [] }),
                 changes.pipe(
                     Stream.mapEffect((commit) =>
                         Effect.gen(function* () {
-                            if (commit.revision <= revision) return { reset: false, rows: [], removed: [] };
+                            if (commit.revision <= revision)
+                                return { revision, reset: false, rows: [], removed: [] };
                             const own = commit.changes.filter((row) => row.objectType === options.objectType);
                             if (commit.reset || commit.previous !== revision || (window && own.length)) {
                                 const next = yield* options.read(options.snapshot);
                                 revision = next.revision;
-                                return { reset: true, rows: next.rows, removed: [] };
+                                return { revision, reset: true, rows: next.rows, removed: [] };
                             }
                             revision = commit.revision;
                             const rows = evaluateQuery(
@@ -137,6 +170,7 @@ export function observeRows(options: {
                             );
                             const matched = new Set(rows.map((row) => row.key));
                             return {
+                                revision,
                                 reset: false,
                                 rows,
                                 removed: own.filter((row) => !matched.has(row.key)).map((row) => row.key),

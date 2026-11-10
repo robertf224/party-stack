@@ -17,6 +17,7 @@
     "dependencies": {
         "@effect/platform-browser": "^4.0.5",
         "@party-stack/indexeddb-ontology-storage": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "effect": "^4.0.5"
     },
@@ -28,8 +29,7 @@
         "@party-stack/ontology-replica": "workspace:*",
         "@party-stack/ontology-server": "workspace:*",
         "@party-stack/ontology-spec": "workspace:*",
-        "@party-stack/ontology-storage": "workspace:*",
-        "@tanstack/db": "0.14.0",
+        "@tanstack/db": "1.0.0-rc.1.4",
         "playwright": "^1.61.1",
         "typescript": "~7.0.2",
         "vite": "catalog:",

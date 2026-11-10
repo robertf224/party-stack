@@ -7,7 +7,7 @@ Worktree dev is enabled by default: `vp dev` serves the app at a named local URL
 derived from its unscoped package name, with a branch prefix in linked worktrees
 and a stable directory hash prefix for detached HEAD. The preset installs Portless
 transitively. An existing proxy is reused; otherwise an HTTP proxy starts on port
-1355 (for example, `http://remote-notes.localhost:1355`).
+1355 (for example, `http://notes.localhost:1355`).
 
 Development also links missing `.env` and `.env.local` files from the matching app in the
 primary checkout before env loading. Existing local files and symlinks are

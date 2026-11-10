@@ -27,8 +27,9 @@ Reordering React effects alone cannot await TanStack's deferred collection GC.
 
 The normal action call returns one Promise for authoritative confirmation plus local
 reconciliation. Optimistic visibility still publishes the projection before that
-Promise resolves. mode controls offline admission only: direct requires connectivity,
-outbox permits offline queueing. Both use the same executor and return the same result.
+Promise resolves. Replica actions always enter the outbox, including while offline.
+The former direct/outbox admission option has been removed from ReplicaService and
+LiveOntology; this does not change request-only forwarding proxies.
 Queued/accepted/confirmed handles are not added to the ordinary API without evidence
 that applications need those distinct observations. Recovery/admin tooling retains
 outbox.wait and low-level enqueue observations. Awaiting an action offline can take
@@ -60,9 +61,9 @@ are removed. Host attachment preparation only gathers locally staged bytes. Nati
 provider action execution owns uploads/parameter encoding and returns mappings in
 its receipt. Native attachment staging remains available for explicitly eager use.
 
-The current direct/outbox mode labels also deserve review: both use the outbox and
-wait for confirmation, so an explicit offline-admission option may be clearer. Do
-not mix that future naming decision with optimistic visibility or a second executor.
+Scheduling lanes or more granular admission controls may follow when applications
+need them. They should remain separate from prediction visibility and should not
+introduce a second action executor.
 
 ## Query work and v0 gates
 

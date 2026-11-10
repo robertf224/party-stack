@@ -37,6 +37,7 @@ test("a SharedWorker owns persisted state while memory tabs and TanStack collect
     const errors: string[] = [];
     for (const page of [first, second]) page.on("pageerror", (error) => errors.push(error.message));
     const url = `${origin}e2e/replica-tab.html?scope=${crypto.randomUUID()}`;
+    let completed = false;
     try {
         for (const page of [first, second]) {
             await page.goto(url);
@@ -56,13 +57,16 @@ test("a SharedWorker owns persisted state while memory tabs and TanStack collect
         await expect
             .poll(() => run(second, "receipt", "second-action"))
             .toMatchObject({ outcome: "committed" });
-        // Worker navigator.onLine changes can arrive without native events. The
-        // platform monitor must wake the outbox, not the ten-minute data poll.
+        // Inject the worker's observed network state explicitly. BrowserContext's
+        // offline emulation changes pages but need not change SharedWorker flags.
+        // The connectivity notification must wake its outbox, not the data poll.
         await context.setOffline(true);
+        await run(second, "ownerNetwork", false);
         await run(second, "enqueue", "offline-action");
         await expect.poll(() => run(second, "rows")).toEqual([{ id: "one", count: 3 }]);
         expect(await run(second, "receipt", "offline-action")).toBeUndefined();
         await context.setOffline(false);
+        await run(second, "ownerNetwork", true);
         await expect
             .poll(() => run(second, "receipt", "offline-action"))
             .toMatchObject({ outcome: "committed" });
@@ -71,8 +75,61 @@ test("a SharedWorker owns persisted state while memory tabs and TanStack collect
         expect(await run(second, "sourceId")).toBe(sourceId);
         await expect.poll(() => run(second, "rows")).toEqual([{ id: "one", count: 3 }]);
         expect(errors).toEqual([]);
+        completed = true;
     } finally {
+        if (!completed && !second.isClosed())
+            console.info(
+                "Worker reconnect diagnostics",
+                JSON.stringify(await run(second, "diagnostics", "offline-action"))
+            );
         if (!second.isClosed()) await run(second, "cleanup").catch(() => undefined);
+        await context.close();
+    }
+});
+
+test("public SDK worker setup shares one owner and keeps another tab alive after cleanup", async () => {
+    const context = await browser.newContext();
+    const first = await context.newPage();
+    const second = await context.newPage();
+    const errors: string[] = [];
+    const invoke = (page: Page, method: string) =>
+        page.evaluate(async (method) => {
+            const api = Reflect.get(window, "publicSetup") as Record<string, () => Promise<unknown>>;
+            return api[method]!();
+        }, method);
+    let stage = "opening";
+    let completed = false;
+    try {
+        for (const page of [first, second]) {
+            page.on("pageerror", (error) => errors.push(error.message));
+        }
+        const url = `${origin}e2e/public-tab.html?scope=${crypto.randomUUID()}`;
+        for (const page of [first, second]) {
+            await page.goto(url);
+            await page.waitForFunction(() => Reflect.has(window, "publicSetup"), null, { timeout: 10_000 });
+        }
+        stage = "first action";
+        await invoke(first, "increment");
+        await expect.poll(() => invoke(first, "outcome")).toBe("confirmed");
+        await expect.poll(() => invoke(second, "rows")).toEqual([{ id: "one", count: 1 }]);
+        stage = "closing first tab";
+        await invoke(first, "cleanup");
+        await first.close();
+        stage = "second action";
+        await invoke(second, "increment");
+        await expect.poll(() => invoke(second, "outcome")).toBe("confirmed");
+        await expect.poll(() => invoke(second, "rows")).toEqual([{ id: "one", count: 2 }]);
+        stage = "closing second tab";
+        await invoke(second, "cleanup");
+        expect(errors).toEqual([]);
+        completed = true;
+    } finally {
+        if (!completed) {
+            console.info("Public setup failure", { stage, errors });
+            for (const page of [first, second])
+                if (!page.isClosed() && (await page.evaluate(() => Reflect.has(window, "publicSetup"))))
+                    console.info("Replica diagnostics", await invoke(page, "diagnostics"));
+        }
         await context.close();
     }
 });

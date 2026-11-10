@@ -1,4 +1,6 @@
+import { pull } from "@party-stack/ontology-backend/meta";
 import { objectSubset, resolveSubsetSnapshot } from "@party-stack/ontology-backend/subset";
+import { o } from "@party-stack/ontology-spec";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import { eq, field, inArray } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
@@ -6,13 +8,36 @@ import { beforeEach, expect, test, vi } from "vite-plus/test";
 import { makeFoundryMetadataBackend } from "./backend.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
 
-const mocks = vi.hoisted(() => ({ load: vi.fn() }));
-vi.mock("./loadEntities.js", () => ({ loadFoundryMetaOntology: mocks.load }));
+const mocks = vi.hoisted(() => ({ load: vi.fn(), links: vi.fn(), values: vi.fn() }));
+vi.mock("./loadEntities.js", () => ({
+    loadFoundryMetaObjectTypes: mocks.load,
+    loadFoundryMetaLinkTypes: mocks.links,
+    loadFoundryMetaValueTypes: mocks.values,
+}));
 const backend = () =>
     makeFoundryMetadataBackend({
         client: { baseUrl: "https://foundry.example/", ontologyRid: "ontology" } as OntologyClient,
     });
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.load.mockResolvedValue([]);
+    mocks.links.mockResolvedValue([]);
+    mocks.values.mockResolvedValue([]);
+});
+
+test("pull declares the known Foundry current-user context without an app transform", async () => {
+    const result = await Effect.runPromise(
+        pull(backend(), {
+            objectTypeNames: [],
+            actionTypeNames: [],
+            queryFunctionTypeNames: [],
+        })
+    );
+    expect(result.context).toEqual({
+        type: o.struct({ fields: [{ name: "userId", displayName: "User ID", type: o.string({}) }] }),
+        partition: [["userId"]],
+    });
+});
 
 test.each([
     [401, "Unauthenticated", false],
@@ -27,7 +52,7 @@ test.each([
 });
 
 test("metadata filters provider candidates before certifying the requested subset", async () => {
-    mocks.load.mockResolvedValue({ objectTypes: [{ name: "Issue" }, { name: "Project" }] });
+    mocks.load.mockResolvedValue([{ name: "Issue" }, { name: "Project" }]);
     const snapshot = await Effect.runPromise(
         loadSubset(objectSubset("ObjectType", { where: eq(field("name"), "Issue") }))
     );
@@ -39,7 +64,7 @@ test("metadata filters provider candidates before certifying the requested subse
 });
 
 test("malformed metadata identities are nonretryable response failures", async () => {
-    mocks.load.mockResolvedValue({ objectTypes: [{ displayName: "Missing name" }] });
+    mocks.load.mockResolvedValue([{ displayName: "Missing name" }]);
     expect(await Effect.runPromise(Effect.result(loadSubset(objectSubset("ObjectType"))))).toMatchObject({
         _tag: "Failure",
         failure: { kind: "InvalidResponse", retryable: false },

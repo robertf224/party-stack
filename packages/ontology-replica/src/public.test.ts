@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
@@ -61,7 +62,8 @@ test("logical demand waits for its snapshot, releases its scope and rejects unsu
                     ir,
                     tables: yield* Memory.make(),
                     live: false,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
@@ -84,7 +86,7 @@ test("logical demand waits for its snapshot, releases its scope and rejects unsu
                                     };
                                 })
                             ),
-                    },
+                    }),
                 });
                 const consumer = yield* Scope.make();
                 yield* Scope.provide(
@@ -141,7 +143,8 @@ test.each([true, false])(
                         ir,
                         tables: yield* Memory.make(),
                         network: connectivity,
-                        backend: {
+                        backend: makeOntologyBackend({
+                            ir,
                             name: "fixture",
                             sourceId: "fixture",
                             supportsIdempotency: true,
@@ -171,7 +174,7 @@ test.each([true, false])(
                                         affected: [{ objectType: "Item", keys: [id] }],
                                     };
                                 }),
-                        },
+                        }),
                     });
                     yield* replica.demand.acquire({
                         from: { source: { objectType: "Item" }, binding: "item" },
@@ -202,7 +205,8 @@ test("the replica Layer acquires its platform resources from one Runtime bundle"
         Layer.provide(
             Layer.succeed(ReplicaUpstream)({
                 kind: "committed",
-                backend: {
+                backend: makeOntologyBackend({
+                    ir,
                     name: "fixture",
                     sourceId: "fixture",
                     supportsIdempotency: true,
@@ -214,7 +218,7 @@ test("the replica Layer acquires its platform resources from one Runtime bundle"
                             complete: true,
                             rows: [{ key: "one", value: { id: "one", count: 1 } }],
                         }),
-                },
+                }),
             })
         ),
         Layer.provide(MemoryRuntime.layer),
@@ -275,7 +279,8 @@ test("native parameter resolution acquires narrow demand for a cold object looku
                     namespace: "resolve-cold",
                     tables: yield* Memory.make(),
                     live: false,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "fixture",
                         queryFunction: () => Effect.die("No query function"),
                         sourceId: "fixture",
@@ -297,7 +302,7 @@ test("native parameter resolution acquires narrow demand for a cold object looku
                                     };
                                 })
                             ),
-                    },
+                    }),
                 });
                 expect(yield* replica.get("Item", "one")).toBeUndefined();
                 expect(yield* replica.actions.resolveParameters("resolve", { item: "one" })).toEqual({

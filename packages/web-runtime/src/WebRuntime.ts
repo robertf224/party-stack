@@ -3,15 +3,27 @@ import { makeEncryptionKeyring } from "@party-stack/indexeddb-ontology-storage/e
 import * as IndexedDbTables from "@party-stack/indexeddb-ontology-storage/tables";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { makeMemoryEncryptionKeyring, MemoryBlobBytesStore } from "@party-stack/runtime";
-import { Runtime, RuntimeError, RuntimePartition } from "@party-stack/runtime";
+import { Runtime, RuntimeError, RuntimePartition, Runtimes } from "@party-stack/runtime";
 import { Effect, Layer } from "effect";
 import { createWebBrowserAuthentication } from "./createWebBrowserAuthentication.js";
 import { makeNavigatorNetworkConnectivity } from "./NavigatorNetworkConnectivity.js";
 import { OPFSBlobBytesStore } from "./OPFSBlobBytesStore.js";
-import type { RuntimeOptions } from "@party-stack/runtime";
+import type { TablesService } from "@party-stack/ontology-storage/tables";
+import type { RuntimeOptions, RuntimeAcquisitionError } from "@party-stack/runtime";
+import type { Scope } from "effect";
 
 export interface WebRuntimeOptions {
+    /** Selects the built-in tables and ancillary blob/keyring/capacity persistence. */
     readonly storage?: "indexeddb" | "memory";
+    /** Replace table acquisition without changing browser capabilities or opening built-in tables.
+     * The acquisition Scope owns open resources. Destroy must also work after that Scope closes;
+     * it deletes this partition's custom tables when the replica is forgotten.
+     */
+    readonly tables?: Effect.Effect<
+        { readonly tables: TablesService; readonly destroy: Effect.Effect<void, RuntimeAcquisitionError> },
+        RuntimeAcquisitionError,
+        RuntimePartition | Scope.Scope
+    >;
     /** Explicitly allow a non-extractable AES-GCM CryptoKey to persist in IndexedDB across reloads.
      * Same-origin code can still use it to decrypt: this is not a vault lock or protection from XSS.
      * Keys are separate from ordinary table exports. Clearing site data loses the keys and makes
@@ -44,6 +56,7 @@ export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeO
     const blobBytes = persistent
         ? new OPFSBlobBytesStore({ directoryName: `${name}:blobs` })
         : new MemoryBlobBytesStore();
+    const customTables = options.tables ? yield* options.tables : undefined;
     const adapter: RuntimeOptions = {
         capacity: {
             memory: Effect.succeed(undefined),
@@ -68,24 +81,32 @@ export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeO
         },
         connectivity,
         blobBytes,
-        tables: persistent
-            ? yield* IndexedDbTables.make({ databaseName: `${name}:storage` }).pipe(Effect.provide(indexedDb))
-            : yield* Memory.make(),
-        destroy: persistent
-            ? Effect.tryPromise({
-                  try: async () => {
-                      await Promise.all([
-                          deleteDatabase(name),
-                          deleteDatabase(`${name}:storage`),
-                          deleteDatabase(`${name}:keys`),
-                          blobBytes instanceof OPFSBlobBytesStore
-                              ? Effect.runPromise(blobBytes.clear())
-                              : Promise.resolve(),
-                      ]);
-                  },
-                  catch: (cause) => new RuntimeError({ operation: "destroy", cause }),
-              })
-            : undefined,
+        tables:
+            customTables?.tables ??
+            (persistent
+                ? yield* IndexedDbTables.make({ databaseName: `${name}:storage` }).pipe(
+                      Effect.provide(indexedDb)
+                  )
+                : yield* Memory.make()),
+        destroy:
+            persistent || customTables
+                ? Effect.all(
+                      [
+                          customTables?.destroy ??
+                              (persistent
+                                  ? Effect.all([removeDatabase(name), removeDatabase(`${name}:storage`)], {
+                                        concurrency: "unbounded",
+                                    })
+                                  : Effect.void),
+                          persistent ? removeDatabase(`${name}:keys`) : Effect.void,
+                          blobBytes instanceof OPFSBlobBytesStore ? blobBytes.clear() : Effect.void,
+                      ],
+                      { concurrency: "unbounded" }
+                  ).pipe(
+                      Effect.asVoid,
+                      Effect.mapError((cause) => new RuntimeError({ operation: "destroy", cause }))
+                  )
+                : undefined,
         encryptionKeyring:
             persistent && options.persistEncryptionKeys
                 ? yield* makeEncryptionKeyring(`${name}:keys`).pipe(Effect.provide(indexedDb))
@@ -99,12 +120,26 @@ export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeO
 
 export const layer = (options: WebRuntimeOptions = {}) => Layer.effect(Runtime, make(options));
 
+/** Browser capabilities are available before any partition storage is acquired. */
+export const webRuntime = (options: WebRuntimeOptions = {}) =>
+    Runtimes.layer(layer(options), {
+        browserAuthentication: typeof window !== "undefined" ? createWebBrowserAuthentication() : undefined,
+    });
+
 function deleteDatabase(name: string): Promise<void> {
     return new Promise((resolve, reject) => {
         const request = globalThis.indexedDB.deleteDatabase(name);
         request.onsuccess = () => resolve();
         request.onerror = () =>
             reject(new Error(`IndexedDB database "${name}" could not be deleted.`, { cause: request.error }));
-        request.onblocked = () => reject(new Error(`IndexedDB database "${name}" is still open.`));
+        // "blocked" is a progress event: cooperating connections may still be
+        // finishing transactions after close()/versionchange. The deletion is
+        // already queued and cannot be cancelled, so await its final result.
     });
 }
+
+const removeDatabase = (name: string) =>
+    Effect.tryPromise({
+        try: () => deleteDatabase(name),
+        catch: (cause) => new RuntimeError({ operation: "destroy", cause }),
+    });

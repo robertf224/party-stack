@@ -1,0 +1,39 @@
+---
+title: Installation
+description: Install the client, React bindings, and the runtime your app uses.
+---
+
+For a React app in the browser:
+
+```sh
+pnpm add @party-stack/ontology @party-stack/ontology-react @party-stack/web-runtime
+pnpm add --save-exact @tanstack/db@1.0.0-rc.1.4 @tanstack/react-db@1.0.0-rc.1.4
+```
+
+For a non-React client, omit `ontology-react` and `react-db`. Framework and backend
+guides list their additional packages. Keep both TanStack packages on the same,
+exact supported version.
+
+## TanStack DB fixes
+
+The examples use two optional patches for ordered-query pagination and avoiding
+unnecessary Suspense loading states. Apply them explicitly at your pnpm workspace root:
+
+```sh
+pnpm dlx @party-stack/tanstack-db-patches setup
+```
+
+The patch package is not published yet; until publication, use the
+[local setup instructions](https://github.com/robertf224/party-stack/tree/codex/effect-ontology-migration/packages/tanstack-db-patches).
+Setup records a versioned pnpm config dependency and patch paths. Commit the
+configuration and lockfile. No application import or postinstall script is needed.
+Use `--core-only` without React DB, and `check` instead of `setup` to verify an install.
+Review patches when upgrading TanStack; they are specific to the versions above.
+
+## Choose your environment
+
+- [TanStack Start](/docs/tanstack-start): React views and a shared browser worker.
+- [Expo](/docs/expo): persistent mobile data, authentication, and background sync.
+- [SQLite server](/docs/server): own your schema, data, and actions.
+- [Durable Objects](/docs/durable-objects): host an ontology on Cloudflare.
+- [Foundry](/docs/foundry): connect an existing ontology and sign in with OAuth.

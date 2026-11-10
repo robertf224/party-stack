@@ -28,7 +28,7 @@ describe("server-owned browser authorization", () => {
             },
         });
         const result = await Effect.runPromise(
-            client.authorize({ connectorId: "connector", browserPresentation: "popup" })
+            client.authorize({ applicationId: "connector", browserPresentation: "popup" })
         );
         expect(result).toEqual({ status: "completed", connectionId: "connection" });
         expect(close).toHaveBeenCalledOnce();
@@ -58,7 +58,7 @@ describe("server-owned browser authorization", () => {
                     ),
             },
         });
-        await expect(Effect.runPromise(client.authorize({ connectorId: "connector" }))).rejects.toThrow(
+        await expect(Effect.runPromise(client.authorize({ applicationId: "connector" }))).rejects.toThrow(
             /did not match/
         );
         expect(close).toHaveBeenCalledOnce();

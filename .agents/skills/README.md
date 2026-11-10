@@ -11,3 +11,7 @@ The installed package's `node_modules/effect/AGENTS.md` and linked examples are 
 authoritative implementation guide for its version. The root Effect development
 dependency makes that path available from the workspace root. Do not replace it
 with a stale external checkout or upgrade runtime dependencies just to read docs.
+
+## Repository skills
+
+- [party-stack-performance](party-stack-performance/SKILL.md): app query/fragment ownership, outbox phases and cross-tab performance investigation using the native replica path.

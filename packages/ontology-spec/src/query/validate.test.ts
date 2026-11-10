@@ -55,9 +55,26 @@ const document = (): QueryDocument => ({
 });
 
 describe("query semantic validation", () => {
+    it("boolean comparisons use the same false-before-true order as storage and preserve uncertainty", () => {
+        for (const a of [false, true])
+            for (const b of [false, true]) {
+                const comparison = Number(a) - Number(b);
+                expect(compareValues(a, b)).toBe(comparison);
+                for (const [op, expected] of [
+                    ["lt", comparison < 0],
+                    ["lte", comparison <= 0],
+                    ["gt", comparison > 0],
+                    ["gte", comparison >= 0],
+                ] as const)
+                    expect(evaluateOperator(op, [certain(a), certain(b)])).toEqual(certain(expected));
+            }
+        expect(compareValues(undefined, false)).toBeUndefined();
+        expect(evaluateOperator("gt", [uncertain(), certain(false)])).toEqual(uncertain());
+        expect(() => compareValues(false, 0)).toThrow("incompatible scalar types");
+    });
     it("accepts source-preserving entity grants and an ordinary string user context", () => {
         const ir = definition();
-        ir.policy = { read: document(), actions: [{ actionType: "save", check: literal(true) }] };
+        ir.policy = { objects: document(), actions: [{ actionType: "save", check: literal(true) }] };
         expect(validate(ir)).toEqual({ kind: "ok", value: undefined });
         expect(validateQueryDocument(ir, document(), { mode: "entity" })).toEqual([]);
     });
@@ -103,7 +120,7 @@ describe("query semantic validation", () => {
     });
     it("checks policy action targets and bound parameter names", () => {
         const ir = definition();
-        ir.policy = { read: document(), actions: [{ actionType: "missing", check: literal(true) }] };
+        ir.policy = { objects: document(), actions: [{ actionType: "missing", check: literal(true) }] };
         expect(validate(ir).kind).toBe("err");
         ir.policy.actions = [
             {

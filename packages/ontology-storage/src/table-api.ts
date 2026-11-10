@@ -33,7 +33,14 @@ export type {
     Query,
 } from "./model.js";
 export { Tables } from "./tables.js";
-export type { TablesService, Transaction, ReadTransaction, TableQuery, TableQueryOptions } from "./tables.js";
+export type {
+    TablesService,
+    Transaction,
+    ReadTransaction,
+    TableQuery,
+    TableQueryOptions,
+    TableKeysOptions,
+} from "./tables.js";
 export { applyQuery, cursorOf, compareRows } from "./query/evaluate.js";
 
 export {

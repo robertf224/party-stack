@@ -13,14 +13,14 @@ export const makeReplicaResource = Effect.fnUntraced(function* (options: Replica
 
 /** SDK view over a scoped native host. */
 export const makeReplicaLiveOntology = Effect.fnUntraced(function* (options: ReplicaLiveOptions) {
-    const { replica, backend, attachments, traces } = yield* makeReplicaResource(options);
+    const { replica, attachments, traces } = yield* makeReplicaResource(options);
     const view = makeReplicaOntologyView({
         ir: options.ir,
         context: options.context,
         replica,
         writes: options.writes,
         attachments,
-        queryFunction: backend.queryFunction,
+
         traces,
     });
     return yield* traces ? view.pipe(Effect.provideService(Tracer.Tracer, traces.tracer)) : view;

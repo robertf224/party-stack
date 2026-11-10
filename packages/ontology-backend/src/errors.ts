@@ -264,6 +264,7 @@ export function classifyBackendFailure(operation: string, cause: unknown): Backe
         const decoded = Schema.decodeUnknownOption(ProviderFailure)(candidate);
         if (decoded._tag === "None") break;
         value = decoded.value;
+        if (value.cause instanceof BackendError) return value.cause;
         if (
             value.status !== undefined ||
             value.statusCode !== undefined ||
@@ -382,12 +383,14 @@ export function projectValidationIssue(
         return { message: "Choose a valid value.", path: issue.path, code: "InvalidObjectReference" };
     return undefined;
 }
-/** Always removes raw causes. Custom projection cannot change execution/retry facts. */
+/** Forwarding preserves the original error. Projection removes raw causes and
+ * cannot change execution/retry facts. */
 export function projectBackendError(
     error: BackendError,
     policy: ErrorProjection = "projected",
     context: ErrorProjectionContext = {}
 ): BackendError {
+    if (policy === "forward") return error;
     const shown = typeof policy === "function" ? policy(error, context) : error;
     const kind = error.kind === "Unauthenticated" && context.upstream ? "Unavailable" : shown.kind;
     const issues =

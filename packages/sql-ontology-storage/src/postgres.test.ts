@@ -2,7 +2,16 @@ import * as PgClient from "@effect/sql-pg/PgClient";
 import { makeOwnedBackend, type OwnedTransaction } from "@party-stack/ontology-backend/owned";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
-import { Table, field } from "@party-stack/ontology-storage/tables";
+import {
+    Table,
+    applyQuery,
+    eq,
+    field,
+    ilike,
+    not,
+    or,
+    type Query,
+} from "@party-stack/ontology-storage/tables";
 import { Deferred, Effect, Exit, Fiber, Redacted } from "effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ConnectionError, SqlError } from "effect/sql/SqlError";
@@ -15,6 +24,35 @@ const layer = () => PgClient.layer({ url: Redacted.make(url), maxConnections: 12
 const prefix = () => `pg_test_${crypto.randomUUID().replaceAll("-", "")}`;
 const run = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient | Scope.Scope>) =>
     Effect.runPromise(effect.pipe(Effect.provide(layer()), Effect.scoped));
+
+test("native PostgreSQL keeps non-string rows in negated ILIKE and disjunctions", async () => {
+    await run(
+        Effect.gen(function* () {
+            const tables = yield* make({ prefix: prefix() });
+            for (const backfill of [false, true]) {
+                const rows = Table.make<{ name: unknown }>({
+                    name: `mixed-folded-${backfill ? "backfill" : "writes"}`,
+                });
+                const data = [undefined, null, false, true, 0, "Alpha", "beta"].map((name, n) => ({
+                    key: String(n),
+                    value: { name },
+                }));
+                const index = { name: "name", field: field("name") };
+                if (!backfill) yield* tables.ensureIndex(rows, index);
+                yield* tables.putMany(rows, data);
+                if (backfill) yield* tables.ensureIndex(rows, index);
+                const positive = ilike(field("name"), "al%");
+                const queries: Query[] = [
+                    { where: not(positive) },
+                    { where: or(positive, eq(field("name"), true)) },
+                    { where: or(not(positive), eq(field("name"), "Alpha")), offset: 1, limit: 4 },
+                ];
+                for (const query of queries)
+                    expect(yield* tables.query(rows, query)).toEqual(applyQuery(data, query));
+            }
+        })
+    );
+});
 
 test("native PostgreSQL ranks and windows each partition independently", async () => {
     await run(

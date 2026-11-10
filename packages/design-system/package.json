@@ -1,0 +1,27 @@
+{
+    "name": "@party-stack/design-system",
+    "version": "0.1.0",
+    "files": [
+        "lib",
+        "tokens.css"
+    ],
+    "type": "module",
+    "exports": {
+        "./brand": {
+            "types": "./lib/brand.d.ts",
+            "default": "./lib/brand.js"
+        },
+        "./tokens.css": "./tokens.css"
+    },
+    "devDependencies": {
+        "@party-stack/build-config": "workspace:*",
+        "@types/react": "^19.3.0",
+        "react": "^19.3.0",
+        "typescript": "~7.0.2",
+        "vite": "catalog:",
+        "vite-plus": "catalog:"
+    },
+    "peerDependencies": {
+        "react": "^19.3.0"
+    }
+}

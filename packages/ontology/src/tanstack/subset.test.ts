@@ -1,14 +1,22 @@
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import * as oq from "@party-stack/ontology-spec/query";
 import { evaluateQuery, eq as storageEq, field } from "@party-stack/ontology-storage";
-import { IR, compileSingleRowExpression, queryOnce, eq, gte } from "@tanstack/db";
+import { IR, compileSingleRowExpression, createLiveQueryCollection, queryOnce, eq, gte } from "@tanstack/db";
 import { Deferred, Effect, PubSub, Stream, Fiber } from "effect";
 import { Temporal } from "temporal-polyfill";
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import { makeReplicatedCollection, persistedCollectionOptions, scopedCollection } from "./collections.js";
-import { storageSubset } from "./subset.js";
+import { analyzeOntologySubset, storageSubset, ontologySubset } from "./subset.js";
 import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
+
+// ReplicaService values in this file are structural test doubles, not native
+// owners. Keep all real infrastructure exports; their revision fence is fixed.
+vi.mock("@party-stack/ontology-replica/infrastructure", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@party-stack/ontology-replica/infrastructure")>();
+    const { Effect } = await import("effect");
+    return { ...actual, readVisibleRevision: () => Effect.succeed(0) };
+});
 
 const ir: ReplicaService["ir"] = {
     types: [{ name: "Rank", type: { kind: "integer", value: {} } }],
@@ -56,6 +64,16 @@ const ir: ReplicaService["ir"] = {
                 },
                 { name: "created", displayName: "Created", type: { kind: "timestamp", value: {} } },
                 {
+                    name: "pinned",
+                    displayName: "Pinned",
+                    type: { kind: "optional", value: { type: { kind: "boolean", value: {} } } },
+                },
+                {
+                    name: "other",
+                    displayName: "Other",
+                    type: { kind: "optional", value: { type: { kind: "boolean", value: {} } } },
+                },
+                {
                     name: "tags",
                     displayName: "Tags",
                     type: {
@@ -81,6 +99,28 @@ const values = [
     { id: "e" },
 ];
 const rows = values.map((value) => ({ key: value.id, value }));
+
+test("boolean ordered boundaries lower to valid Query IR with exact TanStack null semantics", async () => {
+    const data = [true, false, undefined].flatMap((pinned, i) =>
+        [true, false, undefined].map((other, j) => ({
+            key: `${i}:${j}`,
+            value: { id: `${i}:${j}`, pinned, other },
+        }))
+    );
+    for (const op of ["gt", "gte", "lt", "lte"])
+        for (const right of [val(true), val(false), ref("other")]) {
+            const comparison = fn(op, ref("pinned"), right);
+            for (const expression of [comparison, fn("not", comparison)]) {
+                const subset = ontologySubset({ where: expression }, ir, "Note");
+                const compiled = await Effect.runPromise(compileObjectSubset(ir, subset));
+                expect(evaluateQuery(data, compiled.query).map((row) => row.key)).toEqual(
+                    data
+                        .filter((row) => compileSingleRowExpression(expression)(row.value) === true)
+                        .map((row) => row.key)
+                );
+            }
+        }
+});
 
 test("reverse IN pushes scalar-array membership through OR and preserves three-valued negation", () => {
     const data = [
@@ -315,6 +355,78 @@ test("Temporal values retain typed equality and ordering", () => {
     expect(evaluateQuery(timed, query).map((row) => row.key)).toEqual(["2"]);
 });
 
+test("PlainDate equality and membership broaden before LIMIT, including negation and calendar variants", async () => {
+    const iso = Temporal.PlainDate.from("2026-11-09");
+    const gregory = iso.withCalendar("gregory");
+    const dated: ReplicaService["ir"] = {
+        ...ir,
+        objectTypes: [
+            {
+                ...ir.objectTypes[0]!,
+                properties: [
+                    ...ir.objectTypes[0]!.properties,
+                    { name: "day", displayName: "Day", type: { kind: "date", value: {} } },
+                    {
+                        name: "days",
+                        displayName: "Days",
+                        type: { kind: "list", value: { elementType: { kind: "date", value: {} } } },
+                    },
+                ],
+            },
+        ],
+    };
+    const data = [
+        { id: "a", day: gregory, days: [gregory] },
+        { id: "b", day: gregory, days: [gregory] },
+        { id: "z", day: iso, days: [iso] },
+    ].map((value) => ({ key: value.id, value }));
+    const orderBy = [
+        {
+            expression: ref("id"),
+            compareOptions: { direction: "asc", nulls: "last", stringSort: "lexical" },
+        },
+    ] as const;
+    for (const predicate of [
+        fn("eq", ref("day"), val(iso)),
+        fn("in", ref("day"), val([iso])),
+        fn("in", val(iso), ref("days")),
+    ])
+        for (const where of [predicate, fn("not", predicate)]) {
+            const options = { where, orderBy: [...orderBy], limit: 1 };
+            const analysis = analyzeOntologySubset(options, dated, "Note");
+            expect(analysis.filterExact).toBe(false);
+            expect(analysis.orderedWindowExact).toBe(false);
+            expect(analysis.subset.page).toBeUndefined();
+            const scan = await Effect.runPromise(
+                compileObjectSubset(dated, ontologySubset(options, dated, "Note"))
+            );
+            const accepts = compileSingleRowExpression(where);
+            const physical = evaluateQuery(data, scan.query);
+            const expected = data.filter((row) => accepts(row.value) === true);
+            expect(physical.filter((row) => accepts(row.value) === true)).toEqual(expected);
+            expect(physical.filter((row) => accepts(row.value) === true).slice(0, 1)).toEqual(
+                expected.slice(0, 1)
+            );
+        }
+    const ordered = analyzeOntologySubset(
+        {
+            orderBy: [
+                {
+                    expression: ref("day"),
+                    compareOptions: { direction: "desc", nulls: "last" },
+                },
+                ...orderBy,
+            ],
+            limit: 1,
+        },
+        dated,
+        "Note"
+    );
+    expect(ordered.filterExact).toBe(true);
+    expect(ordered.orderedWindowExact).toBe(true);
+    expect(ordered.subset.page?.limit).toBe(1);
+});
+
 test("a real TanStack query forwards its predicate and numeric window into Replica demand", async () => {
     const requested: ObjectSubset[] = [];
     await Effect.runPromise(
@@ -328,6 +440,7 @@ test("a real TanStack query forwards its predicate and numeric window into Repli
                     observeSubset: (subset: ObjectSubset) =>
                         Stream.fromEffect(
                             Effect.map(compileObjectSubset(ir, subset), (scan) => ({
+                                revision: 0,
                                 reset: true,
                                 rows: evaluateQuery(rows, scan.query),
                                 removed: [],
@@ -392,6 +505,7 @@ test("overlapping scoped subsets share materialized rows and unload without clob
                 const eventsBus = yield* PubSub.unbounded<void>();
                 let releases = 0;
                 let local: readonly { key: string; value: Record<string, unknown> }[] = rows;
+                let revision = 0;
                 const replica = {
                     ir,
                     syncOnce: Effect.void,
@@ -406,6 +520,7 @@ test("overlapping scoped subsets share materialized rows and unload without clob
                                 );
                                 return Stream.concat(Stream.succeed(undefined), events).pipe(
                                     Stream.map(() => ({
+                                        revision,
                                         reset: true,
                                         rows: evaluateQuery(local, scan.query),
                                         removed: [],
@@ -449,6 +564,7 @@ test("overlapping scoped subsets share materialized rows and unload without clob
                 local = local.map((row) =>
                     row.key === "a" ? { ...row, value: { ...row.value, rank: 0 } } : row
                 );
+                revision++;
                 yield* PubSub.publish(eventsBus, undefined);
                 yield* Effect.sleep(5);
                 expect([...collection.keys()]).toEqual(["c"]);
@@ -456,12 +572,83 @@ test("overlapping scoped subsets share materialized rows and unload without clob
                 yield* Effect.sleep(1);
                 expect(releases).toBe(2);
                 local = rows;
+                revision++;
                 yield* PubSub.publish(eventsBus, undefined);
                 yield* Effect.sleep(5);
                 expect([...collection.keys()]).toEqual(["a", "c"]);
                 collection._sync.unloadSubset(duplicate);
                 yield* Effect.sleep(1);
                 expect(releases).toBe(3);
+            })
+        )
+    );
+});
+
+test("fulfilled live regions keep filtered window updates live while new acquisitions wait", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const events = yield* PubSub.unbounded<void>();
+                let local: readonly { key: string; value: Record<string, unknown> }[] = rows;
+                let revision = 0;
+                let acquisitions = 0;
+                const replica = {
+                    ir,
+                    readSubset: () => Effect.succeed([]),
+                    demand: {
+                        acquire: () =>
+                            Effect.suspend(() => (++acquisitions === 1 ? Effect.void : Effect.never)),
+                    },
+                    observeSubset: (subset: ObjectSubset) =>
+                        Stream.unwrap(
+                            Effect.gen(function* () {
+                                const scan = yield* compileObjectSubset(ir, subset);
+                                const changes = yield* PubSub.subscribe(events).pipe(
+                                    Effect.map(Stream.fromSubscription)
+                                );
+                                return Stream.concat(Stream.succeed(undefined), changes).pipe(
+                                    Stream.map(() => ({
+                                        revision,
+                                        reset: true,
+                                        rows: evaluateQuery(local, scan.query),
+                                        removed: [],
+                                    }))
+                                );
+                            })
+                        ),
+                } as unknown as ReplicaService;
+                const source = yield* makeReplicatedCollection<{ id: string; rank: number }>({
+                    id: "held-region-readiness",
+                    replica,
+                    objectType: "Note",
+                    getKey: (row) => row.id,
+                });
+                // This source has already supplied every row in the region, including
+                // future locally observed changes. No collection-wide preload is needed.
+                yield* Effect.promise(() =>
+                    Promise.resolve(source._sync.loadSubset({ where: fn("gte", ref("rank"), val(2)) }))
+                );
+                const query = createLiveQueryCollection({
+                    query: (q) =>
+                        q
+                            .from({ row: source })
+                            .where(({ row }) => gte(row.rank, 2))
+                            .orderBy(({ row }) => row.id, "asc")
+                            .limit(51)
+                            .select(({ row }) => ({ id: row.id })),
+                });
+                yield* Effect.addFinalizer(() => Effect.promise(() => query.cleanup()));
+                yield* Effect.promise(() => query.preload());
+                expect(query.toArray.map((row) => row.id)).toEqual(["a", "c"]);
+                local = local.map((row) =>
+                    row.key === "a" ? { ...row, value: { ...row.value, rank: 0 } } : row
+                );
+                revision++;
+                yield* PubSub.publish(events, undefined);
+                yield* Effect.promise(() =>
+                    vi.waitFor(() => expect(query.toArray.map((row) => row.id)).toEqual(["c"]))
+                );
+                expect(acquisitions).toBeGreaterThan(1);
             })
         )
     );

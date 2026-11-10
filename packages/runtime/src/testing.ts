@@ -5,6 +5,7 @@ import { MemoryBlobBytesStore } from "./memory/MemoryBlobBytesStore.js";
 import { makeNetworkConnectivity } from "./NetworkConnectivity.js";
 import { Runtime, RuntimeError } from "./Runtime.js";
 import { RuntimePartition } from "./RuntimePartition.js";
+import { Runtimes } from "./Runtimes.js";
 import type { RuntimeOptions, RuntimeService, NetworkConnectivity } from "./index.js";
 import type { OntologyStorageError } from "@party-stack/ontology-storage";
 import type { EncryptionError, EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
@@ -165,19 +166,21 @@ export const asRuntimeLayer = (
         namespace: string
     ) => RuntimeFixtureOptions & { cleanup?: () => void | Promise<void> }
 ) =>
-    Layer.effect(
-        Runtime,
-        Effect.gen(function* () {
-            const partition = yield* RuntimePartition;
-            const value = yield* Effect.acquireRelease(
-                Effect.sync(() => provider(partition.owner, partition.namespace)),
-                (value) =>
-                    Effect.promise(async () => {
-                        await value.cleanup?.();
-                    })
-            );
-            const existing = states.get(value);
-            if (existing && !existing.closed) return existing.service;
-            return yield* Effect.flatMap(optionsFor(value), Runtime.make);
-        })
+    Runtimes.layer(
+        Layer.effect(
+            Runtime,
+            Effect.gen(function* () {
+                const partition = yield* RuntimePartition;
+                const value = yield* Effect.acquireRelease(
+                    Effect.sync(() => provider(partition.owner, partition.namespace)),
+                    (value) =>
+                        Effect.promise(async () => {
+                            await value.cleanup?.();
+                        })
+                );
+                const existing = states.get(value);
+                if (existing && !existing.closed) return existing.service;
+                return yield* Effect.flatMap(optionsFor(value), Runtime.make);
+            })
+        )
     );

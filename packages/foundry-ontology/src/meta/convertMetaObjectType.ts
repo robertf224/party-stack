@@ -6,7 +6,9 @@ import type {
     ObjectType as MetaObjectType,
 } from "@party-stack/ontology-spec/meta";
 
-export function convertFoundryMetaObjectType(metadata: ObjectTypeFullMetadata): MetaObjectType {
+export function convertFoundryMetaObjectType(
+    metadata: Pick<ObjectTypeFullMetadata, "objectType">
+): MetaObjectType {
     const objectType = metadata.objectType;
     return {
         id: objectType.rid,

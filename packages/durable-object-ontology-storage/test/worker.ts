@@ -4,7 +4,7 @@ import {
     sqliteOntologyConformanceIR,
     type SQLiteOntologyConformanceCaseId,
 } from "@party-stack/ontology/testing/sqlite";
-import { createSQLiteTestBackend } from "@party-stack/ontology/testing/sqliteBackend";
+import { makeSQLiteTestBackend } from "@party-stack/ontology/testing/sqliteBackend";
 import { queryOnce } from "@tanstack/db";
 import { DurableObject } from "cloudflare:workers";
 import { Effect } from "effect";
@@ -31,14 +31,14 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
         super(state, environment);
         this.database = createDurableObjectSQLiteDatabase(state.storage);
         this.initialized = state.blockConcurrencyWhile(async () => {
-            const binding = createSQLiteTestBackend({
+            const binding = makeSQLiteTestBackend({
                 ir: sqliteOntologyConformanceIR,
                 database: this.database,
                 name: "sqlite",
             });
             const ontology = await createLiveOntology({
                 ir: sqliteOntologyConformanceIR,
-                backend: () => binding,
+                backend: binding,
             });
             await ontology.cleanup();
         });
@@ -84,10 +84,7 @@ export class DurableObjectOntologyTest extends DurableObject<TestEnvironment> {
                             Effect.promise(() =>
                                 createLiveOntology({
                                     ir: sqliteOntologyConformanceIR,
-                                    backend: () => ({
-                                        name: backend.name,
-                                        open: () => Effect.succeed(backend),
-                                    }),
+                                    backend: Effect.succeed(backend),
                                     context: { user: "fixture" },
                                 })
                             ),

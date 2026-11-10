@@ -12,13 +12,14 @@ export const Ontology = OntologyDurableObject(
             ir,
             bucket: Attachments,
             ontologyId: "primary",
-            authorize: (_request, headers) =>
-                headers.authorization === `Bearer ${Redacted.value(token)}`
-                    ? Effect.void
+            dangerouslyAllowInternalAccess: true,
+            authenticate: (request) =>
+                request.headers.get("authorization") === `Bearer ${Redacted.value(token)}`
+                    ? Effect.succeed({})
                     : Effect.fail(
                           new BackendError({
-                              operation: "authorize",
-                              kind: "Forbidden",
+                              operation: "authentication",
+                              kind: "Unauthenticated",
                               message: "Unauthorized.",
                               retryable: false,
                           })

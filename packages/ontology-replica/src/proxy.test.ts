@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
@@ -30,7 +31,8 @@ const ir: OntologyIR = {
     ],
 };
 
-const quietBackend: OntologyBackendService = {
+const quietBackend: OntologyBackendService = makeOntologyBackend({
+    ir,
     name: "cache-lifetime",
     sourceId: "cache-lifetime",
     supportsIdempotency: false,
@@ -38,7 +40,7 @@ const quietBackend: OntologyBackendService = {
     applyAction: () => Effect.die("Unexpected action"),
     queryFunction: () => Effect.void,
     refresh: () => ({ pollIntervalMs: false }),
-};
+});
 const subsetFor = (key: string) => objectSubset("Item", { where: eq(field("id"), key) });
 
 test("cached demand renews its idle TTL and evicts the oldest idle lease at capacity", async () => {
@@ -199,7 +201,8 @@ test("cached proxy never promotes an incomplete source snapshot to complete cove
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const backend = {
+                const backend = makeOntologyBackend({
+                    ir,
                     name: "incomplete",
                     sourceId: "incomplete",
                     supportsIdempotency: false,
@@ -210,7 +213,7 @@ test("cached proxy never promotes an incomplete source snapshot to complete cove
                         }),
                     applyAction: () => Effect.die("unused"),
                     queryFunction: () => Effect.void,
-                };
+                });
                 const replica = yield* makeReplica({
                     namespace: "partial",
                     ir,
@@ -437,25 +440,23 @@ test("cache invalidation failures preserve the receipt, block stale reads and re
                     startSync: false,
                     demand: { idleRetentionMs: 60_000, refresh: { pollIntervalMs: 5_000 } },
                 });
-                const proxy = yield* makeCachedProxy({
-                    replica: {
-                        ...replica,
-                        invalidate: (types) =>
-                            Effect.suspend(() =>
-                                failures-- > 0
-                                    ? Effect.fail(
-                                          new BackendError({
-                                              operation: "storage",
-                                              kind: "Unavailable",
-                                              retryable: true,
-                                              message: "Cache storage unavailable.",
-                                          })
-                                      )
-                                    : replica.invalidate(types)
-                            ),
-                    },
-                    backend,
-                });
+                const cache: typeof replica = {
+                    ...replica,
+                    invalidate: (types) =>
+                        Effect.suspend(() =>
+                            failures-- > 0
+                                ? Effect.fail(
+                                      new BackendError({
+                                          operation: "storage",
+                                          kind: "Unavailable",
+                                          retryable: true,
+                                          message: "Cache storage unavailable.",
+                                      })
+                                  )
+                                : replica.invalidate(types)
+                        ),
+                };
+                const proxy = yield* makeCachedProxy({ replica: cache, backend });
                 yield* proxy.loadSubset(objectSubset("Item"));
                 expect(yield* proxy.applyAction({ id: "one", name: "save", parameters: {} })).toMatchObject({
                     outcome: "committed",
@@ -464,7 +465,8 @@ test("cache invalidation failures preserve the receipt, block stale reads and re
                     _tag: "Failure",
                     failure: { kind: "Unavailable" },
                 });
-                expect((yield* proxy.loadSubset(objectSubset("Item"))).rows[0]?.value.count).toBe(1);
+                const reopened = yield* makeCachedProxy({ replica: cache, backend });
+                expect((yield* reopened.loadSubset(objectSubset("Item"))).rows[0]?.value.count).toBe(1);
                 expect(writes).toBe(1);
                 expect(yield* replica.pending).toEqual([]);
             })

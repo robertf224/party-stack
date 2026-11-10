@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { pascalCase } from "change-case";
 import { createJiti } from "jiti";
 import { generateBuilders } from "../generate/builders.js";
+import { generateCollections } from "../generate/collections.js";
 import { generateConstants } from "../generate/constants.js";
 import { generateLive } from "../generate/live.js";
 import { generateEffectSchemas } from "../generate/schemas.js";
@@ -177,6 +178,11 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
         ontologyTypeName: generatedOntologyTypeName,
         outputFactoryName: `create${namespace}LiveOntology`,
     });
+    const collectionsOutput = generateCollections(ontology, {
+        ontologyTypesImportPath: maybeStripJsExtension("./types.js", jsExtensions),
+        ontologyRuntimeImportPath,
+        ontologyTypeName: generatedOntologyTypeName,
+    });
 
     const typesFilePath = join(outDir, "types.ts");
     const liveFilePath = join(outDir, "live.ts");
@@ -184,12 +190,19 @@ export async function generateFiles(options: GenerateFilesOpts): Promise<void> {
 
     await Promise.all([
         formatAndWrite(typesFilePath, typesOutput),
-        ...(options.emitLive === false ? [] : [formatAndWrite(liveFilePath, liveOutput)]),
+        ...(options.emitLive === false
+            ? []
+            : [
+                  formatAndWrite(liveFilePath, liveOutput),
+                  formatAndWrite(join(outDir, "collections.ts"), collectionsOutput),
+              ]),
         formatAndWrite(constantsFilePath, constantsOutput),
     ]);
 
     await writeEffectFiles(ontology, outDir, options, generatedOntologyTypeName);
     console.log(`Generated types written to: ${typesFilePath}`);
     if (options.emitLive !== false) console.log(`Generated live helpers written to: ${liveFilePath}`);
+    if (options.emitLive !== false)
+        console.log(`Generated collection descriptors written to: ${join(outDir, "collections.ts")}`);
     console.log(`Generated constants written to: ${constantsFilePath}`);
 }

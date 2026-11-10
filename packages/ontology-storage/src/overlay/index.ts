@@ -81,6 +81,22 @@ export const getVisible = Effect.fnUntraced(function* <A>(tx: ReadTransaction, v
     const override = yield* tx.get(view.overrides, key);
     return override ? (override.deleted ? undefined : override.value) : yield* getBaseline(tx, view, key);
 });
+/** The same sparse precedence as getVisible, with bounded native key reads. */
+export const getVisibleMany = Effect.fnUntraced(function* <A>(
+    tx: ReadTransaction,
+    view: Overlay<A>,
+    keys: readonly Key[]
+) {
+    const values = new Map<Key, A | undefined>();
+    let missing = [...keys];
+    for (const layer of view.inherited ? [view.overrides, view.inherited] : [view.overrides]) {
+        for (const row of yield* tx.getMany(layer, missing))
+            values.set(row.key, row.value.deleted ? undefined : row.value.value);
+        missing = missing.filter((key) => !values.has(key));
+    }
+    for (const row of yield* tx.getMany(view.base, missing)) values.set(row.key, row.value);
+    return values;
+});
 export const putVisible = <A>(tx: Transaction, view: Overlay<A>, key: Key, value: A) =>
     tx.put(view.overrides, key, { deleted: false, value });
 export const deleteVisible = <A>(tx: Transaction, view: Overlay<A>, key: Key) =>

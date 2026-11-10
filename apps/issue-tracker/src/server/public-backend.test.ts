@@ -98,7 +98,8 @@ it("publishes real Better Auth sign-up as a public User change while hiding acco
                     },
                 });
                 const before = yield* backend.loadSubset(objectSubset("User"));
-                const notification = yield* Effect.forkScoped(Stream.runHead(owned.changes!.watch!), {
+                const watchChanges = yield* owned.changes!.watch!;
+                const notification = yield* Effect.forkScoped(Stream.runHead(watchChanges), {
                     startImmediately: true,
                 });
                 const signed = yield* Effect.promise(() =>
@@ -153,7 +154,7 @@ it("constructs the real authenticated policy server and exposes its projected de
                     mutators: {},
                 });
                 const result = yield* Effect.result(
-                    makeOntologyServer({ kind: "owned", backend: owned, context: { user: "ada" } })
+                    makeOntologyServer({ kind: "owned", backend: owned, context: { userId: "ada" } })
                 );
                 expect(result._tag === "Failure" ? result.failure.issues : []).toEqual([]);
                 expect(result._tag).toBe("Success");

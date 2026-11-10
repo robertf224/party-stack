@@ -32,7 +32,7 @@ own execution identifier, and is not used for local retry identity or settlement
 interface ActionReceipt {
     operationId: string;
     providerOperationId?: string;
-    outcome: "committed" | "accepted";
+    outcome: "committed";
     cursor?: string;
     // Read-back targets and attachment ID mappings are additional receipt fields.
 }
@@ -44,8 +44,27 @@ pipeline and returns canonical ID mappings with the successful receipt. Those
 mappings are not installed ahead of the receipt. Explicit eager staging uses the
 native attachments.stage capability, where available.
 
-loadSubset/watchSubset remain snapshot/invalidation operations. changes.pull returns
-the source-wide journal; changes.watch is only its wake-up stream. A future
+`loadSubset` reads snapshots. `watchSubset` acquires invalidation notifications;
+`changes.pull` reads the source-wide journal and `changes.watch` acquires its wake-up feed.
+Both watch acquisitions are scoped Effects: they return only after the feed is
+registered and buffering, even if the returned stream stays quiet indefinitely.
+Closing the acquisition Scope releases the subscription.
+
+```ts
+// Inside the caller's Scope; undefined means this subset needs polling.
+const acquire = backend.watchSubset?.(subset);
+if (acquire) {
+    const changes = yield * acquire;
+    const snapshot = yield * backend.loadSubset(subset);
+    // Process the snapshot, then consume changes to refresh it.
+}
+```
+
+Changes between acquisition and snapshot consumption remain observable. Merely
+returning a lazy `Stream.fromPubSub` inside `Effect.succeed` does not establish this
+guarantee: acquire its subscription first. Parent acceptance is a separate replica
+handoff operation; an ordinary action receipt reports authoritative commitment.
+A future
 query-scoped data subscription is deferred; see the
 [subscription design note](../../specs/2026-10-19-effect-tables-replica/subset-subscriptions.md).
 

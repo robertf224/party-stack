@@ -12,3 +12,9 @@ export function useDemandQuery<A extends { readonly collection?: object }>(owner
     useEffect(() => (collection ? registerQueryConsumer(owner, collection) : undefined), [owner, collection]);
     return result;
 }
+
+/** Singular fragments return their selected value, including an absent row. */
+export function useDemandFragment<A>(owner: DemandOwner, result: A, collection: object): A {
+    useEffect(() => registerQueryConsumer(owner, collection), [owner, collection]);
+    return result;
+}

@@ -16,6 +16,92 @@ interface Task {
     email: string;
 }
 export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
+    const keyRows = Table.make<number>({ name: "primary-key-pages" });
+    const unorderedKeys = [
+        3,
+        -2,
+        0,
+        1.5,
+        "",
+        "\0",
+        "é",
+        "💛",
+        ...Array.from({ length: 260 }, (_, i) => `key-${String(259 - i).padStart(3, "0")}`),
+    ];
+    yield* tables.putMany(
+        keyRows,
+        unorderedKeys.map((key, value) => ({ key, value }))
+    );
+    const orderedKeys = applyQuery(unorderedKeys.map((key) => ({ key, value: 0 }))).map((row) => row.key);
+    const pagedKeys: typeof orderedKeys = [];
+    yield* tables.read((tx) =>
+        Effect.gen(function* () {
+            let after: string | number | undefined;
+            for (;;) {
+                const page = yield* tx.keys(keyRows, { after, limit: 17 });
+                pagedKeys.push(...page);
+                if (page.length < 17) break;
+                after = page.at(-1);
+            }
+        })
+    );
+    assert(
+        JSON.stringify(pagedKeys) === JSON.stringify(orderedKeys),
+        "Key pages preserve exact portable ordering without duplicates or omissions"
+    );
+    assert(
+        JSON.stringify(yield* tables.keys(keyRows)) === JSON.stringify(orderedKeys),
+        "Unbounded key enumeration has the same ordering"
+    );
+    assert((yield* tables.keys(keyRows, { limit: 0 })).length === 0, "A zero key limit is empty");
+    assert(
+        JSON.stringify(yield* tables.keys(keyRows, { limit: Number.MAX_SAFE_INTEGER })) ===
+            JSON.stringify(orderedKeys),
+        "A valid large key limit does not overflow native request counts"
+    );
+    assert(
+        JSON.stringify(yield* tables.keys(keyRows, { after: "key-004x", limit: 2 })) ===
+            JSON.stringify(["key-005", "key-006"]),
+        "Key cursors need not name an existing row"
+    );
+    assert((yield* tables.keys(keyRows, { after: "💛" })).length === 0, "An exhausted key cursor is empty");
+    assert(
+        Exit.isFailure(yield* Effect.exit(tables.keys(keyRows, { limit: -1 }))),
+        "Key limits are validated"
+    );
+    assert(
+        Exit.isFailure(yield* Effect.exit(tables.keys(keyRows, { after: Number.NaN }))),
+        "Key cursors are validated"
+    );
+    const wrongKeyVersion = Table.make<number>({ name: keyRows.name, version: 2 });
+    assert(
+        Exit.isFailure(yield* Effect.exit(tables.keys(wrongKeyVersion, { limit: 1 }))),
+        "Key enumeration validates the table version"
+    );
+    const escapedKeyTransaction = yield* tables.read((tx) => Effect.succeed(tx));
+    assert(
+        Exit.isFailure(yield* Effect.exit(escapedKeyTransaction.keys(keyRows))),
+        "Key enumeration cannot escape its transaction"
+    );
+    const keysRolledBack = yield* Effect.exit(
+        tables.transaction((tx) =>
+            Effect.gen(function* () {
+                yield* tx.put(keyRows, "new", 0);
+                yield* tx.delete(keyRows, "key-000");
+                const keys = yield* tx.keys(keyRows);
+                assert(
+                    keys.includes("new") && !keys.includes("key-000"),
+                    "Key reads see writes and deletes in the same transaction"
+                );
+                return yield* Effect.fail("abort key writes");
+            })
+        )
+    );
+    assert(Exit.isFailure(keysRolledBack), "The key-read transaction was rolled back");
+    assert(
+        JSON.stringify(yield* tables.keys(keyRows)) === JSON.stringify(orderedKeys),
+        "Key reads preserve rollback semantics"
+    );
     const claims = Table.make<number>({ name: "atomic-claims" });
     assert(yield* tables.insert(claims, "key", 1), "First insert claims the key");
     assert(!(yield* tables.insert(claims, "key", 2)), "Duplicate insert must not replace the key");
@@ -38,6 +124,66 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
             assert(!(yield* tx.insert(claims, "next", 4)), "Insert sees its own transaction's claim");
         })
     );
+    const bulk = Table.make<{ group: number }>({ name: "bulk-io" });
+    yield* tables.ensureIndex(bulk, { name: "group", field: field("group") });
+    yield* tables.putMany(
+        bulk,
+        Array.from({ length: 260 }, (_, key) => ({ key, value: { group: key % 3 } }))
+    );
+    const fetched = yield* tables.getMany(bulk, [259, "missing", 0, 259]);
+    assert(
+        JSON.stringify(fetched) ===
+            JSON.stringify([
+                { key: 259, value: { group: 1 } },
+                { key: 0, value: { group: 0 } },
+                { key: 259, value: { group: 1 } },
+            ]),
+        "Bulk reads preserve input order and duplicates while omitting missing rows"
+    );
+    yield* tables.putMany(bulk, [
+        { key: 0, value: { group: 8 } },
+        { key: 0, value: { group: 9 } },
+    ]);
+    assert((yield* tables.get(bulk, 0))?.group === 9, "Repeated batch keys keep sequential write order");
+    yield* tables.putMany(uniqueClaims, [
+        { key: "a", value: { email: "new@example.test" } },
+        { key: "b", value: { email: "a@example.test" } },
+    ]);
+    assert(
+        (yield* tables.get(uniqueClaims, "b"))?.email === "a@example.test",
+        "Unique batches preserve sequential vacancy and claim semantics"
+    );
+    const checked = Table.make<number>({
+        name: "bulk-validated",
+        codec: {
+            encode: (value) => {
+                if (value < 0) throw new Error("Negative batch value");
+                return value;
+            },
+            decode: (value) => value as number,
+        },
+    });
+    yield* tables.transaction((tx) =>
+        Effect.gen(function* () {
+            const result = yield* Effect.exit(
+                tx.putMany(checked, [
+                    { key: "valid", value: 1 },
+                    { key: "invalid", value: -1 },
+                ])
+            );
+            assert(Exit.isFailure(result), "Bulk values must pass codec validation");
+            assert((yield* tx.get(checked, "valid")) === undefined, "Invalid batches must write no rows");
+        })
+    );
+    const aborted = yield* Effect.exit(
+        tables.transaction((tx) =>
+            tx
+                .putMany(bulk, [{ key: "rollback", value: { group: 1 } }])
+                .pipe(Effect.andThen(Effect.fail("abort bulk write")))
+        )
+    );
+    assert(Exit.isFailure(aborted), "Bulk writes join the physical transaction");
+    assert((yield* tables.get(bulk, "rollback")) === undefined, "Aborted bulk writes must roll back");
     const firstRevision = yield* tables.transaction((tx) => tx.allocateRevision("contract-publication"));
     const rollbackRevision = yield* Effect.exit(
         tables.transaction((tx) =>

@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { makeBetterAuthStorage } from "@party-stack/better-auth/storage";
-import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { makeStorageBackend } from "@party-stack/ontology-backend/storage";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import Database from "better-sqlite3";
 import { Context, Effect, Layer, ManagedRuntime } from "effect";
@@ -14,16 +14,18 @@ const acquirePersistence = Effect.gen(function* () {
         }),
         (database) => Effect.sync(() => database.close())
     );
-    const namespace = "issue-tracker-auth-backed";
-    const native = yield* SQLite.makeStorage(database, { namespace, mode: "authoritative" });
-    const backend = yield* makeOwnedBackend({
+    const namespace = "issue-tracker-auth-backed-user-id-v1";
+    const native = yield* SQLite.makeStorage(database, {
+        namespace,
+        attachmentBytesRetentionMode: "authoritative",
+    });
+    const backend = yield* makeStorageBackend({
         namespace,
         ir: serverOntology,
         ...native,
-        mutators: {},
     });
     const adapter = yield* makeBetterAuthStorage({ storage: backend.storage, models: authModels });
-    return { adapter, storage: backend.storage, namespace, native };
+    return { adapter, storage: backend.storage, backend, namespace, native };
 });
 class ServerPersistence extends Context.Service<
     ServerPersistence,

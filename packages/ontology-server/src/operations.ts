@@ -1,5 +1,6 @@
 import {
     BackendError,
+    classifyBackendFailure,
     BackendSnapshotSchema,
     BackendChangePageSchema,
     ValidationReportSchema,
@@ -13,7 +14,12 @@ import {
     ObjectSubsetCodec,
     protocolValueCodec,
 } from "@party-stack/ontology-backend/protocol";
-import { ReplicaStatusSchema, makeReplicaMonitor } from "@party-stack/ontology-replica";
+import {
+    PinOptionsSchema,
+    PinStatusSchema,
+    ReplicaStatusSchema,
+    makeReplicaMonitor,
+} from "@party-stack/ontology-replica";
 import { QueryDocumentSchema } from "@party-stack/ontology-spec/effect";
 import { getTargetValueType } from "@party-stack/ontology-spec/utils";
 import { withObjectSources } from "@party-stack/ontology-storage";
@@ -35,7 +41,7 @@ import {
 } from "./attachmentTransfers.js";
 import { projectValidationReport, type ErrorProjectionOptions } from "./errorProjection.js";
 import type { AttachmentTransferPolicy } from "./attachmentTransfers.js";
-import type { ReplicaService } from "@party-stack/ontology-replica";
+import type { ReplicaService, ReplicaPinControls } from "@party-stack/ontology-replica";
 import type { AttachmentCreateOptions } from "@party-stack/ontology-replica";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { attachment } from "@party-stack/ontology-spec/values";
@@ -94,7 +100,7 @@ const HelperRpcs = RpcGroup.make(
     Rpc.make("WatchChanges", { success: Schema.Literal("invalidate"), error: BackendError, stream: true }),
     Rpc.make("WatchSubset", {
         payload: ObjectSubsetCodec,
-        success: Schema.Literal("invalidate"),
+        success: Schema.Literals(["reset", "invalidate"]),
         error: BackendError,
         stream: true,
     }),
@@ -156,6 +162,23 @@ const HelperRpcs = RpcGroup.make(
         ),
         error: BackendError,
     }),
+    Rpc.make("ReadPin", {
+        success: protocolValueCodec(Schema.UndefinedOr(PinStatusSchema)),
+        error: BackendError,
+    }),
+    Rpc.make("WatchPin", {
+        success: protocolValueCodec(Schema.UndefinedOr(PinStatusSchema)),
+        error: BackendError,
+        stream: true,
+    }),
+    Rpc.make("SetPin", {
+        payload: {
+            query: protocolValueCodec(QueryDocumentSchema),
+            options: Schema.optional(protocolValueCodec(PinOptionsSchema)),
+        },
+        error: BackendError,
+    }),
+    Rpc.make("ClearPin", { error: BackendError }),
     Rpc.make("ReplicaStatus", {
         success: protocolValueCodec(ReplicaStatusSchema),
         error: BackendError,
@@ -211,18 +234,15 @@ export type OntologyOperationRequest =
           readonly command: "remove" | "retry" | "edit";
           readonly invocation?: Schema.Schema.Type<typeof ActionRequestSchema>;
       }
+    | { readonly operation: "ReadPin" | "WatchPin" | "ClearPin" }
+    | {
+          readonly operation: "SetPin";
+          readonly query: Schema.Schema.Type<typeof QueryDocumentSchema>;
+          readonly options?: Schema.Schema.Type<typeof PinOptionsSchema>;
+      }
     | { readonly operation: "ReplicaStatus" | "Traces" | "DeleteLocalData" | "ReleaseOwner" };
 
-const failure = (cause: unknown) =>
-    cause instanceof BackendError
-        ? cause
-        : new BackendError({
-              operation: "ontology.operations",
-              kind: "Unavailable",
-              message: cause instanceof Error ? cause.message : "Ontology operation failed.",
-              retryable: true,
-              cause,
-          });
+const failure = (cause: unknown) => classifyBackendFailure("ontology.operations", cause);
 const decryptFailure = (cause: unknown) =>
     new BackendError({
         operation: "decrypt",
@@ -239,12 +259,9 @@ const missing = (name: string) =>
     });
 
 export type OntologyOperationOptions<R = never> = ErrorProjectionOptions & {
-    readonly query?: (
-        document: import("@party-stack/ontology-spec").QueryDocument,
-        inputs?: Record<string, unknown>
-    ) => Effect.Effect<Record<string, unknown>, BackendError, R>;
     readonly attachmentTransfers?: AttachmentTransferPolicy<R>;
     readonly replica?: ReplicaService;
+    readonly pins?: ReplicaPinControls;
     readonly traces?: TraceStore;
     readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
     readonly ready?: Effect.Effect<void, BackendError, R>;
@@ -257,7 +274,10 @@ export type OntologyOperationOptions<R = never> = ErrorProjectionOptions & {
 };
 
 /** Shared storage/application operation; transports supply framing and authorization. */
-export const ontologyAttachmentHandlers = <R>(options: OntologyOperationOptions<R>) => ({
+export const ontologyAttachmentHandlers = <R>(
+    options: OntologyOperationOptions<R>,
+    authorize: OntologyOperationOptions<R>["authorize"] = options.authorize
+) => ({
     create: (
         request: import("./attachmentTransfers.js").AttachmentUpload,
         blob: import("@party-stack/ontology-storage/blobs").ByteInput
@@ -300,7 +320,7 @@ export const ontologyAttachmentHandlers = <R>(options: OntologyOperationOptions<
         }),
     read: (attachment: import("./attachmentTransfers.js").AttachmentValue, headers: Headers) =>
         Effect.gen(function* () {
-            yield* options.authorize({ operation: "ReadAttachment", attachment }, headers);
+            yield* authorize({ operation: "ReadAttachment", attachment }, headers);
             yield* options.ready ?? Effect.void;
             if (options.backend) {
                 if (!options.backend.attachments?.read) return yield* missing("ReadAttachment");
@@ -311,18 +331,21 @@ export const ontologyAttachmentHandlers = <R>(options: OntologyOperationOptions<
         }),
 });
 
-export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R>) => {
+export const ontologyOperationHandlers = <R>(
+    options: OntologyOperationOptions<R>,
+    authorize: OntologyOperationOptions<R>["authorize"] = options.authorize
+) => {
     return HelperRpcs.toLayer({
         Query: (request, context) =>
             Effect.gen(function* () {
-                yield* options.authorize({ operation: "Query", ...request }, context.headers);
+                yield* authorize({ operation: "Query", ...request }, context.headers);
                 yield* options.ready ?? Effect.void;
-                if (!options.query) return yield* missing("Query");
-                return yield* options.query(request.document, request.inputs);
+                if (!options.backend) return yield* missing("Query");
+                return yield* options.backend.query(request.document, { inputs: request.inputs });
             }),
         LoadSubset: (subset, context) =>
             Effect.gen(function* () {
-                yield* options.authorize({ operation: "LoadSubset", subset }, context.headers);
+                yield* authorize({ operation: "LoadSubset", subset }, context.headers);
                 yield* options.ready ?? Effect.void;
                 if (!options.backend) return yield* missing("LoadSubset");
                 const snapshot = yield* options.backend.loadSubset(subset);
@@ -343,19 +366,19 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
         WatchChanges: (_, context) =>
             Stream.unwrap(
                 Effect.gen(function* () {
-                    yield* options.authorize({ operation: "WatchChanges" }, context.headers);
+                    yield* authorize({ operation: "WatchChanges" }, context.headers);
                     yield* options.ready ?? Effect.void;
                     if (!options.backend?.changes?.watch) return yield* missing("WatchChanges");
                     return Stream.concat(
                         Stream.make("invalidate" as const),
-                        options.backend.changes.watch.pipe(Stream.map(() => "invalidate" as const))
+                        (yield* options.backend.changes.watch).pipe(Stream.map(() => "invalidate" as const))
                     );
                 })
             ),
         WatchSubset: (subset, context) =>
             Stream.unwrap(
                 Effect.gen(function* () {
-                    yield* options.authorize({ operation: "WatchSubset", subset }, context.headers);
+                    yield* authorize({ operation: "WatchSubset", subset }, context.headers);
                     yield* options.ready ?? Effect.void;
                     if (!options.backend) return yield* missing("WatchSubset");
                     const watched = options.backend.watchSubset?.(subset);
@@ -368,31 +391,36 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                             message: "Invalid subset poll interval.",
                         });
                     if (!watched && interval === false) return yield* missing("WatchSubset");
-                    const changes = watched ?? Stream.tick(interval as number);
-                    // A new subscription is also a repair boundary for missed invalidations.
+                    const changes = watched ? yield* watched : Stream.tick(interval as number);
+                    // Opening a watch is a repair boundary, not an observed change.
+                    // A replica with another maintained covering watch can reuse its proof.
                     return Stream.concat(
-                        Stream.make("invalidate" as const),
-                        changes.pipe(Stream.map(() => "invalidate" as const))
+                        Stream.make("reset" as const),
+                        changes.pipe(
+                            Stream.map((event) =>
+                                event === "reset" ? ("reset" as const) : ("invalidate" as const)
+                            )
+                        )
                     );
                 })
             ),
         PullChanges: (request, context) =>
             Effect.gen(function* () {
-                yield* options.authorize({ operation: "PullChanges", ...request }, context.headers);
+                yield* authorize({ operation: "PullChanges", ...request }, context.headers);
                 yield* options.ready ?? Effect.void;
                 if (!options.backend?.changes) return yield* missing("PullChanges");
                 return yield* options.backend.changes.pull(request);
             }),
         ApplyAction: (invocation, context) =>
             Effect.gen(function* () {
-                yield* options.authorize({ operation: "ApplyAction", invocation }, context.headers);
+                yield* authorize({ operation: "ApplyAction", invocation }, context.headers);
                 yield* options.ready ?? Effect.void;
                 if (!options.backend) return yield* missing("ApplyAction");
                 return yield* options.backend.applyAction(invocation);
             }),
         Decrypt: (request, context) =>
             Effect.gen(function* () {
-                yield* options.authorize({ operation: "Decrypt", ...request }, context.headers);
+                yield* authorize({ operation: "Decrypt", ...request }, context.headers);
                 yield* options.ready ?? Effect.void;
                 if (options.backend) {
                     if (!options.backend.encrypted) return yield* missing("Decrypt");
@@ -415,10 +443,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
             }).pipe(Effect.mapError(decryptFailure)),
         ResolveActionParameters: (request, context) =>
             Effect.gen(function* () {
-                yield* options.authorize(
-                    { operation: "ResolveActionParameters", ...request },
-                    context.headers
-                );
+                yield* authorize({ operation: "ResolveActionParameters", ...request }, context.headers);
                 yield* options.ready ?? Effect.void;
                 if (options.backend) {
                     if (!options.backend.resolveActionParameters)
@@ -430,7 +455,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
             }),
         QueryFunction: (request, context) =>
             Effect.gen(function* () {
-                yield* options.authorize({ operation: "QueryFunction", ...request }, context.headers);
+                yield* authorize({ operation: "QueryFunction", ...request }, context.headers);
                 if (options.backend) {
                     yield* options.ready ?? Effect.void;
                     if (!options.backend.queryFunction) return yield* missing(request.name);
@@ -440,7 +465,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
             }),
         ValidateAction: (request, context) =>
             Effect.gen(function* () {
-                yield* options.authorize({ operation: "ValidateAction", ...request }, context.headers);
+                yield* authorize({ operation: "ValidateAction", ...request }, context.headers);
                 if (options.backend?.validateAction)
                     return yield* options.backend
                         .validateAction(request.name, request.parameters, {
@@ -456,7 +481,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
             }),
         AttachmentMetadata: (request, context) =>
             Effect.gen(function* () {
-                yield* options.authorize({ operation: "AttachmentMetadata", ...request }, context.headers);
+                yield* authorize({ operation: "AttachmentMetadata", ...request }, context.headers);
                 if (options.backend) {
                     yield* options.ready ?? Effect.void;
                     if (!options.backend.attachments?.metadata) return yield* missing("AttachmentMetadata");
@@ -477,7 +502,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
             }),
         ControlOutbox: (request, context) =>
             Effect.gen(function* () {
-                yield* options.authorize(
+                yield* authorize(
                     {
                         operation: "ControlOutbox",
                         id: request.id,
@@ -500,7 +525,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
             Stream.unwrap(
                 Effect.gen(function* () {
                     yield* Effect.annotateCurrentSpan("activity", "subscription");
-                    yield* options.authorize({ operation: "ReplicaStatus" }, context.headers);
+                    yield* authorize({ operation: "ReplicaStatus" }, context.headers);
                     yield* options.ready ?? Effect.void;
                     if (!options.replica) return yield* missing("ReplicaStatus");
                     return options.replica.status.changes;
@@ -510,7 +535,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
             Stream.unwrap(
                 Effect.gen(function* () {
                     yield* Effect.annotateCurrentSpan("activity", "subscription");
-                    yield* options.authorize({ operation: "Traces" }, context.headers);
+                    yield* authorize({ operation: "Traces" }, context.headers);
                     yield* options.ready ?? Effect.void;
                     const traces = options.traces;
                     if (!traces) return Stream.succeed([]);
@@ -530,20 +555,53 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                     );
                 })
             ),
+        ReadPin: (_, context) =>
+            Effect.gen(function* () {
+                yield* authorize({ operation: "ReadPin" }, context.headers);
+                yield* options.ready ?? Effect.void;
+                const pins = options.pins ?? options.replica?.demand;
+                if (!pins) return yield* missing("ReadPin");
+                return yield* pins.pinStatus;
+            }),
+        WatchPin: (_, context) =>
+            Stream.unwrap(
+                Effect.gen(function* () {
+                    yield* authorize({ operation: "WatchPin" }, context.headers);
+                    yield* options.ready ?? Effect.void;
+                    const pins = options.pins ?? options.replica?.demand;
+                    return pins?.pinStatusChanges ?? Stream.fail(missing("WatchPin"));
+                })
+            ),
+        SetPin: ({ query, options: settings }, context) =>
+            Effect.gen(function* () {
+                yield* authorize({ operation: "SetPin", query, options: settings }, context.headers);
+                yield* options.ready ?? Effect.void;
+                const pins = options.pins ?? options.replica?.demand;
+                if (!pins) return yield* missing("SetPin");
+                return yield* pins.setPin(query, settings);
+            }),
+        ClearPin: (_, context) =>
+            Effect.gen(function* () {
+                yield* authorize({ operation: "ClearPin" }, context.headers);
+                yield* options.ready ?? Effect.void;
+                const pins = options.pins ?? options.replica?.demand;
+                if (!pins) return yield* missing("ClearPin");
+                return yield* pins.clearPin;
+            }),
         DeleteLocalData: (_, context) =>
-            options
-                .authorize({ operation: "DeleteLocalData" }, context.headers)
-                .pipe(Effect.andThen(options.deleteLocalData ?? Effect.fail(missing("DeleteLocalData")))),
+            authorize({ operation: "DeleteLocalData" }, context.headers).pipe(
+                Effect.andThen(options.deleteLocalData ?? Effect.fail(missing("DeleteLocalData")))
+            ),
         ReleaseOwner: (_, context) =>
-            options
-                .authorize({ operation: "ReleaseOwner" }, context.headers)
-                .pipe(Effect.andThen(options.releaseOwner ?? Effect.fail(missing("ReleaseOwner")))),
+            authorize({ operation: "ReleaseOwner" }, context.headers).pipe(
+                Effect.andThen(options.releaseOwner ?? Effect.fail(missing("ReleaseOwner")))
+            ),
     }).pipe(
         Layer.merge(
             attachmentTransferHandlers({
                 ...options.attachmentTransfers,
                 authorizeUpload: (request, headers) =>
-                    options.authorize(
+                    authorize(
                         {
                             operation: "CreateAttachment",
                             id: request.id,
@@ -553,7 +611,7 @@ export const ontologyOperationHandlers = <R>(options: OntologyOperationOptions<R
                         },
                         headers
                     ),
-                ...ontologyAttachmentHandlers(options),
+                ...ontologyAttachmentHandlers(options, authorize),
             })
         )
     );
@@ -604,6 +662,7 @@ export interface OntologyOperationsClient {
     >;
     readonly traces: TraceStore;
     readonly replicaMonitor: import("@party-stack/ontology-replica").ReplicaMonitor;
+    readonly pins: ReplicaPinControls;
     readonly deleteLocalData: Effect.Effect<void, BackendError>;
     readonly releaseOwner: Effect.Effect<void, BackendError>;
 }
@@ -784,6 +843,13 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
             ),
         deleteLocalData: client.DeleteLocalData().pipe(Effect.mapError(failure)),
         releaseOwner: client.ReleaseOwner(undefined, { discard: true }).pipe(Effect.mapError(failure)),
+        pins: {
+            pinStatus: client.ReadPin().pipe(Effect.mapError(failure)),
+            pinStatusChanges: client.WatchPin().pipe(Stream.mapError(failure)),
+            setPin: (query, settings) =>
+                client.SetPin({ query, options: settings }).pipe(Effect.mapError(failure)),
+            clearPin: client.ClearPin().pipe(Effect.mapError(failure)),
+        },
         queryFunction: (name, parameters) =>
             client.QueryFunction({ name, parameters }).pipe(Effect.mapError(failure)),
         resolveActionParameters: (name, parameters) =>

@@ -1,0 +1,253 @@
+---
+title: Queries
+description: Read reactive collections and the local cache.
+---
+
+## Render a filtered list
+
+```tsx
+import { eq } from "@tanstack/db";
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { objects } from "./ontology/generated/collections";
+
+function OpenIssues() {
+    const { data: issues } = useLiveSuspenseQuery({
+        query: (q) =>
+            q
+                .from({ issue: objects.Issue })
+                .where(({ issue }) => eq(issue.status, "Open"))
+                .orderBy(({ issue }) => issue.title, "asc"),
+    });
+    return (
+        <ul>
+            {issues.map((issue) => (
+                <li key={issue.id}>{issue.title}</li>
+            ))}
+        </ul>
+    );
+}
+```
+
+`ontology generate` writes these descriptors to `generated/collections.ts`. They
+resolve against the active provider, so switching accounts changes their source.
+
+Queries acquire the data they need and update when local rows change. They include
+optimistic predictions by default. Collections are created lazily on first access.
+String sorts use lexical ordering by default, matching the native store. For stable
+pagination, include the object's primary key as the final sort field.
+
+Place the component inside an [OntologyProvider](/docs/tanstack-start#let-the-provider-open-the-view)
+and a React Suspense boundary. Initial load failures reach your error boundary.
+
+Normal queries can render a previously confirmed result from the replica cache
+while it refreshes in the background. This includes a previously confirmed empty
+result. A watch restarting does not make retained data unusable; evicting required
+rows removes that cached guarantee. If the replica has only partial data and no
+retained confirmation for the query, initial loading still waits.
+
+This is different from `cachedObjects`: normal queries continue acquiring and
+syncing upstream data. `cachedObjects` only observes whatever is already local.
+
+Background refresh failures do not hide retained data. Inspect them in devtools;
+query-level cached/fresh status is not yet exposed by the React hooks.
+
+## Join local collections
+
+Inside a component, join `Issue.projectId` to `Project.id`:
+
+```tsx
+const { data } = useLiveSuspenseQuery({
+    query: (q) =>
+        q
+            .from({ issue: objects.Issue })
+            .join({ project: objects.Project }, ({ issue, project }) => eq(issue.projectId, project.id))
+            .select(({ issue, project }) => ({
+                id: issue.id,
+                title: issue.title,
+                project: project?.name,
+            })),
+});
+```
+
+TanStack DB maintains the UI result. Remote demand currently uses object subsets;
+this does not request a server-maintained join.
+
+## Component fragments
+
+Keep each component's selection beside it. `defineFragment` accepts a generated
+collection descriptor. `.include` creates a native TanStack DB `include`, which the
+child reads directly with `useFragment`.
+
+```tsx
+import { defineFragment, useFragment, type FragmentRef } from "@party-stack/ontology-react";
+
+const issueCard = defineFragment(objects.Issue, (issue) => ({
+    title: issue.title,
+    status: issue.status,
+}));
+
+function Issues() {
+    const { data } = useLiveSuspenseQuery((q) =>
+        q.from({ issue: objects.Issue }).select(({ issue }) => ({
+            id: issue.id,
+            card: issueCard.include(issue),
+        }))
+    );
+    return data.map((row) => <IssueCard key={row.id} issue={row.card} />);
+}
+
+function IssueCard({ issue }: { issue: FragmentRef<typeof issueCard> }) {
+    const { data: value } = useFragment(issue);
+    return value ? <h2>{value.title}</h2> : null;
+}
+```
+
+The parent controls membership and ordering. Each child sees only its selected
+fields, and an unselected field change does not change its fragment. `useFragment` returns `{ data }`. Deletion
+empties the child collection, so `data` can become `undefined`. For a declared link, use
+`userCard.include(objects.Issue.links.assignee(issue))`. Generated
+link helpers return parent-correlated native queries. Fragments can nest those
+queries and other fragments.
+
+Without a declared link, pass your own correlated query:
+
+```ts
+userCard.include(new Query().from({ row: objects.User }).where(({ row }) => eq(row.id, issue.assigneeId)));
+```
+
+Generated descriptors supply the primary-key field for indexed correlation.
+Plain TanStack collections use their existing collection identity. To correlate on
+a different field, pass a third argument such as `{ key: user => user.email }`.
+Fragment callers do not need to pass a query builder through refs.
+
+### Fragment arguments
+
+Arguments are inferred from defaults on the callback's second parameter:
+
+```tsx
+import { defineFragment } from "@party-stack/ontology-react";
+
+const issueCard = defineFragment(objects.Issue, (issue, { includeStatus = true }) => ({
+    title: issue.title,
+    ...(includeStatus ? { status: issue.status } : {}),
+}));
+
+const { data } = useLiveSuspenseQuery((q) =>
+    q.from({ issue: objects.Issue }).select(({ issue }) => ({
+        id: issue.id,
+        card: issueCard.include(issue, { includeStatus: false }),
+    }))
+);
+```
+
+Use `query = undefined as string | undefined` for an optional argument without a
+default, or annotate the parameter as `args: Args` for required arguments and
+constrained types. Required argument properties must be supplied.
+Parent fragments can forward arguments to their children.
+Bindings belong to each reference, so the same issue can appear with different
+selections. Change bindings through the enclosing live query. A conditionally
+selected field is optional in the component's data type.
+
+The framework-independent helpers also live in `@party-stack/db-fragments`;
+the React hook is exported from `@party-stack/db-fragments/react`. These reuse
+the enclosing query's execution and collection demand, with no separate cache.
+
+### Related lists
+
+This example uses a notebook schema with a `notes` link. Keep each component and
+its exported fragment together; `NoteCard` exports `noteCard` just like the card above:
+
+```tsx
+import { eq } from "@tanstack/db";
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import {
+    defineFragment,
+    defineListFragment,
+    useFragment,
+    useListFragment,
+    type FragmentRef,
+    type ListFragmentRef,
+} from "@party-stack/ontology-react";
+import { objects } from "./ontology/generated/collections";
+import { NoteCard, noteCard } from "./NoteCard";
+
+const noteList = defineListFragment(objects.Note, (notes, { limit = 50 }) =>
+    notes
+        .where(({ row }) => eq(row.trashed, false))
+        .orderBy(({ row }) => row.favorite, "desc")
+        .orderBy(({ row }) => row.updatedAt, "desc")
+        .orderBy(({ row }) => row.id, "asc")
+        .limit(limit)
+        .select(({ row }) => ({ id: row.id, card: noteCard.include(row) }))
+);
+
+const folderView = defineFragment(objects.Notebook, (folder, { limit = 50 }) => ({
+    name: folder.name,
+    notes: noteList.include(objects.Notebook.links.notes(folder), { limit }),
+}));
+
+function Folder({ id }: { id: string }) {
+    const { data } = useLiveSuspenseQuery((q) =>
+        q
+            .from({ folder: objects.Notebook })
+            .where(({ folder }) => eq(folder.id, id))
+            .select(({ folder }) => ({ view: folderView.include(folder) }))
+    );
+    return data[0] ? <FolderContents folder={data[0].view} /> : null;
+}
+
+function FolderContents({ folder }: { folder: FragmentRef<typeof folderView> }) {
+    const { data } = useFragment(folder);
+    return data ? (
+        <section>
+            <h1>{data.name}</h1>
+            <NoteList notes={data.notes} />
+        </section>
+    ) : null;
+}
+
+function NoteList({ notes }: { notes: ListFragmentRef<typeof noteList> }) {
+    const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useListFragment(notes);
+    return (
+        <>
+            {data.map((note) => (
+                <NoteCard key={note.id} note={note.card} />
+            ))}
+            {hasNextPage && (
+                <button disabled={isFetchingNextPage} onClick={() => void fetchNextPage()}>
+                    Load more
+                </button>
+            )}
+        </>
+    );
+}
+```
+
+The parent chooses membership through the link; the list adds its own filters and
+ordering. Link helpers also work in reverse, such as `objects.Note.links.notebook(note)`.
+They use the `row` alias and the IR's foreign keys, including nested paths.
+
+`limit` is the initial page size. The child owns later pages through `fetchNextPage`;
+the parent does not update the limit. The first page uses Suspense, and later pages
+keep the existing list visible. Changing the parent or arguments resets pagination.
+Use a unique final sort key to break ties.
+
+Each mounted list owns its pagination. Internally, the reader re-roots the original query with concrete parent bindings
+and uses TanStack's infinite-query controller. This adds one query per mounted
+list reader, sharing source data and replica coverage. Compose the outer tree with
+fragment `.include` helpers so the bound recipe is retained. Current grouped includes
+can still overfetch on the initial load; independent windows do not guarantee bounded
+provider reads.
+
+## Inspect the local cache
+
+Use `cachedObjects.Issue` in a query to display only data already on the
+device. It observes the same local view as `objects.Issue`, but does not request
+additional remote data. This is useful for cache inspection, not a replacement for
+normal app queries.
+
+```tsx
+const { data: cached } = useLiveSuspenseQuery({
+    query: (q) => q.from({ issue: cachedObjects.Issue }),
+});
+```

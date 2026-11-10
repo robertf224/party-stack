@@ -70,6 +70,56 @@ it("durable outbox roots compose atomically, survive reopen and preserve aliases
     );
 });
 
+it.effect("retaining an unchanged graph through aliases avoids rewrites and preserves byte retention", () =>
+    Effect.gen(function* () {
+        const tables = yield* Memory.make();
+        let writes = 0;
+        const instrumented: typeof tables = {
+            ...tables,
+            transaction: (body) =>
+                tables.transaction((tx) =>
+                    body({
+                        ...tx,
+                        put: (table, key, value) => {
+                            writes++;
+                            return tx.put(table, key, value);
+                        },
+                        delete: (table, key) => {
+                            writes++;
+                            return tx.delete(table, key);
+                        },
+                    })
+                ),
+        };
+        const { bytes } = memoryBytes();
+        const blobs = yield* makeBlobStorage({ namespace: "unchanged-roots", tables: instrumented, bytes });
+        yield* blobs.stage("local", new Blob(["payload"]));
+        yield* blobs.bindRemoteId("local", "remote");
+        yield* instrumented.transaction((tx) => blobs.in(tx).retain("pin", ["local"], { group: "offline" }));
+        writes = 0;
+        yield* instrumented.transaction((tx) =>
+            blobs.in(tx).retain("pin", ["remote", "local", "remote"], { group: "offline" })
+        );
+        expect(writes).toBe(0);
+        expect(yield* blobs.metadata("remote")).toMatchObject({
+            bytesRetained: true,
+            unreferencedAt: undefined,
+        });
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0 })).toBe(0);
+        yield* instrumented.transaction((tx) =>
+            blobs.in(tx).retain("pin", ["remote"], { bytes: false, group: "offline" })
+        );
+        expect(yield* blobs.metadata("remote")).toMatchObject({
+            bytesRetained: false,
+            unreferencedAt: undefined,
+        });
+        expect(yield* blobs.collectGarbage({ olderThanMs: 0 })).toBe(1);
+        expect(yield* blobs.metadata("local")).toBeDefined();
+        yield* instrumented.transaction((tx) => blobs.in(tx).retain("pin", []));
+        expect((yield* blobs.metadata("local"))?.unreferencedAt).toEqual(expect.any(Number));
+    }).pipe(Effect.scoped)
+);
+
 it("failed enqueue transactions roll back roots and sole staged copies survive the cache eviction policy", async () => {
     await Effect.runPromise(
         Effect.scoped(
@@ -367,10 +417,15 @@ it.effect(
     "identity roots permit cache eviction, byte pins do not; authoritative storage preserves referenced bytes",
     () =>
         Effect.gen(function* () {
-            for (const mode of ["replica", "authoritative"] as const) {
+            for (const retentionMode of ["cache", "authoritative"] as const) {
                 const tables = yield* Memory.make();
                 const { bytes } = memoryBytes();
-                const blobs = yield* makeBlobStorage({ namespace: mode, tables, bytes, mode });
+                const blobs = yield* makeBlobStorage({
+                    namespace: retentionMode,
+                    tables,
+                    bytes,
+                    attachmentBytesRetentionMode: retentionMode,
+                });
                 yield* blobs.cache("remote", new Blob(["cache"]));
                 yield* tables.transaction((tx) =>
                     blobs.in(tx).retain("object", ["remote"], { bytes: false })
@@ -379,7 +434,7 @@ it.effect(
                 expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
                 yield* tables.transaction((tx) => blobs.in(tx).release("offline"));
                 expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(
-                    mode === "replica" ? 1 : 0
+                    retentionMode === "cache" ? 1 : 0
                 );
                 expect(yield* blobs.metadata("remote")).toBeDefined();
                 yield* tables.transaction((tx) => blobs.in(tx).release("object"));
@@ -436,19 +491,24 @@ it.effect("scoped reads pin file-backed content until the consumer finishes or i
     }).pipe(Effect.scoped)
 );
 
-it.effect("only replica storage may retain an attachment whose bytes are not local", () =>
+it.effect("only cache retention may retain an attachment whose bytes are not local", () =>
     Effect.gen(function* () {
         const tables = yield* Memory.make();
         const { bytes } = memoryBytes();
-        for (const mode of ["replica", "authoritative"] as const) {
-            const blobs = yield* makeBlobStorage({ namespace: `availability:${mode}`, tables, bytes, mode });
+        for (const retentionMode of ["cache", "authoritative"] as const) {
+            const blobs = yield* makeBlobStorage({
+                namespace: `availability:${retentionMode}`,
+                tables,
+                bytes,
+                attachmentBytesRetentionMode: retentionMode,
+            });
             const retained = yield* Effect.result(
                 tables.transaction((tx) => blobs.in(tx).retain("object", ["missing"], { bytes: false }))
             );
-            expect(Result.isFailure(retained)).toBe(mode === "authoritative");
+            expect(Result.isFailure(retained)).toBe(retentionMode === "authoritative");
             if (Result.isFailure(retained)) expect(retained.failure).toMatchObject({ kind: "NotFound" });
             expect(yield* blobs.metadata("missing")).toEqual(
-                mode === "authoritative" ? undefined : expect.objectContaining({ id: "missing" })
+                retentionMode === "authoritative" ? undefined : expect.objectContaining({ id: "missing" })
             );
         }
     }).pipe(Effect.scoped)

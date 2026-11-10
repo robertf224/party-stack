@@ -6,7 +6,9 @@ import type {
 } from "@osdk/foundry.ontologies";
 import type { LinkType as MetaLinkType } from "@party-stack/ontology-spec/meta";
 
-export function convertFoundryMetaLinkTypes(objectTypes: ObjectTypeFullMetadata[]): MetaLinkType[] {
+export function convertFoundryMetaLinkTypes(
+    objectTypes: Pick<ObjectTypeFullMetadata, "linkTypes">[]
+): MetaLinkType[] {
     const sidesByRid = new Map<string, LinkTypeSideV2[]>();
 
     for (const objectType of objectTypes) {

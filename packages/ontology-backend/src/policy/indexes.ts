@@ -82,15 +82,15 @@ export function policyIndexes(ir: OntologyIR): { objectType: string; index: Inde
         selection(q.select, scope);
     }
     if (ir.policy) {
-        selection(ir.policy.read.select, new Map());
+        selection(ir.policy.objects.select, new Map());
         for (const action of ir.policy.actions ?? []) {
             expression(action.check, new Map());
             action.bind?.forEach((binding) => expression(binding.expression, new Map()));
-            if (action.read) selection(action.read.select, new Map());
+            if (action.additionalObjects) selection(action.additionalObjects.select, new Map());
         }
         for (const fn of ir.policy.queryFunctions ?? []) {
             expression(fn.check, new Map());
-            if (fn.read) selection(fn.read.select, new Map());
+            if (fn.additionalObjects) selection(fn.additionalObjects.select, new Map());
         }
     }
     return [...indexes.values()];

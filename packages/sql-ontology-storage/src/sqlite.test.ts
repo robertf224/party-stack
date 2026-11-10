@@ -1,12 +1,33 @@
 import { DatabaseSync } from "node:sqlite";
+import { layer as sqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
 import { byteChunks } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Exit, Stream } from "effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { expect, test } from "vitest";
 import { makeBytes } from "./sqlite-bytes.js";
-import { layer, type SQLiteDatabase } from "./sqlite.js";
+import { layer, makeStorage, type SQLiteDatabase } from "./sqlite.js";
 import { make } from "./tables.js";
+
+test("storage composes with an Effect-owned SQLite client and carries its namespace", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const storage = yield* makeStorage({
+                    namespace: "owned-sqlite",
+                    attachmentBytesRetentionMode: "authoritative",
+                });
+                expect(storage.namespace).toBe("owned-sqlite");
+                const rows = Table.make<{ id: string }>({ name: "effect-client" });
+                yield* storage.tables.put(rows, "one", { id: "one" });
+                expect(yield* storage.tables.get(rows, "one")).toEqual({ id: "one" });
+                yield* storage.blobs.stage("photo", new Blob(["photo bytes"]));
+                const blob = yield* storage.blobs.read("photo");
+                expect(yield* Effect.promise(() => blob!.text())).toBe("photo bytes");
+            }).pipe(Effect.provide(sqliteLayer({ filename: ":memory:" })))
+        )
+    );
+});
 
 for (const native of [false, true])
     test(`existing SQLite bridge preserves async rollback and cancellation (native=${native})`, async () => {

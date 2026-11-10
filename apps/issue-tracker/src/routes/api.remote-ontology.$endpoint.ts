@@ -1,49 +1,32 @@
-import { makeStorageBackend } from "@party-stack/ontology-backend/storage";
-import { makeOntologyServer } from "@party-stack/ontology-server";
+import { classifyBackendFailure, unauthenticated } from "@party-stack/ontology-backend";
+import { makeOntologyServer, OntologyHttpServer, toWebHandler } from "@party-stack/ontology-server/http";
 import { createFileRoute } from "@tanstack/react-router";
 import { Effect } from "effect";
-import { HttpEffect, HttpServerResponse } from "effect/http";
 import { auth } from "../server/auth";
-import { serverOntology } from "../server/ontology";
 import { serverStorage } from "../server/storage";
 
-async function handleRequest(request: Request): Promise<Response> {
-    const selected = await auth.api.getSession({
-        headers: request.headers,
-    });
-    if (!selected) {
-        return new Response("Authentication required.", {
-            status: 401,
-            headers: {
-                "www-authenticate": 'Session realm="Party Stack Issue Tracker"',
-            },
-        });
-    }
-    if (new URL(request.url).pathname.replace(/\/+$/, "").endsWith("/rpc")) {
-        return HttpEffect.toWebHandler(
-            Effect.gen(function* () {
-                const context = { user: selected.user.id };
-                const backend = yield* makeStorageBackend({
-                    ir: serverOntology,
-                    namespace: serverStorage.namespace,
-                    context,
-                    ...serverStorage.native,
-                });
-                yield* backend.maintenance ?? Effect.void;
-                const server = yield* makeOntologyServer({ kind: "owned", backend, context });
-                const response = yield* Effect.promise(() => server.handleRequest(request));
-                return HttpServerResponse.fromWeb(response);
-            }).pipe(
-                Effect.interruptible,
-                Effect.tapError((error) =>
-                    Effect.logError("Ontology request failed", { kind: error.kind, issues: error.issues })
-                )
-            )
-        )(request);
-    }
+const serverLayer = OntologyHttpServer.layer(
+    makeOntologyServer({
+        enableRealtime: true,
+        kind: "owned",
+        backend: serverStorage.backend,
+        authenticate: Effect.fn("IssueTracker.authenticate")(function* (request: Request) {
+            const session = yield* Effect.tryPromise({
+                try: () => auth.api.getSession({ headers: request.headers }),
+                catch: (cause) => classifyBackendFailure("authentication", cause),
+            });
+            if (!session) return yield* unauthenticated();
+            return { userId: session.user.id };
+        }),
+    })
+);
+const { handler, dispose } = toWebHandler(serverLayer);
+if (import.meta.hot) import.meta.hot.dispose(dispose);
 
-    return new Response("Not found.", { status: 404 });
-}
+const handleRequest = (request: Request) =>
+    new URL(request.url).pathname.replace(/\/+$/, "").endsWith("/rpc")
+        ? handler(request)
+        : new Response("Not found.", { status: 404 });
 
 export const Route = createFileRoute("/api/remote-ontology/$endpoint")({
     server: {

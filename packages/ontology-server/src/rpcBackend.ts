@@ -1,6 +1,7 @@
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { sliceByteSource } from "@party-stack/ontology-storage/blobs";
 import { Effect, Stream } from "effect";
+import { acquireRpcWatch } from "./rpcWatch.js";
 import type { OntologyOperationsClient } from "./operations.js";
 import type { OntologyDescription, OntologyRpcClient } from "./rpc.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
@@ -54,6 +55,7 @@ export function makeRpcBackend(
         name: "protocol",
         sourceId: description.sourceId,
         supportsIdempotency: description.supportsIdempotency,
+        query: (document, settings) => operations.query(document, settings?.inputs),
         resolveActionParameters: description.actionParameterResolution
             ? operations.resolveActionParameters
             : undefined,
@@ -66,18 +68,36 @@ export function makeRpcBackend(
                               Effect.mapError((cause) => classifyBackendFailure("remote.pullChanges", cause))
                           ),
                   watch: description.watchChanges
-                      ? client.WatchChanges().pipe(
-                            Stream.map(() => undefined),
-                            Stream.mapError((cause) => classifyBackendFailure("remote.changes", cause))
-                        )
+                      ? acquireRpcWatch(
+                            client
+                                .WatchChanges()
+                                .pipe(
+                                    Stream.mapError((cause) =>
+                                        classifyBackendFailure("remote.changes", cause)
+                                    )
+                                ),
+                            "invalidate",
+                            "remote.changes"
+                        ).pipe(Effect.map((stream) => stream.pipe(Stream.as(undefined))))
                       : undefined,
               }
             : undefined,
         watchSubset: description.watchSubset
             ? (subset) =>
-                  client.WatchSubset(subset).pipe(
-                      Stream.map(() => undefined),
-                      Stream.mapError((cause) => classifyBackendFailure("remote.watchSubset", cause))
+                  acquireRpcWatch(
+                      client
+                          .WatchSubset(subset)
+                          .pipe(
+                              Stream.mapError((cause) => classifyBackendFailure("remote.watchSubset", cause))
+                          ),
+                      "reset",
+                      "remote.watchSubset"
+                  ).pipe(
+                      Effect.map((stream) =>
+                          stream.pipe(
+                              Stream.map((event) => (event === "reset" ? ("reset" as const) : undefined))
+                          )
+                      )
                   )
             : undefined,
         subscribeSelection: description.delivery

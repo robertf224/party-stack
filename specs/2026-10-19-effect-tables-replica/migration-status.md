@@ -769,8 +769,8 @@ aggregate/physical resource-budget work.
   the separate `ontology-replica/host` export is removed. Storage-injection kernels
   remain private implementation/test seams.
 - `ontology-backend/meta` owns native metadata pull and the local metadata backend.
-  SDK metadata pull delegates to it. The provider/CLI installation selection
-  plumbing has not yet been removed.
+  SDK metadata pull delegates to it. Provider/CLI sources acquire metadata backends
+  directly, without installations, replicas or UI collections.
 - Actions support optional `returnType` in IR, runtime/generated codecs, inference,
   metadata and codegen. Owned results are validated and JSON-encoded before the
   atomic edits/receipt commit, survive retries/reopening, and pass through server
@@ -782,8 +782,88 @@ aggregate/physical resource-budget work.
   advertise general action-ID idempotency. They must be called directly through
   backend/protocol, without persisting authorization codes in a replica outbox.
 - Foundry user augmentation preserves an existing declared context and partition.
-- Account-to-local-partition inventory and installation teardown remain under
-  design. Retain the existing inventory until replacement account/forget wiring
-  is ready; do not introduce a general runtime catalogue or another host manager.
-  A future durable workflow/result facility could improve Connect action recovery;
+- `ontology-replica/installation` owns scoped shared acquisition, Connect composition
+  and a durable Tables inventory of account-to-partition associations. Configuration
+  and declared context partition resolve before native cache lookup. Disconnect closes
+  resources; forget deletes private partitions and preserves addresses associated with
+  other accounts. Failed deletion leaves the association/account for retry. The former
+  inventory imports in bounded atomic batches.
+- Worker transport is `ontology-server/installation/worker`; the SDK's
+  `ontology/installation` owns only typed/Promise views. Native acquisition has one
+  LayerMap and an idle retention setting; the worker does not add another cache.
+  Foundry/Salesforce `connect` exports acquire provider data/metadata backends from
+  Connect egress. Provider installation/route wrappers and SDK worker code are removed.
+- A future durable workflow/result facility could improve Connect action recovery;
   it cannot provide exactly-once remote exchange without provider support.
+
+## Finite backend queries and SDK/TanStack review — November 3
+
+Every acquired backend exposes `query(document, { inputs })`. Provider factories
+use the shared subset-based executor or a native implementation; owned storage
+uses one read transaction. Projected queries apply policy at the final read path,
+cached-proxy queries use the cache, and Query RPC delegates to the bound backend.
+Metadata pull uses multi-root Query IR and transitive value-type reads without
+opening a replica. The standalone `backendQueryReader` export and server query
+handler option are removed.
+
+LiveOntology exposes `replica`, plus lazy per-type `objects` and `cachedObjects`
+getters. Construction creates no object collections until accessed. Cache inspection
+retains/observes local visible data without adding upstream demand, including under
+a speculative parent. Query functions delegate through Replica and preserve native
+logical values. Action receipt return values are decoded by the typed SDK.
+
+SDK `ready`, `waitForLiveOntologyReady`, `destroy`, eager `persistedObjects`, the
+unused row-observer wrapper and unimplemented refresh/collection adapter types are
+removed. `cleanup()` closes a view, installation `forget(accountId)` manages account
+partitions, and explicit native Runtime administration remains separate. Local read
+leases close with their consumer or replica owner, avoiding release after storage
+shutdown. Outbox edits retain replay/Temporal data and report typed missing entries.
+See [the review](./sdk-tanstack-review.md) for verification and remaining boundaries.
+
+Validation: all 133 workspace CI tasks passed. Real-browser checks passed all 5
+web-runtime cases and 9 issue-tracker cases, with its existing expected React/TanStack
+cleanup-warning failure unchanged.
+
+The [final cross-package pass](./final-cross-package-review.md) also removes eager
+inspector imports from startup, parallelizes independent profile acquisition,
+publishes cached rows while remote readiness is pending, adds the TanStack Start
+setup recipe and shares the existing devtools branding with the website.
+
+## Connect service acquisition and multi-ontology serving — November 5
+
+Connect now stores ServiceInstance, OAuthApplication, OAuthConnection,
+ApiKeyConnection, ExternalSessionConnection and OAuthAuthorizationAttempt records.
+ServiceConnector supplies verification and scoped authenticated egress. The native
+connection manager reads that ontology directly; token fields and PKCE attempts
+are omitted from the device's public read policy.
+
+A single ordinary ontology server resolves named targets. Issue-tracker serves
+Connect plus Foundry and Better Auth/SQLite issue replicas through one SharedWorker.
+Authentication uses Connect actions; Better Auth login remains tab-side. The
+installation worker protocol and authentication-method bridge are removed.
+`makeReplicaRegistry` owns native sharing and the durable partition inventory;
+forgetting does not require live credentials. Reauthentication normally reuses the
+same service/user connection, preserving the existing cache/outbox partition.
+
+The SDK uses workerClient/httpClient target selection and createAuthenticationClient for
+Promise authentication commands. OntologyEnvironmentProvider owns the shared
+server client; OntologyProvider owns a named view and the generated collection
+descriptors use its DbProvider. Pins target the selected ordinary ontology.
+AuthenticationProvider combines a Connect view with its Promise command facade.
+
+Foundry and Salesforce pull now use makeConnectManager and the shared
+acquireConfiguredConnection bootstrap. It selects a saved account or starts the
+configured authentication flow, then acquires authenticated I/O from the same
+manager. Pull opens only a metadata backend. The Salesforce example uses the same
+manager in its SharedWorker server, and its Node smoke commands use native scoped
+acquisition. Legacy generic connection managers, provider Connector wrappers,
+standalone ontology installation helpers and duplicate OAuth client credential
+stores are removed. makeAuthenticationClient is the native command/query facade; the SDK
+createAuthenticationClient only adds Promise and Scope bridging. Scoped service access is
+an internal part of the manager, not an independently persisted inventory.
+
+Routing resolves the current native owner on each request. Active endpoint state
+is shared only for the same target/owner/context, so an old subscription cannot
+hide a replacement replica after local-data deletion. Connect maintenance belongs
+to its backend owner; serverless hosts may disable the scoped timer and call the
+same maintenance Effect from their alarm/job.

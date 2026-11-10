@@ -1,8 +1,7 @@
-import { backendQueryReader } from "@party-stack/ontology-backend/query";
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
-import { eq, field } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
 import { RpcTest } from "effect/rpc";
 import { expect, test } from "vite-plus/test";
@@ -31,7 +30,7 @@ const ir: OntologyIR = {
         },
     ],
     policy: {
-        read: {
+        objects: {
             select: [
                 q.sub("items", {
                     from: { source: { objectType: "Item" }, binding: "i" },
@@ -42,7 +41,8 @@ const ir: OntologyIR = {
         },
     },
 };
-const backend: OntologyBackendService = {
+const backend: OntologyBackendService = makeOntologyBackend({
+    ir,
     name: "test",
     sourceId: "test",
     supportsIdempotency: false,
@@ -58,18 +58,23 @@ const backend: OntologyBackendService = {
                 { key: "c", value: { id: "c", owner: "alice", title: "C", secret: "private-c" } },
             ],
         }),
-};
+});
 
 test("finite query reads apply residual filtering/order/window to broader provider data", async () => {
-    const rows = await Effect.runPromise(
-        backendQueryReader(ir, backend).loadSubset("Item", {
-            where: eq(field("owner"), "alice"),
-            orderBy: [{ field: field("title"), direction: "desc" }],
-            offset: 1,
-            limit: 1,
+    const result = await Effect.runPromise(
+        backend.query({
+            select: [
+                q.sub("items", {
+                    from: { source: { objectType: "Item" }, binding: "item" },
+                    where: q.eq(q.field("item", "owner"), q.literal("alice")),
+                    orderBy: [{ expression: q.field("item", "title"), direction: "desc" }],
+                    page: { offset: 1, limit: 1 },
+                    select: [q.selectField("id", q.field("item", "id"))],
+                }),
+            ],
         })
     );
-    expect(rows.map((row) => row.key)).toEqual(["a"]);
+    expect(result.items).toEqual([{ id: "a" }]);
 });
 
 test("authorization projects broader provider data before returning exact downstream coverage", async () => {
@@ -91,6 +96,7 @@ test("RPC retains explicit fulfilled subsets for the receiving replica's cache p
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyRpcHandlers({
+                            enableRealtime: true,
                             backend,
                             ir,
                             authorize: () => Effect.void,

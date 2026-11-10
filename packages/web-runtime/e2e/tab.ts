@@ -73,15 +73,17 @@ Object.assign(window, {
         },
         rows: () => [...query.values()].map(({ id, title, score }) => ({ id, title, score })),
         insert: async (item: Item) => {
-            await collection.insert(item).isPersisted.promise;
+            await collection.insert(item).when("settled");
         },
         update: async (id: string, title: string) => {
-            await collection.update(id, (draft) => {
-                draft.title = title;
-            }).isPersisted.promise;
+            await collection
+                .update(id, (draft) => {
+                    draft.title = title;
+                })
+                .when("settled");
         },
         remove: async (id: string) => {
-            await collection.delete(id).isPersisted.promise;
+            await collection.delete(id).when("settled");
         },
         cleanup: async () => {
             subscription.unsubscribe();

@@ -44,7 +44,7 @@ Tabs dispose their scopes on pagehide. Returning from the browser's back/forward
 cache reloads the application to acquire a fresh scope. Unsupported/unavailable
 worker startup uses the Web Locks coordinated in-process owner. Authentication,
 definition and data errors propagate instead of silently selecting a second engine.
-Connection/installation metadata and credential refresh still use their existing
+Connect metadata and credential refresh use their own
 coordinated persistence; moving those private services wholly under the owner is
 the next migration step. This example explicitly opts into browser-local key
 persistence for its saved OAuth credentials.

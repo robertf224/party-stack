@@ -44,6 +44,62 @@ const ir: OntologyIR = {
 const rename = (tx: OwnedTransaction, invocation: ActionRequest) =>
     tx.put("Note", { id: "one", title: invocation.parameters.title });
 
+test("SDK commands start local work before returning their Promise and never run after closure", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const runtime = yield* makeTestRuntime(memoryRuntimeFixture("test", "immediate-command"));
+                const backend = yield* makeOwnedBackend({
+                    namespace: "immediate-owner",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: { rename },
+                });
+                const replica = yield* makeReplica({
+                    namespace: "immediate-view",
+                    ir,
+                    tables: runtime.tables,
+                    backend,
+                    mutators: { rename },
+                    live: false,
+                    cache: { objects: false },
+                });
+                const owner = yield* Scope.fork(yield* Effect.scope);
+                let starts = 0;
+                const view = yield* Scope.provide(
+                    makeReplicaOntologyView({
+                        ir,
+                        context: {},
+                        attachments: {} as LiveOntology["attachments"],
+                        replica: {
+                            ...replica,
+                            actions: {
+                                ...replica.actions,
+                                apply: (request) =>
+                                    Effect.sync(() => {
+                                        starts++;
+                                        return {
+                                            operationId: request.id,
+                                            outcome: "committed" as const,
+                                            affected: [],
+                                        };
+                                    }),
+                            },
+                        },
+                    }).pipe(Effect.provideService(Runtime, runtime)),
+                    owner
+                );
+                const result = view.actions.rename!({});
+                expect(starts).toBe(1);
+                yield* Effect.promise(() => result);
+                yield* Scope.close(owner, Exit.void);
+                yield* Effect.promise(() => expect(view.actions.rename!({})).rejects.toBeDefined());
+                expect(starts).toBe(1);
+            })
+        )
+    );
+});
+
 test.each(["incremental", "snapshot"] as const)(
     "parent outbox controls propagate through %s replication without a bridge sync pass",
     async (delivery) => {
@@ -109,7 +165,6 @@ test.each(["incremental", "snapshot"] as const)(
                             ...child,
                             syncOnce: Effect.die("Outbox controls must not run a bridge sync pass."),
                         },
-                        queryFunction: () => Effect.void,
                         attachments: {} as LiveOntology["attachments"],
                     }).pipe(Effect.provideService(Runtime, runtime));
                     yield* Effect.promise(async () => {
@@ -220,7 +275,6 @@ test.each(["pause", "discard-all"] as const)(
                         ir,
                         context: {},
                         replica: child,
-                        queryFunction: () => Effect.void,
                         attachments: {} as LiveOntology["attachments"],
                     }).pipe(Effect.provideService(Runtime, runtime));
                     yield* replicaController(child).retainActions();
@@ -373,8 +427,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                                 ir,
                                 context: {},
                                 replica,
-                                writes: { defaultMode: "outbox", defaultVisibility: "optimistic" },
-                                queryFunction: () => Effect.void,
+                                writes: { defaultVisibility: "optimistic" },
                                 attachments: {} as LiveOntology["attachments"],
                             }).pipe(Effect.provideService(Runtime, runtime));
                             return { replica, view };
@@ -386,7 +439,7 @@ test("memory views await durable owner acceptance, inspect shared actions and su
                 const first = yield* open("first");
                 const second = yield* open("second");
                 yield* replicaController(second.replica).retainActions();
-                yield* replicaController(second.replica).retainLocal("Note");
+                yield* replicaController(second.replica).demand({ objectType: "Note" });
                 let accepted = false;
                 const submitting = yield* Effect.forkChild(
                     Effect.promise(() =>

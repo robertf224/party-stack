@@ -2,19 +2,21 @@ import { LucideIcon } from "@party-stack/icons-lucide/react";
 import { isValidElement, type ReactElement } from "react";
 import { describe, expect, it } from "vite-plus/test";
 import {
-    createOntologyDevtoolsPlugin,
     getOutboxActivity,
     layoutSchema,
     moveColumn,
-    OntologyDevtoolsPanel,
     OntologyIcon,
+    timestampPreview,
+    typeDisplayName,
+} from "./OntologyDevtools.js";
+import {
+    createOntologyDevtoolsPlugin,
+    OntologyDevtoolsPanel,
     OntologyDevtoolsPluginName,
     ontologyDevtoolsTrigger,
     OntologyDevtoolsTrigger,
-    timestampPreview,
-    typeDisplayName,
     type OntologyDevtoolsPanelProps,
-} from "./OntologyDevtools.js";
+} from "./index.js";
 import type { LiveOntology, OntologyIR, OntologyOutboxEntry } from "@party-stack/ontology";
 
 describe("createOntologyDevtoolsPlugin", () => {
@@ -251,7 +253,6 @@ describe("getOutboxActivity", () => {
             },
             status: "queued",
             createdAt: 0,
-            updatedAt: 0,
             attempts: 0,
             retryable: true,
             nextAttemptAt: 0,
@@ -296,7 +297,6 @@ it("shows field paths and unknown outcomes in the outbox error display", async (
                 sequence: 1,
                 status: "blocked",
                 createdAt: 0,
-                updatedAt: 0,
                 attempts: 1,
                 retryable: false,
                 nextAttemptAt: 0,
@@ -324,4 +324,34 @@ it("shows field paths and unknown outcomes in the outbox error display", async (
     expect(markup).toContain("project");
     expect(markup).toContain("Choose a valid value.");
     expect(markup).toContain("Blocked");
+});
+
+it.each([
+    ["sending", "forwarding", "Forwarding"],
+    ["acknowledged", "forwarding", "Accepted by parent"],
+    ["sending", "execution", "Sending"],
+    ["acknowledged", "execution", "Reconciling"],
+] as const)("distinguishes %s during %s as %s", async (status, attemptStage, label) => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const { OutboxEntryCard } = await import("./OntologyDevtools.js");
+    const markup = renderToStaticMarkup(
+        createElement(OutboxEntryCard, {
+            entry: {
+                id: "entry",
+                sequence: 1,
+                status,
+                attemptStage,
+                createdAt: 0,
+                attempts: 1,
+                retryable: true,
+                nextAttemptAt: 0,
+                request: { actionTypeName: "save", idempotencyKey: "entry", parameters: {} },
+            },
+            outbox: {} as import("@party-stack/ontology").OntologyOutbox,
+            now: 0,
+        })
+    );
+    expect(markup).toContain(label);
+    if (attemptStage === "forwarding") expect(markup).not.toContain("Reconciling");
 });

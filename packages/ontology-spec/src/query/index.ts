@@ -85,7 +85,9 @@ export const coalesce = (...expressions: Expression[]): Expression => o.Expressi
 export const not = (expression: Expression): Expression => o.Expression.not({ expression });
 export const caseExpression = (options: CaseExpression): Expression => o.Expression.case(options);
 export const lookup = (reference: Expression): Expression => o.Expression.lookup({ reference });
-export const exists = (query: Query): Expression => o.Expression.exists({ query });
+/** Existence needs a source and predicate, without a result projection. */
+export const exists = (query: Query | ObjectSubset): Expression =>
+    o.Expression.exists({ query: { ...query, select: "select" in query ? query.select : [] } });
 
 export const selectField = (name: string, expression: Expression): QuerySelection =>
     o.QuerySelection.field({ name, expression });

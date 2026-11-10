@@ -1,11 +1,13 @@
 import { o } from "@party-stack/ontology-spec";
+import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { context } from "@party-stack/ontology-spec/query";
+import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { byteSource, collectByteBlob, makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
-import { CurrentExecutionContext } from "./policy.js";
+import { CurrentActionAuthorization, CurrentExecutionContext } from "./policy.js";
 import { makeStorageBackend } from "./storage.js";
 import type { StorageBackendOptions } from "./storage.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -55,7 +57,7 @@ test("fixed storage bindings scope idempotency by the declared context partition
                 const blobs = yield* makeBlobStorage({
                     namespace: "partition",
                     tables,
-                    mode: "authoritative",
+                    attachmentBytesRetentionMode: "authoritative",
                     bytes: {
                         read: () => Effect.succeed(undefined),
                         write: () => Effect.void,
@@ -104,6 +106,69 @@ test("fixed storage bindings scope idempotency by the declared context partition
     );
 });
 
+test("one storage owner preserves partitioned receipts across authenticated bindings and older owners", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const blobs = yield* makeBlobStorage({
+                    namespace: "shared-owner",
+                    tables,
+                    attachmentBytesRetentionMode: "authoritative",
+                    bytes: {
+                        read: () => Effect.succeed(undefined),
+                        write: () => Effect.void,
+                        delete: () => Effect.void,
+                    },
+                });
+                const options: StorageBackendOptions = {
+                    namespace: "shared-owner",
+                    ir,
+                    tables,
+                    blobs,
+                    mutators: {
+                        increment: (tx) =>
+                            Effect.gen(function* () {
+                                const previous = yield* tx.get("Counter", "one");
+                                yield* tx.put("Counter", {
+                                    id: "one",
+                                    count: Number(previous?.count ?? 0) + 1,
+                                });
+                            }),
+                    },
+                };
+                const schemas = compileEffectSchemas(ir);
+                const bind = <A, E, R>(work: Effect.Effect<A, E, R>, tenant: string) =>
+                    work.pipe(
+                        Effect.provideService(CurrentExecutionContext, { tenant }),
+                        Effect.provideService(CurrentActionAuthorization, {
+                            scope: contextPartition(ir, { tenant }),
+                            parameterSchemas: schemas.actionParameterSchemas,
+                            apply: (read, request) =>
+                                Effect.succeed({ read, parameters: request.parameters }),
+                        })
+                    );
+                const fixed = yield* makeStorageBackend({ ...options, context: { tenant: "a" } });
+                const action = { id: "same-id", name: "increment", parameters: {} };
+                const existing = yield* bind(fixed.applyAction(action), "a");
+                const shared = yield* makeStorageBackend(options);
+                expect(yield* bind(shared.applyAction(action), "a")).toEqual(existing);
+                const other = yield* bind(shared.applyAction(action), "b");
+                expect(other.cursor).not.toBe(existing.cursor);
+                expect(yield* bind(shared.applyAction(action), "b")).toEqual(other);
+                const legacy = yield* makeStorageBackend({ ...options, actionScope: "system" });
+                const oldAction = { ...action, id: "older-shared-owner" };
+                const oldReceipt = yield* bind(legacy.applyAction(oldAction), "a");
+                expect(yield* bind(shared.applyAction(oldAction), "a")).toEqual(oldReceipt);
+                expect(yield* shared.storage.read((tx) => tx.get("Counter", "one"))).toEqual({
+                    id: "one",
+                    count: 3,
+                });
+            })
+        )
+    );
+});
+
 test.each([true, false])(
     "storage owner periodic maintenance enabled=%s includes orphan bytes and preserves roots",
     async (periodic) => {
@@ -115,7 +180,7 @@ test.each([true, false])(
                     const blobs = yield* makeBlobStorage({
                         namespace: "maintenance",
                         tables,
-                        mode: "authoritative",
+                        attachmentBytesRetentionMode: "authoritative",
                         bytes: {
                             read: (id) =>
                                 Effect.sync(() => {

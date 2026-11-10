@@ -17,13 +17,11 @@ export interface OntologyOutboxEntry {
     visibility?: "confirmed" | "optimistic";
     status: OntologyOutboxStatus;
     createdAt: number;
-    updatedAt: number;
     attempts: number;
     /** Forwarding retries belong to a different stage than upstream execution retries. */
     attemptStage?: "forwarding" | "execution";
     retryable: boolean;
     nextAttemptAt: number;
-    executionId?: string;
     /** Retry may duplicate a previous remote execution unless the caller acknowledges it. */
     retryRequiresAcknowledgement?: boolean;
     lastError?: import("@party-stack/ontology-backend").BackendError;

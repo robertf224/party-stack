@@ -1,0 +1,325 @@
+---
+title: Better Auth
+description: Save authenticated sessions in Connect and select an account per ontology view.
+---
+
+## Configure Better Auth
+
+Add the server plugin to your existing Better Auth configuration:
+
+```ts title="src/server/auth.ts"
+import { partyStack } from "@party-stack/better-auth";
+import { betterAuth } from "better-auth";
+import { authOptions } from "./auth-options";
+
+export const auth = betterAuth({
+    ...authOptions,
+    plugins: [...(authOptions.plugins ?? []), partyStack()],
+});
+```
+
+`authOptions` is your app's usual Better Auth configuration, including its database
+and sign-in methods. Mount `auth.handler` at your normal authentication endpoint.
+The `partyStack` plugin adds multiple saved sessions and lets each request select
+one of them without changing the browser's active account.
+
+Add the matching client plugin:
+
+```ts title="src/app/auth.ts"
+import { partyStackClient } from "@party-stack/better-auth";
+import { createAuthClient } from "better-auth/client";
+
+export const authClient = createAuthClient({
+    plugins: [partyStackClient()],
+});
+```
+
+## Register the connection service
+
+Define your app's service configuration, then include it in the worker's
+`makeConnectManager({ services: [betterAuthService] })` call. This uses the same
+[worker and client setup](/docs/foundry#start-the-sharedworker) as other Connect services:
+
+```ts title="src/app/better-auth-service.ts"
+import { makeBetterAuthServiceConnector } from "@party-stack/better-auth";
+import type { ConnectServiceConfiguration } from "@party-stack/connect";
+import { authClient } from "./auth";
+
+export const betterAuthService = {
+    connector: makeBetterAuthServiceConnector({ client: authClient }),
+    instances: [{ id: "app", title: "My app", instanceUrl: globalThis.location.origin }],
+} satisfies ConnectServiceConfiguration;
+```
+
+`app` is this configured service instance's stable ID. It identifies your app's
+deployment, not a person or session. Multiple saved accounts can share it. Use
+different instances if one Connect manager serves multiple deployments.
+In the helper below, `client` is the Better Auth SDK; `authentication` is Party
+Stack's facade for verifying and saving the resulting account.
+
+Provide the credential-storage Runtime as shown in the worker setup. The Better
+Auth client runs in the worker too, where it calls the same cookie-authenticated
+session endpoints. Provider-specific sign-in methods stay in the tab.
+
+## Sign in from React
+
+Render this component inside `AuthenticationProvider`. Its parent selects a data ontology
+when `onSelect` receives the saved connection ID:
+
+```tsx title="src/app/SignIn.tsx"
+import { attachBetterAuthSession } from "@party-stack/better-auth";
+import { useAuthentication } from "@party-stack/ontology-react/authentication";
+import { useState } from "react";
+import { authClient } from "./auth";
+
+export function SignIn({ onSelect }: { onSelect: (connectionId: string) => void }) {
+    const authentication = useAuthentication();
+    const [error, setError] = useState<string>();
+    return (
+        <form
+            onSubmit={async (event) => {
+                event.preventDefault();
+                const form = new FormData(event.currentTarget);
+                setError(undefined);
+                try {
+                    const signedIn = await authClient.signIn.email({
+                        email: String(form.get("email")),
+                        password: String(form.get("password")),
+                    });
+                    if (signedIn.error || !signedIn.data)
+                        throw new Error(signedIn.error?.message ?? "Better Auth sign-in failed.");
+                    const connection = await attachBetterAuthSession({
+                        client: authClient,
+                        authentication,
+                        serviceInstanceId: "app",
+                        session: signedIn.data,
+                    });
+                    onSelect(connection.id);
+                } catch (cause) {
+                    setError(cause instanceof Error ? cause.message : "Sign-in failed.");
+                }
+            }}
+        >
+            <input name="email" type="email" autoComplete="username" required />
+            <input name="password" type="password" autoComplete="current-password" required />
+            <button type="submit">Sign in</button>
+            {error && <p role="alert">{error}</p>}
+        </form>
+    );
+}
+```
+
+The helper accepts a session with `id`, or sign-in data with `token`. For a token,
+it finds the exact matching device session; it does not pick by user ID or recency.
+Better Auth's popup sign-in currently returns only a success flag. For that flow,
+select the intended device session explicitly and pass its session object; a
+success flag alone cannot identify an account. Connect still verifies the session
+with Better Auth before saving an
+`ExternalSessionConnection`. It stores the session ID, verified user ID, display
+name and expiry. The cookie token stays with Better Auth. The public Connect
+policy excludes the session ID from replicated account collections.
+
+When its last-verified expiry passes, authenticated access revalidates the saved
+session on demand and persists any renewed expiry. A temporary server/network
+failure leaves account status unchanged; confirmed rejection sets `needs-auth`.
+Cached application data can open without waiting for this verification.
+
+Query `authenticationObjects.ExternalSessionConnection` for the account picker, using
+the same pattern as the [profile switcher](/docs/authentication#build-a-profile-switcher).
+Calling `authentication.signOut({ kind: "external-session", id })`
+revokes that Better Auth session and marks its saved connection inactive.
+Use `authentication.forget({ kind: "external-session", id })` to also remove the saved account row.
+
+## Open the selected backend
+
+A worker route acquires the saved connection with
+`connect.connections.acquire({ objectType: "ExternalSessionConnection", id })`.
+The returned egress methods are Effects. They add the saved
+session ID to each request and restrict requests to the configured service origin.
+WebSockets carry the same selector in a subprotocol.
+
+At a fetch-based SDK boundary, acquire a scoped Promise adapter:
+
+```ts
+import { toWebEgress } from "@party-stack/connect";
+
+const web = yield * toWebEgress(access.egress);
+// Supply web.fetch to a fetch-based client, such as FetchHttpClient.Fetch.
+```
+
+The acquiring scope cancels pending calls and rejects new calls after release.
+
+The backend authenticates each request with
+`auth.api.getSession({ headers: request.headers })` and returns the verified
+`userId` from its server `authenticate` hook. The server plugin resolves the
+requested session from the caller's signed cookies; a session ID alone grants no
+access. See [caller permissions](/docs/server#add-caller-permissions).
+
+This connector assumes browser cookies for the same service are available to the
+worker. A remote server cannot use the saved ID as a bearer credential.
+
+## Store auth records in an ontology
+
+Use this adapter instead of Better Auth's normal database adapter. It writes
+through an owned backend's trusted storage capability; the Connect connector above
+is independent of this storage choice.
+
+```sh
+pnpm add @party-stack/better-auth @party-stack/ontology-backend @party-stack/ontology-spec @party-stack/sql-ontology-storage @effect/sql-sqlite-node better-auth effect
+```
+
+### Define the private records
+
+This definition uses Better Auth's field names, so its model lenses are identity
+mappings. The small `object` helper only supplies the IR's display names and primary key.
+
+```ts title="src/server/auth-ontology.ts"
+import { o, type OntologyIR, type TypeDef } from "@party-stack/ontology-spec";
+import type { AuthModelView } from "@party-stack/better-auth/storage";
+
+const text = o.string({});
+const timestamp = o.timestamp({});
+const optional = (type: TypeDef) => o.optional({ type });
+const timestamps = { createdAt: timestamp, updatedAt: timestamp };
+const userId = o.objectReference({ objectType: "AuthUser" });
+const object = (name: string, fields: Record<string, TypeDef>) => ({
+    name,
+    displayName: name,
+    pluralDisplayName: name,
+    primaryKey: "id",
+    properties: Object.entries({ id: text, ...fields }).map(([name, type]) => ({
+        name,
+        displayName: name,
+        type,
+    })),
+});
+
+export const authOntology: OntologyIR = {
+    types: [],
+    linkTypes: [],
+    actionTypes: [],
+    queryFunctionTypes: [],
+    objectTypes: [
+        object("AuthUser", {
+            name: text,
+            email: text,
+            emailVerified: o.boolean({}),
+            image: optional(text),
+            ...timestamps,
+        }),
+        object("AuthSession", {
+            userId,
+            token: text,
+            expiresAt: timestamp,
+            ipAddress: optional(text),
+            userAgent: optional(text),
+            ...timestamps,
+        }),
+        object("AuthAccount", {
+            userId,
+            issuer: text,
+            accountId: text,
+            providerId: text,
+            accessToken: optional(text),
+            refreshToken: optional(text),
+            idToken: optional(text),
+            accessTokenExpiresAt: optional(timestamp),
+            refreshTokenExpiresAt: optional(timestamp),
+            scope: optional(text),
+            password: optional(text),
+            ...timestamps,
+        }),
+        object("AuthVerification", {
+            identifier: text,
+            value: text,
+            expiresAt: timestamp,
+            ...timestamps,
+        }),
+    ],
+};
+
+export const authModels: Record<string, AuthModelView> = {
+    user: { objectType: "AuthUser", lens: { operations: [] } },
+    session: { objectType: "AuthSession", lens: { operations: [] } },
+    account: { objectType: "AuthAccount", lens: { operations: [] } },
+    verification: { objectType: "AuthVerification", lens: { operations: [] } },
+};
+```
+
+`authModels` maps Better Auth's logical models to your object types. If an existing
+app calls its user type `Person` or uses different property names, map them with
+lens operations such as `o.LensOp.move({ from: ["displayName"], to: ["name"] })`.
+The adapter preserves source properties outside that view.
+
+### Open the database and auth service
+
+```ts title="src/server/auth.ts"
+import { layer as sqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
+import { partyStack } from "@party-stack/better-auth";
+import { makeBetterAuthStorage } from "@party-stack/better-auth/storage";
+import { makeStorageBackend } from "@party-stack/ontology-backend/storage";
+import { makeStorage } from "@party-stack/sql-ontology-storage/sqlite";
+import { betterAuth } from "better-auth";
+import { Context, Effect, Layer, ManagedRuntime } from "effect";
+import { authModels, authOntology } from "./auth-ontology";
+
+const openAuth = Effect.gen(function* () {
+    const storage = yield* makeStorage({ namespace: "auth" });
+    const backend = yield* makeStorageBackend({ ir: authOntology, ...storage });
+    const database = yield* makeBetterAuthStorage({ storage: backend.storage, models: authModels });
+    return betterAuth({
+        database,
+        baseURL: process.env.BETTER_AUTH_URL ?? "http://localhost:3000",
+        secret: process.env.BETTER_AUTH_SECRET!,
+        emailAndPassword: { enabled: true },
+        plugins: [partyStack()],
+    });
+});
+
+class Authentication extends Context.Service<Authentication, Effect.Success<typeof openAuth>>()(
+    "my-app/Authentication"
+) {}
+const runtime = ManagedRuntime.make(
+    Layer.effect(Authentication, openAuth).pipe(Layer.provide(sqliteLayer({ filename: "auth.sqlite" })))
+);
+export const auth = await runtime.runPromise(Authentication);
+export const disposeAuth = () => runtime.dispose();
+if (import.meta.hot) import.meta.hot.dispose(disposeAuth);
+```
+
+Set `BETTER_AUTH_SECRET` to your application's secret. The Layer owns SQLite and
+the storage adapter for the server's lifetime. Call `disposeAuth` at shutdown;
+HMR does so above. Add other Better Auth methods/plugins to this configuration as
+usual; plugins with additional database models also need authored types and mappings.
+
+### Mount the authentication endpoint
+
+```ts title="src/routes/api.auth.$.ts"
+import { createFileRoute } from "@tanstack/react-router";
+import { auth } from "../server/auth";
+
+export const Route = createFileRoute("/api/auth/$")({
+    server: {
+        handlers: {
+            GET: ({ request }) => auth.handler(request),
+            POST: ({ request }) => auth.handler(request),
+        },
+    },
+});
+```
+
+The [client and sign-in component above](#configure-better-auth) now use these
+records. Better Auth owns password hashing, cookies and its authentication
+endpoints. Its adapter transactions commit through native ontology storage and
+publish the normal journal notifications. An authentication HTTP request can use
+several such transactions; it is not one ontology action transaction.
+
+Keep the auth backend private: these rows contain password hashes, sessions and
+verification tokens. The storage adapter bypasses ontology action policies. To
+share a canonical user object with your application, add the auth types and model
+lenses to that application's owned backend and expose only its authorized public
+projection. Do not serve the private auth backend directly or replicate its raw journal.
+
+The adapter creates its storage tables and indexes; Better Auth's Kysely migration
+runner does not apply to it. Changes to authored types require an explicit ontology
+schema/data migration.

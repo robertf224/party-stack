@@ -39,7 +39,7 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
     const actionScope = yield* Effect.try({
         try: () =>
             options.actionScope ??
-            (options.context ? contextPartition(options.ir, options.context) : "system"),
+            (options.context ? contextPartition(options.ir, options.context) : undefined),
         catch: (cause) =>
             new BackendError({
                 operation: "storage-ontology",
@@ -213,9 +213,16 @@ export const makeStorageBackend = Effect.fn("StorageOntology.make")(function* (
         );
     const maintenance = collectGarbage().pipe(Effect.asVoid);
     yield* scheduleMaintenance(maintenance, maintenanceIntervalMs);
+    const query: OwnedBackendService["query"] = (document, settings) =>
+        Effect.flatMap(CurrentExecutionContext, (context) =>
+            backend
+                .query(document, settings)
+                .pipe(Effect.provideService(CurrentExecutionContext, context ?? options.context))
+        );
     return {
         ...backend,
         maintenance,
+        query,
         // Incoming HTTP sources may be one-shot. Owned storage accepts bytes into
         // its final byte store first; fingerprinting and retries reopen that store.
         applyAction: Effect.fn("StorageOntology.applyAction")(function* (invocation: ActionRequest) {

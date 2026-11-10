@@ -1,11 +1,15 @@
 // Auto-generated file - do not edit manually
 
-import { createLiveOntology, type CreateLiveOntologyOpts, type LiveOntology } from "@party-stack/ontology";
-import ontology from "../ontology.js";
-import type { SalesforceTaskManagerOntology, SalesforceTaskManagerOntologyContext } from "./types.js";
+import {
+    createLiveOntology,
+    type LiveOntologyFactoryOptions,
+    type LiveOntology,
+} from "@party-stack/ontology";
+import ontology from "../ontology";
+import type { SalesforceTaskManagerOntology, SalesforceTaskManagerOntologyContext } from "./types";
 
 export async function createSalesforceTaskManagerLiveOntology(
-    opts: Omit<CreateLiveOntologyOpts<SalesforceTaskManagerOntologyContext>, "ir">
+    opts: LiveOntologyFactoryOptions<SalesforceTaskManagerOntologyContext>
 ): Promise<LiveOntology<SalesforceTaskManagerOntology>> {
     return createLiveOntology<SalesforceTaskManagerOntology, SalesforceTaskManagerOntologyContext>({
         ...opts,

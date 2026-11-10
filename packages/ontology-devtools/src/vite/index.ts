@@ -1,7 +1,11 @@
 import { transformAsync, types as t, type NodePath, type PluginObj } from "@babel/core";
 import type { Plugin } from "vite-plus";
 
-const hooks = new Set(["useLiveQuery", "useLiveInfiniteQuery", "useLiveSuspenseQuery"]);
+const queryHooks = new Map([
+    ["@tanstack/react-db", new Set(["useLiveQuery", "useLiveInfiniteQuery", "useLiveSuspenseQuery"])],
+    ["@party-stack/ontology-react", new Set(["useFragment", "useListFragment", "useLiveSuspenseQuery"])],
+    ["@party-stack/db-fragments/react", new Set(["useFragment", "useListFragment", "useLiveSuspenseQuery"])],
+]);
 const marker = "party-stack-demand-attribution";
 type ComponentPath = NodePath<t.FunctionDeclaration | t.FunctionExpression | t.ArrowFunctionExpression>;
 
@@ -13,12 +17,18 @@ function componentName(path: ComponentPath): string | undefined {
 }
 
 export async function transformDemandAttribution(code: string, filename: string) {
-    if (code.includes(marker) || !code.includes("@tanstack/react-db")) return null;
+    if (code.includes(marker) || ![...queryHooks.keys()].some((source) => code.includes(source))) return null;
     let modified = false;
     const instrumentation = (): PluginObj => {
-        const owners = new Map<t.Node, { path: ComponentPath; name: string; owner: t.Identifier }>();
+        const owners = new Map<
+            t.Node,
+            { path: ComponentPath; name: string; owner: t.Identifier; fragments: t.Identifier[] }
+        >();
         let ownerHook: t.Identifier;
         let queryHook: t.Identifier;
+        let fragmentHook: t.Identifier;
+        let hasQueries = false;
+        let hasFragments = false;
         return {
             visitor: {
                 Program: {
@@ -31,6 +41,7 @@ export async function transformDemandAttribution(code: string, filename: string)
                         };
                         ownerHook = fresh("usePartyStackDemandOwner");
                         queryHook = fresh("usePartyStackDemandQuery");
+                        fragmentHook = fresh("usePartyStackDemandFragment");
                     },
                     exit(path) {
                         if (!owners.size) return;
@@ -52,6 +63,15 @@ export async function transformDemandAttribution(code: string, filename: string)
                                     ),
                                 ])
                             );
+                            if (entry.fragments.length)
+                                entry.path.node.body.body.splice(
+                                    1,
+                                    0,
+                                    t.variableDeclaration(
+                                        "let",
+                                        entry.fragments.map((id) => t.variableDeclarator(t.cloneNode(id)))
+                                    )
+                                );
                             entry.path.traverse({
                                 JSXOpeningElement(element) {
                                     if (
@@ -90,7 +110,12 @@ export async function transformDemandAttribution(code: string, filename: string)
                             t.importDeclaration(
                                 [
                                     t.importSpecifier(ownerHook, t.identifier("useDemandOwner")),
-                                    t.importSpecifier(queryHook, t.identifier("useDemandQuery")),
+                                    ...(hasQueries
+                                        ? [t.importSpecifier(queryHook, t.identifier("useDemandQuery"))]
+                                        : []),
+                                    ...(hasFragments
+                                        ? [t.importSpecifier(fragmentHook, t.identifier("useDemandFragment"))]
+                                        : []),
                                 ],
                                 t.stringLiteral("@party-stack/ontology-devtools/attribution")
                             )
@@ -107,9 +132,8 @@ export async function transformDemandAttribution(code: string, filename: string)
                     const imported = binding.path.node.imported;
                     const name = t.isIdentifier(imported) ? imported.name : imported.value;
                     if (
-                        !hooks.has(name) ||
                         !binding.path.parentPath.isImportDeclaration() ||
-                        binding.path.parentPath.node.source.value !== "@tanstack/react-db"
+                        !queryHooks.get(binding.path.parentPath.node.source.value)?.has(name)
                     )
                         return;
                     const parent = path.getFunctionParent();
@@ -124,16 +148,37 @@ export async function transformDemandAttribution(code: string, filename: string)
                         return;
                     const nameOfComponent = componentName(parent);
                     if (!nameOfComponent || !/^[A-Z]/u.test(nameOfComponent)) return;
+                    const fragment = name === "useFragment" ? path.node.arguments[0] : undefined;
+                    if (name === "useFragment" && !t.isExpression(fragment)) return;
                     let entry = owners.get(parent.node);
                     if (!entry) {
                         entry = {
                             path: parent,
                             name: nameOfComponent,
                             owner: parent.scope.generateUidIdentifier("demandOwner"),
+                            fragments: [],
                         };
                         owners.set(parent.node, entry);
                     }
-                    path.replaceWith(t.callExpression(queryHook, [t.cloneNode(entry.owner), path.node]));
+                    if (t.isExpression(fragment)) {
+                        // Evaluate the caller's input once, in its original position.
+                        // The selected row itself can be undefined or contain a
+                        // property named collection, so attribution uses this input.
+                        const input = parent.scope.generateUidIdentifier("demandFragment");
+                        entry.fragments.push(input);
+                        path.node.arguments[0] = t.assignmentExpression("=", t.cloneNode(input), fragment);
+                        hasFragments = true;
+                        path.replaceWith(
+                            t.callExpression(fragmentHook, [
+                                t.cloneNode(entry.owner),
+                                path.node,
+                                t.cloneNode(input),
+                            ])
+                        );
+                    } else {
+                        hasQueries = true;
+                        path.replaceWith(t.callExpression(queryHook, [t.cloneNode(entry.owner), path.node]));
+                    }
                     path.skip();
                 },
             },

@@ -1,13 +1,6 @@
-import { createFoundryOntologyPullSource } from "@party-stack/foundry-ontology/config";
-import { o } from "@party-stack/ontology";
-import { foundryUserToUser } from "./user";
+import { makeFoundryPullBackend } from "@party-stack/foundry-ontology/config";
+import { transformPulledOntology } from "./transformPulledOntology";
 import type { FoundryOntologyPullConfig } from "@party-stack/foundry-ontology/config";
-
-const imageConstraint = {
-    content: o.AttachmentContentConstraint.image({
-        mediaTypes: ["image/png", "image/jpeg"],
-    }),
-};
 
 function requiredEnv(name: string): string {
     const value = process.env[name];
@@ -18,7 +11,7 @@ function requiredEnv(name: string): string {
 }
 
 export default {
-    source: createFoundryOntologyPullSource({
+    backend: makeFoundryPullBackend({
         baseUrl: requiredEnv("VITE_FOUNDRY_URL"),
         ontologyRid: requiredEnv("VITE_FOUNDRY_ONTOLOGY_RID"),
         connection: {
@@ -27,38 +20,8 @@ export default {
                 redirectUrl: requiredEnv("VITE_FOUNDRY_REDIRECT_URL"),
             },
         },
-        users: {
-            objectType: "User",
-            lens: foundryUserToUser,
-        },
-        // TODO: scrap this
-        attachmentConstraints: [
-            {
-                target: {
-                    kind: "objectProperty",
-                    objectType: "Issue",
-                    property: "issueAttachments",
-                },
-                constraint: imageConstraint,
-            },
-            {
-                target: {
-                    kind: "actionParameter",
-                    actionType: "createIssue",
-                    parameter: "attachments",
-                },
-                constraint: imageConstraint,
-            },
-            {
-                target: {
-                    kind: "actionParameter",
-                    actionType: "updateIssue",
-                    parameter: "attachments",
-                },
-                constraint: imageConstraint,
-            },
-        ],
     }),
+    transformPulledOntology,
     objectTypeNames: ["Issue", "Project"],
     actionTypeNames: [
         "createIssue",

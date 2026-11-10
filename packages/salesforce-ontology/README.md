@@ -1,38 +1,65 @@
 # salesforce-ontology
 
-Salesforce connection, installation, metadata, and runtime ontology adapters.
+Salesforce service integration, metadata, and ontology backends.
 
-## Installation
+## Saved connections and native backends
 
 ```ts
-import {
-    createSalesforceBackendInstallation,
-    createSalesforceOntologyRoute,
-} from "@party-stack/salesforce-ontology";
+import { makeConnectManager } from "@party-stack/connect";
+import { makeSalesforceServiceConnector } from "@party-stack/salesforce-ontology";
+import { makeSalesforceBackend } from "@party-stack/salesforce-ontology/connect";
 
-const installation = await createSalesforceBackendInstallation({
-    instanceUrl: "https://example.my.salesforce.com",
-    apiVersion: "65.0",
-    runtime,
-    connections: {
-        oauth: {
-            clientId,
-            redirectUrl: "http://localhost:1717/oauth/callback",
-        },
-    },
-    routes: [
-        createSalesforceOntologyRoute({
-            ontologyId: "salesforce:task-manager",
-            ir: generatedOntology,
-        }),
-    ],
-});
+const connect =
+    yield *
+    makeConnectManager({
+        services: [
+            {
+                connector: makeSalesforceServiceConnector({ loginUrl }),
+                instances: [
+                    {
+                        id: "salesforce",
+                        title: "Salesforce",
+                        instanceUrl,
+                        OAuthApplications: [
+                            {
+                                id: clientId,
+                                title: "My app",
+                                clientId,
+                                redirectUrl,
+                                flow: "authorization-code",
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    });
+const access =
+    yield *
+    connect.connections.acquire({
+        objectType: "OAuthConnection",
+        id: connectionId,
+    });
+const backend =
+    yield *
+    makeSalesforceBackend({
+        instanceUrl: access.serviceInstance.instanceUrl,
+        apiVersion: "65.0",
+        egress: access.egress,
+        ir: generatedOntology,
+        context: { user: access.userId },
+    });
 ```
 
-The connection adapter uses `@party-stack/connect`, persists refresh tokens
-through the selected runtime, and applies authentication through
-`ConnectionEgress`. The Salesforce client and ontology backends remain
-token-provider/egress agnostic.
+`makeConnectManager` requires `Runtime` and `Scope`. It owns the saved connection
+inventory, credential refresh and maintenance. Acquiring a connection creates
+scoped authenticated I/O. Each request reads current credentials; an OAuth 401
+can request one coordinated refresh and retry.
+
+Mount the public Connect ontology on `makeOntologyServer`, then use
+`createAuthenticationClient(...).oauth(...).signIn()` from a browser event handler.
+Serve acquired data backends through other routes on the same server. The
+Salesforce task manager uses that arrangement in a SharedWorker.
 
 ## Pull configuration
 
@@ -64,50 +91,16 @@ export default createSalesforceOntologyPullConfig({
 });
 ```
 
-Running `ontology pull` opens the Salesforce metadata ontology and emits the
-normal `src/ontology/ontology.ts` consumed by
-`createSalesforceOntologyRoute({ ir })`.
+Running `ontology pull` acquires the native Salesforce metadata backend and emits
+`src/ontology/ontology.ts`. It uses the same Connect manager and acquires only authenticated metadata I/O; it does not open a data replica or UI collection.
 
 See `apps/salesforce-task-manager` for a real-org example.
 
-# salesforce-ontology
+## Metadata backend
 
-Salesforce backend adapters for Party Stack LiveOntology.
-
-## Runtime adapter
-
-```ts
-import { createLiveOntology } from "@party-stack/ontology";
-import { createSalesforceClient } from "@party-stack/salesforce-client";
-import { createSalesforceOntologyBackend } from "@party-stack/salesforce-ontology";
-
-// jsforce-backed client; supply your own token (no OAuth ownership here)
-const client = createSalesforceClient({
-    instanceUrl: process.env.SALESFORCE_INSTANCE_URL!,
-    apiVersion: "61.0",
-    tokenProvider: async () => process.env.SALESFORCE_ACCESS_TOKEN!,
-});
-
-const ontology = await createLiveOntology({
-    ir,
-    backend: createSalesforceOntologyBackend({ client }),
-});
-```
-
-## Metadata adapter
-
-```ts
-import { createMetaLiveOntology } from "@party-stack/ontology";
-import { createSalesforceMetaOntologyBackendAdapter } from "@party-stack/salesforce-ontology/meta";
-
-const meta = await createMetaLiveOntology({
-    backend: () =>
-        createSalesforceMetaOntologyBackendAdapter({
-            client,
-            objectTypeNames: ["Account", "Contact"],
-        }),
-});
-```
+`makeSalesforceMetadataBackend({ instanceUrl, apiVersion, egress, ...options })`
+from the `connect` export acquires metadata directly. The lower-level adapter
+constructors remain available for callers supplying their own Salesforce client.
 
 Unscoped object/action queries load Salesforce catalog summaries only.
 Queries using `eq` or `inArray` on `name` push down to the direct describe

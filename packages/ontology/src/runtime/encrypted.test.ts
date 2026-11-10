@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
@@ -71,7 +72,8 @@ const fixture = Effect.fnUntraced(function* (settings?: { keys?: boolean; owner?
         encryptionKeyring: settings?.keys === false ? undefined : Effect.succeed(keys),
     });
     const call = vi.fn((value: Encrypted) => Effect.succeed({ value: wire, ciphertext: value.ciphertext }));
-    const backend = {
+    const backend = makeOntologyBackend({
+        ir,
         name: "test",
         sourceId: "authority",
         supportsIdempotency: false,
@@ -81,7 +83,7 @@ const fixture = Effect.fnUntraced(function* (settings?: { keys?: boolean; owner?
         queryFunction: () => Effect.die("unused"),
         encrypted: { decrypt: call },
         refresh: () => ({ pollIntervalMs: false as const }),
-    };
+    });
     const replica = yield* makeReplica({
         namespace: "private",
         ir,
@@ -292,25 +294,27 @@ test("LiveOntology decorates encrypted sources and only decrypts explicitly", as
     const call = vi.fn(() => Effect.succeed({ value: wire, ciphertext: handle.ciphertext }));
     const live = await createLiveOntology({
         ir,
-        backend: () => ({
-            name: "test",
-            open: () =>
-                Effect.succeed({
-                    name: "test",
-                    sourceId: "authority",
-                    supportsIdempotency: false,
-                    loadSubset: () =>
-                        Effect.succeed({
-                            rows: [
-                                { key: "1", value: { id: "1", secret: { ciphertext: handle.ciphertext } } },
-                            ],
-                            complete: true,
-                        }),
-                    applyAction: () => Effect.die("unused"),
-                    queryFunction: () => Effect.die("unused"),
-                    encrypted: { decrypt: call },
-                }),
-        }),
+        backend: Effect.succeed(
+            makeOntologyBackend({
+                ir,
+                name: "test",
+                sourceId: "authority",
+                supportsIdempotency: false,
+                loadSubset: () =>
+                    Effect.succeed({
+                        rows: [
+                            {
+                                key: "1",
+                                value: { id: "1", secret: { ciphertext: handle.ciphertext } },
+                            },
+                        ],
+                        complete: true,
+                    }),
+                applyAction: () => Effect.die("unused"),
+                queryFunction: () => Effect.die("unused"),
+                encrypted: { decrypt: call },
+            })
+        ),
     });
     try {
         const rows = await queryOnce((q) => q.from({ person: live.objects.Person! }));
@@ -331,7 +335,7 @@ test("owned storage decrypts with deployment keys and proves an immutable handle
                 const blobs = yield* makeBlobStorage({
                     namespace,
                     tables,
-                    mode: "authoritative",
+                    attachmentBytesRetentionMode: "authoritative",
                     bytes: {
                         read: () => Effect.succeed(undefined),
                         write: () => Effect.void,

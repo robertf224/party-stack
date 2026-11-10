@@ -1,6 +1,6 @@
 // Auto-generated file - do not edit manually
 
-import { defineOntology, o } from "@party-stack/ontology";
+import { defineOntology, o } from "@party-stack/ontology-spec";
 export default defineOntology({
     types: [],
     objectTypes: [
@@ -423,7 +423,7 @@ export default defineOntology({
                         {
                             property: ["createdBy"],
                             value: o.Expression.contextReference({
-                                name: "user",
+                                name: "userId",
                             }),
                         },
                         {
@@ -1054,7 +1054,7 @@ export default defineOntology({
         type: o.struct({
             fields: [
                 {
-                    name: "user",
+                    name: "userId",
                     displayName: "User",
                     type: o.objectReference({
                         objectType: "User",
@@ -1062,5 +1062,6 @@ export default defineOntology({
                 },
             ],
         }),
+        partition: [["userId"]],
     },
 });

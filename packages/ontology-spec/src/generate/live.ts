@@ -19,7 +19,7 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
         namedImports: [
             { name: "createLiveOntology" },
             {
-                name: "CreateLiveOntologyOpts",
+                name: "LiveOntologyFactoryOptions",
                 isTypeOnly: true,
             },
             {
@@ -44,7 +44,7 @@ export function generateLive(ir: OntologyIR, opts: GenerateLiveOpts): string {
         parameters: [
             {
                 name: "opts",
-                type: `Omit<CreateLiveOntologyOpts<${opts.ontologyTypeName}Context>, "ir">`,
+                type: `LiveOntologyFactoryOptions<${opts.ontologyTypeName}Context>`,
             },
         ],
         returnType: `Promise<LiveOntology<${opts.ontologyTypeName}>>`,

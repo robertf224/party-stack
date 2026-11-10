@@ -1,3 +1,5 @@
+import { it } from "@effect/vitest";
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { executeQuery } from "@party-stack/ontology-backend/query";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
@@ -9,11 +11,13 @@ import { makeBlobStorage, byteSource } from "@party-stack/ontology-storage/blobs
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { makeNetworkConnectivity, MemoryBlobBytesStore, RuntimeError } from "@party-stack/runtime";
-import { Effect, Exit, Scope, Stream, Deferred } from "effect";
+import { Effect, Exit, Scope, Stream, Deferred, Schema, PubSub } from "effect";
 import { TestClock } from "effect/testing";
-import fc from "fast-check";
 import { expect, test } from "vitest";
+import { makeReplicaKernel } from "./engine.js";
 import { replicaStateSource } from "./infrastructure.js";
+import { pinRecordKey } from "./pinModel.js";
+import { makeQueryPin } from "./pins.js";
 import { makeReplica } from "./service.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
@@ -75,7 +79,8 @@ const fixture = Effect.fnUntraced(function* () {
         ],
     };
     const loads: CompiledSubset[] = [];
-    const backend: OntologyBackendService = {
+    const backend: OntologyBackendService = makeOntologyBackend({
+        ir,
         name: "fixture",
         sourceId: "fixture",
         supportsIdempotency: false,
@@ -97,7 +102,7 @@ const fixture = Effect.fnUntraced(function* () {
                     };
                 })
             ),
-    };
+    });
     return { tables, network: connectivity, data, loads, backend };
 });
 
@@ -137,6 +142,141 @@ test("capacity estimates are live diagnostics and a failed sensor does not stop 
     );
 });
 
+test("named pins keep overlapping graphs across removal and resume every revision", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const options = { ...f, namespace: "plural-pins", ir, live: false };
+                const firstScope = yield* Scope.make();
+                let replica = yield* Scope.provide(makeReplica(options), firstScope);
+                const folderA = { name: "folders", query: document("a") };
+                const overlapping = { name: "favorites", query: document("a") };
+                const folderB = { name: "folders", query: document("b") };
+                yield* replica.demand.pins.update({ set: [folderA, overlapping, folderB] });
+                const first = yield* replica.demand.pins.list;
+                expect(first).toHaveLength(3);
+                expect(first.every((row) => row.ready)).toBe(true);
+                yield* replica.demand.pins.set(folderA);
+                expect(
+                    (yield* replica.demand.pins.list).find((row) => row.id === pinRecordKey(folderA))
+                        ?.generation
+                ).toBe(first.find((row) => row.id === pinRecordKey(folderA))?.generation);
+                yield* replica.demand.pins.remove(pinRecordKey(folderA));
+                yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                expect(yield* replica.get("Issue", "one")).toBeDefined();
+                expect(yield* replica.get("Issue", "two")).toBeDefined();
+                yield* Scope.close(firstScope, Exit.void);
+                replica = yield* makeReplica(options);
+                expect(yield* replica.demand.pins.list).toHaveLength(2);
+                yield* replica.demand.pins.clear("folders");
+                yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                expect(yield* replica.get("Issue", "one")).toBeDefined();
+                expect(yield* replica.get("Issue", "two")).toBeUndefined();
+                yield* replica.demand.pins.clear("favorites");
+                yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                expect(yield* replica.get("Issue", "one")).toBeUndefined();
+                expect(yield* replica.demand.pins.list).toEqual([]);
+            })
+        )
+    );
+});
+
+test("named downloads resume from offline intent in a one-shot background sync", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                yield* f.network.set(false);
+                const options = { ...f, namespace: "plural-background", ir, live: false };
+                const scope = yield* Scope.make();
+                let replica = yield* Scope.provide(makeReplica(options), scope);
+                yield* replica.demand.pins.set({ name: "folders", query: document("a") });
+                expect(yield* replica.demand.pins.list).toMatchObject([{ ready: false }]);
+                yield* Scope.close(scope, Exit.void);
+                replica = yield* makeReplica(options);
+                yield* f.network.set(true);
+                yield* replica.syncOnce;
+                expect(yield* replica.demand.pins.list).toMatchObject([{ ready: true }]);
+                expect(yield* replica.get("Issue", "one")).toBeDefined();
+            })
+        )
+    );
+});
+
+test("overlapping named downloads retain shared bytes until the last owner is removed", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const blobs = yield* makeBlobStorage({
+                    namespace: "plural-bytes",
+                    tables: f.tables,
+                    bytes: new MemoryBlobBytesStore(),
+                });
+                let downloads = 0;
+                const replica = yield* makeReplica({
+                    ...f,
+                    namespace: "plural-bytes",
+                    ir,
+                    live: false,
+                    blobs,
+                    attachments: {
+                        read: () =>
+                            Effect.sync(() => {
+                                downloads++;
+                                return byteSource(new Blob(["shared bytes"]));
+                            }),
+                    },
+                });
+                const a = { name: "folders", query: document("a"), attachments: "all" as const };
+                const b = { ...a, name: "favorites" };
+                yield* replica.demand.pins.update({ set: [a, b] });
+                expect(downloads).toBe(1);
+                yield* replica.demand.pins.remove(pinRecordKey(a));
+                yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
+                expect(yield* replica.demand.pins.list).toMatchObject([{ name: "favorites", ready: true }]);
+                yield* replica.demand.pins.remove(pinRecordKey(b));
+                yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBeGreaterThan(0);
+            })
+        )
+    );
+});
+
+test("a plural pin update validates all intents atomically before acquisition", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const replica = yield* makeReplica({ ...f, namespace: "plural-invalid", ir, live: false });
+                const result = yield* Effect.result(
+                    replica.demand.pins.update({
+                        set: [
+                            { name: "folders", query: document("a") },
+                            {
+                                name: "invalid",
+                                query: {
+                                    select: [
+                                        q.sub("bad", {
+                                            from: { source: { objectType: "Missing" }, binding: "bad" },
+                                            select: [],
+                                        }),
+                                    ],
+                                },
+                            },
+                        ],
+                    })
+                );
+                expect(result._tag).toBe("Failure");
+                expect(yield* replica.demand.pins.list).toEqual([]);
+                expect(f.loads).toEqual([]);
+            })
+        )
+    );
+});
+
 test("query pins retain a complete graph across replacement, offline edits, restart and clear", async () => {
     await Effect.runPromise(
         Effect.scoped(
@@ -147,6 +287,7 @@ test("query pins retain a complete graph across replacement, offline edits, rest
                 let replica = yield* Scope.provide(makeReplica(options), firstScope);
                 yield* replica.demand.setPin(document("a"));
                 expect(yield* replica.demand.pinStatus).toMatchObject({ ready: true });
+                expect((yield* replica.demand.pinStatus)?.retainedGraph).toBeUndefined();
                 yield* f.network.set(false);
                 yield* replica.demand.setPin(document("b"));
                 yield* replica.demand.setPin(document("c"));
@@ -154,11 +295,15 @@ test("query pins retain a complete graph across replacement, offline edits, rest
                     query: document("c"),
                     ready: false,
                     previousGraphRetained: true,
+                    retainedGraph: { query: document("a"), attachments: "none" },
                 });
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.get("Issue", "one")).toBeDefined();
                 yield* Scope.close(firstScope, Exit.void);
                 replica = yield* makeReplica(options);
+                expect((yield* replica.demand.pinStatus)?.retainedGraph).toMatchObject({
+                    query: document("a"),
+                });
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.get("Issue", "one")).toBeDefined();
                 yield* f.network.set(true);
@@ -167,6 +312,7 @@ test("query pins retain a complete graph across replacement, offline edits, rest
                     ready: true,
                     previousGraphRetained: false,
                 });
+                expect((yield* replica.demand.pinStatus)?.retainedGraph).toBeUndefined();
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.get("Issue", "one")).toBeUndefined();
                 expect(yield* replica.get("Project", "c")).toBeDefined();
@@ -174,6 +320,58 @@ test("query pins retain a complete graph across replacement, offline edits, rest
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.get("Project", "c")).toBeUndefined();
                 expect(yield* replica.demand.pinStatus).toBeUndefined();
+            })
+        )
+    );
+});
+
+test("refreshing an unchanged pin graph preserves its membership rows", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const roots = Table.make({ name: JSON.stringify(["replica", "stable-pins", "pins"]) });
+                let writes = 0;
+                const tables: typeof f.tables = {
+                    ...f.tables,
+                    transaction: (body) =>
+                        f.tables.transaction((tx) =>
+                            body({
+                                ...tx,
+                                put: (table, key, value) => {
+                                    if (table.name === roots.name) writes++;
+                                    return tx.put(table, key, value);
+                                },
+                                delete: (table, key) => {
+                                    if (table.name === roots.name) writes++;
+                                    return tx.delete(table, key);
+                                },
+                                clear: (table) => {
+                                    if (table.name === roots.name) writes++;
+                                    return tx.clear(table);
+                                },
+                            })
+                        ),
+                };
+                const replica = yield* makeReplica({
+                    ...f,
+                    tables,
+                    namespace: "stable-pins",
+                    ir,
+                    live: false,
+                });
+                yield* replica.demand.setPin(document("a"));
+                const before = yield* tables.query(roots);
+                expect(before.length).toBeGreaterThan(0);
+                writes = 0;
+                yield* replica.demand.setPin(document("a"));
+                expect(writes).toBe(0);
+                expect(yield* tables.query(roots)).toEqual(before);
+                yield* replica.demand.setPin(document("b"));
+                expect(writes).toBeGreaterThan(0);
+                yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                expect(yield* replica.get("Issue", "one")).toBeUndefined();
+                expect(yield* replica.get("Issue", "two")).toBeDefined();
             })
         )
     );
@@ -255,67 +453,179 @@ test("replacing a pin cancels its pending acquisition and cannot install the obs
     );
 });
 
-test("pinned membership agrees with finite entity recomputation across varied correlations", async () => {
-    await fc.assert(
-        fc.asyncProperty(fc.array(fc.constantFrom("a", "b", "c"), { maxLength: 12 }), async (projects) => {
-            await Effect.runPromise(
-                Effect.scoped(
-                    Effect.gen(function* () {
-                        const f = yield* fixture();
-                        f.data.Issue = projects.map((project, index) => ({ id: String(index), project }));
-                        const owner = yield* Scope.make();
-                        let replica = yield* Scope.provide(
-                            makeReplica({ ...f, namespace: "pin-oracle", ir, live: false }),
-                            owner
-                        );
-                        const query: QueryDocument = {
-                            select: [
-                                ...document("a").select,
-                                q.sub("other", {
-                                    from: { source: { objectType: "Issue" }, binding: "i" },
-                                    where: q.eq(q.field("i", "project"), q.literal("b")),
-                                    select: [q.selectField("id", q.field("i", "id"))],
-                                }),
-                            ],
-                        };
-                        const oracle = yield* executeQuery(query, {
-                            reader: {
-                                ir,
-                                loadSubset: (type, scan) =>
-                                    Effect.map(
-                                        f.backend.loadSubset(objectSubset(type, scan)),
-                                        (snapshot) => snapshot.rows
-                                    ),
-                            },
-                            mode: "entity",
-                            strategy: "reference",
-                        });
-                        yield* replica.demand.setPin(query);
-                        expect(yield* replica.demand.pinStatus).toMatchObject({ ready: true });
-                        // Reopen without restoring volatile leases, then compare durable membership.
-                        yield* Scope.close(owner, Exit.void);
-                        replica = yield* makeReplica({ ...f, namespace: "pin-oracle", ir, live: false });
-                        yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
-                        for (const [type, values] of Object.entries(f.data))
-                            for (const value of values)
-                                expect(Boolean(yield* replica.get(type, value.id as string))).toBe(
-                                    oracle.entities.some(
-                                        (entity) => entity.objectType === type && entity.key === value.id
-                                    )
-                                );
-                        for (const entity of oracle.entities)
-                            expect(yield* replica.get(entity.objectType, entity.key)).toEqual(entity.value);
-                        yield* replica.demand.clearPin;
-                        yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
-                        for (const entity of oracle.entities)
-                            expect(yield* replica.get(entity.objectType, entity.key)).toBeUndefined();
-                    })
-                )
+it.effect("incomplete pin coverage stays pending beyond five seconds and resumes on notification", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            const f = yield* fixture();
+            const engine = yield* makeReplicaKernel({
+                ...f,
+                namespace: "pin-pending",
+                ir,
+                execute: () => Effect.void,
+                startSync: false,
+                objectCacheGc: false,
+            });
+            const updates = yield* PubSub.sliding<void>(1);
+            const waiting = yield* Deferred.make<void>();
+            let complete = false;
+            // Reproduce a persisted failure from the former coverage deadline.
+            yield* f.tables.put(
+                Table.make({ name: JSON.stringify(["replica", "pin-pending", "query-pin"]) }),
+                "head",
+                {
+                    desired: { query: document("a"), generation: "existing" },
+                    error: { kind: "Unavailable", message: "Waiting for coverage" },
+                }
+            );
+            const pin = yield* makeQueryPin({
+                ...f,
+                namespace: "pin-pending",
+                ir,
+                live: true,
+                engine: {
+                    ...engine,
+                    demand: () => Effect.void,
+                    syncSubset: () => Effect.void,
+                    hasCoverage: () => Effect.succeed(complete),
+                    snapshotSubset: () =>
+                        Deferred.succeed(waiting, undefined).pipe(Effect.as({ complete, rows: [] })),
+                    subscribeChanges: Effect.map(PubSub.subscribe(updates), Stream.fromSubscription),
+                    visibleChanges: Effect.succeed(Stream.never),
+                },
+            });
+            yield* Deferred.await(waiting);
+            yield* TestClock.adjust(60_000);
+            expect(yield* pin.pinStatus).toMatchObject({ ready: false, error: undefined });
+            complete = true;
+            yield* PubSub.publish(updates, undefined);
+            yield* pin.refresh;
+            expect(yield* pin.pinStatus).toMatchObject({ ready: true, error: undefined });
+        })
+    )
+);
+
+it.effect("pin commands accept newer intent while obsolete acquisition cleanup is held", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            const f = yield* fixture();
+            const engine = yield* makeReplicaKernel({
+                ...f,
+                namespace: "pin-command",
+                ir,
+                execute: () => Effect.void,
+                startSync: false,
+                objectCacheGc: false,
+            });
+            const waiting = yield* Deferred.make<void>();
+            const cleanup = yield* Deferred.make<void>();
+            const release = yield* Deferred.make<void>();
+            const pin = yield* makeQueryPin({
+                ...f,
+                namespace: "pin-command",
+                ir,
+                live: true,
+                engine: {
+                    ...engine,
+                    demand: (subset) =>
+                        JSON.stringify(subset.query).includes('"b"')
+                            ? Effect.addFinalizer(() =>
+                                  Deferred.succeed(cleanup, undefined).pipe(
+                                      Effect.andThen(Deferred.await(release))
+                                  )
+                              )
+                            : Effect.void,
+                    syncSubset: () => Effect.void,
+                    hasCoverage: () => Effect.succeed(true),
+                    snapshotSubset: (subset) =>
+                        Deferred.succeed(waiting, undefined).pipe(
+                            Effect.as({ complete: !JSON.stringify(subset.query).includes('"b"'), rows: [] })
+                        ),
+                    subscribeChanges: Effect.succeed(Stream.never),
+                    visibleChanges: Effect.succeed(Stream.never),
+                },
+            });
+            try {
+                yield* pin.setPin(document("b"));
+                yield* Deferred.await(waiting);
+                yield* pin.setPin(document("c"));
+                yield* Deferred.await(cleanup);
+                // Neither clearing nor another set waits for the held finalizer.
+                yield* pin.clearPin();
+                expect(yield* pin.pinStatus).toBeUndefined();
+                yield* pin.setPin(document("a"));
+                expect(yield* pin.pinStatus).toMatchObject({ query: document("a"), ready: false });
+            } finally {
+                yield* Deferred.succeed(release, undefined);
+            }
+            yield* Effect.all([pin.setPin(document("b")), pin.clearPin(), pin.setPin(document("a"))], {
+                concurrency: "unbounded",
+            });
+            yield* pin.refresh;
+            expect(yield* pin.pinStatus).toMatchObject({ query: document("a"), ready: true });
+        })
+    )
+);
+
+it.live.prop(
+    "pinned membership agrees with finite entity recomputation across varied correlations",
+    [Schema.Array(Schema.Literals(["a", "b", "c"])).check(Schema.isMaxLength(12))],
+    ([projects]) =>
+        Effect.gen(function* () {
+            yield* Effect.scoped(
+                Effect.gen(function* () {
+                    const f = yield* fixture();
+                    f.data.Issue = projects.map((project, index) => ({ id: String(index), project }));
+                    const owner = yield* Scope.make();
+                    let replica = yield* Scope.provide(
+                        makeReplica({ ...f, namespace: "pin-oracle", ir, live: false }),
+                        owner
+                    );
+                    const query: QueryDocument = {
+                        select: [
+                            ...document("a").select,
+                            q.sub("other", {
+                                from: { source: { objectType: "Issue" }, binding: "i" },
+                                where: q.eq(q.field("i", "project"), q.literal("b")),
+                                select: [q.selectField("id", q.field("i", "id"))],
+                            }),
+                        ],
+                    };
+                    const oracle = yield* executeQuery(query, {
+                        reader: {
+                            ir,
+                            loadSubset: (type, scan) =>
+                                Effect.map(
+                                    f.backend.loadSubset(objectSubset(type, scan)),
+                                    (snapshot) => snapshot.rows
+                                ),
+                        },
+                        mode: "entity",
+                        strategy: "reference",
+                    });
+                    yield* replica.demand.setPin(query);
+                    expect(yield* replica.demand.pinStatus).toMatchObject({ ready: true });
+                    // Reopen without restoring volatile leases, then compare durable membership.
+                    yield* Scope.close(owner, Exit.void);
+                    replica = yield* makeReplica({ ...f, namespace: "pin-oracle", ir, live: false });
+                    yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                    for (const [type, values] of Object.entries(f.data))
+                        for (const value of values)
+                            expect(Boolean(yield* replica.get(type, value.id as string))).toBe(
+                                oracle.entities.some(
+                                    (entity) => entity.objectType === type && entity.key === value.id
+                                )
+                            );
+                    for (const entity of oracle.entities)
+                        expect(yield* replica.get(entity.objectType, entity.key)).toEqual(entity.value);
+                    yield* replica.demand.clearPin;
+                    yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                    for (const entity of oracle.entities)
+                        expect(yield* replica.get(entity.objectType, entity.key)).toBeUndefined();
+                })
             );
         }),
-        { numRuns: 25 }
-    );
-});
+    { arbitrary: { runs: 25 } }
+);
 
 test("coverage age and one-shot mode do not create a hidden polling or outbox lifetime", async () => {
     await Effect.runPromise(
@@ -333,7 +643,7 @@ test("coverage age and one-shot mode do not create a hidden polling or outbox li
                         ...f.backend,
                         watchSubset: () => {
                             watches++;
-                            return Stream.never;
+                            return Effect.succeed(Stream.never);
                         },
                     },
                 });
@@ -449,12 +759,12 @@ test("caller refresh settings override adapter recommendations while healthy wat
                     },
                 });
                 const subset = { from: { source: { objectType: "Project" }, binding: "p" } };
-                yield* Effect.scoped(replica.demand.acquire(subset));
+                yield* Effect.scoped(replica.demand.acquire(subset, { resultType: "complete" }));
                 yield* TestClock.adjust(1_000);
-                yield* Effect.scoped(replica.demand.acquire(subset));
+                yield* Effect.scoped(replica.demand.acquire(subset, { resultType: "complete" }));
                 expect(f.loads).toHaveLength(1);
                 yield* TestClock.adjust(1_000);
-                yield* Effect.scoped(replica.demand.acquire(subset));
+                yield* Effect.scoped(replica.demand.acquire(subset, { resultType: "complete" }));
                 expect(f.loads).toHaveLength(2);
                 const watched = yield* makeReplica({
                     ...f,
@@ -462,13 +772,13 @@ test("caller refresh settings override adapter recommendations while healthy wat
                     ir,
                     cache: { objects: false },
                     demand: { refresh: { maxCoverageAgeMs: 0 } },
-                    backend: { ...f.backend, watchSubset: () => Stream.never },
+                    backend: { ...f.backend, watchSubset: () => Effect.succeed(Stream.never) },
                 });
                 const owner = yield* Scope.make();
-                yield* Scope.provide(watched.demand.acquire(subset), owner);
+                yield* Scope.provide(watched.demand.acquire(subset, { resultType: "complete" }), owner);
                 const loads = f.loads.length;
                 yield* TestClock.adjust(60_000);
-                yield* Scope.provide(watched.demand.acquire(subset), owner);
+                yield* Scope.provide(watched.demand.acquire(subset, { resultType: "complete" }), owner);
                 expect(f.loads).toHaveLength(loads);
                 yield* Scope.close(owner, Exit.void);
             })

@@ -1,6 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
-import { connectOntologyHttp } from "@party-stack/ontology-server/rpc/http";
+import { makeOntologyHttpClient } from "@party-stack/ontology-server/rpc/http";
 import { sqliteOntologyConformanceIR } from "@party-stack/ontology/testing/sqlite";
 import { Bucket } from "alchemy/Cloudflare/R2/Bucket";
 import { Secret } from "alchemy/Cloudflare/SecretsStore";
@@ -65,13 +65,14 @@ const declare = Effect.fnUntraced(function* (bucket: R2Bucket, gc: OntologyDurab
               }
             : {}),
         context: { user: "tester" },
-        authorize: (_request, headers) =>
-            headers.authorization === "Bearer test"
-                ? Effect.void
+        dangerouslyAllowInternalAccess: true,
+        authenticate: (request) =>
+            request.headers.get("authorization") === "Bearer test"
+                ? Effect.succeed({})
                 : Effect.fail(
                       new BackendError({
-                          operation: "authorize",
-                          kind: "Forbidden",
+                          operation: "authentication",
+                          kind: "Unauthenticated",
                           message: "Denied",
                           retryable: false,
                       })
@@ -167,7 +168,8 @@ export const runOntologyResource: (
         )
     );
     const connect = (token: string) =>
-        connectOntologyHttp({ url: "https://resource.test/rpc" }).pipe(
+        makeOntologyHttpClient({ url: "https://resource.test/rpc" }).pipe(
+            Effect.flatMap((client) => client.ontology()),
             Effect.provide(FetchHttpClient.layer),
             Effect.provideService(FetchHttpClient.Fetch, (input, init) => {
                 const request = new Request(input, init);
@@ -222,7 +224,8 @@ export const runOntologyResource: (
             bucket
         )
     );
-    const restored = yield* connectOntologyHttp({ url: "https://resource.test/rpc" }).pipe(
+    const restored = yield* makeOntologyHttpClient({ url: "https://resource.test/rpc" }).pipe(
+        Effect.flatMap((client) => client.ontology()),
         Effect.provide(FetchHttpClient.layer),
         Effect.provideService(FetchHttpClient.Fetch, (input, init) => {
             const request = new Request(input, init);
@@ -243,7 +246,7 @@ export const runOntologyResource: (
             )
         ),
         schemaDeferred: schemaBefore.length === 0,
-        denied: Result.isFailure(denied) && denied.failure.kind === "Forbidden",
+        denied: Result.isFailure(denied) && denied.failure.kind === "Unauthenticated",
         firstAlarm: disabled ? firstAlarm === null : firstAlarm === earlier,
         scheduled: disabled ? afterAlarm === null : afterAlarm !== null && afterAlarm >= earlier,
         preservedAlarm: secondAlarm === afterAlarm,

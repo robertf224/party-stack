@@ -1,2 +1,2 @@
-export * from "./createFoundryMetaOntologyBackendAdapter.js";
+export * from "./backend.js";
 export * from "./convertMetaActionType.js";

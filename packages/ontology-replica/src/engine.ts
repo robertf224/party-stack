@@ -1,24 +1,24 @@
 import { isUnknownActionOutcome } from "@party-stack/ontology-backend";
 import { objectSubset, resolveSubsetSnapshot, coversSubset } from "@party-stack/ontology-backend/subset";
-import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
+import {
+    ontologyDefinitionSignature,
+    ontologyDefinitionContractSignature,
+} from "@party-stack/ontology-storage";
 import { tableUsage } from "@party-stack/ontology-storage/tables";
 import { alwaysOnlineConnectivity } from "@party-stack/runtime";
 import type { ConnectionMonitor } from "@party-stack/connect";
 import type { DeliveryPosition } from "@party-stack/ontology-backend/delivery";
 import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { NetworkConnectivity } from "@party-stack/runtime";
-import type { Scope } from "effect";
 export { makeCachedProxy } from "./proxy.js";
 import { BackendError, classifyBackendFailure, ActionReceiptSchema } from "@party-stack/ontology-backend";
 import { clientRegistry } from "@party-stack/ontology-backend/clients";
 import {
-    acknowledgeDelivery,
-    makeDelivery,
+    makeDeliveryManager,
     makeDeliveryReceiver,
     scanSelectedRows,
     scanDeliveryRows,
     deliveryKey,
-    collectDeliveryGarbage,
     type DeliveryFrame,
     type DeliveryMetadata,
     type DeliveryPolicy,
@@ -39,6 +39,7 @@ import {
     lte,
     OntologyStorageError,
     ConfigurationError,
+    TransactionError,
 } from "@party-stack/ontology-storage";
 import {
     digestBytes,
@@ -55,9 +56,10 @@ import {
     putVisible,
     deleteVisible,
 } from "@party-stack/ontology-storage/overlay";
-import { Table } from "@party-stack/ontology-storage/tables";
+import { Table, type ReadTable } from "@party-stack/ontology-storage/tables";
 import {
     Clock,
+    Context,
     Deferred,
     Effect,
     Exit,
@@ -66,6 +68,7 @@ import {
     Redacted,
     Schema,
     Semaphore,
+    Scope,
     Stream,
     Tracer,
 } from "effect";
@@ -73,12 +76,21 @@ import { hasWindow, isWholeCollection, primaryKeyLookup } from "./coverage.js";
 import { cachedCopy, withCachedCopy, encryptedCacheCodec, preserveCachedCopies } from "./encryptedCache.js";
 import { makeReplicaDiagnostics } from "./status.js";
 import type { ReplicaLoad, ReplicaStatus } from "./status.js";
+
+// Local selection fencing is execution context, never part of the provider's
+// immutable batch bytes or persisted replay fingerprint.
+const deliveryGeneration = Context.Reference<number | undefined>(
+    "@party-stack/ontology-replica/deliveryGeneration",
+    { defaultValue: () => undefined }
+);
 import type { Encrypted } from "@party-stack/ontology-spec/values";
 export { ReplicaStatusSchema, makeReplicaMonitor } from "./status.js";
 export type { ReplicaStatus, ReplicaLoad, ReplicaMonitor } from "./status.js";
+import { objectTypesWithAttachments } from "./attachmentCapability.js";
 import { makeDemandCache, type DemandPolicy } from "./demandCache.js";
-import { putIncomingRow } from "./incoming.js";
+import { putIncomingRow, putIncomingBaseRows } from "./incoming.js";
 import { connectReplicaParent, connectReplicaDelivery } from "./parent.js";
+import { primaryKeyQueries, primaryKeyTableQuery } from "./primaryKeyOrder.js";
 import { deliveryRecovery } from "./recovery.js";
 import { superviseWatch } from "./watch.js";
 export type { DemandPolicy } from "./demandCache.js";
@@ -134,6 +146,9 @@ interface Position {
     parentSubmissionSequence?: number;
     parentViewGeneration?: number;
     parentViewIdentity?: string;
+    deliverySelection?: string;
+    deliveryMembershipVersion?: 1;
+    deliveryResident?: boolean;
 }
 interface Coverage {
     complete?: boolean;
@@ -169,6 +184,9 @@ export interface ReplicaService extends OwnedReadTransaction {
         ) => Effect.Effect<A, BackendError | OntologyStorageError>
     ) => Effect.Effect<A, BackendError>;
     readonly visibleChanges: Effect.Effect<Stream.Stream<void>, BackendError, Scope.Scope>;
+    readonly visibleRevision: (tx: ReadTransaction) => Effect.Effect<number, OntologyStorageError>;
+    /** Read a local observation fence from this replica's own storage. */
+    readonly readVisibleRevision: Effect.Effect<number, BackendError>;
     readonly hasCoverage: (
         tx: ReadTransaction,
         subset: CompiledSubset
@@ -177,7 +195,13 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly ir: OntologyIR;
     readonly mode: "adapter" | "protocol";
     readonly connectivity: NetworkConnectivity;
-    readonly connection?: Pick<ConnectionMonitor, "state" | "changes">;
+    readonly connection?: ConnectionMonitor;
+    /** Shared by transient server wrappers; a failed cache repair survives endpoint release. */
+    readonly proxyInvalidation: {
+        writeGeneration: number;
+        invalidatedGeneration: number;
+        dirtyTypes: readonly string[] | undefined;
+    };
     /** Read-only diagnostics; inspecting never acquires remote demand. */
     readonly status: Effect.Effect<ReplicaStatus, BackendError>;
     readonly statuses: Stream.Stream<ReplicaStatus, BackendError>;
@@ -223,7 +247,10 @@ export interface ReplicaService extends OwnedReadTransaction {
         resume?: DeliveryPosition
     ) => Effect.Effect<DeliverySubscription, BackendError, Scope.Scope>;
     readonly resetParentDelivery: Effect.Effect<void, BackendError>;
-    readonly receiveDelivery: (frame: DeliveryFrame) => Effect.Effect<
+    readonly receiveDelivery: (
+        frame: DeliveryFrame,
+        generation?: number
+    ) => Effect.Effect<
         | {
               position: import("@party-stack/ontology-backend/delivery").DeliveryPosition;
               metadata: DeliveryMetadata;
@@ -317,8 +344,11 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly pin: (objectType: string, key: Key, pinned: boolean) => Effect.Effect<void, BackendError>;
     /** Explicit full checkpoint: refresh state and process pending actions. Not a read-readiness API. */
     readonly syncOnce: Effect.Effect<void, BackendError>;
-    /** Refresh state only, reporting this subset's load failure. Never submits actions. */
-    readonly syncSubset: (subset: CompiledSubset) => Effect.Effect<void, BackendError>;
+    /** Refresh state only, or accept a retained previous confirmation. Never submits actions. */
+    readonly syncSubset: (
+        subset: CompiledSubset,
+        settings?: { readonly resultType?: "cached" | "complete" }
+    ) => Effect.Effect<void, BackendError>;
     readonly invalidate: (objectTypes?: readonly string[]) => Effect.Effect<void, BackendError>;
     readonly ensureIndex: (objectType: string, index: Index) => Effect.Effect<void, BackendError>;
     readonly collectGarbage: (options?: ObjectCacheSweepOptions) => Effect.Effect<number, BackendError>;
@@ -339,7 +369,7 @@ interface ReplicaCommonOptions {
     /** Idempotent local receipt application. Runs only after the receipt is durable; failures retry without dispatch. */
     readonly onReceipt?: (receipt: ActionReceipt) => Effect.Effect<void, BackendError>;
     readonly connectivity?: NetworkConnectivity;
-    readonly connection?: Pick<ConnectionMonitor, "state" | "changes">;
+    readonly connection?: ConnectionMonitor;
     /** Private controller scheduling switch for deterministic state-machine fixtures. */
     readonly startSync?: boolean;
     readonly live?: boolean;
@@ -416,6 +446,17 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const canSync = Effect.gen(function* () {
         return (yield* connectivity.online) && (!connection || connection.state.status === "active");
     });
+    const awaitAuthentication = connection
+        ? Effect.suspend(() =>
+              connection.state.status === "active"
+                  ? Effect.void
+                  : connection.changes.pipe(
+                        Stream.filter(() => connection.state.status === "active"),
+                        Stream.runHead,
+                        Effect.flatMap((active) => (active._tag === "Some" ? Effect.void : Effect.never))
+                    )
+          )
+        : Effect.void;
     const maxCoverageAge = options.demand?.refresh?.maxCoverageAgeMs ?? 60_000;
     if (Number.isNaN(maxCoverageAge) || maxCoverageAge < 0)
         return yield* fault("InvalidConfiguration", "Coverage age must be nonnegative or Infinity.");
@@ -451,6 +492,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         ? Effect.succeed(adapter)
         : Effect.fail(fault("NotImplemented", "This Replica receives state through its protocol source."));
     const name = (part: string) => JSON.stringify(["replica", options.namespace, part]);
+    const committedDeliveries = yield* makeDeliveryManager({
+        tables: options.tables,
+        namespace: name("committed"),
+    });
+    const speculativeDeliveries = yield* makeDeliveryManager({
+        tables: options.tables,
+        namespace: name("speculative"),
+    });
     const stateHead = Table.make<{ sourceId: string; revision: number; visibleRevision?: number }>({
         name: name("state-head"),
     });
@@ -466,6 +515,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const importedPending = Table.make<PendingAction>({ name: name("parent-pending") });
     const importedCompleted = Table.make<PendingAction>({ name: name("parent-completed") });
     const views = new Map<string, Overlay<ObjectValue>>();
+    const primaryKeys = new Map<ReadTable<unknown>, string>();
     const visibleEvents = yield* PubSub.sliding<VisibleCommit>(16);
     yield* Effect.addFinalizer(() => PubSub.shutdown(visibleEvents));
     const cachePressure = yield* Queue.sliding<void>(1);
@@ -478,13 +528,36 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 v.overrides,
             ]) as Table<unknown>[],
     });
+    let closed = false;
+    const open = Effect.suspend(() =>
+        closed ? Effect.fail(fault("InvalidRequest", "Replica scope is closed.")) : Effect.void
+    );
+    yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+            closed = true;
+        })
+    );
     const tables: TablesService = {
         ...options.tables,
+        query: primaryKeyTableQuery(options.tables.query, primaryKeys),
+        read: (body) => options.tables.read((tx) => body(primaryKeyQueries(tx, primaryKeys))),
         transaction: (body) =>
             options.tables
                 .transaction((tx) =>
                     Effect.gen(function* () {
-                        const tracked = trackVisible(tx, views);
+                        // A caller can pass its entry guard and then wait for
+                        // storage while this owner closes. Fence the actual
+                        // transaction too, before admitting any old intent.
+                        if (closed)
+                            return yield* new OntologyStorageError({
+                                operation: "replica.transaction",
+                                reason: new TransactionError({
+                                    kind: "Closed",
+                                    retryable: false,
+                                    message: "Replica scope is closed.",
+                                }),
+                            });
+                        const tracked = trackVisible(primaryKeyQueries(tx, primaryKeys), views);
                         const result = yield* body(tracked.tx);
                         const delta = yield* tracked.finish;
                         const head = yield* tx.get(stateHead, "head");
@@ -517,7 +590,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                       options.objectCacheGc && options.objectCacheGc.maxBytes !== undefined
                                           ? Queue.offer(cachePressure, undefined)
                                           : Effect.void
-                                  )
+                                  ),
+                                  Effect.withSpan("Replica.visible.publish")
                               )
                             : Effect.void
                     ),
@@ -572,11 +646,13 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 properties
             ),
         });
+        primaryKeys.set(base, type.primaryKey);
         const inherited = options.source
             ? overlay(base, { name: name(`parent-overlay:${type.name}`) }).overrides
             : undefined;
         views.set(type.name, overlay(base, { name: name(`overlay:${type.name}`), inherited }));
     }
+    const attachmentTypes = objectTypesWithAttachments(options.ir);
     const blobGroup = (type: string, kind: "base" | "overlay") =>
         JSON.stringify(["replica-row", options.namespace, kind, type]);
     const retainRowBlobs = (
@@ -587,7 +663,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         kind: "base" | "overlay",
         additional?: ObjectValue
     ) => {
-        if (!options.blobs) return Effect.void;
+        if (!options.blobs || !attachmentTypes.has(type)) return Effect.void;
         const group = blobGroup(type, kind);
         const owner = JSON.stringify([group, key]);
         return value === undefined && additional === undefined
@@ -643,6 +719,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     });
     const sweep = Table.make<{ after?: Cursor; reclaiming?: boolean }>({ name: name("sweep") });
     const rootOwner = crypto.randomUUID();
+    const rootScope = yield* Effect.scope;
     const rootCounts = new Map<string, number>();
     const rootGate = yield* Semaphore.make(1);
     const pins = Table.make<{ objectType: string; key: Key }>({ name: name("pins") });
@@ -650,8 +727,24 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         try: () => ontologyDefinitionSignature(options.ir),
         catch: (cause) => fault("InvalidConfiguration", "Invalid ontology definition.", cause),
     });
+    const contractSignature = yield* Effect.try({
+        try: () => ontologyDefinitionContractSignature(options.ir),
+        catch: (cause) => fault("InvalidConfiguration", "Invalid ontology definition.", cause),
+    });
+    const sameDefinitionContract = (stored: string) => {
+        if (stored === signature) return true;
+        try {
+            const definition = Table.make<OntologyIR>({ name: "replica-definition" }).decode(stored);
+            return ontologyDefinitionContractSignature(definition) === contractSignature;
+        } catch {
+            return false;
+        }
+    };
     const schemaHash = yield* boundary(
-        digestBytes({ type: "application/json", stream: Stream.make(new TextEncoder().encode(signature)) })
+        digestBytes({
+            type: "application/json",
+            stream: Stream.make(new TextEncoder().encode(contractSignature)),
+        })
     );
     const deliveryActive =
         options.startSync !== false && Boolean(options.source?.subscribe || adapter?.subscribeSelection);
@@ -671,6 +764,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             revision: number;
             installed: number;
             watchers: number;
+            watchReady?: Deferred.Deferred<void>;
+            sourceReady?: Deferred.Deferred<void, BackendError>;
             watched?: boolean;
             loadFailure?: { readonly revision: number; readonly error: BackendError };
             watchFailure?: BackendError;
@@ -681,15 +776,51 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         }
     >();
     const actionInterests = new Map<string, readonly string[] | undefined>();
-    let closed = false;
-    const open = Effect.suspend(() =>
-        closed ? Effect.fail(fault("InvalidRequest", "Replica scope is closed.")) : Effect.void
-    );
-    yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-            closed = true;
-        })
-    );
+    // Transient IO fences, bounded by the definition's object types. Durable
+    // completeness lives in coverage; these only identify overlapping fetches.
+    const coverageGenerations = new Map(options.ir.objectTypes.map((type) => [type.name, Symbol()]));
+    const coverageFor = Effect.fnUntraced(function* (tx: ReadTransaction, subset: CompiledSubset) {
+        const key = subsetKey(subset);
+        const exact = yield* tx.get(coverage, key);
+        if (exact?.complete && !exact.invalidated) return exact;
+        const reused = demands.get(key)?.coveredBy;
+        if (reused && subsetKey(reused) !== key && (!deliveryActive || demands.has(subsetKey(reused)))) {
+            const covering = yield* tx.get(coverage, subsetKey(reused));
+            if (covering?.complete && !covering.invalidated) return covering;
+        }
+        // A maintained live region can answer a new child selection before a
+        // sync pass has assigned its coveredBy field. This applies to snapshot
+        // adapters with healthy watches as well as incremental parent delivery.
+        // Cached rows or a retired/polling/failed watch cannot prove readiness.
+        for (const [candidateKey, candidate] of demands) {
+            if (!coversSubset(subset, candidate.subset)) continue;
+            if (
+                !deliveryActive &&
+                (candidate.watchers === 0 ||
+                    candidate.pollIntervalMs !== undefined ||
+                    candidate.watchFailure ||
+                    candidate.installed !== candidate.revision)
+            )
+                continue;
+            const record = yield* tx.get(coverage, candidateKey);
+            if (record?.complete && !record.invalidated && coversSubset(subset, record.subset)) return record;
+        }
+        return exact;
+    });
+    // A previous confirmation is useful to readers even after a watch gap or
+    // invalidation makes it stale. Residency is still required: collectors and
+    // view replacement delete these proofs together with the data they protect.
+    // This does not prove current completeness, including a bounded query's
+    // current boundary after later changes to its retained rows.
+    const cachedCoverageFor = Effect.fnUntraced(function* (tx: ReadTransaction, subset: CompiledSubset) {
+        const exact = yield* tx.get(coverage, subsetKey(subset));
+        if (exact?.complete) return exact;
+        for (const { value: record } of yield* tx.query(coverage, {
+            where: eq(field("subset", "objectType"), subset.objectType),
+        }))
+            if (record.complete && coversSubset(subset, record.subset)) return record;
+        return undefined;
+    });
     const view = (type: string) => {
         const found = views.get(type);
         return found
@@ -713,6 +844,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     let authenticationGeneration = 0;
     const authentication = connection
         ? {
+              awaitActive: awaitAuthentication,
               generation: Effect.sync(() => authenticationGeneration),
               awaitActivation: (after: number) =>
                   Effect.scoped(
@@ -745,7 +877,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     );
     const wake = wakeState.pipe(Effect.andThen(wakeOutbox));
     const access = <A, E, R>(work: Effect.Effect<A, E, R>) => open.pipe(Effect.andThen(boundary(work)));
-    const retain = (objectType: string, kind: "remote" | "reader", key: string, subset?: CompiledSubset) =>
+    const retainLease = (
+        objectType: string,
+        kind: "remote" | "reader",
+        key: string,
+        subset?: CompiledSubset
+    ) =>
         Effect.acquireRelease(
             rootGate.withPermits(1)(
                 boundary(
@@ -777,6 +914,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                     revision: 1,
                                     installed: 0,
                                     watchers: 0,
+                                    watchReady:
+                                        !options.source && !deliveryActive && options.live !== false
+                                            ? yield* Deferred.make<void>()
+                                            : undefined,
                                 });
                             yield* wakeState;
                         }
@@ -800,6 +941,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 if (current && current.count > 1) current.count--;
                                 else {
                                     if (current?.watched) {
+                                        coverageGenerations.set(objectType, Symbol());
                                         const previous = yield* tables.get(coverage, key);
                                         if (previous)
                                             yield* tables.put(coverage, key, {
@@ -817,6 +959,18 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     )
                     .pipe(Effect.orDie)
         ).pipe(Effect.asVoid);
+
+    // A consumer may outlive the replica (for example a React inspector during
+    // account switching). Either scope closes the same lease, exactly once,
+    // before this replica's storage and notification services are released.
+    const retain = Effect.fnUntraced(function* (...args: Parameters<typeof retainLease>) {
+        const lease = yield* Effect.acquireRelease(Scope.fork(rootScope), (scope, exit) =>
+            Scope.close(scope, exit)
+        );
+        yield* Scope.provide(retainLease(...args), lease).pipe(
+            Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(lease, exit) : Effect.void))
+        );
+    });
 
     const pendingIn = (tx: ReadTransaction) =>
         tx
@@ -837,19 +991,19 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     "SourceMismatch",
                     "Replica source changed; reset this namespace explicitly."
                 );
-            if (stored && stored.signature !== signature)
+            if (stored && !sameDefinitionContract(stored.signature))
                 return yield* fault(
                     "SchemaMismatch",
                     "Replica definition changed; migrate or reset this namespace explicitly."
                 );
-            return (
-                stored ?? {
-                    sequence: 0,
-                    source: sourceId,
-                    signature,
-                    ...(options.source ? { mode: "parent" as const } : {}),
-                }
-            );
+            return stored
+                ? { ...stored, signature }
+                : {
+                      sequence: 0,
+                      source: sourceId,
+                      signature,
+                      ...(options.source ? { mode: "parent" as const } : {}),
+                  };
         });
     const reader = (tx: ReadTransaction, confirmed: boolean): OwnedReadTransaction => ({
         get: (type, key) =>
@@ -1210,6 +1364,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     ) {
         const backend = yield* backendEffect;
         yield* Effect.annotateCurrentSpan("objectType", subset.objectType);
+        const generation = coverageGenerations.get(subset.objectType);
+        const demandKey = subsetKey(subset);
+        const capturedDemand = demands.get(demandKey);
+        const demandRevision = capturedDemand?.revision;
+        const invalidated = () =>
+            coverageGenerations.get(subset.objectType) !== generation ||
+            demands.get(demandKey) !== capturedDemand ||
+            capturedDemand?.revision !== demandRevision;
         // Local reads apply their own offset. Install the complete leading prefix
         // so a pushed-down offset is not applied twice against a cold cache.
         const request = subset.query ? { ...subset, query: retentionQuery(subset.query) } : subset;
@@ -1218,6 +1380,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         const expanded = options.storeBroaderSubsets === true;
         const storedSubset = expanded ? resolved.fulfilled : subset;
         const storedRows = expanded ? resolved.fulfilledRows : snapshot.rows;
+        yield* Effect.annotateCurrentSpan({
+            rows: snapshot.rows.length,
+            storedRows: storedRows.length,
+            reason,
+        });
+        let repairCandidates = 0;
+        let repairRequests = 0;
+        let repairRows = 0;
         if (requireComplete && !snapshot.complete)
             return yield* fault("Unavailable", "Action read-back was incomplete.");
         const v = yield* view(subset.objectType);
@@ -1236,8 +1406,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             const returned = new Set(storedRows.map((row) => row.key));
             const candidates = yield* boundary(tables.query(v.base, { where: storedSubset.query?.where }));
             const missing = candidates.filter((row) => !returned.has(row.key)).map((row) => row.key);
+            repairCandidates = missing.length;
             for (let offset = 0; offset < missing.length; offset += 128) {
                 const keys = missing.slice(offset, offset + 128);
+                repairRequests++;
                 const repairResult = yield* loadSubset(
                     {
                         objectType: subset.objectType,
@@ -1248,6 +1420,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     "repair"
                 );
                 const repair = repairResult.snapshot;
+                repairRows += repair.rows.length;
                 if (!repair.complete)
                     return yield* fault("Unavailable", "Filtered snapshot repair was incomplete.");
                 for (const key of keys) repaired.set(key, undefined);
@@ -1261,47 +1434,112 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 }
             }
         }
+        yield* Effect.annotateCurrentSpan({ repairCandidates, repairRequests, repairRows });
         const now = yield* Clock.currentTimeMillis;
         return (tx: Transaction) =>
             Effect.gen(function* () {
+                let inserted = 0;
+                let updated = 0;
+                let unchanged = 0;
+                let removed = 0;
+                let retentionRows = 0;
                 const incoming = [
                     ...storedRows,
                     ...[...repaired].flatMap(([key, value]) => (value === undefined ? [] : [{ key, value }])),
                 ];
-                const preserved = new Map<Key, ObjectValue>();
                 const properties = encryptedProperties.get(subset.objectType)!;
-                if (properties.length)
-                    for (const row of incoming)
-                        preserved.set(
-                            row.key,
-                            preserveCachedCopies(yield* tx.get(v.base, row.key), row.value, properties)
-                        );
                 // Only an unfiltered complete snapshot can prove arbitrary cached keys were removed.
                 if (snapshot.complete && isWholeCollection(storedSubset.query)) {
-                    yield* clearRowBlobs(tx, subset.objectType, "base");
-                    yield* tx.clear(v.base);
+                    const returned = new Set(incoming.map((row) => row.key));
+                    yield* scanDeliveryRows(tx, v.base, {}, (row) =>
+                        boundary(
+                            Effect.gen(function* () {
+                                if (returned.has(row.key)) return;
+                                removed++;
+                                yield* retainRowBlobs(tx, subset.objectType, row.key, undefined, "base");
+                                yield* tx.delete(v.base, row.key);
+                                yield* tx.delete(retention, identity(subset.objectType, row.key));
+                            })
+                        )
+                    );
                 }
                 for (const [key, value] of repaired) {
                     if (value !== undefined) continue;
+                    removed++;
                     yield* retainRowBlobs(tx, subset.objectType, key, undefined, "base");
                     yield* tx.delete(v.base, key);
                     yield* tx.delete(retention, identity(subset.objectType, key));
                 }
-                for (const row of incoming) {
-                    if (row.value[definitions.get(subset.objectType)!.primaryKey] !== row.key)
-                        return yield* fault("InvalidResponse", "Snapshot key does not match its row.");
-                    yield* retainRowBlobs(tx, subset.objectType, row.key, row.value, "base");
-                    yield* tx.put(v.base, row.key, preserved.get(row.key) ?? row.value);
-                    yield* tx.put(retention, identity(subset.objectType, row.key), {
-                        objectType: subset.objectType,
-                        key: row.key,
-                        accessedAt: now,
-                    });
+                for (let offset = 0; offset < incoming.length; offset += 128) {
+                    const page = incoming.slice(offset, offset + 128);
+                    // Incoming snapshots already carry native storage keys. Avoid
+                    // reading primary-key index entries to rediscover those keys.
+                    const attributes = { objectType: subset.objectType, rows: page.length };
+                    const previous = new Map(
+                        (yield* tx
+                            .getMany(
+                                v.base,
+                                page.map((row) => row.key)
+                            )
+                            .pipe(Effect.withSpan("Replica.snapshot.readPrevious", { attributes }))).map(
+                            (row) => [row.key, row.value]
+                        )
+                    );
+                    const changed = yield* Effect.gen(function* () {
+                        const changed: Row<ObjectValue>[] = [];
+                        for (let index = 0; index < page.length; index++) {
+                            const row = page[index]!;
+                            if (row.value[definitions.get(subset.objectType)!.primaryKey] !== row.key)
+                                return yield* fault(
+                                    "InvalidResponse",
+                                    "Snapshot key does not match its row."
+                                );
+                            const before = previous.get(row.key);
+                            const value = preserveCachedCopies(before, row.value, properties);
+                            // Watch invalidations can refresh a whole collection after an
+                            // unrelated edit. Preserve unchanged rows, indexes and blob roots.
+                            if (before === undefined || v.base.encode(before) !== v.base.encode(value)) {
+                                if (before === undefined) inserted++;
+                                else updated++;
+                                yield* retainRowBlobs(tx, subset.objectType, row.key, value, "base");
+                                changed.push({ key: row.key, value });
+                            } else unchanged++;
+                        }
+                        return changed;
+                    }).pipe(Effect.withSpan("Replica.snapshot.compare", { attributes }));
+                    yield* tx.putMany(v.base, changed).pipe(
+                        Effect.withSpan("Replica.snapshot.putBase", {
+                            attributes: {
+                                objectType: subset.objectType,
+                                rows: changed.length,
+                                count: page.length,
+                            },
+                        })
+                    );
+                    // Returned rows were accessed by the requested snapshot. Identity
+                    // repairs also inspect older cached rows outside that result; an
+                    // unchanged repair must not renew an unrelated row's cache age.
+                    // Changed/inserted repairs keep their existing write-access behavior.
+                    const changedKeys = new Set(changed.map((row) => row.key));
+                    const accessed = page.filter(
+                        (row, index) => offset + index < storedRows.length || changedKeys.has(row.key)
+                    );
+                    retentionRows += accessed.length;
+                    yield* tx
+                        .putMany(
+                            retention,
+                            accessed.map((row) => ({
+                                key: identity(subset.objectType, row.key),
+                                value: { objectType: subset.objectType, key: row.key, accessedAt: now },
+                            }))
+                        )
+                        .pipe(Effect.withSpan("Replica.snapshot.putRetention", { attributes }));
                 }
                 if (expanded && subsetKey(storedSubset) !== subsetKey(subset))
                     yield* tx.put(coverage, subsetKey(storedSubset), {
                         subset: storedSubset,
                         complete: snapshot.complete,
+                        invalidated: invalidated(),
                         snapshotCursor: snapshot.cursor,
                         barrierCursor:
                             snapshot.cursor !== (yield* position(tx)).cursor ? snapshot.cursor : undefined,
@@ -1311,13 +1549,32 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 yield* tx.put(coverage, subsetKey(subset), {
                     subset,
                     complete: snapshot.complete,
+                    invalidated: invalidated(),
                     snapshotCursor: snapshot.cursor,
                     barrierCursor:
                         snapshot.cursor !== (yield* position(tx)).cursor ? snapshot.cursor : undefined,
                     rowKeys: snapshot.rows.map((row) => row.key),
                     updatedAt: now,
                 });
-            });
+                yield* Effect.annotateCurrentSpan({
+                    rows: incoming.length,
+                    retentionRows,
+                    changed: inserted + updated,
+                    inserted,
+                    updated,
+                    unchanged,
+                    // Counts removal commands; a concurrently absent repair key
+                    // is deliberately not re-read only for diagnostic accounting.
+                    removed,
+                    repairCandidates,
+                    repairRequests,
+                    repairRows,
+                });
+            }).pipe(
+                Effect.withSpan("Replica.snapshot.write", {
+                    attributes: { objectType: subset.objectType, reason },
+                })
+            );
     });
     const installSnapshot = Effect.fn("Replica.installSnapshot")(function* (
         subset: CompiledSubset,
@@ -1645,12 +1902,16 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const maintain = Effect.fn("Replica.maintenance")(function* () {
         const clients = yield* service.collectClientGarbage;
         const records = yield* collectResults;
-        yield* collectDeliveryGarbage(options.tables, name("committed"));
-        yield* collectDeliveryGarbage(options.tables, name("speculative"));
+        yield* committedDeliveries.collectGarbage;
+        yield* speculativeDeliveries.collectGarbage;
         if (clients || records) yield* notify;
     });
-    const saveReceipt = (entry: PendingAction, receipt: ActionReceipt, bindings: boolean) =>
-        tables.transaction((tx) =>
+    const saveReceipt = Effect.fn("Replica.saveReceipt")(function* (
+        entry: PendingAction,
+        receipt: ActionReceipt,
+        bindings: boolean
+    ) {
+        yield* tables.transaction((tx) =>
             Effect.gen(function* () {
                 const done = yield* tx.get(completed, entry.invocation.id);
                 if (done) yield* tx.put(completed, entry.invocation.id, { ...done, receipt });
@@ -1669,6 +1930,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 if (bindings) yield* bindReceiptBlobs(tx, receipt, entry.invocation);
             })
         );
+    });
     let recoveredOutbox = false;
     const recoverOutbox = Effect.fnUntraced(function* () {
         if (recoveredOutbox) return;
@@ -1829,7 +2091,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 );
                 yield* notify;
             }
-            yield* boundary(tables.transaction((tx) => bindReceiptBlobs(tx, receipt!, head.invocation)));
+            if (
+                !newlyReceived &&
+                options.blobs &&
+                (receipt.attachmentIdMappings?.length || attachmentIds(head.invocation).length)
+            )
+                yield* boundary(
+                    tables.transaction((tx) => bindReceiptBlobs(tx, receipt!, head.invocation))
+                ).pipe(Effect.withSpan("Replica.bindReceiptAttachments"));
             if (newlyReceived) yield* options.onReceipt?.(receipt) ?? Effect.void;
             if (receipt.cursor && backend.changes && !deliveryActive) {
                 yield* pull();
@@ -1862,7 +2131,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             }
         }
     });
-    const sync = Effect.fn("Replica.sync", { root: true })(function* (requested?: string) {
+    const sync = Effect.fn("Replica.sync", { root: true })(function* (requested?: ReadonlySet<string>) {
         yield* open;
         if (replicationError?.recovery === "stop")
             return yield* fault(replicationError.kind, replicationError.message);
@@ -1888,13 +2157,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             records: readonly Row<Coverage>[],
             cursor?: string
         ) {
+            const requestedKey = subsetKey(subset);
             const key = primaryKeyLookup(subset.query, definitions.get(subset.objectType)!.primaryKey);
-            const present =
-                key !== undefined &&
-                (yield* boundary(tx.get((yield* view(subset.objectType)).base, key))) !== undefined;
-            for (const { value: record } of records) {
+            let present: boolean | undefined;
+            for (const { key: recordKey, value: record } of records) {
                 if (record.invalidated) continue;
-                const live = demands.get(subsetKey(record.subset));
+                const live = demands.get(String(recordKey));
                 const maxAge =
                     options.demand?.refresh?.maxCoverageAgeMs ??
                     backend.refresh?.(objectSubset(record.subset.objectType, record.subset.query))
@@ -1908,9 +2176,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     live.installed === live.revision;
                 const maintained = backend.changes
                     ? record.snapshotCursor !== undefined && record.barrierCursor === undefined
-                    : liveWatch ||
-                      ((!live || live.installed === 0 || live.installed === live.revision) &&
-                          now - record.updatedAt < maxAge);
+                    : liveWatch || now - record.updatedAt < maxAge;
                 if (!maintained) continue;
                 const proof = (reason: "collection" | "query" | "primary-key") => ({
                     subset: record.subset,
@@ -1929,7 +2195,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 if (record.complete && isWholeCollection(record.subset.query)) return proof("collection");
                 if (
                     record.complete &&
-                    subsetKey(record.subset) === subsetKey(subset) &&
+                    recordKey === requestedKey &&
                     (!backend.changes || !hasWindow(subset.query) || record.snapshotCursor === cursor)
                 )
                     return proof("query");
@@ -1946,12 +2212,17 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         key
                 )
                     return proof("query");
-                if (key !== undefined && present && record.rowKeys?.includes(key))
-                    return proof("primary-key");
+                if (key !== undefined && record.rowKeys?.includes(key)) {
+                    present ??=
+                        (yield* boundary(tx.get((yield* view(subset.objectType)).base, key))) !== undefined;
+                    if (present) return proof("primary-key");
+                }
             }
             return undefined;
         });
         type CoverageCheck = {
+            demand: NonNullable<ReturnType<typeof demands.get>>;
+            generation: symbol | undefined;
             revision: number;
             cached?: Coverage;
             covering?: Effect.Success<ReturnType<typeof covered>>;
@@ -1961,41 +2232,70 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         // transactions let long delivery writes repeatedly jump between these
         // tiny reads while sync holds the publication gate, starving dispatch.
         const readChecks = (objectType?: string) =>
-            boundary(
-                tables.read((tx) =>
-                    Effect.gen(function* () {
-                        const head = yield* position(tx);
-                        const byType = new Map<string, readonly Row<Coverage>[]>();
-                        for (const [key, demand] of demands) {
-                            if (
-                                deliveryActive ||
-                                (objectType !== undefined && demand.subset.objectType !== objectType)
-                            )
-                                continue;
-                            const revision = demand.revision;
-                            let records = byType.get(demand.subset.objectType);
-                            if (!records) {
-                                records = yield* tx.query(coverage, {
-                                    where: eq(field("subset", "objectType"), demand.subset.objectType),
-                                });
-                                byType.set(demand.subset.objectType, records);
-                            }
-                            checks.set(key, {
-                                revision,
-                                cached: records.find((row) => row.key === subsetKey(demand.subset))?.value,
-                                covering: yield* covered(tx, demand.subset, records, head.cursor),
-                            });
-                        }
-                    })
-                )
-            );
+            Effect.suspend(() => {
+                // Capture transient fences before the first asynchronous storage
+                // operation, not after reading records that may already be stale.
+                const selected = [...demands]
+                    .filter(
+                        ([, demand]) =>
+                            !deliveryActive &&
+                            (objectType === undefined || demand.subset.objectType === objectType)
+                    )
+                    .map(([key, demand]) => ({
+                        key,
+                        demand,
+                        revision: demand.revision,
+                        generation: coverageGenerations.get(demand.subset.objectType),
+                    }));
+                return boundary(
+                    tables
+                        .read((tx) =>
+                            Effect.gen(function* () {
+                                const head = yield* position(tx);
+                                const byType = new Map<string, readonly Row<Coverage>[]>();
+                                yield* Effect.annotateCurrentSpan("demands", selected.length);
+                                for (const type of new Set(
+                                    selected.map(({ demand }) => demand.subset.objectType)
+                                ))
+                                    byType.set(
+                                        type,
+                                        yield* tx.query(coverage, {
+                                            where: eq(field("subset", "objectType"), type),
+                                        })
+                                    );
+                                yield* Effect.forEach(
+                                    selected,
+                                    ({ key, demand, revision, generation }) =>
+                                        Effect.gen(function* () {
+                                            const records = byType.get(demand.subset.objectType)!;
+                                            checks.set(key, {
+                                                demand,
+                                                generation,
+                                                revision,
+                                                cached: records.find((row) => row.key === key)?.value,
+                                                covering: yield* covered(
+                                                    tx,
+                                                    demand.subset,
+                                                    records,
+                                                    head.cursor
+                                                ),
+                                            });
+                                        }),
+                                    { concurrency: 128, discard: true }
+                                );
+                            })
+                        )
+                        .pipe(Effect.withSpan("Replica.checkCoverage"))
+                );
+            });
         yield* Effect.annotateCurrentSpan("stage", "checking-coverage");
         yield* readChecks();
         // Snapshot refresh follows journal catch-up, so historical commits cannot replace newer snapshots.
         let demandFailure: BackendError | undefined;
+        let coverageChanged = false;
         for (const demand of demands.values()) {
             if (deliveryActive) continue;
-            const relevant = requested === undefined || requested === subsetKey(demand.subset);
+            const relevant = requested === undefined || requested.has(subsetKey(demand.subset));
             if (demand.loadFailure?.revision === demand.revision && !demand.loadFailure.error.retryable) {
                 if (relevant) demandFailure ??= demand.loadFailure.error;
                 continue;
@@ -2004,11 +2304,29 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 stage: "checking-coverage",
                 objectType: demand.subset.objectType,
             });
-            const check = checks.get(subsetKey(demand.subset));
+            const key = subsetKey(demand.subset);
+            let check = checks.get(key);
+            while (
+                check &&
+                (check.demand !== demand ||
+                    check.revision !== demand.revision ||
+                    check.generation !== coverageGenerations.get(demand.subset.objectType))
+            ) {
+                if (demands.get(key) !== demand) {
+                    check = undefined;
+                    break;
+                }
+                yield* readChecks(demand.subset.objectType);
+                check = checks.get(key);
+            }
             if (!check) continue; // A concurrently acquired demand has its own queued check.
             const cached = check.cached;
-            const coveringSubset = check.revision === demand.revision ? check.covering : undefined;
+            const coveringSubset = check.covering;
             if (coveringSubset) {
+                coverageChanged ||=
+                    demand.installed !== demand.revision ||
+                    !demand.coveredBy ||
+                    subsetKey(demand.coveredBy) !== subsetKey(coveringSubset.subset);
                 demand.installed = demand.revision;
                 demand.loadFailure = undefined;
                 demand.coveredBy = coveringSubset.subset;
@@ -2026,6 +2344,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 demand.installed === demand.revision
             )
                 continue;
+            // A watch must be registered before a new snapshot starts. The
+            // background pass skips opening watches rather than holding the
+            // publication gate across network acquisition.
+            if (demand.watchReady && !(yield* Deferred.isDone(demand.watchReady))) continue;
             yield* Effect.annotateCurrentSpan("stage", "loading-subset");
             const revision = demand.revision;
             const authenticationAtLoad = authenticationGeneration;
@@ -2051,12 +2373,17 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 } else demand.loadFailure = { revision, error: installed.failure };
                 if (relevant) demandFailure ??= installed.failure;
             } else if (installed.success) {
+                coverageChanged = true;
                 demand.installed = revision;
                 demand.loadFailure = undefined;
                 // A newly loaded superset can satisfy later demands of this type.
                 yield* readChecks(demand.subset.objectType);
             }
         }
+        // Snapshot writes notify before this in-memory readiness bookkeeping.
+        // A child may have captured those rows with incomplete coverage already;
+        // publish the readiness transition even when no additional rows changed.
+        if (coverageChanged) yield* notify;
         if (demandFailure) return yield* demandFailure;
     });
     const parentStateIn = Effect.fnUntraced(function* (tx: ReadTransaction) {
@@ -2129,9 +2456,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             objects.push({ objectType, base, overrides });
         }
         const actions = Effect.fnUntraced(function* (
-            table: import("@party-stack/ontology-storage/tables").Table<PendingAction>
+            table: import("@party-stack/ontology-storage/tables").Table<PendingAction>,
+            pending = false
         ) {
-            if (!selected || selected.selection.inspectActions)
+            if (!selected || (pending && selected.selection.inspectActions))
                 return (yield* tx.query(table)).map((row) => row.value);
             const entries: PendingAction[] = [];
             for (const id of selected.selection.actionIds) {
@@ -2141,9 +2469,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             return entries;
         });
         const pending = new Map(
-            (parent ? yield* actions(importedPending) : []).map((entry) => [entry.invocation.id, entry])
+            (parent ? yield* actions(importedPending, true) : []).map((entry) => [entry.invocation.id, entry])
         );
-        for (const entry of yield* actions(outbox))
+        for (const entry of yield* actions(outbox, true))
             if (!(entry as LocalAction).includedInBase) pending.set(entry.invocation.id, publicAction(entry));
         const done = new Map(
             (parent ? yield* actions(importedCompleted) : []).map((entry) => [entry.invocation.id, entry])
@@ -2205,7 +2533,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         yield* tx.put(metadata, "head", { ...state, sequence: resolved.sequence });
         return resolved;
     });
-    const runStateSync = (requested?: string) =>
+    const runStateSync = (requested?: ReadonlySet<string>) =>
         gate
             .withPermit(diagnostics.sync(sync(requested)))
             .pipe(
@@ -2216,16 +2544,22 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         maintain(),
         options.source
             ? Effect.suspend(() => service.syncParent(options.source!))
-            : gate.withPermit(
-                  diagnostics.sync(
-                      Effect.gen(function* () {
-                          yield* recoverOutbox();
-                          const state = yield* Effect.result(sync());
-                          yield* drainOutbox(false);
-                          if (state._tag === "Failure") return yield* state.failure;
-                      })
+            : gate
+                  .withPermit(
+                      diagnostics.sync(
+                          Effect.gen(function* () {
+                              yield* recoverOutbox();
+                              const state = yield* Effect.result(sync());
+                              yield* drainOutbox(false);
+                              if (state._tag === "Failure") return yield* state.failure;
+                          })
+                      )
                   )
-              )
+                  .pipe(
+                      Effect.andThen(
+                          Effect.suspend(() => (openingWatches().length ? syncReady() : Effect.void))
+                      )
+                  )
     );
     const ownSourceId = (yield* boundary(tables.get(stateHead, "head")))!.sourceId;
     const clients = clientRegistry(options.namespace, ownSourceId, options.clients);
@@ -2310,24 +2644,19 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             options.tables.transaction((tx) =>
                 Effect.gen(function* () {
                     const subsets = new Map<string, CompiledSubset>();
-                    const include = (subset: CompiledSubset) =>
-                        subsets.set(subsetKey(subset), canonicalSubset(subset));
+                    const include = (subset: CompiledSubset) => {
+                        const requested =
+                            deliveryActive && isWholeCollection(subset.query)
+                                ? { objectType: subset.objectType, query: {} }
+                                : canonicalSubset(subset);
+                        subsets.set(subsetKey(requested), requested);
+                    };
                     for (const row of yield* tx.query(roots, { where: eq(field("owner"), rootOwner) }))
-                        if (options.source || row.value.kind === "remote")
+                        if (row.value.kind === "remote")
                             include({
                                 objectType: row.value.objectType,
                                 query: retentionQuery(row.value.query),
                             });
-                    for (const row of yield* tx.query(pins))
-                        include({
-                            objectType: row.value.objectType,
-                            query: {
-                                where: eq(
-                                    field(definitions.get(row.value.objectType)!.primaryKey),
-                                    row.value.key
-                                ),
-                            },
-                        });
                     const pinned = new Map<string, Key[]>();
                     const flushPins = (objectType: string) => {
                         const keys = pinned.get(objectType)!;
@@ -2377,8 +2706,24 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         if (ids === undefined) inspectActions = true;
                         else for (const id of ids) actionIds.add(id);
                     }
+                    // An inspector follows outcomes of pending actions it has seen,
+                    // without importing the parent's unrelated retained history.
+                    if (options.source && inspectActions)
+                        for (const row of yield* tx.query(importedPending))
+                            actionIds.add(row.value.invocation.id);
+                    const completeTypes = new Set(
+                        deliveryActive
+                            ? [...subsets.values()]
+                                  .filter((subset) => isWholeCollection(subset.query))
+                                  .map((subset) => subset.objectType)
+                            : []
+                    );
                     const selection = {
                         subsets: [...subsets.entries()]
+                            .filter(
+                                ([, subset]) =>
+                                    isWholeCollection(subset.query) || !completeTypes.has(subset.objectType)
+                            )
                             .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
                             .map(([, subset]) => subset),
                         // Committed delivery contains rows only. Local action inspection must not
@@ -2479,6 +2824,19 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     receipt: entry.receipt,
                 });
                 yield* deletePending(tx, entry.invocation.id);
+            } else if (
+                !local &&
+                requestedActionIds?.includes(entry.invocation.id) &&
+                (entry.receipt || entry.failure) &&
+                !(yield* tx.get(completed, entry.invocation.id))
+            ) {
+                // Keep an observed result locally after its upstream interest ends.
+                // It uses the ordinary receipt retention/GC, not another result cache.
+                yield* tx.put(completed, entry.invocation.id, {
+                    ...entry,
+                    completedAt: yield* Clock.currentTimeMillis,
+                    state: entry.receipt ? "acknowledged" : "blocked",
+                });
             }
         }
         if (requestedActionIds)
@@ -2498,19 +2856,66 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             }
     });
     const captureSelection = Effect.fnUntraced(function* (
-        tx: Transaction,
+        storage: Transaction,
         selected: ClientView,
         emit: (record: DeliveryRecord) => Effect.Effect<void, BackendError>,
         speculative: boolean
     ) {
+        // Delivery session bookkeeping deliberately uses raw storage. Apply
+        // object-query translation here too, without publishing extra revisions.
+        const tx = primaryKeyQueries(storage, primaryKeys);
+        // Several demanded subsets can select the same object. Each row has one
+        // base/visible value within this transaction, independent of its query.
+        const emittedRows = new Set<string>();
+        // This proof belongs to this transaction, including every query page and
+        // overlapping subset. Any overlay row (including a tombstone) prevents it.
+        const baseOnlyTypes = new Map<string, boolean>();
         for (const subset of selected.selection.subsets) {
             const v = yield* view(subset.objectType);
+            let baseOnly = !speculative;
+            if (speculative) {
+                let empty = baseOnlyTypes.get(subset.objectType);
+                if (empty === undefined) {
+                    empty = yield* boundary(
+                        Effect.gen(function* () {
+                            if ((yield* tx.query(v.overrides, { limit: 1 })).length) return false;
+                            return !v.inherited || (yield* tx.query(v.inherited, { limit: 1 })).length === 0;
+                        })
+                    );
+                    baseOnlyTypes.set(subset.objectType, empty);
+                }
+                baseOnly = empty;
+            }
+            let bases = new Map<Key, ObjectValue>();
             yield* scanSelectedRows(
-                (query) => boundary(speculative ? loadVisible(tx, v, query) : tx.query(v.base, query)),
+                (query) =>
+                    boundary(
+                        Effect.gen(function* () {
+                            const rows = yield* baseOnly
+                                ? tx.query(v.base, query)
+                                : loadVisible(tx, v, query);
+                            // Selected rows already carry their native storage keys. Read
+                            // their baselines directly in one bounded batch, without an
+                            // index lookup for each primary-key value.
+                            bases = new Map();
+                            if (!baseOnly) {
+                                const keys = rows
+                                    .filter((row) => !emittedRows.has(identity(subset.objectType, row.key)))
+                                    .map((row) => row.key);
+                                if (keys.length)
+                                    for (const row of yield* tx.getMany(v.base, keys))
+                                        bases.set(row.key, row.value);
+                            }
+                            return rows;
+                        })
+                    ),
                 subset.query,
                 (row) =>
                     Effect.gen(function* () {
-                        const base = speculative ? yield* boundary(tx.get(v.base, row.key)) : row.value;
+                        const key = identity(subset.objectType, row.key);
+                        if (emittedRows.has(key)) return;
+                        emittedRows.add(key);
+                        const base = baseOnly ? row.value : bases.get(row.key);
                         if (base !== undefined)
                             yield* emit({
                                 kind: "base",
@@ -2519,7 +2924,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 value: base,
                             });
                         if (
-                            speculative &&
+                            !baseOnly &&
                             (base === undefined || v.base.encode(base) !== v.base.encode(row.value))
                         )
                             yield* emit({
@@ -2533,7 +2938,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         }
         if (speculative) {
             const send = (table: Table<PendingAction>, kind: "pending" | "completed", own = false) =>
-                selected.selection.inspectActions
+                selected.selection.inspectActions && kind === "pending"
                     ? boundary(
                           scanDeliveryRows(tx, table, {}, (row) =>
                               own && (row.value as LocalAction).includedInBase
@@ -2562,11 +2967,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         }
         const coverageEntries: DeliveryMetadata["coverage"][number][] = [];
         for (const subset of selected.selection.subsets) {
-            const demand = demands.get(subsetKey(subset));
-            const proof = yield* tx.get(coverage, subsetKey(demand?.coveredBy ?? subset));
+            const proof = yield* coverageFor(tx, subset);
+            const cached = proof?.complete ? proof : yield* cachedCoverageFor(tx, subset);
             coverageEntries.push({
                 subset,
-                complete: proof?.complete === true && (!demand || demand.installed === demand.revision),
+                complete: proof?.complete === true && !proof.invalidated,
+                ...(cached ? { cached: true } : {}),
             });
         }
         return {
@@ -2592,8 +2998,29 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         )
             return yield* fault("InvalidResponse", "Delivery belongs to a different client session.");
         const current = yield* position(tx);
-        if (current.parentViewGeneration !== meta.generation)
-            return yield* fault("ViewReplaced", "Delivery selection was superseded.");
+        const generation = options.source
+            ? meta.generation
+            : ((yield* deliveryGeneration) ?? meta.generation);
+        if (current.parentViewGeneration === generation) return true;
+        if (
+            options.source &&
+            generation >= 1 &&
+            generation < (current.parentViewGeneration ?? 0) &&
+            current.parentViewIdentity
+        ) {
+            const selected = Table.make<ClientView["selection"]>({ name: "view-identity" }).decode(
+                current.parentViewIdentity
+            );
+            const rows = (subsets: readonly CompiledSubset[]) =>
+                JSON.stringify([...new Set(subsets.map(subsetKey))].sort());
+            if (rows(selected.subsets) === rows(meta.coverage.map((entry) => entry.subset))) {
+                const importedHead = yield* tx.get(imported, "head");
+                if (importedHead && importedHead.revision > meta.revision)
+                    return yield* fault("HistoryExpired", "A newer parent state replaced this target.");
+                return false;
+            }
+        }
+        return yield* fault("ViewReplaced", "Delivery selection was superseded.");
     });
     const preserveReceipt = Effect.fnUntraced(function* (tx: Transaction, entry: PendingAction) {
         const local = yield* tx.get(outbox, entry.invocation.id);
@@ -2611,7 +3038,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             state: "acknowledged",
         });
     });
-    const snapshotRows = Table.make<boolean>({ name: name("delivery-seen") });
+    // The installed upstream membership is separate from the wider local cache.
+    // A later query can revisit a cached row which left the upstream view before
+    // it was deleted. Membership lets view repair remove that stale copy even
+    // when neither the previous nor the new upstream target includes it.
+    const deliveryRows = Table.make<boolean>({ name: name("delivery-seen") });
     const receiver = yield* makeDeliveryReceiver({
         tables,
         namespace: name("upstream"),
@@ -2619,20 +3050,36 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             boundary(
                 Effect.gen(function* () {
                     yield* checkDelivery(tx, batch.metadata);
-                    if (options.source)
+                    if (options.source && (yield* tx.query(outbox, { limit: 1 })).length > 0)
                         yield* batch.forEach((change) =>
                             change.kind === "put" && change.record.kind === "completed"
                                 ? boundary(preserveReceipt(tx, change.record.value))
                                 : Effect.void
                         );
-                })
+                }).pipe(Effect.withSpan("Replica.delivery.preserveReceipts"))
             ),
         apply: (tx, batch) =>
             boundary(
                 Effect.gen(function* () {
-                    yield* checkDelivery(tx, batch.metadata);
+                    const currentInterests = yield* checkDelivery(tx, batch.metadata);
+                    const current = yield* position(tx);
+                    if (
+                        batch.kind === "patch" &&
+                        (current.deliveryMembershipVersion !== 1 || current.deliveryResident === false)
+                    )
+                        return yield* fault(
+                            "HistoryExpired",
+                            "Cached delivery membership must be rebuilt from a snapshot."
+                        );
+                    const deliverySelection = JSON.stringify(
+                        [...new Set(batch.metadata.coverage.map((entry) => subsetKey(entry.subset)))].sort()
+                    );
+                    const changedView = current.deliverySelection !== deliverySelection;
+                    // A new query set replaces completeness claims even when its
+                    // row delta continues the same installed delivery stream.
+                    if (changedView && batch.kind !== "snapshot") yield* tx.clear(coverage);
                     if (batch.kind === "snapshot") {
-                        yield* tx.clear(snapshotRows);
+                        yield* tx.clear(deliveryRows);
                         for (const [type] of views) {
                             yield* clearRowBlobs(tx, type, "base");
                         }
@@ -2642,157 +3089,265 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         }
                         yield* tx.clear(coverage);
                     }
-                    yield* batch.forEach((change) =>
-                        boundary(
-                            Effect.gen(function* () {
-                                const ref = change.kind === "put" ? change.record : change.ref;
-                                if (!("objectType" in ref)) {
-                                    if (!options.source)
-                                        return yield* fault(
-                                            "InvalidResponse",
-                                            "A committed source published speculative actions."
-                                        );
-                                    const table =
-                                        ref.kind === "pending" ? importedPending : importedCompleted;
-                                    if (
-                                        change.kind === "put" &&
-                                        (change.record.kind === "pending" ||
-                                            change.record.kind === "completed")
-                                    ) {
-                                        if (change.record.value.invocation.id !== ref.id)
+                    const rootUpdates = new Map<string, Set<Key>>();
+                    const updateRoots = (objectType: string, key: Key) => {
+                        if (!options.blobs || !attachmentTypes.has(objectType)) return;
+                        const keys = rootUpdates.get(objectType) ?? new Set<Key>();
+                        keys.add(key);
+                        rootUpdates.set(objectType, keys);
+                    };
+                    let baseType: string | undefined;
+                    let baseRows: Row<ObjectValue>[] = [];
+                    const baseKeys = new Set<Key>();
+                    const flushBase = Effect.fnUntraced(function* () {
+                        if (!baseRows.length) return;
+                        const objectType = baseType!;
+                        const rows = baseRows;
+                        baseRows = [];
+                        baseType = undefined;
+                        baseKeys.clear();
+                        const v = yield* view(objectType);
+                        yield* putIncomingBaseRows(
+                            tx,
+                            v,
+                            definitions.get(objectType)!.primaryKey,
+                            encryptedProperties.get(objectType)!,
+                            rows
+                        );
+                        yield* tx.putMany(
+                            deliveryRows,
+                            rows.map((row) => ({
+                                key: deliveryKey({ kind: "base", objectType, key: row.key }),
+                                value: true,
+                            }))
+                        );
+                        const accessedAt = yield* Clock.currentTimeMillis;
+                        yield* tx.putMany(
+                            retention,
+                            rows.map((row) => ({
+                                key: identity(objectType, row.key),
+                                value: { objectType, key: row.key, accessedAt },
+                            }))
+                        );
+                        for (const row of rows) updateRoots(objectType, row.key);
+                    });
+                    yield* batch
+                        .forEach((change) =>
+                            boundary(
+                                Effect.gen(function* () {
+                                    if (change.kind === "put" && change.record.kind === "base") {
+                                        const { objectType, key, value } = change.record;
+                                        if (baseRows.length && (baseType !== objectType || baseKeys.has(key)))
+                                            yield* flushBase();
+                                        baseType = objectType;
+                                        baseRows.push({ key, value });
+                                        baseKeys.add(key);
+                                        if (baseRows.length === 128) yield* flushBase();
+                                        return;
+                                    }
+                                    yield* flushBase();
+                                    const ref = change.kind === "put" ? change.record : change.ref;
+                                    if (!("objectType" in ref)) {
+                                        if (!options.source)
                                             return yield* fault(
                                                 "InvalidResponse",
-                                                "Incoming action key differs from its ID."
+                                                "A committed source published speculative actions."
                                             );
-                                        yield* tx.put(table, ref.id, change.record.value);
-                                    } else yield* tx.delete(table, ref.id);
-                                    return;
-                                }
-                                const v = yield* view(ref.objectType);
-                                if (batch.kind === "snapshot" && change.kind === "put")
-                                    yield* tx.put(snapshotRows, deliveryKey(ref), true);
-                                if (ref.kind === "override" && !v.inherited)
-                                    return yield* fault(
-                                        "InvalidResponse",
-                                        "A committed source published an override."
-                                    );
-                                if (change.kind === "remove")
-                                    yield* ref.kind === "base"
-                                        ? tx.delete(v.base, ref.key)
-                                        : tx.delete(v.inherited!, ref.key);
-                                else if (change.record.kind === "base" || change.record.kind === "override")
-                                    yield* putIncomingRow(
-                                        tx,
-                                        v,
-                                        definitions.get(ref.objectType)!.primaryKey,
-                                        encryptedProperties.get(ref.objectType)!,
-                                        ref.key,
-                                        change.record
-                                    );
-                                yield* touch(tx, ref.objectType, ref.key);
-                                yield* retainRowBlobs(
-                                    tx,
-                                    ref.objectType,
-                                    ref.key,
-                                    yield* tx.get(v.base, ref.key),
-                                    "base",
-                                    yield* getBaseline(tx, v, ref.key)
-                                );
-                            })
+                                        const table =
+                                            ref.kind === "pending" ? importedPending : importedCompleted;
+                                        if (
+                                            change.kind === "put" &&
+                                            (change.record.kind === "pending" ||
+                                                change.record.kind === "completed")
+                                        ) {
+                                            if (change.record.value.invocation.id !== ref.id)
+                                                return yield* fault(
+                                                    "InvalidResponse",
+                                                    "Incoming action key differs from its ID."
+                                                );
+                                            yield* tx.put(table, ref.id, change.record.value);
+                                        } else yield* tx.delete(table, ref.id);
+                                        return;
+                                    }
+                                    const v = yield* view(ref.objectType);
+                                    if (change.kind === "put")
+                                        yield* tx.put(deliveryRows, deliveryKey(ref), true);
+                                    else yield* tx.delete(deliveryRows, deliveryKey(ref));
+                                    if (ref.kind === "override" && !v.inherited)
+                                        return yield* fault(
+                                            "InvalidResponse",
+                                            "A committed source published an override."
+                                        );
+                                    if (change.kind === "remove") {
+                                        if (changedView) {
+                                            // Leaving a view is not evidence that an unrelated
+                                            // cached object was deleted. Match snapshot repair:
+                                            // repair the new selected region, retaining other
+                                            // rows without their old completeness proof.
+                                            const values = [
+                                                yield* tx.get(v.base, ref.key),
+                                                yield* getBaseline(tx, v, ref.key),
+                                                yield* getVisible(tx, v, ref.key),
+                                            ];
+                                            const refreshed = values.some(
+                                                (value) =>
+                                                    value !== undefined &&
+                                                    batch.metadata.coverage.some(
+                                                        (entry) =>
+                                                            entry.subset.objectType === ref.objectType &&
+                                                            evaluateQuery([{ key: ref.key, value }], {
+                                                                where: entry.subset.query?.where,
+                                                            }).length > 0
+                                                    )
+                                            );
+                                            if (!refreshed) return;
+                                        }
+                                        yield* ref.kind === "base"
+                                            ? tx.delete(v.base, ref.key)
+                                            : tx.delete(v.inherited!, ref.key);
+                                    } else if (
+                                        change.record.kind === "base" ||
+                                        change.record.kind === "override"
+                                    )
+                                        yield* putIncomingRow(
+                                            tx,
+                                            v,
+                                            definitions.get(ref.objectType)!.primaryKey,
+                                            encryptedProperties.get(ref.objectType)!,
+                                            ref.key,
+                                            change.record
+                                        );
+                                    yield* touch(tx, ref.objectType, ref.key);
+                                    updateRoots(ref.objectType, ref.key);
+                                })
+                            )
                         )
-                    );
-                    if (batch.kind === "snapshot") {
-                        // A replacement only repairs its selected region. Other cached
-                        // rows retain ordinary demand/pin/outbox/age-based GC semantics.
-                        for (const [objectType, v] of views) {
-                            for (const [kind, table] of [
-                                ["base", v.base],
-                                ["override", v.inherited],
-                            ] as const) {
-                                if (!table) continue;
-                                yield* scanDeliveryRows(
-                                    tx,
-                                    table as Table<ObjectValue | Override<ObjectValue>>,
-                                    {},
-                                    (row) =>
-                                        boundary(
-                                            Effect.gen(function* () {
-                                                if (
-                                                    !(yield* tx.get(
-                                                        snapshotRows,
-                                                        deliveryKey({ kind, objectType, key: row.key })
-                                                    ))
-                                                ) {
-                                                    const base = yield* tx.get(v.base, row.key);
-                                                    const baseline = yield* getBaseline(tx, v, row.key);
-                                                    const visible = yield* getVisible(tx, v, row.key);
-                                                    const refreshed =
-                                                        (yield* tx.get(
-                                                            snapshotRows,
-                                                            deliveryKey({
-                                                                kind: kind === "base" ? "override" : "base",
-                                                                objectType,
-                                                                key: row.key,
-                                                            })
-                                                        )) ||
-                                                        [base, baseline, visible].some(
-                                                            (value) =>
-                                                                value !== undefined &&
-                                                                batch.metadata.coverage.some(
-                                                                    (entry) =>
-                                                                        entry.subset.objectType ===
-                                                                            objectType &&
-                                                                        evaluateQuery(
-                                                                            [{ key: row.key, value }],
-                                                                            {
+                        .pipe(Effect.andThen(flushBase()), Effect.withSpan("Replica.delivery.applyRecords"));
+                    if (batch.kind === "snapshot" || changedView) {
+                        yield* Effect.gen(function* () {
+                            // Membership is small metadata in this transaction.
+                            // Reading it once avoids a separately guarded lookup
+                            // for every cached row during view repair.
+                            const installed = new Set((yield* tx.query(deliveryRows)).map((row) => row.key));
+                            // A replacement only repairs its selected region. Other cached
+                            // rows retain ordinary demand/pin/outbox/age-based GC semantics.
+                            for (const [objectType, v] of views) {
+                                for (const [kind, table] of [
+                                    ["base", v.base],
+                                    ["override", v.inherited],
+                                ] as const) {
+                                    if (!table) continue;
+                                    let after: Key | undefined;
+                                    for (;;) {
+                                        const keys = yield* tx.keys(
+                                            table as Table<ObjectValue | Override<ObjectValue>>,
+                                            { after, limit: 128 }
+                                        );
+                                        for (const key of keys)
+                                            yield* boundary(
+                                                Effect.gen(function* () {
+                                                    let removed = false;
+                                                    if (
+                                                        !installed.has(deliveryKey({ kind, objectType, key }))
+                                                    ) {
+                                                        const base = yield* tx.get(v.base, key);
+                                                        const baseline = yield* getBaseline(tx, v, key);
+                                                        const visible = yield* getVisible(tx, v, key);
+                                                        const refreshed =
+                                                            installed.has(
+                                                                deliveryKey({
+                                                                    kind:
+                                                                        kind === "base" ? "override" : "base",
+                                                                    objectType,
+                                                                    key,
+                                                                })
+                                                            ) ||
+                                                            [base, baseline, visible].some(
+                                                                (value) =>
+                                                                    value !== undefined &&
+                                                                    batch.metadata.coverage.some(
+                                                                        (entry) =>
+                                                                            entry.subset.objectType ===
+                                                                                objectType &&
+                                                                            evaluateQuery([{ key, value }], {
                                                                                 where: entry.subset.query
                                                                                     ?.where,
-                                                                            }
-                                                                        ).length > 0
+                                                                            }).length > 0
+                                                                    )
+                                                            );
+                                                        if (refreshed) {
+                                                            removed = true;
+                                                            yield* tx.delete(
+                                                                table as Table<
+                                                                    ObjectValue | Override<ObjectValue>
+                                                                >,
+                                                                key
+                                                            );
+                                                            if (
+                                                                kind === "base" &&
+                                                                v.inherited &&
+                                                                !installed.has(
+                                                                    deliveryKey({
+                                                                        kind: "override",
+                                                                        objectType,
+                                                                        key,
+                                                                    })
                                                                 )
-                                                        );
-                                                    if (refreshed) {
-                                                        yield* tx.delete(
-                                                            table as Table<
-                                                                ObjectValue | Override<ObjectValue>
-                                                            >,
-                                                            row.key
-                                                        );
-                                                        if (
-                                                            kind === "base" &&
-                                                            v.inherited &&
-                                                            !(yield* tx.get(
-                                                                snapshotRows,
-                                                                deliveryKey({
-                                                                    kind: "override",
-                                                                    objectType,
-                                                                    key: row.key,
-                                                                })
-                                                            ))
-                                                        )
-                                                            yield* tx.delete(v.inherited, row.key);
+                                                            )
+                                                                yield* tx.delete(v.inherited, key);
+                                                        }
                                                     }
-                                                }
-                                                yield* retainRowBlobs(
-                                                    tx,
-                                                    objectType,
-                                                    row.key,
-                                                    yield* tx.get(v.base, row.key),
-                                                    "base",
-                                                    yield* getBaseline(tx, v, row.key)
-                                                );
-                                            })
-                                        )
+                                                    if (batch.kind === "snapshot" || removed)
+                                                        updateRoots(objectType, key);
+                                                })
+                                            );
+                                        if (keys.length < 128) break;
+                                        after = keys.at(-1);
+                                    }
+                                }
+                            }
+                        }).pipe(Effect.withSpan("Replica.delivery.repairSnapshot"));
+                    }
+                    // Retain only the final composed baseline, once per changed
+                    // identity. Inherited records can change or disappear after
+                    // a base record, so earlier per-record reconciliation repeats
+                    // work and can temporarily protect the wrong attachment.
+                    yield* Effect.gen(function* () {
+                        for (const [objectType, changed] of rootUpdates) {
+                            const v = views.get(objectType)!;
+                            const keys = [...changed];
+                            for (let offset = 0; offset < keys.length; offset += 128) {
+                                const page = keys.slice(offset, offset + 128);
+                                const bases = new Map(
+                                    (yield* tx.getMany(v.base, page)).map((row) => [row.key, row.value])
                                 );
+                                const inherited = v.inherited
+                                    ? new Map(
+                                          (yield* tx.getMany(v.inherited, page)).map((row) => [
+                                              row.key,
+                                              row.value,
+                                          ])
+                                      )
+                                    : undefined;
+                                for (const key of page) {
+                                    const entry = inherited?.get(key);
+                                    yield* retainRowBlobs(
+                                        tx,
+                                        objectType,
+                                        key,
+                                        bases.get(key),
+                                        "base",
+                                        entry ? (entry.deleted ? undefined : entry.value) : bases.get(key)
+                                    );
+                                }
                             }
                         }
-                        yield* tx.clear(snapshotRows);
-                    }
-                    const current = yield* position(tx);
+                    }).pipe(Effect.withSpan("Replica.delivery.retainAttachments"));
                     for (const entry of batch.metadata.coverage) {
                         yield* tx.put(coverage, subsetKey(entry.subset), {
                             subset: entry.subset,
-                            complete: entry.complete,
+                            complete: entry.complete || entry.cached === true,
+                            invalidated: !entry.complete,
                             snapshotCursor: batch.metadata.cursor,
                             updatedAt: yield* Clock.currentTimeMillis,
                         });
@@ -2805,24 +3360,33 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                             )
                                 yield* tx.put(coverage, subsetKey(demand.subset), {
                                     subset: demand.subset,
-                                    complete: entry.complete,
+                                    complete: entry.complete || entry.cached === true,
+                                    invalidated: !entry.complete,
                                     snapshotCursor: batch.metadata.cursor,
                                     updatedAt: yield* Clock.currentTimeMillis,
                                 });
                         }
                     }
-                    yield* tx.put(metadata, "head", { ...current, cursor: batch.metadata.cursor });
+                    yield* tx.put(metadata, "head", {
+                        ...current,
+                        cursor: batch.metadata.cursor,
+                        deliverySelection,
+                        deliveryMembershipVersion: 1,
+                        deliveryResident: true,
+                    });
                     if (options.source) {
                         const selected = current.parentViewIdentity
                             ? Table.make<{ actionIds: readonly string[] }>({ name: "view-identity" }).decode(
                                   current.parentViewIdentity
                               )
                             : undefined;
+                        // Positive outcomes remain valid in an older same-row target.
+                        // Its absence cannot establish expiry for newer interests.
                         yield* settleParentActions(
                             tx,
                             (yield* tx.query(importedPending)).map((row) => row.value),
                             (yield* tx.query(importedCompleted)).map((row) => row.value),
-                            selected?.actionIds
+                            currentInterests ? selected?.actionIds : undefined
                         );
                         yield* tx.put(imported, "head", {
                             sourceId,
@@ -2841,12 +3405,18 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         const prepared = yield* Effect.try({
             try: () => {
                 evaluateQuery([], subset.query ?? {});
-                const properties = new Set(
-                    definitions.get(subset.objectType)!.properties.map((property) => property.name)
-                );
+                const definition = definitions.get(subset.objectType)!;
+                const properties = new Set(definition.properties.map((property) => property.name));
                 const codec = Table.make<CompiledSubset>({ name: "subset-copy" });
                 return {
-                    indexes: indexesForQuery(subset.query ?? {}, properties),
+                    // Initialization already installed the unique scalar PK
+                    // index. Automatic query indexes need no duplicate copy.
+                    indexes: indexesForQuery(subset.query ?? {}, properties).filter(
+                        (index) =>
+                            index.multiEntry ||
+                            index.field.path.length !== 1 ||
+                            index.field.path[0] !== definition.primaryKey
+                    ),
                     key: subsetKey(subset),
                     copy: codec.decode(codec.encode(subset)),
                 };
@@ -2866,9 +3436,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         }
         if (!options.source && options.live === false) return;
         const remoteSubset = copy.query ? { ...copy, query: retentionQuery(copy.query) } : copy;
-        const watched = options.source
-            ? options.source.demand(remoteSubset)
+        const sourceWatch = options.source?.demand(remoteSubset);
+        const backendWatch = options.source
+            ? undefined
             : adapter!.watchSubset?.(objectSubset(copy.objectType, copy.query));
+        const watched = sourceWatch ?? backendWatch;
         const configuredInterval =
             options.demand?.refresh?.pollIntervalMs ??
             adapter?.refresh?.(objectSubset(copy.objectType, copy.query))?.pollIntervalMs ??
@@ -2877,67 +3449,141 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         demand.watched = Boolean(watched);
         demand.pollDisabled = !watched && configuredInterval === false;
         const pollIntervalMs =
-            watched || adapter?.changes || configuredInterval === false
-                ? undefined
-                : (configuredInterval ?? options.pollIntervalMs ?? 5_000);
+            watched || adapter?.changes || configuredInterval === false ? undefined : configuredInterval;
         if (pollIntervalMs !== undefined && (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 100))
             return yield* fault("InvalidConfiguration", "Subset poll interval must be at least 100 ms.");
-        const hints =
-            watched ??
-            (pollIntervalMs === undefined
-                ? undefined
-                : Stream.fromEffectRepeat(Effect.sleep(pollIntervalMs)));
-        if (!hints) return;
+        const polling =
+            pollIntervalMs === undefined ? undefined : Stream.fromEffectRepeat(Effect.sleep(pollIntervalMs));
+        if (!watched && demand.watchReady) {
+            yield* Deferred.succeed(demand.watchReady, undefined);
+            yield* wakeState;
+        }
+        if (!watched && !polling) return;
         const ready = options.source ? yield* Deferred.make<void, BackendError>() : undefined;
+        demand.sourceReady = ready;
         let firstWatch = true;
         demand.pollIntervalMs = pollIntervalMs;
-        const invalidateCoverage = boundary(
+        const invalidateCoverage = Effect.sync(() => coverageGenerations.set(copy.objectType, Symbol())).pipe(
+            Effect.andThen(
+                boundary(
+                    tables.transaction((tx) =>
+                        Effect.gen(function* () {
+                            for (const cached of yield* tx.query(coverage, {
+                                where: eq(field("subset", "objectType"), copy.objectType),
+                            }))
+                                // Several subset watches can report the same source change.
+                                // Keep the generation fence above, but do not rewrite every
+                                // already-invalid proof for each callback.
+                                if (!cached.value.invalidated)
+                                    yield* tx.put(coverage, cached.key, {
+                                        ...cached.value,
+                                        invalidated: true,
+                                    });
+                        })
+                    )
+                )
+            ),
+            Effect.withSpan("Replica.invalidateCoverage", { attributes: { objectType: copy.objectType } })
+        );
+        const resetCoverage = boundary(
             tables.transaction((tx) =>
                 Effect.gen(function* () {
-                    for (const cached of yield* tx.query(coverage, {
+                    const records = yield* tx.query(coverage, {
                         where: eq(field("subset", "objectType"), copy.objectType),
-                    }))
-                        yield* tx.put(coverage, cached.key, { ...cached.value, invalidated: true });
+                    });
+                    const maintained = records.filter((record) => {
+                        const other = demands.get(String(record.key));
+                        return (
+                            record.value.complete &&
+                            !record.value.invalidated &&
+                            other &&
+                            other !== demand &&
+                            other.watchers > 0 &&
+                            other.pollIntervalMs === undefined &&
+                            !other.watchFailure &&
+                            other.installed === other.revision
+                        );
+                    });
+                    for (const record of records) {
+                        // A healthy watcher maintains its actual requested scope, never
+                        // a broader expanded fulfillment advertised by its adapter.
+                        if (
+                            !record.value.invalidated &&
+                            !maintained.some((proof) => coversSubset(record.value.subset, proof.value.subset))
+                        )
+                            yield* tx.put(coverage, record.key, { ...record.value, invalidated: true });
+                    }
+                    return maintained.some((proof) => coversSubset(copy, proof.value.subset));
                 })
             )
         );
         yield* Effect.forkScoped(
             superviseWatch({
-                stream: () =>
-                    Stream.unwrap(
-                        Effect.gen(function* () {
-                            yield* Effect.acquireRelease(
-                                Effect.sync(() => {
-                                    demand.watchers++;
-                                }).pipe(Effect.andThen(diagnostics.changed)),
-                                () =>
-                                    Effect.sync(() => {
-                                        demand.watchers--;
-                                    }).pipe(Effect.andThen(diagnostics.changed))
+                acquire: () =>
+                    Effect.gen(function* () {
+                        if (options.source) yield* awaitAuthentication;
+                        const initial = firstWatch;
+                        firstWatch = false;
+                        if (backendWatch && !initial) demand.watchReady = yield* Deferred.make<void>();
+                        const acquisition =
+                            backendWatch &&
+                            (initial
+                                ? backendWatch
+                                : adapter!.watchSubset?.(objectSubset(copy.objectType, copy.query)));
+                        if (backendWatch && !acquisition)
+                            return yield* fault(
+                                "InvalidConfiguration",
+                                "Subset watch is no longer available."
                             );
-                            if (firstWatch) {
-                                firstWatch = false;
-                                return hints;
-                            }
-                            return options.source
-                                ? options.source.demand(remoteSubset)
-                                : (adapter!.watchSubset?.(objectSubset(copy.objectType, copy.query)) ??
-                                      hints);
-                        })
-                    ),
+                        const stream = acquisition
+                            ? yield* acquisition
+                            : sourceWatch
+                              ? initial
+                                  ? sourceWatch
+                                  : options.source!.demand(remoteSubset)
+                              : polling!;
+                        if (backendWatch) {
+                            // Acquisition closes the missed-event gap. Fence an old
+                            // finite read before repairing this watch's own proof.
+                            if (!initial || demand.installed !== 0) demand.revision++;
+                            yield* resetCoverage;
+                        }
+                        yield* Effect.acquireRelease(
+                            Effect.sync(() => {
+                                demand.watchers++;
+                            }).pipe(Effect.andThen(diagnostics.changed)),
+                            () =>
+                                Effect.sync(() => {
+                                    demand.watchers--;
+                                }).pipe(Effect.andThen(diagnostics.changed))
+                        );
+                        return stream;
+                    }),
                 // A protocol parent may be a local worker while the device is
                 // offline. Its transport failures, not upstream connectivity,
                 // determine whether this lease needs retrying.
                 canRun: options.source ? undefined : canSync,
                 authentication,
-                onValue: () =>
+                onValue: (event) =>
                     Effect.gen(function* () {
+                        // Fence this watch's old request synchronously. A reset
+                        // repairs its own missed events; unrelated healthy watches
+                        // retain their proofs and their in-flight type generation.
                         if (!demand.loadFailure || demand.loadFailure.error.retryable) demand.revision++;
-                        yield* invalidateCoverage;
+                        const maintained =
+                            event === "reset" ? yield* resetCoverage : (yield* invalidateCoverage, false);
+                        yield* Effect.annotateCurrentSpan("reusedCoverage", maintained);
                         yield* diagnostics.changed;
                         yield* wakeState;
                         if (ready) yield* Deferred.succeed(ready, undefined);
-                    }),
+                    }).pipe(
+                        Effect.withSpan("Replica.watchHint", {
+                            attributes: {
+                                objectType: copy.objectType,
+                                hint: event === "reset" ? "reset" : "invalidate",
+                            },
+                        })
+                    ),
                 onError: (error) =>
                     Effect.sync(() => {
                         if (error || demand.watchFailure) demand.revision++;
@@ -2949,7 +3595,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 : Effect.void
                         ),
                         Effect.andThen(diagnostics.changed),
-                        Effect.andThen(error ? wakeState : Effect.void),
+                        Effect.andThen(
+                            demand.watchReady ? Deferred.succeed(demand.watchReady, undefined) : Effect.void
+                        ),
+                        Effect.andThen(wakeState),
+                        Effect.andThen(localNotify),
                         Effect.andThen(ready && error ? Deferred.fail(ready, error) : Effect.void)
                     ),
             }).pipe(
@@ -2960,36 +3610,150 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             ),
             { startImmediately: true }
         );
-        if (ready) yield* Deferred.await(ready);
+        if (ready) {
+            // A scoped lease can expose its previously confirmed resident
+            // snapshot while the new watch opens. Explicit fresh reads await
+            // sourceReady below; this proof establishes only cached availability.
+            const cached = yield* access(tables.read((tx) => cachedCoverageFor(tx, copy)));
+            if (!cached) yield* Deferred.await(ready);
+        }
     });
     const demandCodec = Table.make<CompiledSubset>({ name: "demand" });
     const demandCache = yield* makeDemandCache({
         policy: options.demand,
         acquire: (key) => acquireDemand(demandCodec.decode(key)),
     });
-    const waitForDelivery = Effect.fnUntraced(
-        function* (subset: CompiledSubset | undefined) {
-            if (!deliveryActive || !(yield* canSync)) return;
-            for (;;) {
-                if (replicationError?.recovery === "stop")
-                    return yield* fault(replicationError.kind, replicationError.message);
-                const selected = yield* requestedView();
-                const installed = yield* receiver.installed;
-                if (
-                    installed?.metadata?.generation === selected.generation &&
-                    (!subset || (yield* access(tables.read((tx) => service.hasCoverage(tx, subset)))))
-                )
-                    return;
-                yield* Effect.sleep(2);
-            }
-        },
-        Effect.timeoutOrElse({
-            duration: 10_000,
-            orElse: () =>
-                Effect.fail(fault("Unavailable", "Waiting for the current selected delivery.", undefined)),
-        })
-    );
+    const waitForDelivery = (
+        subset: CompiledSubset | undefined,
+        resultType: "cached" | "complete" = "complete"
+    ) =>
+        Effect.scoped(
+            Effect.gen(function* () {
+                if (!deliveryActive) return;
+                if (options.source) yield* awaitAuthentication;
+                else if (!(yield* canSync)) return;
+                // Subscribe before inspecting state: installation can finish between
+                // the read and the wait. Readiness is scoped, not a ten-second IO budget.
+                const updates = yield* PubSub.subscribe(events);
+                for (;;) {
+                    if (options.source) yield* awaitAuthentication;
+                    else if (!(yield* canSync)) return;
+                    if (replicationError?.recovery === "stop")
+                        return yield* fault(replicationError.kind, replicationError.message);
+                    const installed = yield* receiver.installed;
+                    const proof =
+                        subset && installed?.metadata
+                            ? yield* access(
+                                  tables.read((tx) =>
+                                      resultType === "cached"
+                                          ? cachedCoverageFor(tx, subset)
+                                          : coverageFor(tx, subset)
+                                  )
+                              )
+                            : undefined;
+                    if (
+                        installed?.metadata &&
+                        (subset
+                            ? // An unrelated demand/action interest can replace the selected
+                              // generation without invalidating this query's installed rows.
+                              proof?.complete === true && (resultType === "cached" || !proof.invalidated)
+                            : options.source
+                              ? installed.metadata.generation === (yield* requestedView()).generation
+                              : yield* Effect.flatMap(requestedView(), (selected) =>
+                                    access(
+                                        tables.read((tx) =>
+                                            Effect.forEach(selected.selection.subsets, (selectedSubset) =>
+                                                service.hasCoverage(tx, selectedSubset)
+                                            ).pipe(Effect.map((covered) => covered.every(Boolean)))
+                                        )
+                                    )
+                                ))
+                    ) {
+                        const demand = subset && demands.get(subsetKey(subset));
+                        if (
+                            subset &&
+                            demand &&
+                            proof &&
+                            !proof.invalidated &&
+                            subsetKey(proof.subset) !== subsetKey(subset)
+                        ) {
+                            demand.installed = demand.revision;
+                            demand.coveredBy = proof.subset;
+                            demand.coverageProof = {
+                                reason: isWholeCollection(proof.subset.query) ? "collection" : "query",
+                                maintainedBy: "watch",
+                            };
+                        }
+                        return;
+                    }
+                    yield* PubSub.take(updates);
+                }
+            })
+        );
+    const openingWatches = (requested?: ReadonlySet<string>) =>
+        [...demands].filter(
+            ([key, demand]) =>
+                (requested === undefined || requested.has(key)) &&
+                demand.installed !== demand.revision &&
+                demand.watchReady !== undefined &&
+                !Deferred.isDoneUnsafe(demand.watchReady)
+        );
+    // Only a fresh fetch needs the acquisition barrier. Recheck after taking the
+    // gate, and wait outside it so a slow subscription cannot block other views
+    // or action publication. Cached/offline reads keep their existing behavior.
+    const syncReady = (requested?: ReadonlySet<string>) =>
+        Effect.scoped(
+            Effect.gen(function* () {
+                const updates = yield* PubSub.subscribe(events);
+                for (;;) {
+                    yield* runStateSync(requested);
+                    if (!(yield* canSync)) return;
+                    const pending = openingWatches(requested);
+                    if (pending.length === 0) return;
+                    yield* Effect.raceFirst(
+                        Effect.forEach(
+                            pending,
+                            ([, demand]) =>
+                                Effect.raceFirst(
+                                    Deferred.await(demand.watchReady!),
+                                    Deferred.await(demand.released)
+                                ),
+                            { concurrency: "unbounded", discard: true }
+                        ),
+                        PubSub.take(updates)
+                    );
+                }
+            })
+        );
+    // One selected view can contain many subsets. A state pass already checks
+    // aggregate demand; repeating it per subset only serializes the same work.
+    const syncSelection = (
+        subsets: readonly CompiledSubset[],
+        resultType: "cached" | "complete" = "complete"
+    ) => {
+        if (subsets.length === 0) return Effect.void;
+        return deliveryActive
+            ? wakeState.pipe(
+                  Effect.andThen(
+                      Effect.forEach(subsets, (subset) => waitForDelivery(subset, resultType), {
+                          discard: true,
+                      })
+                  )
+              )
+            : options.source
+              ? Effect.gen(function* () {
+                    for (const subset of subsets) {
+                        const ready = demands.get(subsetKey(subset))?.sourceReady;
+                        if (ready) yield* Deferred.await(ready);
+                    }
+                    yield* service.refreshParent(options.source!);
+                })
+              : syncReady(new Set(subsets.map(subsetKey)));
+    };
+    const visibleRevision = (tx: ReadTransaction) =>
+        tx.get(stateHead, "head").pipe(Effect.map((head) => head?.visibleRevision ?? 0));
     const service: ReplicaService = {
+        proxyInvalidation: { writeGeneration: 0, invalidatedGeneration: 0, dirtyTypes: [] },
         reportWatchFailure: (error) =>
             Effect.sync(() => {
                 changeWatchFailure = error;
@@ -3010,10 +3774,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         visibleChanges: access(PubSub.subscribe(visibleEvents)).pipe(
             Effect.map((subscription) => Stream.fromSubscription(subscription).pipe(Stream.as(undefined)))
         ),
+        visibleRevision,
+        readVisibleRevision: access(tables.read(visibleRevision)),
         hasCoverage: (tx, subset) =>
             Effect.gen(function* () {
-                const demand = demands.get(subsetKey(subset));
-                const proof = yield* tx.get(coverage, subsetKey(demand?.coveredBy ?? subset));
+                const proof = yield* coverageFor(tx, subset);
                 return proof?.complete === true && !proof.invalidated;
             }),
         outboxWakeups: outboxWake,
@@ -3024,7 +3789,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     error && recovery !== "selection"
                         ? { kind: error.kind, message: error.message, recovery: recovery! }
                         : undefined;
-                yield* diagnostics.changed;
+                yield* localNotify;
             }),
         observeRows: (objectType, query) =>
             observeRows({
@@ -3050,10 +3815,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             traceDelivery(
                 Effect.gen(function* () {
                     for (const subset of selection.subsets) yield* service.demand(subset);
-                    for (const subset of selection.subsets) yield* service.syncSubset(subset);
-                    return yield* makeDelivery({
-                        tables: options.tables,
-                        namespace: name("committed"),
+                    yield* syncSelection(selection.subsets);
+                    return yield* committedDeliveries.open({
                         policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
                         resume,
                         binding: JSON.stringify([ownSourceId, schemaHash]),
@@ -3074,14 +3837,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     // Publish existing base/optimistic/action state immediately. Data
                     // refresh may be gated behind a submitting action; acceptance
                     // must remain deliverable while that action is still in flight.
-                    const delivery = yield* makeDelivery({
-                        tables: options.tables,
-                        namespace: name("speculative"),
+                    const delivery = yield* speculativeDeliveries.open({
                         policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
                         resume,
                         binding: JSON.stringify([ownSourceId, schemaHash, session.client.clientId]),
                         identity: JSON.stringify(selected),
+                        rowSelection: JSON.stringify(selected.selection.subsets),
                         changes: service.subscribeChanges,
+                        renew: (tx) => boundary(clients.select(tx, session, selected)).pipe(Effect.asVoid),
                         capture: (tx, emit) =>
                             boundary(
                                 Effect.gen(function* () {
@@ -3097,13 +3860,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     return {
                         ...delivery,
                         frames: delivery.frames.pipe(
-                            Stream.mergeEffect(
-                                Effect.forEach(
-                                    selected.selection.subsets,
-                                    (subset) => service.syncSubset(subset),
-                                    { discard: true }
-                                )
-                            )
+                            Stream.mergeEffect(syncSelection(selected.selection.subsets))
                         ),
                     };
                 })
@@ -3111,7 +3868,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         parentDeliveryGeneration: requestedView().pipe(Effect.map((selected) => selected.generation)),
         openParentDelivery: (source) =>
             Effect.gen(function* () {
+                yield* awaitAuthentication;
                 const selected = yield* requestedView();
+                const current = yield* access(tables.read(position));
+                if (current.deliveryMembershipVersion !== 1 || current.deliveryResident === false)
+                    yield* receiver.forget;
                 const resume = yield* receiver.resume;
                 const session = source ? yield* sessionFor(source) : undefined;
                 const subscription = source?.subscribe
@@ -3128,41 +3889,29 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 return {
                     generation: selected.generation,
                     session,
-                    subscription: source?.subscribe
-                        ? subscription
-                        : {
-                              ...subscription,
-                              frames: subscription.frames.pipe(
-                                  Stream.map((frame) =>
-                                      frame.metadata
-                                          ? {
-                                                ...frame,
-                                                metadata: {
-                                                    ...frame.metadata,
-                                                    generation: selected.generation,
-                                                },
-                                            }
-                                          : frame
-                                  )
-                              ),
-                          },
+                    subscription,
                 };
             }),
         resetParentDelivery: receiver.forget,
-        receiveDelivery: Effect.fn("Replica.receiveDelivery")(function* (frame) {
+        receiveDelivery: Effect.fn("Replica.receiveDelivery")(function* (frame, generation) {
             if (frame.end) yield* requestedView();
-            const result = yield* !options.source && frame.end
-                ? gate.withPermits(1)(Effect.andThen(requestedView(), receiver.receive(frame)))
-                : receiver.receive(frame);
+            const receive =
+                !options.source && frame.end
+                    ? gate.withPermits(1)(Effect.andThen(requestedView(), receiver.receive(frame)))
+                    : receiver.receive(frame);
+            const result = yield* receive.pipe(Effect.provideService(deliveryGeneration, generation));
             if (result && !result.duplicate) {
                 for (const demand of demands.values())
                     if (
                         result.metadata.coverage.some(
                             (entry) =>
-                                subsetKey({
+                                entry.complete &&
+                                (subsetKey({
                                     ...demand.subset,
                                     query: retentionQuery(demand.subset.query),
-                                }) === subsetKey(entry.subset)
+                                }) === subsetKey(entry.subset) ||
+                                    (entry.subset.objectType === demand.subset.objectType &&
+                                        isWholeCollection(entry.subset.query)))
                         )
                     )
                         demand.installed = demand.revision;
@@ -3175,8 +3924,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             access(
                 tables.read((tx) =>
                     Effect.gen(function* () {
-                        const demand = demands.get(subsetKey(subset));
-                        const proof = yield* tx.get(coverage, subsetKey(demand?.coveredBy ?? subset));
+                        const proof = yield* coverageFor(tx, subset);
                         return {
                             rows: publicRows(
                                 subset.objectType,
@@ -3246,7 +3994,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     coverageProof: demand.installed === demand.revision ? demand.coverageProof : undefined,
                 })),
             };
-        }),
+        }).pipe(Effect.withSpan("Replica.engineStatus")),
         statuses: Stream.unwrap(
             Effect.gen(function* () {
                 const changes = yield* diagnostics.subscribe;
@@ -3334,17 +4082,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                             view &&
                             (yield* Effect.forEach(view.selection.subsets, (subset) =>
                                 Effect.gen(function* () {
-                                    const demanded = demands.get(subsetKey(subset));
-                                    const proof = yield* tx.get(
-                                        coverage,
-                                        subsetKey(demanded?.coveredBy ?? subset)
-                                    );
+                                    const proof = yield* coverageFor(tx, subset);
+                                    const cached = proof?.complete
+                                        ? proof
+                                        : yield* cachedCoverageFor(tx, subset);
                                     return {
                                         subset,
-                                        complete:
-                                            proof?.complete === true &&
-                                            !proof.invalidated &&
-                                            (!demanded || demanded.installed === demanded.revision),
+                                        complete: proof?.complete === true && !proof.invalidated,
+                                        ...(cached ? { cached: true } : {}),
                                     };
                                 })
                             ));
@@ -3432,7 +4177,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 .acceptClient(request)
                 .pipe(Effect.andThen(() => service.readClient(request.session, request.view))),
         acknowledgeDelivery: (position, speculative = true) =>
-            acknowledgeDelivery(options.tables, name(speculative ? "speculative" : "committed"), position),
+            (speculative ? speculativeDeliveries : committedDeliveries).acknowledge(position),
         acknowledgeClient: (session, revision, through, viewGeneration) =>
             access(
                 options.tables.transaction((tx) =>
@@ -3443,6 +4188,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             Effect.map((ids) => ids.length)
         ),
         refreshParent: Effect.fn("Replica.refreshParent")(function* (source: OntologySource) {
+            if (connection && connection.state.status !== "active") return;
             const session = yield* sessionFor(source);
             const response = yield* source.read(session, yield* requestedView()).pipe(
                 Effect.catch((error) => {
@@ -3467,7 +4213,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 return yield* fault("NotImplemented", "This Replica uses the backend adapter interface.");
             if (snapshot.sourceId !== sourceId)
                 return yield* fault("SourceMismatch", "Parent source changed; reset explicitly.");
-            if (snapshot.definition !== signature)
+            if (!sameDefinitionContract(snapshot.definition))
                 return yield* fault(
                     "SchemaMismatch",
                     "Parent definition changed; migrate or reset explicitly."
@@ -3543,11 +4289,17 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         for (const subset of matched) {
                             const key = subsetKey(subset);
                             const previous = yield* tx.get(coverage, key);
-                            if (previous?.complete !== proof.complete || previous?.invalidated)
+                            const complete = proof.complete || proof.cached === true;
+                            const invalidated = !proof.complete;
+                            if (
+                                previous?.complete !== complete ||
+                                Boolean(previous?.invalidated) !== invalidated
+                            )
                                 changed = true;
                             yield* tx.put(coverage, key, {
                                 subset,
-                                complete: proof.complete,
+                                complete,
+                                invalidated,
                                 updatedAt: yield* Clock.currentTimeMillis,
                             });
                         }
@@ -3695,11 +4447,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         forwardParentActions: Effect.fn("Replica.forwardParentActions", { root: true })(
             function* (source: OntologySource) {
                 yield* open;
+                if (connection && connection.state.status !== "active") return;
                 yield* Effect.annotateCurrentSpan("stage", "open-parent-session");
                 if (replicationError?.recovery === "stop")
                     return yield* fault(replicationError.kind, replicationError.message);
                 const initialSession = yield* sessionFor(source);
-                const first = (yield* access(tables.read(pendingIn)))[0];
+                const first = (yield* access(tables.read(pendingIn))).find(
+                    (entry) => entry.state !== "acknowledged"
+                );
                 if (
                     first?.nextAttemptAt !== undefined &&
                     first.nextAttemptAt > (yield* Clock.currentTimeMillis)
@@ -3716,11 +4471,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     yield* service.refreshParent(source);
                 const session = yield* sessionFor(source);
                 for (;;) {
+                    if (connection && connection.state.status !== "active") return;
                     yield* Effect.annotateCurrentSpan("stage", "claim-action");
                     const entry = yield* access(
                         tables.transaction((tx) =>
                             Effect.gen(function* () {
-                                const head = (yield* pendingIn(tx))[0];
+                                const head = (yield* pendingIn(tx)).find(
+                                    (entry) => entry.state !== "acknowledged"
+                                );
                                 if (!head || (head.state !== "queued" && head.state !== "sending")) return;
                                 if (
                                     head.nextAttemptAt !== undefined &&
@@ -3871,8 +4629,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                   })
                                 : undefined,
                             parentAcceptance:
-                                parent && (observed || local?.includedInBase)
-                                    ? { sourceId: parent.sourceId }
+                                // A successful Accept response is durable evidence even
+                                // before the parent's selected state includes the action.
+                                (options.source && local?.state === "acknowledged") ||
+                                (parent && (observed || local?.includedInBase))
+                                    ? { sourceId: parent?.sourceId ?? sourceId }
                                     : undefined,
                         };
                     })
@@ -3955,12 +4716,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 Effect.tap(() => wakeOutbox)
             ),
         wake,
-        syncSubset: (subset) =>
-            deliveryActive
-                ? wakeState.pipe(Effect.andThen(waitForDelivery(subset)))
-                : options.source
-                  ? service.refreshParent(options.source)
-                  : runStateSync(subsetKey(subset)),
+        syncSubset: (subset, settings) =>
+            settings?.resultType === "cached"
+                ? access(tables.read((tx) => cachedCoverageFor(tx, subset))).pipe(
+                      Effect.flatMap((cached) => (cached ? Effect.void : syncSelection([subset], "cached")))
+                  )
+                : syncSelection([subset]),
         syncOnce: syncOnce.pipe(Effect.andThen(waitForDelivery(undefined))),
         enqueue: Effect.fn("Replica.enqueue", { root: true })(function* (
             invocation: ActionRequest,
@@ -4275,6 +5036,32 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 remaining -= usage.size(v.inherited as Table<unknown>, inherited);
                             yield* tx.delete(v.base, record.key);
                             if (v.inherited) yield* tx.delete(v.inherited, record.key);
+                            if (
+                                (yield* tx.get(
+                                    deliveryRows,
+                                    deliveryKey({
+                                        kind: "base",
+                                        objectType: record.objectType,
+                                        key: record.key,
+                                    })
+                                )) ||
+                                (v.inherited &&
+                                    (yield* tx.get(
+                                        deliveryRows,
+                                        deliveryKey({
+                                            kind: "override",
+                                            objectType: record.objectType,
+                                            key: record.key,
+                                        })
+                                    )))
+                            ) {
+                                const current = yield* position(tx);
+                                yield* tx.put(metadata, "head", {
+                                    ...current,
+                                    deliveryResident: false,
+                                    parentViewIdentity: undefined,
+                                });
+                            }
                             const head = yield* tx.get(imported, "head");
                             if (head) yield* tx.put(imported, "head", { ...head, resident: false });
                             yield* tx.delete(retention, row.key);
@@ -4310,10 +5097,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     };
     if (options.startSync !== false && options.source) {
         yield* options.source.subscribe
-            ? connectReplicaDelivery(service, options.source)
+            ? connectReplicaDelivery(service, options.source, { authentication })
             : connectReplicaParent(service, options.source, { authentication });
     } else if (options.startSync !== false) {
-        if (adapter?.subscribeSelection) yield* connectReplicaDelivery(service);
+        if (adapter?.subscribeSelection)
+            yield* connectReplicaDelivery(service, undefined, { authentication });
         const dataPollIntervalMs = options.pollIntervalMs ?? 5000;
         if (!Number.isFinite(dataPollIntervalMs) || dataPollIntervalMs < 100)
             return yield* fault("InvalidConfiguration", "Sync poll interval must be at least 100 ms.");
@@ -4393,7 +5181,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         if (adapter?.changes?.watch)
             yield* Effect.forkScoped(
                 superviseWatch({
-                    stream: () => adapter.changes!.watch!,
+                    acquire: () => adapter.changes!.watch!,
                     canRun: canSync,
                     authentication,
                     onValue: () => wakeState,
@@ -4417,7 +5205,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 )
             )
         );
-    yield* Stream.runForEach(connectivity.changes, () => diagnostics.changed.pipe(Effect.andThen(wake))).pipe(
+    yield* Stream.runForEach(connectivity.changes, () => localNotify.pipe(Effect.andThen(wake))).pipe(
         Effect.forkScoped
     );
     let initialConnectionState = true;
@@ -4441,7 +5229,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     syncRetry = undefined;
                     yield* service.reportReplicationFailure(undefined);
                 }
-                yield* diagnostics.changed;
+                yield* localNotify;
                 yield* wake;
             })
         ).pipe(Effect.forkScoped);
@@ -4456,5 +5244,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             )
         );
     }
+    // Run before interrupting workers or releasing tables on a successful open.
+    // The earlier guard also covers a partially failed acquisition.
+    yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+            closed = true;
+        })
+    );
     return service;
 });

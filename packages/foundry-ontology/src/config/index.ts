@@ -1,23 +1,11 @@
-import {
-    o,
-    type Lens,
-    type OntologyPullSource,
-    type OntologyPullConfig,
-    type OntologyIR,
-} from "@party-stack/ontology";
-import { type FoundryAuthenticationClient, type FoundryOAuthConnectionOptions } from "../connection.js";
-import {
-    createFoundryBackendInstallation,
-    createFoundryOntologyRoute,
-} from "../installation/createFoundryBackendInstallation.js";
-import { createFoundryUserObjectType } from "../users/foundryUser.js";
-import {
-    applyAttachmentConstraintOverrides,
-    type FoundryAttachmentConstraintOverride,
-} from "./applyAttachmentConstraintOverrides.js";
-import type { Connection } from "@party-stack/connect";
-
-export type { FoundryAttachmentConstraintOverride } from "./applyAttachmentConstraintOverrides.js";
+import { makeConnectManager, acquireConfiguredConnection } from "@party-stack/connect";
+import { classifyBackendFailure } from "@party-stack/ontology-backend";
+import { Runtimes, Runtime } from "@party-stack/runtime";
+import { Effect } from "effect";
+import { makeFoundryMetadataBackend } from "../backend.js";
+import { makeFoundryServiceConnector } from "../serviceConnector.js";
+import type { FoundryOAuthConnectionOptions } from "../connectionOptions.js";
+import type { OntologyPullConfig } from "@party-stack/ontology-backend/meta";
 
 const DEFAULT_FOUNDRY_SCOPES = [
     "api:use-ontologies-read",
@@ -32,108 +20,62 @@ export interface FoundryOntologyPullConnectionOptions {
     userId?: string;
 }
 
-export interface CreateFoundryOntologyPullSourceOptions {
+export interface FoundryPullBackendOptions {
     baseUrl: string;
     ontologyRid: string;
     connection: FoundryOntologyPullConnectionOptions;
-    attachmentConstraints?: FoundryAttachmentConstraintOverride[];
-    users?: {
-        objectType: string;
-        lens: Lens;
-    };
 }
 
-function addConfiguredUser(
-    ontology: OntologyIR,
-    users: CreateFoundryOntologyPullSourceOptions["users"]
-): OntologyIR {
-    if (!users) return ontology;
-    const userObjectType = createFoundryUserObjectType(users.objectType, users.lens);
-    return {
-        ...ontology,
-        objectTypes: [
-            ...ontology.objectTypes.filter((objectType) => objectType.name !== users.objectType),
-            userObjectType,
-        ],
-        context: ontology.context ?? {
-            type: o.struct({
-                fields: [
+/** Acquire an authenticated metadata backend for the duration of the pull. */
+export const makeFoundryPullBackend = Effect.fn("Foundry.makePullBackend")(function* (
+    options: FoundryPullBackendOptions
+) {
+    const scopes = options.connection.oauth?.scopes ?? DEFAULT_FOUNDRY_SCOPES;
+    const oauth = options.connection.oauth;
+    const identity = `foundry:${options.baseUrl}:${oauth?.clientId ?? "api-key"}:${[...scopes].sort().join(",")}`;
+    const runtimes = yield* Runtimes;
+    const runtime = yield* runtimes
+        .acquire({ owner: "connect", namespace: identity })
+        .pipe(Effect.mapError((cause) => classifyBackendFailure("pull.runtime", cause)));
+    const manager = yield* makeConnectManager({
+        services: [
+            {
+                connector: makeFoundryServiceConnector({ fetch: oauth?.fetch }),
+                instances: [
                     {
-                        name: "user",
-                        displayName: "User",
-                        type: o.objectReference({ objectType: users.objectType }),
+                        id: options.baseUrl,
+                        title: "Foundry",
+                        instanceUrl: options.baseUrl,
+                        OAuthApplications: oauth
+                            ? [
+                                  {
+                                      id: oauth.clientId,
+                                      title: "Foundry",
+                                      clientId: oauth.clientId,
+                                      scopes,
+                                      redirectUrl: oauth.redirectUrl,
+                                      flow: "authorization-code",
+                                  },
+                              ]
+                            : [],
                     },
                 ],
-            }),
-        },
-    };
-}
-
-export function createFoundryOntologyPullSource(
-    options: CreateFoundryOntologyPullSourceOptions
-): OntologyPullSource<FoundryAuthenticationClient> {
-    return {
+            },
+        ],
+    }).pipe(Effect.provideService(Runtime, runtime));
+    const access = yield* acquireConfiguredConnection({
+        manager,
+        serviceInstanceId: options.baseUrl,
+        userId: options.connection.userId,
+        apiKey: options.connection.token,
+        oauth: oauth ? { applicationId: oauth.clientId, redirectUrl: oauth.redirectUrl } : undefined,
+        browserAuthentication: runtimes.browserAuthentication ?? runtime.browserAuthentication,
+    });
+    return yield* makeFoundryMetadataBackend({
+        baseUrl: options.baseUrl,
         ontologyId: options.ontologyRid,
-        createInstallation: ({ runtime }) => {
-            const scopes = options.connection.oauth?.scopes ?? DEFAULT_FOUNDRY_SCOPES;
-            return createFoundryBackendInstallation({
-                installationId: `foundry-pull:${options.baseUrl}:${options.ontologyRid}:${[...scopes].sort().join(",")}`,
-                baseUrl: options.baseUrl,
-                runtime,
-                connections: {
-                    token: options.connection.token,
-                    oauth: options.connection.oauth
-                        ? {
-                              ...options.connection.oauth,
-                              scopes,
-                          }
-                        : undefined,
-                },
-                routes: [
-                    createFoundryOntologyRoute({
-                        ontologyId: options.ontologyRid,
-                    }),
-                ],
-            });
-        },
-        async resolveConnection(installation) {
-            const configuredUserId = options.connection.userId;
-            const activeConnections = [...installation.connections.values()]
-                .filter((connection) => connection.state.status === "active")
-                .map((connection): Connection<"active"> => ({
-                    userId: connection.userId,
-                    state: connection.state as Connection<"active">["state"],
-                }));
+        egress: access.egress,
+    });
+});
 
-            if (!options.connection.token && !configuredUserId && activeConnections.length > 1) {
-                throw new Error(
-                    "Multiple Foundry users are signed in for this project. Set connection.userId in the ontology pull source."
-                );
-            }
-            let connection = options.connection.token
-                ? await installation.authentication.signIn.apiToken()
-                : configuredUserId
-                  ? activeConnections.find((candidate) => candidate.userId === configuredUserId)
-                  : activeConnections[0];
-            if (!connection && options.connection.oauth) {
-                connection = await installation.authentication.signIn.oauth();
-            }
-            if (!connection) {
-                throw new Error("Foundry ontology pull requires connection.oauth or connection.token.");
-            }
-            if (configuredUserId && connection.userId !== configuredUserId) {
-                throw new Error(
-                    `Foundry signed in as "${connection.userId}", but connection.userId is "${configuredUserId}".`
-                );
-            }
-            return connection;
-        },
-        transformPulledOntology: (ontology) =>
-            addConfiguredUser(
-                applyAttachmentConstraintOverrides(ontology, options.attachmentConstraints ?? []),
-                options.users
-            ),
-    };
-}
-
-export type FoundryOntologyPullConfig = OntologyPullConfig<FoundryAuthenticationClient>;
+export type FoundryOntologyPullConfig = OntologyPullConfig<Runtimes>;

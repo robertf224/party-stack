@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
@@ -15,13 +16,13 @@ import { Temporal } from "temporal-polyfill";
 import { expect, test, vi } from "vite-plus/test";
 import { replicaController } from "../../ontology-replica/lib/internal.js";
 import { makeReplica } from "../../ontology-replica/lib/service.js";
-import { makeOntologyServer } from "./composition.js";
+import { makeOntologyServer, ontologyServerDispatch, selectOntology } from "./routing.js";
 import { makeOntologyProtocolClient, ontologyRpcHandlers, OntologyRpcs } from "./rpc.js";
-import { connectOntologyBackendHttp, connectOntologyHttp, makeOntologyHttpHandler } from "./rpcHttp.js";
-import type { OntologyConnection } from "./rpc.js";
+import { makeOntologyHttpBackend, makeOntologyHttpClient, makeOntologyHttpHandler } from "./rpcHttp.js";
+import type { OntologyClient } from "./rpc.js";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 
-const speculativeSource = (connection: OntologyConnection) => {
+const speculativeSource = (connection: OntologyClient) => {
     if (connection.replication.kind !== "speculative") throw new Error("Expected speculative replication.");
     return connection.replication.source;
 };
@@ -89,7 +90,7 @@ test.each(["owned", "proxy", "cached-proxy", "replica"] as const)(
                 Effect.gen(function* () {
                     const owned = yield* setup();
                     yield* owned.applyAction({ id: "seed", name: "increment", parameters: {} });
-                    const reads = vi.spyOn(owned.storage, "read");
+                    const queries = vi.spyOn(owned, "query");
                     const cache = yield* makeReplica({
                         namespace: "query-cache",
                         ir,
@@ -107,17 +108,18 @@ test.each(["owned", "proxy", "cached-proxy", "replica"] as const)(
                               : kind === "cached-proxy"
                                 ? { kind, backend: owned, cache }
                                 : { kind, backend: owned, replica: cache };
-                    const operations: string[] = [];
                     const { handleRequest } = yield* makeOntologyServer({
+                        enableRealtime: true,
                         ...role,
-                        errors: "forward",
-                        authorize: (request) =>
-                            Effect.sync(() => {
-                                operations.push(request.operation);
-                            }),
-                    });
+                        dangerouslyAllowInternalAccess: true as const,
+                    }).pipe(
+                        Effect.flatMap((server) => makeOntologyHttpHandler(server)),
+                        Effect.map((handleRequest) => ({ handleRequest }))
+                    );
                     yield* Effect.gen(function* () {
-                        const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
+                        const connection = yield* makeOntologyHttpClient({
+                            url: "https://ontology.test/rpc",
+                        }).pipe(Effect.flatMap((server) => server.ontology()));
                         const result = yield* connection.operations.query({
                             select: [
                                 q.sub("counters", {
@@ -134,8 +136,7 @@ test.each(["owned", "proxy", "cached-proxy", "replica"] as const)(
                             ],
                         });
                         expect(result).toEqual({ counters: [{ id: "one", doubled: 2 }] });
-                        expect(operations).toContain("Query");
-                        if (kind === "owned") expect(reads).toHaveBeenCalledTimes(1);
+                        expect(queries).toHaveBeenCalledTimes(kind === "cached-proxy" ? 0 : 1);
                     }).pipe(
                         Effect.provide(FetchHttpClient.layer),
                         Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
@@ -154,14 +155,24 @@ test("automatic finite queries reject incomplete source subsets", async () => {
             Effect.gen(function* () {
                 const owned = yield* setup();
                 const { handleRequest } = yield* makeOntologyServer({
+                    enableRealtime: true,
                     kind: "proxy",
                     ir,
-                    errors: "forward",
-                    authorize: () => Effect.void,
-                    backend: { ...owned, loadSubset: () => Effect.succeed({ rows: [], complete: false }) },
-                });
+                    dangerouslyAllowInternalAccess: true,
+                    backend: makeOntologyBackend({
+                        ...owned,
+                        ir,
+                        query: undefined,
+                        loadSubset: () => Effect.succeed({ rows: [], complete: false }),
+                    }),
+                }).pipe(
+                    Effect.flatMap((server) => makeOntologyHttpHandler(server)),
+                    Effect.map((handleRequest) => ({ handleRequest }))
+                );
                 yield* Effect.gen(function* () {
-                    const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
+                    const connection = yield* makeOntologyHttpClient({
+                        url: "https://ontology.test/rpc",
+                    }).pipe(Effect.flatMap((server) => server.ontology()));
                     const result = yield* Effect.result(
                         connection.operations.query({
                             select: [
@@ -184,6 +195,68 @@ test("automatic finite queries reject incomplete source subsets", async () => {
     );
 });
 
+test("pin inventories share ordinary ontology RPCs and require parent administrative access", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* setup();
+                const replica = yield* makeReplica({
+                    ir,
+                    backend: owned,
+                    tables: yield* Memory.make(),
+                    namespace: "pin-rpc",
+                });
+                let allowed = true;
+                const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                    Effect.provide(
+                        ontologyRpcHandlers({
+                            backend: owned,
+                            replica,
+                            ir,
+                            enableRealtime: true,
+                            authorize: (request) =>
+                                request.operation === "ReadPin" && !allowed
+                                    ? Effect.fail(
+                                          new BackendError({
+                                              operation: "pins",
+                                              kind: "Forbidden",
+                                              retryable: false,
+                                              message: "Denied",
+                                          })
+                                      )
+                                    : Effect.void,
+                        })
+                    )
+                );
+                const remote = yield* makeOntologyProtocolClient(client);
+                const pins = yield* remote.pinBackend!;
+                const query = {
+                    select: [
+                        q.sub("counters", {
+                            from: { source: { objectType: "Counter" }, binding: "counter" },
+                            select: [q.selectField("id", q.field("counter", "id"))],
+                        }),
+                    ],
+                };
+                yield* pins.applyAction({
+                    id: "pin-request",
+                    name: "updatePins",
+                    parameters: {
+                        change: { set: [{ name: "counters", query }] },
+                    },
+                });
+                expect((yield* pins.loadSubset(objectSubset("Pin"))).rows).toHaveLength(1);
+                expect(yield* replica.demand.pins.list).toMatchObject([{ name: "counters" }]);
+                allowed = false;
+                const denied = yield* Effect.result(pins.loadSubset(objectSubset("Pin")));
+                expect(denied).toMatchObject({ _tag: "Failure", failure: { kind: "Forbidden" } });
+                // Ordinary application reads are unaffected by the administrative denial.
+                expect((yield* remote.backend.loadSubset(objectSubset("Counter"))).complete).toBe(true);
+            })
+        )
+    );
+});
+
 test("domain RPC carries selected state, resumable ordered actions and acknowledgments", async () => {
     await Effect.runPromise(
         Effect.scoped(
@@ -194,6 +267,7 @@ test("domain RPC carries selected state, resumable ordered actions and acknowled
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyRpcHandlers({
+                            enableRealtime: true,
                             source: parentSource,
                             authorize: (request) =>
                                 Effect.sync(() => {
@@ -299,6 +373,7 @@ test("incremental state delivery owns demand without a parallel Demand RPC", asy
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyRpcHandlers({
+                            enableRealtime: true,
                             source: replicaStateSource(parent),
                             ir,
                             authorize: (request) =>
@@ -361,6 +436,7 @@ test.each(["Unavailable", "Forbidden"] as const)(
                     const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                         Effect.provide(
                             ontologyRpcHandlers({
+                                enableRealtime: true,
                                 source: {
                                     ...source,
                                     demand: () =>
@@ -407,8 +483,8 @@ test("native HTTP advertises and transports read-only parameter resolution with 
         Effect.scoped(
             Effect.gen(function* () {
                 const owned = yield* setup();
-                const operations: string[] = [];
                 const { handleRequest } = yield* makeOntologyServer({
+                    enableRealtime: true,
                     kind: "owned",
                     backend: {
                         ...owned,
@@ -419,13 +495,13 @@ test("native HTTP advertises and transports read-only parameter resolution with 
                                 at: Temporal.Instant.from("2026-10-26T00:00:00Z"),
                             }),
                     },
-                    authorize: (request) =>
-                        Effect.sync(() => {
-                            operations.push(request.operation);
-                        }),
-                });
+                    dangerouslyAllowInternalAccess: true as const,
+                }).pipe(
+                    Effect.flatMap((server) => makeOntologyHttpHandler(server)),
+                    Effect.map((handleRequest) => ({ handleRequest }))
+                );
                 yield* Effect.gen(function* () {
-                    const backend = yield* connectOntologyBackendHttp({ url: "https://ontology.test/rpc" });
+                    const backend = yield* makeOntologyHttpBackend({ url: "https://ontology.test/rpc" });
                     expect(backend.resolveActionParameters).toBeDefined();
                     const result = yield* backend.resolveActionParameters!("increment", { count: 4 });
                     expect(result).toMatchObject({ name: "increment", count: 4 });
@@ -436,8 +512,6 @@ test("native HTTP advertises and transports read-only parameter resolution with 
                         handleRequest(new Request(input, init))
                     )
                 );
-                expect(operations).toContain("ResolveActionParameters");
-                expect(operations).not.toContain("ApplyAction");
                 expect(yield* owned.storage.read((tx) => tx.get("Counter", "one"))).toBeUndefined();
             })
         )
@@ -470,7 +544,9 @@ test("RPC demand leases and change subscriptions close with the client scope", a
                         ).pipe(Stream.scoped),
                 };
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
-                    Effect.provide(ontologyRpcHandlers({ source, authorize: () => Effect.void }))
+                    Effect.provide(
+                        ontologyRpcHandlers({ enableRealtime: true, source, authorize: () => Effect.void })
+                    )
                 );
                 const remote = yield* makeOntologyProtocolClient(client);
                 const session = yield* speculativeSource(remote).openClient();
@@ -524,6 +600,7 @@ test("HTTP RPC preserves values/authentication and reacquires interrupted stream
                     nested: { tags: new Set(["one"]) },
                 };
                 const handler = yield* makeOntologyHttpHandler({
+                    enableRealtime: true,
                     source: {
                         ...parentSource,
                         read: (session, view) =>
@@ -573,17 +650,19 @@ test("HTTP RPC preserves values/authentication and reacquires interrupted stream
                 });
                 const program = Effect.gen(function* () {
                     const http = yield* HttpClient.HttpClient;
-                    const remote = yield* connectOntologyHttp({
+                    const remote = yield* makeOntologyHttpClient({
                         url: "https://ontology.test/rpc",
-                    }).pipe(
-                        Effect.provideService(
-                            HttpClient.HttpClient,
-                            HttpClient.mapRequest(
-                                http,
-                                HttpClientRequest.setHeader("authorization", "Bearer test")
+                    })
+                        .pipe(Effect.flatMap((server) => server.ontology()))
+                        .pipe(
+                            Effect.provideService(
+                                HttpClient.HttpClient,
+                                HttpClient.mapRequest(
+                                    http,
+                                    HttpClientRequest.setHeader("authorization", "Bearer test")
+                                )
                             )
-                        )
-                    );
+                        );
                     const session = yield* speculativeSource(remote).openClient();
                     yield* speculativeSource(remote).submit({
                         session,
@@ -620,7 +699,11 @@ test("HTTP RPC preserves values/authentication and reacquires interrupted stream
                     yield* Scope.close(consumer, Exit.void);
                     yield* Effect.promise(() => vi.waitFor(() => expect(leases).toBe(0)));
                     expect(
-                        yield* Effect.result(connectOntologyHttp({ url: "https://ontology.test/rpc" }))
+                        yield* Effect.result(
+                            makeOntologyHttpClient({ url: "https://ontology.test/rpc" }).pipe(
+                                Effect.flatMap((server) => server.ontology())
+                            )
+                        )
                     ).toMatchObject({
                         _tag: "Failure",
                         failure: { kind: "ValidationFailed", retryable: false },
@@ -666,6 +749,7 @@ test("RPC authorization runs before source operations, including demand and chan
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyRpcHandlers({
+                            enableRealtime: true,
                             source: { ...parentSource, read, submit, demand },
                             authorize: (request) =>
                                 request.operation === "Describe" || request.operation === "OpenClient"
@@ -795,6 +879,7 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                     cache: { objects: false },
                 });
                 const handler = yield* makeOntologyHttpHandler({
+                    enableRealtime: true,
                     source: parentSource,
                     replica,
                     backend,
@@ -804,12 +889,14 @@ test("helper RPCs authorize independently, preserve values and bytes, and stream
                             operations.push(request.operation);
                         }),
                 });
-                const client = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" }).pipe(
-                    Effect.provide(FetchHttpClient.layer),
-                    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
-                        handler(new Request(input, init))
-                    )
-                );
+                const client = yield* makeOntologyHttpClient({ url: "https://ontology.test/rpc" })
+                    .pipe(Effect.flatMap((server) => server.ontology()))
+                    .pipe(
+                        Effect.provide(FetchHttpClient.layer),
+                        Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                            handler(new Request(input, init))
+                        )
+                    );
                 expect(yield* Effect.result(client.operations.deleteLocalData)).toMatchObject({
                     _tag: "Failure",
                     failure: { kind: "NotImplemented" },
@@ -951,19 +1038,18 @@ test("stateless backend calls use the same HTTP server without opening a replica
         Effect.scoped(
             Effect.gen(function* () {
                 const owned = yield* setup();
-                const operations: string[] = [];
                 const { handleRequest } = yield* makeOntologyServer({
+                    enableRealtime: true,
                     kind: "proxy",
                     backend: owned,
                     ir,
-                    errors: "forward",
-                    authorize: (request) =>
-                        Effect.sync(() => {
-                            operations.push(request.operation);
-                        }),
-                });
+                    dangerouslyAllowInternalAccess: true as const,
+                }).pipe(
+                    Effect.flatMap((server) => makeOntologyHttpHandler(server)),
+                    Effect.map((handleRequest) => ({ handleRequest }))
+                );
                 yield* Effect.gen(function* () {
-                    const backend = yield* connectOntologyBackendHttp({ url: "https://ontology.test/rpc" });
+                    const backend = yield* makeOntologyHttpBackend({ url: "https://ontology.test/rpc" });
                     const receipt = yield* backend.applyAction({
                         id: "stateless",
                         name: "increment",
@@ -986,13 +1072,6 @@ test("stateless backend calls use the same HTTP server without opening a replica
                         handleRequest(new Request(input, init))
                     )
                 );
-                expect(operations).toEqual([
-                    "Describe",
-                    "ApplyAction",
-                    "LoadSubset",
-                    "ValidateAction",
-                    "PullChanges",
-                ]);
             })
         )
     );
@@ -1003,8 +1082,8 @@ test("authorization makes an owned server read-only and defects never escape as 
         Effect.scoped(
             Effect.gen(function* () {
                 const owned = yield* setup();
-                const { handleRequest } = yield* makeOntologyServer({
-                    kind: "owned",
+                const handleRequest = yield* makeOntologyHttpHandler({
+                    enableRealtime: true,
                     backend: { ...owned, loadSubset: () => Effect.die(new Error("private-token")) },
                     ir,
                     authorize: (request) =>
@@ -1021,7 +1100,7 @@ test("authorization makes an owned server read-only and defects never escape as 
                             : Effect.void,
                 });
                 yield* Effect.gen(function* () {
-                    const backend = yield* connectOntologyBackendHttp({ url: "https://ontology.test/rpc" });
+                    const backend = yield* makeOntologyHttpBackend({ url: "https://ontology.test/rpc" });
                     const denied = yield* Effect.result(
                         backend.applyAction({ id: "denied", name: "increment", parameters: {} })
                     );
@@ -1064,13 +1143,19 @@ test("a replica server keeps its committed facet separate from speculative publi
                 });
                 yield* replicaController(replica).enqueue({ id: "local", name: "increment", parameters: {} });
                 const { handleRequest } = yield* makeOntologyServer({
+                    enableRealtime: true,
                     kind: "replica",
                     replica,
                     backend: owned,
-                    authorize: () => Effect.void,
-                });
+                    dangerouslyAllowInternalAccess: true,
+                }).pipe(
+                    Effect.flatMap((server) => makeOntologyHttpHandler(server)),
+                    Effect.map((handleRequest) => ({ handleRequest }))
+                );
                 yield* Effect.gen(function* () {
-                    const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
+                    const connection = yield* makeOntologyHttpClient({
+                        url: "https://ontology.test/rpc",
+                    }).pipe(Effect.flatMap((server) => server.ontology()));
                     expect(connection.backend.changes).toBeDefined();
                     expect((yield* connection.backend.loadSubset(objectSubset("Counter"))).rows).toEqual([]);
                     const source = speculativeSource(connection);
@@ -1102,8 +1187,8 @@ test("a failing error-disclosure policy cannot leak its defect over RPC", async 
         Effect.scoped(
             Effect.gen(function* () {
                 const owned = yield* setup();
-                const { handleRequest } = yield* makeOntologyServer({
-                    kind: "owned",
+                const handleRequest = yield* makeOntologyHttpHandler({
+                    enableRealtime: true,
                     backend: owned,
                     errors: () => {
                         throw new Error("private-policy-detail");
@@ -1121,7 +1206,7 @@ test("a failing error-disclosure policy cannot leak its defect over RPC", async 
                             : Effect.void,
                 });
                 yield* Effect.gen(function* () {
-                    const backend = yield* connectOntologyBackendHttp({ url: "https://ontology.test/rpc" });
+                    const backend = yield* makeOntologyHttpBackend({ url: "https://ontology.test/rpc" });
                     const result = yield* Effect.result(
                         backend.applyAction({ id: "policy-defect", name: "increment", parameters: {} })
                     );
@@ -1153,22 +1238,30 @@ test("only replica servers advertise speculative state; owned and proxy roles ex
                     backend: owned,
                     live: false,
                 });
-                const roles: readonly import("./composition.js").OntologyServerOptions[] = [
-                    { kind: "owned", backend: owned, authorize: () => Effect.void },
-                    { kind: "proxy", backend: owned, authorize: () => Effect.void, ir },
+                const roles: readonly import("./composition.js").OntologyBindingOptions[] = [
+                    { kind: "owned", backend: owned, dangerouslyAllowInternalAccess: true },
+                    { kind: "proxy", backend: owned, dangerouslyAllowInternalAccess: true, ir },
                     {
                         kind: "cached-proxy",
                         backend: owned,
                         cache: replica,
-                        authorize: () => Effect.void,
+                        dangerouslyAllowInternalAccess: true,
                         ir,
                     },
-                    { kind: "replica", backend: owned, replica, authorize: () => Effect.void },
+                    { kind: "replica", backend: owned, replica, dangerouslyAllowInternalAccess: true },
                 ];
                 for (const options of roles) {
-                    const { handleRequest } = yield* makeOntologyServer(options);
+                    const { handleRequest } = yield* makeOntologyServer({
+                        ...options,
+                        enableRealtime: true,
+                    }).pipe(
+                        Effect.flatMap((server) => makeOntologyHttpHandler(server)),
+                        Effect.map((handleRequest) => ({ handleRequest }))
+                    );
                     yield* Effect.gen(function* () {
-                        const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
+                        const connection = yield* makeOntologyHttpClient({
+                            url: "https://ontology.test/rpc",
+                        }).pipe(Effect.flatMap((server) => server.ontology()));
                         expect(connection.replication.kind).toBe(
                             options.kind === "replica" ? "speculative" : "committed"
                         );
@@ -1203,9 +1296,10 @@ test.each(["absent", "read-only", "read-write"] as const)(
                 Effect.gen(function* () {
                     const owned = yield* setup();
                     const { handleRequest } = yield* makeOntologyServer({
+                        enableRealtime: true,
                         kind: "proxy",
                         ir,
-                        authorize: () => Effect.void,
+                        dangerouslyAllowInternalAccess: true,
                         backend: {
                             ...owned,
                             attachments:
@@ -1220,9 +1314,14 @@ test.each(["absent", "read-only", "read-write"] as const)(
                                           metadata: () => Effect.succeed({ size: 4 }),
                                       },
                         },
-                    });
+                    }).pipe(
+                        Effect.flatMap((server) => makeOntologyHttpHandler(server)),
+                        Effect.map((handleRequest) => ({ handleRequest }))
+                    );
                     yield* Effect.gen(function* () {
-                        const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
+                        const connection = yield* makeOntologyHttpClient({
+                            url: "https://ontology.test/rpc",
+                        }).pipe(Effect.flatMap((server) => server.ontology()));
                         expect(Boolean(connection.backend.attachments)).toBe(mode !== "absent");
                         expect(Boolean(connection.backend.attachments?.stage)).toBe(mode === "read-write");
                         expect(connection.backend.encrypted).toBeUndefined();
@@ -1250,23 +1349,23 @@ test("committed RPC subset watching preserves provider hints and releases its sc
             Effect.gen(function* () {
                 const owned = yield* setup();
                 let watchers = 0;
+                const events: unknown[] = [];
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyRpcHandlers({
+                            enableRealtime: true,
                             backend: {
                                 ...owned,
                                 watchSubset: () =>
-                                    Stream.unwrap(
-                                        Effect.acquireRelease(
+                                    Effect.acquireRelease(
+                                        Effect.sync(() => {
+                                            watchers++;
+                                            return Stream.concat(Stream.make(undefined), Stream.never);
+                                        }),
+                                        () =>
                                             Effect.sync(() => {
-                                                watchers++;
-                                                return Stream.never;
-                                            }),
-                                            () =>
-                                                Effect.sync(() => {
-                                                    watchers--;
-                                                })
-                                        )
+                                                watchers--;
+                                            })
                                     ),
                                 refresh: () => ({ pollIntervalMs: false }),
                             },
@@ -1280,12 +1379,17 @@ test("committed RPC subset watching preserves provider hints and releases its sc
                 expect(connection.backend.watchSubset).toBeDefined();
                 const subscription = yield* Scope.make();
                 yield* Scope.provide(
-                    Stream.runDrain(connection.backend.watchSubset!(objectSubset("Counter"))!).pipe(
-                        Effect.forkScoped
-                    ),
+                    Stream.runForEach(
+                        Stream.unwrap(connection.backend.watchSubset!(objectSubset("Counter"))!),
+                        (event) =>
+                            Effect.sync(() => {
+                                events.push(event);
+                            })
+                    ).pipe(Effect.forkScoped),
                     subscription
                 );
                 yield* Effect.promise(() => vi.waitFor(() => expect(watchers).toBe(1)));
+                yield* Effect.promise(() => vi.waitFor(() => expect(events).toEqual([undefined])));
                 yield* Scope.close(subscription, Exit.void);
                 expect(watchers).toBe(0);
             })
@@ -1310,10 +1414,14 @@ test.each(["watchSubset", "changes"] as const)(
                     const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                         Effect.provide(
                             ontologyRpcHandlers({
+                                enableRealtime: true,
                                 backend: {
                                     ...owned,
-                                    watchSubset: () => Stream.fail(failure),
-                                    changes: { ...owned.changes!, watch: Stream.fail(failure) },
+                                    watchSubset: () => Effect.succeed(Stream.fail(failure)),
+                                    changes: {
+                                        ...owned.changes!,
+                                        watch: Effect.succeed(Stream.fail(failure)),
+                                    },
                                 },
                                 ir,
                                 errors: "forward",
@@ -1326,7 +1434,9 @@ test.each(["watchSubset", "changes"] as const)(
                         hook === "changes"
                             ? connection.backend.changes!.watch!
                             : connection.backend.watchSubset!(objectSubset("Counter"))!;
-                    const result = yield* Effect.result(Stream.runDrain(stream).pipe(Effect.timeout(200)));
+                    const result = yield* Effect.result(
+                        Stream.runDrain(Stream.unwrap(stream)).pipe(Effect.timeout(200))
+                    );
                     expect(result).toMatchObject({
                         _tag: "Failure",
                         failure: { kind: "RateLimited", retryable: true, retryAfterMs: 30_000 },
@@ -1351,6 +1461,7 @@ test.each([
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyRpcHandlers({
+                            enableRealtime: true,
                             backend: {
                                 ...owned,
                                 loadSubset: () =>
@@ -1405,14 +1516,11 @@ test.each(
                         tables: yield* Memory.make(),
                         live: false,
                     });
-                    const requests: string[] = [];
                     const common = {
+                        enableRealtime: true,
                         ir,
                         deliveryStrategy,
-                        authorize: (request: import("./rpc.js").OntologyRpcRequest) =>
-                            Effect.sync(() => {
-                                requests.push(request.operation);
-                            }),
+                        dangerouslyAllowInternalAccess: true as const,
                     };
                     const { handleRequest } = yield* makeOntologyServer(
                         kind === "owned"
@@ -1420,13 +1528,18 @@ test.each(
                             : kind === "cached-proxy"
                               ? { ...common, kind, backend: owned, cache: parent }
                               : { ...common, kind, backend: owned, replica: parent }
+                    ).pipe(
+                        Effect.flatMap((server) => makeOntologyHttpHandler(server)),
+                        Effect.map((handleRequest) => ({ handleRequest }))
                     );
                     const wait = (condition: Effect.Effect<boolean, BackendError>) =>
                         Effect.gen(function* () {
                             while (!(yield* condition)) yield* Effect.sleep(2);
                         }).pipe(Effect.timeout("3 seconds"));
                     yield* Effect.gen(function* () {
-                        const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
+                        const connection = yield* makeOntologyHttpClient({
+                            url: "https://ontology.test/rpc",
+                        }).pipe(Effect.flatMap((server) => server.ontology()));
                         if (kind === "replica" && deliveryStrategy === "incremental") {
                             // Its ordinary committed facet must use the endpoint's advertised identity too.
                             yield* Effect.scoped(
@@ -1486,23 +1599,11 @@ test.each(
                         );
                         expect((yield* child.get("Counter", "one"))?.count).toBe(3);
                         if (deliveryStrategy === "incremental") {
-                            expect(requests).toContain("AckDelivery");
-                            expect(requests).toContain(
-                                kind === "replica" ? "SubscribeState" : "SubscribeSelection"
-                            );
-                            expect(requests).toContain(kind === "replica" ? "Accept" : "ApplyAction");
-                            expect(requests).not.toContain("Submit");
                         } else {
                             expect(connection.backend.subscribeSelection).toBeUndefined();
                             expect(connection.backend.changes).toBeUndefined();
                             if (connection.replication.kind === "speculative")
                                 expect(connection.replication.source.subscribe).toBeUndefined();
-                            expect(requests).toContain(kind === "replica" ? "Read" : "LoadSubset");
-                            expect(requests).toContain(kind === "replica" ? "Submit" : "ApplyAction");
-                            expect(requests).not.toContain("SubscribeState");
-                            expect(requests).not.toContain("SubscribeSelection");
-                            expect(requests).not.toContain("AckDelivery");
-                            expect(requests).not.toContain("PullChanges");
                         }
                     }).pipe(
                         Effect.provide(FetchHttpClient.layer),
@@ -1524,6 +1625,7 @@ test("snapshot endpoints reject direct incremental calls and retain subset inval
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyRpcHandlers({
+                            enableRealtime: true,
                             backend,
                             ir,
                             deliveryStrategy: "snapshot",
@@ -1556,7 +1658,7 @@ test("snapshot endpoints reject direct incremental calls and retain subset inval
                 });
                 expect(
                     yield* Stream.runCollect(client.WatchSubset(objectSubset("Counter")).pipe(Stream.take(1)))
-                ).toEqual(["invalidate"]);
+                ).toEqual(["reset"]);
             })
         )
     );
@@ -1570,6 +1672,7 @@ test("explicit incremental configuration rejects a source without native deliver
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyRpcHandlers({
+                            enableRealtime: true,
                             backend: {
                                 ...backend,
                                 subscribeSelection: undefined,
@@ -1599,6 +1702,7 @@ test("a scoped attachment source cancels its unconsumed RPC download without clo
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyRpcHandlers({
+                            enableRealtime: true,
                             backend: {
                                 ...owned,
                                 attachments: {
@@ -1633,6 +1737,133 @@ test("a scoped attachment source cancels its unconsumed RPC download without clo
                 yield* Scope.close(second, Exit.void);
                 yield* Effect.promise(() => vi.waitFor(() => expect(active).toBe(0)));
                 expect((yield* connection.backend.loadSubset(objectSubset("Counter"))).rows).toEqual([]);
+            })
+        )
+    );
+});
+
+test.each([undefined, false, true])(
+    "client synchronization is explicit opt-in: %s",
+    async (enableRealtime) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const owned = yield* setup();
+                    const watched = vi.fn(() => Effect.succeed(Stream.never));
+                    const backend = { ...owned, watchSubset: watched };
+                    const selected = vi.spyOn(backend, "subscribeSelection");
+                    const server = yield* makeOntologyServer({
+                        enableRealtime,
+                        routes: {
+                            default: { kind: "owned", backend, dangerouslyAllowInternalAccess: true },
+                            finite: {
+                                kind: "owned",
+                                backend,
+                                dangerouslyAllowInternalAccess: true,
+                                enableRealtime: false,
+                            },
+                            live: {
+                                kind: "owned",
+                                backend,
+                                dangerouslyAllowInternalAccess: true,
+                                enableRealtime: true,
+                            },
+                        },
+                    });
+                    const rpc = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                        Effect.provide(ontologyServerDispatch(server))
+                    );
+                    for (const [name, enabled] of [
+                        ["default", enableRealtime === true],
+                        ["finite", false],
+                        ["live", true],
+                    ] as const) {
+                        const route = selectOntology(rpc, name);
+                        const description = yield* route.Describe();
+                        expect(description.watchSubset).toBe(enabled);
+                        expect(description.delivery).toBe(enabled);
+                        expect(description.changes).toBe(enabled);
+                        yield* route.ApplyAction({ id: `action-${name}`, name: "increment", parameters: {} });
+                        expect((yield* route.LoadSubset(objectSubset("Counter"))).rows).toHaveLength(1);
+                        if (!enabled) {
+                            const denied = [
+                                Stream.runDrain(route.WatchSubset(objectSubset("Counter"))),
+                                Stream.runDrain(route.WatchChanges()),
+                                route.PullChanges({}),
+                                Stream.runDrain(
+                                    route.SubscribeSelection({
+                                        selection: { subsets: [objectSubset("Counter")] },
+                                    })
+                                ),
+                                route.OpenClient({}),
+                                Stream.runDrain(route.Changes()),
+                            ];
+                            for (const request of denied)
+                                expect(yield* Effect.result(request)).toMatchObject({
+                                    _tag: "Failure",
+                                    failure: { kind: "NotImplemented" },
+                                });
+                        }
+                    }
+                    expect(watched).not.toHaveBeenCalled();
+                    expect(selected).not.toHaveBeenCalled();
+                })
+            )
+        );
+    }
+);
+
+test("server errors follow each route's policy boundary automatically", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* setup();
+                const backend = {
+                    ...owned,
+                    applyAction: () =>
+                        Effect.fail(
+                            new BackendError({
+                                operation: "applyAction",
+                                kind: "InvalidRequest",
+                                message: "private provider detail",
+                                retryable: false,
+                                actionOutcome: "not-committed",
+                                cause: new Error("private cause"),
+                            })
+                        ),
+                };
+                const policy = {
+                    objects: {
+                        select: [
+                            q.sub("counters", {
+                                from: { source: { objectType: "Counter" }, binding: "row" },
+                                select: [q.selectField("id", q.field("row", "id"))],
+                            }),
+                        ],
+                    },
+                    actions: [{ actionType: "increment", check: q.literal(true) }],
+                };
+                const server = yield* makeOntologyServer({
+                    routes: {
+                        private: { kind: "proxy", backend, ir, dangerouslyAllowInternalAccess: true },
+                        public: { kind: "proxy", backend, ir: { ...ir, policy }, context: {} },
+                    },
+                });
+                const rpc = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                    Effect.provide(ontologyServerDispatch(server))
+                );
+                for (const name of ["private", "public"]) {
+                    const result = yield* Effect.result(
+                        selectOntology(rpc, name).ApplyAction({ id: name, name: "increment", parameters: {} })
+                    );
+                    expect(result._tag).toBe("Failure");
+                    if (result._tag !== "Failure") throw new Error("Expected failure");
+                    expect(result.failure.message === "private provider detail").toBe(name === "private");
+                    expect(result.failure.cause).toEqual(
+                        name === "private" ? new Error("private cause") : undefined
+                    );
+                    expect(result.failure).toMatchObject({ actionOutcome: "not-committed" });
+                }
             })
         )
     );

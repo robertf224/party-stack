@@ -46,7 +46,7 @@ test("workers detect connectivity changes without native events, including brief
                 expect(yield* connectivity.online).toBe(false);
                 yield* TestClock.adjust(100);
                 setOnline(true, false);
-                yield* TestClock.adjust(1_899);
+                yield* TestClock.adjust(899);
                 expect(values).toEqual([true, false]);
                 yield* TestClock.adjust(1);
                 expect(values).toEqual([true, false, true]);
@@ -58,46 +58,61 @@ test("workers detect connectivity changes without native events, including brief
         ).pipe(Effect.provide(TestClock.layer()))
     );
 });
-test("connectivity emits its initial state and waits for an online connection to stabilize", async () => {
+
+test("an offline observation is retained even when reconnect precedes the event consumer", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { connectivity, setOnline, values } = yield* setup(true, true);
+                setOnline(false, false);
+                expect(yield* connectivity.online).toBe(false);
+                // Do not yield to the event consumer between observing offline and reconnecting.
+                setOnline(true, false);
+                expect(yield* connectivity.online).toBe(true);
+                yield* TestClock.adjust(0);
+                expect(values).toEqual([true, false, true]);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
+});
+test("an online event wakes connectivity without advancing the clock", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const { connectivity, setOnline, values } = yield* setup();
                 expect(values).toEqual([false]);
                 setOnline(true);
-                yield* TestClock.adjust(999);
-                expect(yield* connectivity.online).toBe(false);
-                yield* TestClock.adjust(1);
+                yield* TestClock.adjust(0);
                 expect(yield* connectivity.online).toBe(true);
                 expect(values).toEqual([false, true]);
             })
         ).pipe(Effect.provide(TestClock.layer()))
     );
 });
-test("going offline cancels pending stabilization", async () => {
+test("connectivity follows successive online and offline events immediately", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const { connectivity, setOnline, values } = yield* setup();
                 setOnline(true);
-                yield* TestClock.adjust(500);
+                yield* TestClock.adjust(0);
+                expect(yield* connectivity.online).toBe(true);
                 setOnline(false);
-                yield* TestClock.adjust(1000);
+                yield* TestClock.adjust(0);
                 expect(yield* connectivity.online).toBe(false);
-                expect(values).toEqual([false]);
+                expect(values).toEqual([false, true, false]);
             })
         ).pipe(Effect.provide(TestClock.layer()))
     );
 });
-test("closing the platform scope removes listeners and cancels stabilization", async () => {
+test("closing the platform scope removes listeners and worker sampling", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const scope = yield* Scope.fork(yield* Effect.scope);
-                const { setOnline, remove, values } = yield* Scope.provide(setup(), scope);
-                setOnline(true);
-                yield* TestClock.adjust(100);
+                const { setOnline, remove, values } = yield* Scope.provide(setup(false, true), scope);
                 yield* Scope.close(scope, Exit.void);
+                setOnline(true);
                 yield* TestClock.adjust(1000);
                 expect(remove.mock.calls.map(([event]) => event).sort()).toEqual(["offline", "online"]);
                 expect(values).toEqual([false]);

@@ -1,10 +1,9 @@
 import { makeNetworkConnectivity } from "@party-stack/runtime";
 import { Effect, PubSub, Stream } from "effect";
 
-const ONLINE_STABILIZATION_MS = 1_000;
 const WORKER_CONNECTIVITY_SAMPLE_MS = 1_000;
 
-/** Native listeners and stabilization belong to the caller's platform scope. */
+/** Native listeners and the worker event fallback belong to the caller's platform scope. */
 export const makeNavigatorNetworkConnectivity = Effect.fnUntraced(function* () {
     const state = yield* makeNetworkConnectivity(navigator.onLine !== false);
     const target = typeof window === "undefined" ? globalThis : window;
@@ -32,15 +31,7 @@ export const makeNavigatorNetworkConnectivity = Effect.fnUntraced(function* () {
             })
     );
     const changes = Stream.fromPubSub(events).pipe(
-        Stream.switchMap(() =>
-            Stream.fromEffect(
-                Effect.gen(function* () {
-                    if (navigator.onLine !== false && !(yield* state.online))
-                        yield* Effect.sleep(ONLINE_STABILIZATION_MS);
-                    yield* state.set(navigator.onLine !== false);
-                })
-            )
-        )
+        Stream.mapEffect(() => state.set(navigator.onLine !== false))
     );
     yield* Stream.runDrain(changes).pipe(Effect.forkScoped({ startImmediately: true }));
     // SharedWorkers can observe onLine changes without receiving native events
@@ -50,13 +41,14 @@ export const makeNavigatorNetworkConnectivity = Effect.fnUntraced(function* () {
             Effect.sleep(WORKER_CONNECTIVITY_SAMPLE_MS).pipe(Effect.andThen(Effect.sync(sample)))
         ).pipe(Effect.forkScoped);
     return {
-        online: state.online.pipe(
-            Effect.map((online) => {
-                // Remember even a short offline period noticed between worker samples.
-                sample();
-                return navigator.onLine !== false && online;
-            })
-        ),
+        online: Effect.suspend(() => {
+            sample();
+            // Record an observed state before returning it. Otherwise a
+            // quick reconnect can overtake the event consumer: it sees true -> true,
+            // and an outbox that just paused never receives its reconnect wakeup.
+            const online = navigator.onLine !== false;
+            return state.set(online).pipe(Effect.as(online));
+        }),
         changes: state.changes,
     };
 });

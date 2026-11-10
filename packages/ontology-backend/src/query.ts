@@ -1,7 +1,7 @@
 import { executeQuery as execute, queryExecutor as executor } from "@party-stack/ontology-storage/query";
 import { Effect } from "effect";
+import { BackendError } from "./errors.js";
 import { objectSubset, resolveSubsetSnapshot } from "./subset.js";
-import { BackendError } from "./index.js";
 import type { OntologyBackendService } from "./index.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { QueryDocument } from "@party-stack/ontology-spec";
@@ -33,10 +33,7 @@ export const executeQuery = Effect.fn("Backend.query")(function* (
 });
 
 /** Finite query execution cannot interpret an incomplete subset as an absence. */
-export const backendQueryReader = (
-    ir: OntologyIR,
-    backend: Pick<OntologyBackendService, "loadSubset">
-): QueryReader => ({
+const subsetReader = (ir: OntologyIR, backend: Pick<OntologyBackendService, "loadSubset">): QueryReader => ({
     ir,
     loadSubset: (objectType, query) =>
         backend.loadSubset(objectSubset(objectType, query)).pipe(
@@ -58,3 +55,26 @@ export const backendQueryReader = (
             )
         ),
 });
+
+/** Install shared finite query execution when a provider has no native executor. */
+export function makeOntologyBackend(
+    options: Omit<OntologyBackendService, "query"> & {
+        readonly ir: OntologyIR;
+        readonly context?: Record<string, unknown>;
+        readonly query?: OntologyBackendService["query"];
+    }
+): OntologyBackendService {
+    const { ir, context, query, ...backend } = options;
+    const reader = subsetReader(ir, backend);
+    return {
+        ...backend,
+        query:
+            query ??
+            ((document, options) =>
+                executeQuery(document, {
+                    reader,
+                    context,
+                    inputs: options?.inputs,
+                }).pipe(Effect.map((result) => result.value))),
+    };
+}

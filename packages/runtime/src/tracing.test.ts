@@ -204,3 +204,50 @@ test("delivery diagnostics retain progress identifiers without recording payload
     });
     expect(JSON.stringify(capture.getSnapshot())).not.toContain("do-not-record");
 });
+
+test("delivery diagnostics preserve normalized error and recovery classifications", async () => {
+    const capture = createTraceCapture();
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const span = yield* Effect.currentSpan;
+            span.event("replica.disconnected", 0n, {
+                diagnostic: true,
+                errorKind: "HistoryExpired",
+                recovery: "snapshot",
+                payload: "private",
+            });
+        }).pipe(Effect.withSpan("delivery"), Effect.provideService(Tracer.Tracer, capture.tracer))
+    );
+    expect(capture.getSnapshot()[0]?.events?.[0]?.attributes).toEqual({
+        errorKind: "HistoryExpired",
+        recovery: "snapshot",
+    });
+});
+
+test("bulk diagnostics retain only bounded phase counters", async () => {
+    const capture = createTraceCapture();
+    await Effect.runPromise(
+        Effect.annotateCurrentSpan({
+            rows: 128,
+            indexes: 2,
+            concurrency: 128,
+            peakWrites: 128,
+            uniqueSlots: 256,
+            uniqueProbes: 256,
+            reason: "independent",
+            tableName: "private-table",
+            rowKeys: ["private-row"],
+            values: "private-value",
+        }).pipe(Effect.withSpan("Tables.putMany.proof"), Effect.provideService(Tracer.Tracer, capture.tracer))
+    );
+    expect(capture.getSnapshot()[0]?.attributes).toEqual({
+        rows: 128,
+        indexes: 2,
+        concurrency: 128,
+        peakWrites: 128,
+        uniqueSlots: 256,
+        uniqueProbes: 256,
+        reason: "independent",
+    });
+    expect(JSON.stringify(capture.getSnapshot())).not.toContain("private");
+});

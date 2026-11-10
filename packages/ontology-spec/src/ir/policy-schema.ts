@@ -26,7 +26,7 @@ export const policyTypes: NamedTypeDef[] = [
             field("actionType", o.string({})),
             field("check", ref("Expression")),
             field("bind", optional(list("ActionParameterBinding"))),
-            field("read", optional(ref("QueryDocument"))),
+            field("additionalObjects", optional(ref("QueryDocument"))),
         ]
     ),
     struct(
@@ -35,14 +35,14 @@ export const policyTypes: NamedTypeDef[] = [
         [
             field("queryFunctionType", o.string({})),
             field("check", ref("Expression")),
-            field("read", optional(ref("QueryDocument"))),
+            field("additionalObjects", optional(ref("QueryDocument"))),
         ]
     ),
     struct(
         "PolicyDef",
         "One effective policy for an ontology view; grants are evaluated under its trusted context.",
         [
-            field("read", ref("QueryDocument")),
+            field("objects", ref("QueryDocument")),
             field("actions", optional(list("ActionPolicy"))),
             field("queryFunctions", optional(list("QueryFunctionPolicy"))),
         ]

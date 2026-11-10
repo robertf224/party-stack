@@ -64,16 +64,14 @@ export function TaskManager() {
 
 function ConnectedTaskManager({ ontologies }: { ontologies: SalesforceOntologies }) {
     const { data, meta, userId } = ontologies;
-    const { data: tasks } = useLiveQuery(
-        (query) =>
-            query
-                .from({ Task: data.objects.Task })
-                .orderBy(({ Task }) => Task.CreatedDate, "desc")
-                .limit(50)
-                .select(({ Task }) => ({
-                    ...Task,
-                })),
-        [data]
+    const { data: tasks } = useLiveQuery((query) =>
+        query
+            .from({ Task: data.objects.Task })
+            .orderBy(({ Task }) => Task.CreatedDate, "desc")
+            .limit(50)
+            .select(({ Task }) => ({
+                ...Task,
+            }))
     );
     const [taskDialog, setTaskDialog] = useState<Task | null>();
     const [saving, setSaving] = useState(false);

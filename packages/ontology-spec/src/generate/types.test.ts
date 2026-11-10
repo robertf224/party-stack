@@ -5,6 +5,63 @@ import { generateTypeDefinitions, generateTypes } from "./types.js";
 import type { OntologyIR } from "../ir/generated/types.js";
 
 describe("generateTypes", () => {
+    it("separates binary action inputs from persisted parameters and return values", () => {
+        const ir: OntologyIR = {
+            objectTypes: [],
+            linkTypes: [],
+            queryFunctionTypes: [],
+            types: [
+                {
+                    name: "Bundle",
+                    type: o.struct({
+                        fields: [
+                            {
+                                name: "files",
+                                displayName: "Files",
+                                type: o.list({ elementType: o.attachment({}) }),
+                            },
+                            {
+                                name: "label",
+                                displayName: "Label",
+                                type: o.struct({
+                                    fields: [{ name: "id", displayName: "ID", type: o.string({}) }],
+                                }),
+                            },
+                        ],
+                    }),
+                },
+            ],
+            actionTypes: [
+                {
+                    name: "upload",
+                    displayName: "Upload",
+                    logic: [],
+                    parameters: [
+                        { name: "bundle", displayName: "Bundle", type: o.ref({ name: "Bundle" }) },
+                        {
+                            name: "encrypted",
+                            displayName: "Encrypted",
+                            type: o.encrypted({ type: o.attachment({}) }),
+                        },
+                    ],
+                    returnType: o.attachment({}),
+                },
+            ],
+        };
+        const output = generateTypes(ir);
+        expect(output).toContain("export type BundleInput");
+        expect(output).toContain("files: Array<v.attachment | Blob>");
+        expect(output).toContain("bundle: BundleInput");
+        expect(output).toContain("inputParameters: UploadInput");
+        expect(output).toContain("export type UploadReturn = v.attachment;");
+        expect(output).toContain("encrypted: v.Encrypted<v.attachment>");
+        const canonical = output.slice(
+            output.indexOf("export type UploadParameters"),
+            output.indexOf("export type UploadInput")
+        );
+        expect(canonical).toContain("bundle: Bundle");
+        expect(canonical).not.toContain("Blob");
+    });
     it("generates type-only struct definitions with ontology values imports", () => {
         const ontology: Pick<OntologyIR, "types"> = {
             types: [

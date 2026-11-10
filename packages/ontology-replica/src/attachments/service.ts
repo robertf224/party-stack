@@ -1,8 +1,12 @@
-import { BackendError } from "@party-stack/ontology-backend";
-import { ImageMediaTypeOptions } from "@party-stack/ontology-spec/constants";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { getTargetValueType } from "@party-stack/ontology-spec/utils";
-import { attachmentByteSource } from "@party-stack/ontology-storage/blobs";
+import { attachmentByteSource, digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Effect, Fiber } from "effect";
+import {
+    invalidAttachment as invalid,
+    attachmentSizeInRange as inRange,
+    validateAttachmentSource,
+} from "./validate.js";
 import type { BlobManagerService } from "./manager.js";
 import type { BlobMetadataField, PartialBlobMetadata } from "./types.js";
 import type { BackendAttachments } from "@party-stack/ontology-backend";
@@ -38,8 +42,6 @@ export interface ReplicaAttachments {
         options?: { readonly select?: readonly BlobMetadataField[] }
     ) => Effect.Effect<attachment & PartialBlobMetadata, BackendError>;
 }
-const invalid = (message: string) =>
-    new BackendError({ operation: "attachment.create", kind: "InvalidRequest", message, retryable: false });
 const missing = () =>
     new BackendError({
         operation: "attachment",
@@ -47,8 +49,6 @@ const missing = () =>
         message: "Local attachment storage is unavailable.",
         retryable: false,
     });
-const inRange = (value: number, range: { min?: number; max?: number }) =>
-    (range.min === undefined || value >= range.min) && (range.max === undefined || value <= range.max);
 
 /** Replica-owned lifecycle and IO; the SDK only infers target types and unwraps Effects. */
 export const makeReplicaAttachments = Effect.fnUntraced(function* (options: {
@@ -71,20 +71,41 @@ export const makeReplicaAttachments = Effect.fnUntraced(function* (options: {
             });
             if (type && type.kind !== "attachment") return yield* invalid("Target is not an attachment.");
             const constraint = type?.kind === "attachment" ? type.value.constraint : undefined;
-            if (constraint?.size && source.size !== undefined && !inRange(source.size, constraint.size))
-                return yield* invalid(`Attachment size ${source.size} is outside the allowed range.`);
-            const content = constraint?.content;
-            if (
-                content?.kind === "image" &&
-                !(content.value.mediaTypes ?? ImageMediaTypeOptions.map((option) => option.value)).some(
-                    (mediaType) => mediaType === source.type
-                )
-            )
-                return yield* invalid(
-                    `Attachment media type "${source.type || "(empty)"}" is not allowed by the target.`
-                );
+            yield* validateAttachmentSource(source, type?.kind === "attachment" ? type.value : undefined);
             const id = settings?.id ?? crypto.randomUUID();
-            yield* manager.stage(id, source);
+            const existing = settings?.id
+                ? yield* Effect.scoped(
+                      Effect.gen(function* () {
+                          const bytes = yield* manager.storage
+                              .readScoped(id)
+                              .pipe(
+                                  Effect.mapError((cause) =>
+                                      classifyBackendFailure("attachment.create", cause)
+                                  )
+                              );
+                          if (!bytes) return false;
+                          const hashes = yield* Effect.all([digestBytes(bytes), digestBytes(source)], {
+                              concurrency: 2,
+                          }).pipe(
+                              Effect.mapError((cause) => classifyBackendFailure("attachment.create", cause))
+                          );
+                          if (
+                              hashes[0] !== hashes[1] ||
+                              bytes.type !== source.type ||
+                              bytes.name !== source.name
+                          )
+                              return yield* new BackendError({
+                                  operation: "attachment.create",
+                                  kind: "Conflict",
+                                  retryable: false,
+                                  actionOutcome: "not-committed",
+                                  message: "Attachment ID was reused with different bytes or metadata.",
+                              });
+                          return true;
+                      })
+                  )
+                : false;
+            if (!existing) yield* manager.stage(id, source);
             if (constraint?.size && source.size === undefined) {
                 const metadata = yield* manager.metadata(id);
                 if (metadata.size === undefined || !inRange(metadata.size, constraint.size))

@@ -35,7 +35,10 @@ const ir: OntologyIR = {
 
 test("native snapshots stay native with a users integration, and watcher resources belong to the binding scope", async () => {
     const subscribe = vi.fn(() =>
-        Stream.concat(Stream.make({ type: "state", status: "open" }), Stream.never)
+        Stream.concat(
+            Stream.make({ type: "state", status: "open" }, { type: "change", updates: [] }),
+            Stream.never
+        )
     );
     const release = vi.fn();
     mocks.watcher.mockReturnValue(
@@ -87,10 +90,14 @@ test("native snapshots stay native with a users integration, and watcher resourc
         await Effect.runPromise(
             Scope.provide(
                 Effect.forkScoped(
-                    Stream.runForEach(backend.watchSubset!(objectSubset("Issue"))!, () =>
-                        Effect.sync(() => {
-                            invalidations++;
-                        })
+                    backend.watchSubset!(objectSubset("Issue"))!.pipe(
+                        Effect.flatMap((watch) =>
+                            Stream.runForEach(watch, () =>
+                                Effect.sync(() => {
+                                    invalidations++;
+                                })
+                            )
+                        )
                     ),
                     { startImmediately: true }
                 ),
@@ -106,7 +113,9 @@ test("native snapshots stay native with a users integration, and watcher resourc
 });
 
 test("native action submission returns complete identity targets without opening legacy collections", async () => {
-    const subscribe = vi.fn(() => Stream.never);
+    const subscribe = vi.fn(() =>
+        Stream.concat(Stream.make({ type: "state", status: "open" }), Stream.never)
+    );
     mocks.watcher.mockReturnValue(Effect.succeed({ subscribe }));
     const submitAction = vi.fn<Parameters<typeof makeFoundryBackend>[0]["submitAction"]>().mockResolvedValue({
         result: {
@@ -255,7 +264,7 @@ test("a denied or QoS-limited watcher fails explicitly so Replica can fall back 
                     decodeObject: (_type, value) => value,
                 });
                 const fiber = yield* Effect.forkScoped(
-                    Stream.runDrain(backend.watchSubset!(objectSubset("Issue"))!)
+                    backend.watchSubset!(objectSubset("Issue"))!.pipe(Effect.flatMap(Stream.runDrain))
                 );
                 const result = yield* Effect.result(Fiber.join(fiber));
                 expect(result._tag === "Failure" && result.failure.kind).toBe("Unavailable");
@@ -265,7 +274,9 @@ test("a denied or QoS-limited watcher fails explicitly so Replica can fall back 
 });
 
 test("HTTP reads and watches use the same conservative subset filter while window evaluation stays local", async () => {
-    const subscribe = vi.fn(() => Stream.never);
+    const subscribe = vi.fn(() =>
+        Stream.concat(Stream.make({ type: "state", status: "open" }), Stream.never)
+    );
     mocks.watcher.mockReturnValue(Effect.succeed({ subscribe }));
     mocks.fetch.mockReset();
     mocks.fetch.mockResolvedValue([
@@ -295,7 +306,9 @@ test("HTTP reads and watches use the same conservative subset filter while windo
                     },
                 };
                 yield* Effect.forkScoped(
-                    Stream.runDrain(backend.watchSubset!(objectSubset(subset.objectType, subset.query))!),
+                    backend.watchSubset!(objectSubset(subset.objectType, subset.query))!.pipe(
+                        Effect.flatMap(Stream.runDrain)
+                    ),
                     { startImmediately: true }
                 );
                 const filter = {
@@ -349,7 +362,9 @@ test("HTTP reads and watches use the same conservative subset filter while windo
                     },
                 };
                 yield* Effect.forkScoped(
-                    Stream.runDrain(backend.watchSubset!(objectSubset(search.objectType, search.query))!),
+                    backend.watchSubset!(objectSubset(search.objectType, search.query))!.pipe(
+                        Effect.flatMap(Stream.runDrain)
+                    ),
                     { startImmediately: true }
                 );
                 const searched = yield* loadSubset(backend, objectSubset(search.objectType, search.query));

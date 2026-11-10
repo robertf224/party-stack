@@ -13,6 +13,7 @@
 - Fix test or type errors until the suite is green.
 - After moving files or changing imports, run `vp run <project_name>#build` to verify checks and published outputs.
 - Add or update tests for code changes when appropriate.
+- Property tests use Effect `Arbitrary`, not fast-check. Use `@effect/vitest`'s `it.effect.prop` with test services or `it.live.prop` for real IO/time. Keep Effect test packages on `@party-stack/build-config/effect` so Vitest shares Vite+'s runner. Use `Arbitrary.checkEffect` inside an existing shared fixture; convert assertion defects into typed failures there so shrinking can run. Acquire fresh state per generated scenario, retain independent oracles, and preserve replay tokens for failures.
 
 ## PR instructions
 

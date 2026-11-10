@@ -15,6 +15,24 @@ const visible = async (page: Page, role: Parameters<Page["getByRole"]>[0], name:
     await expect.poll(() => page.getByRole(role, { name }).isVisible()).toBe(true);
 };
 
+test.skipIf(!url)("an unavailable inspector chunk cannot take down the issue tracker", async () => {
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await page.route("**/ontology-devtools/lib/OntologyDevtools.js*", (route) => route.abort());
+    try {
+        await page.goto(url!);
+        await visible(page, "heading", "Connect profile");
+        await page.getByRole("button", { name: "Connect", exact: true }).click();
+        await visible(page, "button", "New issue");
+        await page.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
+        await page.getByText("The inspector could not load. Reconnect and reload to try again.").waitFor();
+        await page.getByRole("button", { name: "New issue", exact: true }).click();
+        await page.getByRole("dialog", { name: "Create issue", exact: true }).waitFor();
+    } finally {
+        await context.close();
+    }
+});
+
 test.skipIf(!url).each(["offline", "online"])(
     "status updates with %s are optimistic with devtools closed, Objects selected, or Outbox selected",
     async (network) => {
@@ -34,7 +52,13 @@ test.skipIf(!url).each(["offline", "online"])(
             await visible(page, "button", new RegExp(title));
             // Offline updates prove the UI does not depend on a server reply.
             // Repeat online as well to catch publication/confirmation races.
-            if (network === "offline") await context.setOffline(true);
+            if (network === "offline") {
+                // Inspector code is optional. Warm it while online before testing its offline UI.
+                await page.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
+                await visible(page, "tab", "Objects");
+                await page.getByTestId("tsd-close-button").click();
+                await context.setOffline(true);
+            }
             const timings: { panel: string; ms: number }[] = [];
             let previous = "Open";
             for (const [panel, next] of [
@@ -210,8 +234,8 @@ test.skipIf(!url)(
             await second.getByRole("tab", { name: /^Outbox/ }).click();
             await context.setOffline(false);
             await expect
-                .poll(() => second.getByText("Queue is clear", { exact: true }).isVisible())
-                .toBe(true);
+                .poll(() => second.locator('[data-ps-devtools="true"]').innerText())
+                .toContain("Queue is clear");
             await second.reload();
             await visible(second, "button", "New issue");
             await second.getByPlaceholder("Search issues").fill(title);
@@ -553,8 +577,8 @@ test.skipIf(!url)(
             // Sidebar removal is optimistic. Establish authoritative deletion
             // before testing a stale reference submitted from the other tab.
             await expect
-                .poll(() => second.getByText("Queue is clear", { exact: true }).isVisible())
-                .toBe(true);
+                .poll(() => second.locator('[data-ps-devtools="true"]').innerText())
+                .toContain("Queue is clear");
             await form.getByRole("button", { name: "Create issue", exact: true }).click();
             await expect.poll(() => form.count()).toBe(0);
             await expect
@@ -563,8 +587,8 @@ test.skipIf(!url)(
             expect(await first.locator(".app-toast").innerText()).toContain("Project: Choose a valid value.");
             await first.locator(".app-toast-close").click();
             await expect
-                .poll(() => second.getByText("Queue is clear", { exact: true }).isVisible())
-                .toBe(true);
+                .poll(() => second.locator('[data-ps-devtools="true"]').innerText())
+                .toContain("Queue is clear");
             await first.getByRole("button", { name: "New issue", exact: true }).click();
             await form.getByLabel("Title", { exact: true }).fill(title);
             await form.getByRole("button", { name: "Create issue", exact: true }).click();
@@ -572,8 +596,8 @@ test.skipIf(!url)(
             await first.getByPlaceholder("Search issues").fill(title);
             await visible(first, "button", new RegExp(title));
             await expect
-                .poll(() => second.getByText("Queue is clear", { exact: true }).isVisible())
-                .toBe(true);
+                .poll(() => second.locator('[data-ps-devtools="true"]').innerText())
+                .toContain("Queue is clear");
         } finally {
             await context.close();
         }

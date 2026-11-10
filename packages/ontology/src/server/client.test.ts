@@ -1,20 +1,21 @@
 import { o, type OntologyIR } from "@party-stack/ontology";
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, makeOntologyBackend } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import {
     makeOntologyProtocolClient,
     ontologyRpcHandlers,
     OntologyRpcs,
 } from "@party-stack/ontology-server/rpc";
+import { contextPartition } from "@party-stack/ontology-spec/utils";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { MemoryBlobBytesStore, Runtime } from "@party-stack/runtime";
+import { MemoryBlobBytesStore, Runtime, RuntimePartition, Runtimes } from "@party-stack/runtime";
 import { makeTestRuntime } from "@party-stack/runtime/testing";
 import { queryOnce } from "@tanstack/db";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
-import { expect, test } from "vite-plus/test";
-import { createConnectedLiveOntology } from "./client.js";
-import type { OntologyConnection } from "@party-stack/ontology-server/rpc";
+import { expect, test, expectTypeOf } from "vite-plus/test";
+import { createLiveOntology } from "../live/LiveOntology.js";
+import type { OntologyClient, OntologyDescription } from "@party-stack/ontology-server/rpc";
 
 const ir: OntologyIR = {
     types: [],
@@ -37,7 +38,7 @@ const ir: OntologyIR = {
 
 test("framework composition retains platform/transport after acquisition, confirms actions, and closes both", async () => {
     const released: string[] = [];
-    let parent: OntologyConnection | undefined;
+    let parent: OntologyClient | undefined;
     const requests: string[] = [];
     const runtime = Layer.effect(
         Runtime,
@@ -54,7 +55,7 @@ test("framework composition retains platform/transport after acquisition, confir
             });
         })
     );
-    const connection = Effect.gen(function* () {
+    const client = Effect.gen(function* () {
         yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
                 released.push("transport");
@@ -82,6 +83,7 @@ test("framework composition retains platform/transport after acquisition, confir
         const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
             Effect.provide(
                 ontologyRpcHandlers({
+                    enableRealtime: true,
                     backend,
                     ir: definition,
                     context: { user: "alice" },
@@ -95,13 +97,20 @@ test("framework composition retains platform/transport after acquisition, confir
         parent = yield* makeOntologyProtocolClient(client);
         return parent;
     });
-    const live = await createConnectedLiveOntology({
-        runtime,
-        connection,
+    const live = await createLiveOntology<{
+        context: { user: string };
+        objectTypes: { Counter: { id: string; count: number } };
+        actionTypes: { increment: { parameters: Record<string, never> } };
+        queryFunctionTypes: {};
+    }>({
+        runtime: Runtimes.layer(runtime),
+        client,
         label: "Client",
         traceRecording: "buffer",
         parent: { label: "Authority" },
-        writes: { defaultMode: "outbox", defaultVisibility: "optimistic" },
+        writes: { defaultVisibility: "optimistic" },
+        demand: { idleRetentionMs: 30_000 },
+        cache: { objects: { maxBytes: 64 * 1024 * 1024 } },
     });
     try {
         expect(released).toEqual([]);
@@ -109,10 +118,13 @@ test("framework composition retains platform/transport after acquisition, confir
         expect(live.attachments).not.toBe(parent!.operations.attachments);
         expect(parent!.replication.kind).toBe("committed");
         const rows = await queryOnce((q) => q.from({ counter: live.objects.Counter! }));
+        expectTypeOf(rows[0]!.count).toEqualTypeOf<number>();
         expect(rows[0]?.count).toBe(1);
         await live.actions.increment!({});
         expect((await queryOnce((q) => q.from({ counter: live.objects.Counter! })))[0]?.count).toBe(2);
-        expect(live.diagnostics?.parent).toBeUndefined();
+        expect(live.diagnostics?.parent?.label).toBe("Authority");
+        expect(live.diagnostics?.parent?.replica).toBe(parent!.operations.replicaMonitor);
+        expect(live.diagnostics?.parent?.traces).toBe(parent!.operations.traces);
         expect(requests).toEqual(
             expect.arrayContaining(["SubscribeSelection", "AckDelivery", "ApplyAction"])
         );
@@ -128,6 +140,80 @@ test("framework composition retains platform/transport after acquisition, confir
     await live.cleanup();
     expect(released).toEqual(["transport", "runtime"]);
     expect(live.objects.Counter!.status).toBe("cleaned-up");
+});
+
+test("automatic client namespaces separate sources under the declared context owner", async () => {
+    const context = { user: "alice", tenant: "first" };
+    const definition: OntologyIR = {
+        ...ir,
+        context: {
+            type: o.struct({
+                fields: [
+                    { name: "user", displayName: "User", type: o.string({}) },
+                    { name: "tenant", displayName: "Tenant", type: o.string({}) },
+                ],
+            }),
+            partition: [["tenant"], ["user"]],
+        },
+    };
+    const partitions: { owner: string; namespace: string }[] = [];
+    const runtime = Layer.effect(
+        Runtime,
+        Effect.gen(function* () {
+            const partition = yield* RuntimePartition;
+            partitions.push(partition);
+            return yield* makeTestRuntime({ ...partition, blobBytes: new MemoryBlobBytesStore() });
+        })
+    );
+    const open = (sourceId: string, id?: string) => {
+        const description: OntologyDescription = {
+            version: 1,
+            replication: "committed",
+            sourceId,
+            ir: definition,
+            context,
+            supportsIdempotency: false,
+        };
+        return createLiveOntology({
+            runtime: Runtimes.layer(runtime),
+            id,
+            client: Effect.succeed({
+                description,
+                definition: {
+                    get: Effect.succeed({ status: "current" as const, refreshing: false }),
+                    changes: Stream.empty,
+                    refresh: Effect.succeed(description),
+                },
+                sourceId,
+                ir: definition,
+                context,
+                replication: { kind: "committed" as const },
+                operations: {} as OntologyClient["operations"],
+                backend: makeOntologyBackend({
+                    ir: definition,
+                    name: sourceId,
+                    sourceId,
+                    supportsIdempotency: false,
+                    loadSubset: () => Effect.succeed({ complete: true, rows: [] }),
+                    queryFunction: () => Effect.void,
+                    applyAction: () => Effect.die("No action is applied in this test."),
+                }),
+            }),
+        });
+    };
+    const first = await open("one");
+    const second = await open("two");
+    const override = await open("one", "explicit-cache");
+    try {
+        const owner = contextPartition(definition, context);
+        expect(partitions).toEqual([
+            { owner, namespace: JSON.stringify(["source", "one"]) },
+            { owner, namespace: JSON.stringify(["source", "two"]) },
+            { owner, namespace: "explicit-cache" },
+        ]);
+    } finally {
+        await Promise.all([first.cleanup(), second.cleanup(), override.cleanup()]);
+    }
 });
 
 test("failed description closes the partial transport before platform acquisition and preserves the typed error", async () => {
@@ -153,7 +239,7 @@ test("failed description closes the partial transport before platform acquisitio
             });
         })
     );
-    const connection = Effect.gen(function* () {
+    const client = Effect.gen(function* () {
         yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
                 released.push("transport");
@@ -161,6 +247,6 @@ test("failed description closes the partial transport before platform acquisitio
         );
         return yield* failure;
     });
-    await expect(createConnectedLiveOntology({ ir, runtime, connection })).rejects.toBe(failure);
+    await expect(createLiveOntology({ ir, runtime: Runtimes.layer(runtime), client })).rejects.toBe(failure);
     expect(released).toEqual(["transport"]);
 });

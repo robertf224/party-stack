@@ -1,0 +1,249 @@
+---
+title: Authentication
+description: Sign in, display saved accounts, and switch the ontology your app uses.
+---
+
+## Provide authentication
+
+An ontology server exposes Connect as an ordinary route, usually `connect`.
+[Foundry](/docs/foundry#start-the-sharedworker) shows a SharedWorker setup;
+[Better Auth](/docs/better-auth) shows how to attach an existing application session.
+
+Wrap the account picker in `AuthenticationProvider`, inside the environment that
+owns your server client. The complete app example below shares that transport
+with the selected data ontology.
+
+The provider opens the authentication command facade and a reactive Connect view.
+It closes both on unmount. It does not start sign-in or choose an account. Set
+`ontology="another-route"` if your server mounts Connect under another name.
+For browser replicas in TanStack Start, render this setup from an `ssr: false`
+route, as in the [TanStack Start guide](/docs/tanstack-start).
+
+## Query saved accounts
+
+`authenticationObjects` is exported by `@party-stack/ontology/authentication`.
+These are typed TanStack DB collection descriptors, like your generated `objects`.
+They resolve through the current provider's `dbClient`; importing them opens no
+connection or storage.
+
+| Descriptor                  | Contents                                                                    |
+| --------------------------- | --------------------------------------------------------------------------- |
+| `OAuthConnection`           | Saved OAuth accounts, including title, user ID, and status                  |
+| `ExternalSessionConnection` | Sessions verified by an external authentication system, such as Better Auth |
+| `ApiKeyConnection`          | Saved API-key connections                                                   |
+| `ServiceInstance`           | Configured service environments                                             |
+| `OAuthApplication`          | Configured OAuth applications                                               |
+| `OAuthAuthorizationAttempt` | Private OAuth workflow state; unavailable in the normal public account view |
+
+For example, inside `AuthenticationProvider`:
+
+```tsx
+import { authenticationObjects } from "@party-stack/ontology/authentication";
+import { eq } from "@tanstack/db";
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+
+const { data: accounts } = useLiveSuspenseQuery((q) =>
+    q
+        .from({ account: authenticationObjects.OAuthConnection })
+        .where(({ account }) => eq(account.application, "app"))
+        .select(({ account }) => ({
+            id: account.id,
+            title: account.title,
+            userId: account.userId,
+            status: account.status,
+        }))
+);
+```
+
+This is a normal live query. Sign-in, credential rejection, and sign-out update
+persisted account rows; replication updates this query, including changes from
+another tab. The standard `connectDeviceRoute` projection excludes tokens and session secrets;
+the descriptors themselves do not grant access to protected fields.
+`useAuthentication()` supplies commands; it does not keep a separate account list
+or a single global current user. Its `connections()` method is a one-shot read for
+imperative code, not a reactive hook.
+
+## Build a profile switcher
+
+This OAuth example uses application `app`, configured in the
+[Foundry guide](/docs/foundry#configure-oauth). Pass the selected connection ID to
+your app; reconnecting is a separate operation from choosing an account.
+
+```tsx title="src/app/ProfileSwitcher.tsx"
+import { authenticationObjects, type AccountRef } from "@party-stack/ontology/authentication";
+import { useAuthentication } from "@party-stack/ontology-react/authentication";
+import { eq } from "@tanstack/db";
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { useState } from "react";
+import { foundry } from "./foundry-config";
+
+export function ProfileSwitcher({
+    selected,
+    onSelect,
+}: {
+    selected?: string;
+    onSelect: (id: string | undefined) => void;
+}) {
+    const authentication = useAuthentication();
+    const oauth = authentication.oauth({
+        applicationId: "app",
+        redirectUrl: foundry.oauth.redirectUrl,
+    });
+    const { data: accounts } = useLiveSuspenseQuery((q) =>
+        q
+            .from({ account: authenticationObjects.OAuthConnection })
+            .where(({ account }) => eq(account.application, "app"))
+            .select(({ account }) => ({
+                kind: "oauth" as const,
+                id: account.id,
+                title: account.title,
+                status: account.status,
+            }))
+    );
+    const [error, setError] = useState<string>();
+
+    async function signIn(connectionId?: string) {
+        setError(undefined);
+        try {
+            const account = await oauth.signIn({
+                connectionId,
+                browserPresentation: "popup",
+            });
+            onSelect(account.id);
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Sign-in failed.");
+        }
+    }
+
+    async function signOut(account: AccountRef) {
+        setError(undefined);
+        try {
+            await authentication.signOut(account);
+            if (selected === account.id) onSelect(undefined);
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Sign-out failed.");
+        }
+    }
+
+    async function forget(account: AccountRef) {
+        setError(undefined);
+        try {
+            await authentication.forget(account);
+            if (selected === account.id) onSelect(undefined);
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Could not forget account.");
+        }
+    }
+
+    return (
+        <nav aria-label="Profiles">
+            {accounts.map((account) => (
+                <div key={account.id}>
+                    <button aria-pressed={selected === account.id} onClick={() => onSelect(account.id)}>
+                        {account.title}
+                        {account.status === "needs-auth" && " — reconnect required"}
+                        {account.status === "inactive" && " — signed out"}
+                    </button>
+                    {account.status !== "active" && (
+                        <button onClick={() => void signIn(account.id)}>Reconnect</button>
+                    )}
+                    {account.status !== "inactive" && (
+                        <button onClick={() => void signOut(account)}>Sign out</button>
+                    )}
+                    <button onClick={() => void forget(account)}>Forget</button>
+                </div>
+            ))}
+            <button onClick={() => void signIn()}>Add account</button>
+            {error && <p role="alert">{error}</p>}
+        </nav>
+    );
+}
+```
+
+The popup opens from the click handler. The credential owner performs the token
+exchange and saves encrypted credentials. These authentication commands execute
+directly through ordinary Connect actions, outside the replica outbox.
+
+## Open the selected profile
+
+Keep selection in your app. This example uses React state; URL parameters or
+session storage can preserve it across reloads. The server's configured routes
+determine how a connection ID addresses a data ontology.
+
+```tsx title="src/app/App.tsx"
+import { OntologyEnvironmentProvider, OntologyProvider } from "@party-stack/ontology-react";
+import { AuthenticationProvider } from "@party-stack/ontology-react/authentication";
+import { Suspense, useState } from "react";
+import { client, tabOptions } from "./ontology-client";
+import { ProfileSwitcher } from "./ProfileSwitcher";
+import { Issues } from "./Issues";
+
+export function App() {
+    const [selected, setSelected] = useState<string>();
+    return (
+        <OntologyEnvironmentProvider client={client} {...tabOptions}>
+            <Suspense fallback={<p>Opening accounts…</p>}>
+                <AuthenticationProvider>
+                    <ProfileSwitcher selected={selected} onSelect={setSelected} />
+                </AuthenticationProvider>
+            </Suspense>
+            {selected && (
+                <Suspense fallback={<p>Opening issues…</p>}>
+                    <OntologyProvider ontology={`foundry/${encodeURIComponent(selected)}`}>
+                        <Issues />
+                    </OntologyProvider>
+                </Suspense>
+            )}
+        </OntologyEnvironmentProvider>
+    );
+}
+```
+
+The picker reads the authentication view; `Issues` reads the selected data view.
+Both borrow the environment's shared transport. Switching profiles replaces the
+tab's data view while the worker retains its persistent replica.
+
+`needs-auth` pauses upstream synchronization and action forwarding. It should not
+prevent an existing replica from displaying retained data. Signing out removes
+credential access; it does not erase downloaded application data or queued actions.
+
+For Better Auth accounts, query `authenticationObjects.ExternalSessionConnection`
+and call `authentication.attachExternalSession` after the normal Better Auth
+sign-in flow. See [Better Auth](/docs/better-auth#configure-better-auth). API-key
+accounts use `authenticationObjects.ApiKeyConnection` and `connectApiKey`.
+`AccountRef`, exported from `@party-stack/ontology/authentication`, identifies an
+account as `{ kind: "oauth" | "api-key" | "external-session", id }`. Sign-in and
+`connections()` results include that discriminator. Live-query rows are ordinary
+ontology rows; the example selects a literal `kind` so they can be passed directly
+to `signOut(account)` and `forget(account)`. Keep both `kind` and `id` when a picker
+combines authentication methods. Connect's native server APIs retain their
+`{ objectType, id }` references.
+
+## Sign out or forget
+
+`authentication.signOut(account)` removes credential access and marks the saved
+account `inactive`. It stays available for reconnecting.
+
+`authentication.forget(account)` removes the saved account row and credentials,
+so live account queries remove it. OAuth attempts targeting it and the application's last-connection
+reference are cleared; late refresh or reconnect replies cannot restore it.
+A new sign-in can add the account again.
+
+The underlying actions retain typed object-reference parameters and normal
+existence/visibility validation. A new forget command after deletion can therefore
+fail reference validation. Connect's current workflow executor does not provide
+durable invocation receipts; the live account query still reflects committed
+local changes if a command reply is lost.
+
+Both operations attempt remote revocation where the service supports it. A remote
+revocation failure is reported after the local change has committed; it cannot
+restore local credentials. Neither operation deletes application replicas, offline
+pins, or queued actions. Local application-data removal is a separate operation.
+
+## Without React
+
+Use `createAuthenticationClient` from `@party-stack/ontology/authentication` with
+the same server client and runtime. It exposes the same Promise commands and a
+one-shot `connections()` read. Its owner calls `cleanup()`. Effect callers can use
+`makeAuthenticationClient` from `@party-stack/connect` with an acquired backend and
+browser authentication capability.

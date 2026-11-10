@@ -1,4 +1,5 @@
 @layer theme, base, components, utilities;
+@import "@party-stack/design-system/tokens.css";
 @import "@xyflow/react/dist/style.css" layer(components);
 @import "tailwindcss/theme.css" layer(theme) prefix(ps);
 @import "tailwindcss/preflight.css" layer(base);
@@ -55,18 +56,18 @@
 @layer components {
     .ps-devtools,
     .ps-outbox-root {
-        --ps-bg: #101114;
-        --ps-surface: #18191e;
-        --ps-raised: #222329;
-        --ps-inset: #121318;
-        --ps-border: #2d2f36;
-        --ps-border-strong: #454852;
-        --ps-text: #e4e4e7;
-        --ps-muted: #a1a1aa;
-        --ps-hover: #ffffff08;
-        --ps-selected: #fb718518;
-        --ps-accent: #fb7185;
-        --ps-shadow: 0 4px 16px #0002;
+        --ps-bg: var(--party-dark-bg);
+        --ps-surface: var(--party-dark-surface);
+        --ps-raised: var(--party-dark-raised);
+        --ps-inset: var(--party-dark-inset);
+        --ps-border: var(--party-dark-border);
+        --ps-border-strong: var(--party-dark-border-strong);
+        --ps-text: var(--party-dark-text);
+        --ps-muted: var(--party-dark-muted);
+        --ps-hover: var(--party-dark-hover);
+        --ps-selected: var(--party-dark-selected);
+        --ps-accent: var(--party-dark-accent);
+        --ps-shadow: var(--party-dark-shadow);
         --ps-inspector-bg: var(--ps-bg);
         --ps-inspector-border: var(--ps-border);
         --ps-inspector-muted: var(--ps-muted);
@@ -77,18 +78,18 @@
     }
     .ps-devtools.ps-theme-light,
     .ps-outbox-root.ps-theme-light {
-        --ps-bg: #fafafa;
-        --ps-surface: #ffffff;
-        --ps-raised: #f1f2f4;
-        --ps-inset: #f5f6f8;
-        --ps-border: #e4e4e7;
-        --ps-border-strong: #c5c7ce;
-        --ps-text: #27272a;
-        --ps-muted: #71717a;
-        --ps-hover: #00000005;
-        --ps-selected: #e11d4810;
-        --ps-accent: #be123c;
-        --ps-shadow: 0 4px 16px #0000000a;
+        --ps-bg: var(--party-light-bg);
+        --ps-surface: var(--party-light-surface);
+        --ps-raised: var(--party-light-raised);
+        --ps-inset: var(--party-light-inset);
+        --ps-border: var(--party-light-border);
+        --ps-border-strong: var(--party-light-border-strong);
+        --ps-text: var(--party-light-text);
+        --ps-muted: var(--party-light-muted);
+        --ps-hover: var(--party-light-hover);
+        --ps-selected: var(--party-light-selected);
+        --ps-accent: var(--party-light-accent);
+        --ps-shadow: var(--party-light-shadow);
         color-scheme: light;
     }
 }
@@ -1157,6 +1158,141 @@
     .ps-query-expression {
         font-size: 12px;
     }
+    .ps-pinned-screen {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 18px;
+        overflow: auto;
+    }
+    .ps-pinned-screen > * {
+        flex-shrink: 0;
+    }
+    .ps-pinned-header,
+    .ps-pinned-meta,
+    .ps-pinned-status,
+    .ps-pinned-attachments {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+    }
+    .ps-pinned-header {
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+    .ps-pinned-meta {
+        flex-wrap: wrap;
+        gap: 14px;
+    }
+    .ps-pinned-header h2 {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0 0 7px;
+    }
+    .ps-pinned-status,
+    .ps-pinned-attachments,
+    .ps-pinned-retained {
+        font-size: 12px;
+        color: var(--ps-inspector-muted);
+    }
+    .ps-pinned-status[data-state="ready"] {
+        color: #34b77e;
+    }
+    .ps-pinned-status[data-state="loading"] {
+        color: #cba33c;
+    }
+    .ps-pinned-status[data-state="error"] {
+        color: #ef7878;
+    }
+    .ps-pinned-empty {
+        min-height: 180px;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        color: var(--ps-inspector-muted);
+    }
+    .ps-pinned-logo {
+        display: block;
+        width: 40px;
+        height: 40px;
+    }
+    .ps-pinned-inputs {
+        max-width: 100%;
+    }
+    .ps-query-document {
+        font-size: 12px;
+        min-width: 0;
+    }
+    .ps-query-input-definitions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+    .ps-query-node {
+        border: 1px solid var(--ps-border);
+        border-radius: 10px;
+        background: var(--ps-surface);
+        min-width: 0;
+    }
+    .ps-query-node > summary {
+        padding: 10px 12px;
+    }
+    .ps-query-node > summary .ps-disclosure-label {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 9px;
+    }
+    .ps-query-node-body {
+        margin: 0 12px 12px 20px;
+        border-left: 1px solid var(--ps-border);
+        padding-left: 14px;
+    }
+    .ps-query-selections {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-width: 0;
+    }
+    .ps-query-node-body > .ps-query-selections {
+        margin-top: 12px;
+    }
+    .ps-query-selection {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 7px;
+        min-height: 25px;
+    }
+    .ps-query-output {
+        font: 600 11px/1.5 var(--ps-font-mono);
+        color: var(--ps-inspector-text);
+        overflow-wrap: anywhere;
+    }
+    .ps-query-binding {
+        color: var(--ps-inspector-muted);
+        font-size: 10px;
+    }
+    .ps-query-cardinality {
+        border: 1px solid var(--ps-border);
+        border-radius: 5px;
+        padding: 1px 5px;
+        color: var(--ps-inspector-muted);
+        font: 10px/1.5 var(--ps-font-mono);
+    }
+    .ps-query-selection-case {
+        border-left: 1px solid #a78bfa40;
+        padding-left: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
     .ps-query-sentence {
         display: flex;
         flex-wrap: wrap;
@@ -1935,5 +2071,86 @@
     .ps-devtools .ps-trace-source-select option {
         background: var(--ps-inspector-bg);
         color: var(--ps-inspector-text);
+    }
+}
+
+@layer components {
+    .ps-pinned-remove {
+        flex-shrink: 0;
+        padding: 6px 10px;
+        border: 1px solid var(--ps-border);
+        border-radius: 7px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+        transition: background 180ms ease;
+    }
+    .ps-pinned-remove:hover {
+        background: color-mix(in srgb, currentColor 8%, transparent);
+    }
+    .ps-pinned-header {
+        justify-content: space-between;
+        gap: 16px;
+    }
+    .ps-pinned-screen {
+        border-bottom: 1px solid var(--ps-border);
+    }
+}
+
+@layer components {
+    .ps-pinned-inventory {
+        height: 100%;
+        min-height: 0;
+        overflow: auto;
+    }
+    .ps-pinned-inventory .ps-pinned-screen {
+        height: auto;
+        min-height: 0;
+        overflow: visible;
+    }
+}
+
+@layer components {
+    .ps-pin-revision {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        min-width: 0;
+    }
+    .ps-pin-downloads {
+        border: 1px solid var(--ps-border);
+        border-radius: 9px;
+    }
+    .ps-pin-download {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 14px;
+        padding: 12px;
+    }
+    .ps-pin-download + .ps-pin-download {
+        border-top: 1px solid var(--ps-border);
+    }
+    .ps-pin-inputs {
+        flex: 1;
+        min-width: 160px;
+        overflow-wrap: anywhere;
+    }
+    .ps-pin-download .ps-pinned-status {
+        white-space: nowrap;
+    }
+    .ps-pin-download .ps-pinned-status[data-state="loading"] svg {
+        animation: ps-pin-spin 1.2s linear infinite;
+    }
+    @keyframes ps-pin-spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+    @media (prefers-reduced-motion: reduce) {
+        .ps-pin-download .ps-pinned-status[data-state="loading"] svg {
+            animation: none;
+        }
     }
 }

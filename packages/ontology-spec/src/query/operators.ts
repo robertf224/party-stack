@@ -31,6 +31,7 @@ export function equalValues(a: unknown, b: unknown): boolean {
 /** Ordered comparisons require present values from the same scalar family. */
 export function compareValues(a: unknown, b: unknown): number | undefined {
     if (a == null || b == null) return undefined;
+    if (typeof a === "boolean" && typeof b === "boolean") return a === b ? 0 : a ? 1 : -1;
     if (typeof a === "string" && typeof b === "string") return a < b ? -1 : a > b ? 1 : 0;
     if (typeof a === "number" && typeof b === "number") {
         if (!Number.isFinite(a) || !Number.isFinite(b))

@@ -1,7 +1,7 @@
 import { createMetaLiveOntology } from "@party-stack/ontology";
 import { eq, queryOnce } from "@tanstack/db";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { createSalesforceMetaOntologyBackendAdapter } from "./createSalesforceMetaOntologyBackendAdapter.js";
+import { makeSalesforceMetadataBackend } from "./backend.js";
 
 describe("Salesforce QueryFunctionType metadata queries", () => {
     it("loads whitelisted reads and excludes mutating standard actions", async () => {
@@ -23,12 +23,11 @@ describe("Salesforce QueryFunctionType metadata queries", () => {
             ],
         });
         const meta = await createMetaLiveOntology({
-            backend: () =>
-                createSalesforceMetaOntologyBackendAdapter({
-                    client: {
-                        describeStandardAction,
-                    } as never,
-                }),
+            backend: makeSalesforceMetadataBackend({
+                client: {
+                    describeStandardAction,
+                } as never,
+            }),
         });
 
         try {

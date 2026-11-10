@@ -12,7 +12,7 @@ export const IndexSchema = Schema.Struct({
     multiEntry: Schema.optional(Schema.Boolean),
 });
 // Shape validation whitelists every SQL operator and ordering token before compilation.
-// Scalar semantics (including Temporal) are validated by scalarKey, shared with indexes.
+// Scalar semantics are checked separately; rich values use the same codec as indexes.
 const PredicateShape = Schema.Union([
     Schema.Struct({
         op: Schema.Literals(["eq", "ne", "lt", "lte", "gt", "gte"]),

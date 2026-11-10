@@ -1,6 +1,6 @@
 import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
 import { makeReplica } from "@party-stack/ontology-replica";
-import { connectOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
+import { makeOntologyWorkerClient } from "@party-stack/ontology-server/rpc/worker";
 import { makeReplicatedCollection } from "@party-stack/ontology/tanstack";
 import { RuntimePartition } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
@@ -16,8 +16,9 @@ const makeTab = Effect.gen(function* () {
         Effect.sync(() => new SharedWorker(workerUrl, { name: namespace, type: "module" })),
         (worker) => Effect.sync(() => worker.port.close())
     );
-    const connection = yield* connectOntologyWorker({ connectionTimeoutMs: 15_000 }).pipe(
-        Effect.provide(BrowserWorker.layer(() => worker))
+    const connection = yield* makeOntologyWorkerClient({ connectionTimeoutMs: 15_000 }).pipe(
+        Effect.provide(BrowserWorker.layer(() => worker)),
+        Effect.flatMap((client) => client.ontology())
     );
     if (connection.replication.kind !== "speculative") throw new Error("Expected a replica host.");
     const source = connection.replication.source;
@@ -35,7 +36,12 @@ const makeTab = Effect.gen(function* () {
         getKey: (row) => row.id,
     });
     yield* replica.demand.acquire({ from: { source: { objectType: "Counter" }, binding: "row" } });
-    return { replica, collection, ownerSourceId: source.sourceId };
+    return {
+        replica,
+        collection,
+        ownerSourceId: source.sourceId,
+        parentMonitor: connection.operations.replicaMonitor,
+    };
 });
 class Tab extends Context.Service<Tab, Effect.Success<typeof makeTab>>()("test/Tab") {}
 const app = ManagedRuntime.make(
@@ -52,6 +58,23 @@ const app = ManagedRuntime.make(
 const tab = await app.runPromise(Tab);
 Reflect.set(window, "replicaTest", {
     sourceId: () => tab.ownerSourceId,
+    ownerNetwork: async (online: boolean) => {
+        const channel = new BroadcastChannel(`owner-network:${namespace}`);
+        const id = crypto.randomUUID();
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+            await new Promise<void>((resolve, reject) => {
+                timeout = setTimeout(() => reject(new Error("Worker network control timed out")), 5_000);
+                channel.onmessage = (event) => {
+                    if ((event.data as { id: string }).id === id) resolve();
+                };
+                channel.postMessage({ id, online });
+            });
+        } finally {
+            clearTimeout(timeout);
+            channel.close();
+        }
+    },
     rows: async () =>
         (
             await queryOnce((q) =>
@@ -63,5 +86,22 @@ Reflect.set(window, "replicaTest", {
     enqueue: (id: string) =>
         app.runPromise(tab.replica.outbox.enqueue({ id, name: "increment", parameters: {} })),
     receipt: (id: string) => app.runPromise(tab.replica.outbox.get(id)).then((status) => status.receipt),
+    diagnostics: async (id: string) => {
+        const action = await app.runPromise(tab.replica.outbox.get(id));
+        const status = await app.runPromise(tab.replica.status.get);
+        const parent = await new Promise<ReturnType<typeof tab.parentMonitor.getSnapshot>>((resolve) => {
+            let stop = () => {};
+            const publish = () => {
+                const snapshot = tab.parentMonitor.getSnapshot();
+                if (snapshot.status || snapshot.error) {
+                    stop();
+                    resolve(snapshot);
+                }
+            };
+            stop = tab.parentMonitor.subscribe(publish);
+            publish();
+        });
+        return { action, status, parent };
+    },
     cleanup: () => app.dispose(),
 });

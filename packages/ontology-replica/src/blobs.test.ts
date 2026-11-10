@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { byteSource } from "@party-stack/ontology-storage/blobs";
@@ -52,7 +53,8 @@ test("staged outbox bytes survive upload, lost receipts and reopen until reconci
                 });
                 yield* blobs.stage("local", new Blob(["pending bytes"]));
                 let loseReceipt = true;
-                const backend: OntologyBackendService = {
+                const backend: OntologyBackendService = makeOntologyBackend({
+                    ir,
                     name: "test",
                     queryFunction: () => Effect.succeed(undefined),
                     sourceId: "test",
@@ -71,7 +73,7 @@ test("staged outbox bytes survive upload, lost receipts and reopen until reconci
                                 });
                             return { operationId: invocation.id, outcome: "committed" as const };
                         }),
-                };
+                });
                 const options = {
                     namespace: "local",
                     ir,
@@ -141,14 +143,15 @@ test("editing and removing pending actions atomically replace and release attach
                     execute: () => Effect.void,
                     startSync: false,
                     outbox: { retryDelayMs: 0 },
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "offline",
                         queryFunction: () => Effect.succeed(undefined),
                         sourceId: "offline",
                         supportsIdempotency: false,
                         loadSubset: () => Effect.succeed({ rows: [], complete: true }),
                         applyAction: () => Effect.die("No dispatch expected"),
-                    },
+                    }),
                 });
                 yield* replica.enqueue({ id: "action", name: "upload", parameters: { file: { id: "one" } } });
                 yield* replica.edit("action", {
@@ -202,7 +205,8 @@ test("a mapping race preserves the receipt and recovers without another remote i
                 const reader = yield* Effect.forkScoped(blobs.read("remote"));
                 yield* Deferred.await(reading);
                 let calls = 0;
-                const backend: OntologyBackendService = {
+                const backend: OntologyBackendService = makeOntologyBackend({
+                    ir,
                     name: "mapping",
                     sourceId: "mapping",
                     supportsIdempotency: false,
@@ -217,7 +221,7 @@ test("a mapping race preserves the receipt and recovers without another remote i
                                 attachmentIdMappings: [{ localId: "local", remoteId: "remote" }],
                             };
                         }),
-                };
+                });
                 const settings = {
                     namespace: "mapping-race",
                     ir,
@@ -301,14 +305,15 @@ test("replica snapshots and optimistic rows retain attachment identities and rel
                     tables,
                     blobs,
                     startSync: false,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "rows",
                         sourceId: "rows",
                         supportsIdempotency: false,
                         loadSubset: () => Effect.succeed({ rows, complete: true }),
                         queryFunction: () => Effect.void,
                         applyAction: () => Effect.die("offline"),
-                    },
+                    }),
                     execute: (tx, invocation) =>
                         tx.put("Document", { id: "optimistic", file: invocation.parameters.file }),
                 });
@@ -374,7 +379,8 @@ test("a speculative child owns byte retention and saves a terminal receipt befor
                 const parentStore = yield* store("parent-bytes");
                 const childStore = yield* store("child-bytes");
                 let applications = 0;
-                const backend: OntologyBackendService = {
+                const backend: OntologyBackendService = makeOntologyBackend({
+                    ir,
                     name: "provider",
                     sourceId: "provider",
                     supportsIdempotency: true,
@@ -390,7 +396,7 @@ test("a speculative child owns byte retention and saves a terminal receipt befor
                                 attachmentIdMappings: [{ localId: "local", remoteId: "provider-id" }],
                             };
                         }),
-                };
+                });
                 const parent = yield* makeReplica({
                     namespace: "parent",
                     ir,
@@ -494,7 +500,8 @@ test("staged-copy validation and parent acceptance are atomic, while duplicate s
                     },
                 });
                 let applications = 0;
-                const backend: OntologyBackendService = {
+                const backend: OntologyBackendService = makeOntologyBackend({
+                    ir,
                     name: "required",
                     sourceId: "required",
                     supportsIdempotency: true,
@@ -509,7 +516,7 @@ test("staged-copy validation and parent acceptance are atomic, while duplicate s
                                 affected: [],
                             };
                         }),
-                };
+                });
                 const parent = yield* makeReplica({
                     namespace: "required-parent",
                     ir,
@@ -588,14 +595,15 @@ test("plain replica reads and observations attach source locators without changi
                     startSync: false,
                     objectCacheGc: false,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "source",
                         sourceId: "source",
                         supportsIdempotency: false,
                         loadSubset: () => Effect.succeed({ rows: [{ key: "item", value }], complete: true }),
                         applyAction: () => Effect.die("No writes expected"),
                         queryFunction: () => Effect.void,
-                    },
+                    }),
                 });
                 yield* replica.demand({ objectType: "Item" });
                 yield* replica.syncOnce;

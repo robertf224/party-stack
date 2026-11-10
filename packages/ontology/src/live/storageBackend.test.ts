@@ -10,7 +10,7 @@ import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { eq, inArray, queryOnce, type Collection } from "@tanstack/db";
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { createSQLiteTestBackend } from "../testing/sqliteBackend.js";
+import { makeSQLiteTestBackend } from "../testing/sqliteBackend.js";
 
 interface TestDatabase {
     close: () => void;
@@ -290,14 +290,15 @@ describe("SQLite LiveOntology MVP acceptance", () => {
 
     async function createOntology(opts?: { context?: Record<string, unknown>; name?: string }) {
         const database = createDatabase();
-        const backendAdapter = createSQLiteTestBackend({
+        const backendAdapter = makeSQLiteTestBackend({
             ir,
             database,
             name: opts?.name ?? "test",
+            context: opts?.context,
         });
         const ontology = await createLiveOntology({
             ir,
-            backend: () => backendAdapter,
+            backend: backendAdapter,
             context: opts?.context,
         });
         ontologies.push(ontology);
@@ -322,7 +323,6 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         const { ontology } = await createOntology({
             context: { user: { email: "alice@example.com" } },
         });
-        await ontology.ready;
 
         await ontology.actions.createAuthor!({
             id: "author-1",
@@ -362,7 +362,6 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         const { ontology } = await createOntology({
             context: { user: { email: "alice@example.com" } },
         });
-        await ontology.ready;
 
         await ontology.actions.createAuthor!({
             id: "author-1",
@@ -394,7 +393,6 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         const { database, ontology } = await createOntology({
             context: { user: { email: "alice@example.com" } },
         });
-        await ontology.ready;
 
         await ontology.actions.createAuthor!({
             id: "author-1",
@@ -412,16 +410,15 @@ describe("SQLite LiveOntology MVP acceptance", () => {
 
         const reloadedOntology = await createLiveOntology({
             ir,
-            backend: (ontologyIr) =>
-                createSQLiteTestBackend({
-                    ir: ontologyIr,
-                    database,
-                    name: "test",
-                }),
+            backend: makeSQLiteTestBackend({
+                ir: ir,
+                database,
+                name: "test",
+                context: { user: { email: "alice@example.com" } },
+            }),
             context: { user: { email: "alice@example.com" } },
         });
         ontologies.push(reloadedOntology);
-        await reloadedOntology.ready;
 
         const note = (await readObjectById(reloadedOntology.objects.Note!, "id", "note-1")) as Record<
             string,
@@ -465,14 +462,13 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         } satisfies OntologyQueryFunctionRegistry;
         const ontology = await createLiveOntology({
             ir,
-            backend: () =>
-                createSQLiteTestBackend({
-                    ir,
-                    database,
-                    name: "handlers",
-                    mutators,
-                    queryFunctions,
-                }),
+            backend: makeSQLiteTestBackend({
+                ir,
+                database,
+                name: "handlers",
+                mutators,
+                queryFunctions,
+            }),
         });
 
         await ontology.actions.createAuthor!({ id: "author-1", email: "alice@example.com" });
@@ -504,12 +500,11 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         const database = createDatabase();
         const ontology = await createLiveOntology({
             ir,
-            backend: () =>
-                createSQLiteTestBackend({
-                    ir,
-                    database,
-                    name: "missing-mutator",
-                }),
+            backend: makeSQLiteTestBackend({
+                ir,
+                database,
+                name: "missing-mutator",
+            }),
         });
 
         await expect(
@@ -525,7 +520,6 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         const { ontology } = await createOntology({
             context: { user: { email: "alice@example.com" } },
         });
-        await ontology.ready;
 
         await ontology.actions.createAuthor!({
             id: "author-1",
@@ -576,7 +570,7 @@ describe("SQLite LiveOntology MVP acceptance", () => {
 
     it("reads only the attachment view's bytes from a shared buffer", async () => {
         const database = createDatabase();
-        const backend = createSQLiteTestBackend({ ir, database });
+        const backend = makeSQLiteTestBackend({ ir, database });
         const buffer = new SharedArrayBuffer(8);
         const bytes = new Uint8Array(buffer, 2, 4);
         bytes.set(new TextEncoder().encode("test"));
@@ -594,7 +588,7 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         const blob = await Effect.runPromise(
             Effect.scoped(
                 Effect.gen(function* () {
-                    const service = yield* backend.open({});
+                    const service = yield* backend;
                     yield* service.attachments!.stage!(
                         { id: "shared" },
                         new Blob(["test"], { type: "text/plain" })
@@ -613,7 +607,7 @@ describe("SQLite LiveOntology MVP acceptance", () => {
         const { ontology } = await createOntology({
             context: { user: { email: "alice@example.com" } },
         });
-        await ontology.ready;
+
         await ontology.cleanup();
         await expect(ontology.cleanup()).resolves.toBeUndefined();
     });

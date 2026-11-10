@@ -91,15 +91,19 @@ export const errorProjectionLayer = (options: ErrorProjectionOptions) =>
                     errorContext(options, payload?.name ?? payload?.invocation?.name)
                 );
             }),
-            Effect.catchDefect(() =>
-                Effect.fail(
-                    new BackendError({
-                        operation: request.rpc._tag,
-                        kind: "Internal",
-                        message: "The operation could not be completed.",
-                        retryable: false,
-                        actionOutcome: "unknown",
-                    })
+            Effect.catchDefect((cause) =>
+                Effect.logError("Ontology RPC defect", { operation: request.rpc._tag, cause }).pipe(
+                    Effect.andThen(
+                        Effect.fail(
+                            new BackendError({
+                                operation: request.rpc._tag,
+                                kind: "Internal",
+                                message: "The operation could not be completed.",
+                                retryable: false,
+                                actionOutcome: "unknown",
+                            })
+                        )
+                    )
                 )
             )
         )

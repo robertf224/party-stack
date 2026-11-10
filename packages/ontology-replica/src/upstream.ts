@@ -6,13 +6,13 @@ export type ReplicaUpstreamService =
     | {
           readonly kind: "committed";
           readonly backend: OntologyBackendService;
-          readonly authentication?: Pick<ConnectionMonitor, "state" | "changes">;
+          readonly authentication?: ConnectionMonitor;
       }
     | {
           readonly kind: "speculative";
           readonly backend: OntologyBackendService;
           readonly source: OntologySource;
-          readonly authentication?: Pick<ConnectionMonitor, "state" | "changes">;
+          readonly authentication?: ConnectionMonitor;
       };
 /** Acquired upstream capabilities. Platform storage remains supplied by Runtime. */
 export class ReplicaUpstream extends Context.Service<ReplicaUpstream, ReplicaUpstreamService>()(

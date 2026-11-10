@@ -1,0 +1,30 @@
+/* Explicit light/dark palettes also work inside the devtools ShadowRoots. */
+:root,
+:host {
+    --party-brand: #e83b32;
+    --party-font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+    --party-light-bg: #fafafa;
+    --party-light-surface: #ffffff;
+    --party-light-raised: #f1f2f4;
+    --party-light-inset: #f5f6f8;
+    --party-light-border: #e4e4e7;
+    --party-light-border-strong: #c5c7ce;
+    --party-light-text: #27272a;
+    --party-light-muted: #71717a;
+    --party-light-hover: #00000005;
+    --party-light-selected: #e11d4810;
+    --party-light-accent: #be123c;
+    --party-light-shadow: 0 4px 16px #0000000a;
+    --party-dark-bg: #101114;
+    --party-dark-surface: #18191e;
+    --party-dark-raised: #222329;
+    --party-dark-inset: #121318;
+    --party-dark-border: #2d2f36;
+    --party-dark-border-strong: #454852;
+    --party-dark-text: #e4e4e7;
+    --party-dark-muted: #a1a1aa;
+    --party-dark-hover: #ffffff08;
+    --party-dark-selected: #fb718518;
+    --party-dark-accent: #fb7185;
+    --party-dark-shadow: 0 4px 16px #0002;
+}

@@ -86,6 +86,11 @@ export function createWebBrowserAuthentication(
                         cause,
                     }),
             });
+            if (presentation === "popup" && !popup)
+                return yield* new BrowserAuthenticationError({
+                    reason: "Platform",
+                    message: "The authentication popup was blocked.",
+                });
             let closed = false;
             let used = false;
             let cancel: (() => void) | undefined;

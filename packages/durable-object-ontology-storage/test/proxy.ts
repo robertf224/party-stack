@@ -2,7 +2,8 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { makeOntologyServer } from "@party-stack/ontology-server";
-import { connectOntologyHttp } from "@party-stack/ontology-server/rpc/http";
+import { makeOntologyHttpHandler } from "@party-stack/ontology-server/rpc/http";
+import { makeOntologyHttpClient } from "@party-stack/ontology-server/rpc/http";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
@@ -89,24 +90,28 @@ export const runProxyScenario = Effect.fnUntraced(function* (
                       demand: { idleRetentionMs: 60_000 },
                   })
                 : undefined;
-        const { handleRequest } = yield* makeOntologyServer({
+        const server = yield* makeOntologyServer({
+            enableRealtime: true,
             ...(cache ? { kind: "cached-proxy" as const, cache } : { kind: "proxy" as const }),
             backend,
             ir,
-            authorize: (_request, headers) =>
-                headers.authorization === "Bearer test"
-                    ? Effect.void
+            dangerouslyAllowInternalAccess: true,
+            authenticate: (request) =>
+                request.headers.get("authorization") === "Bearer test"
+                    ? Effect.succeed({})
                     : Effect.fail(
                           new BackendError({
-                              operation: "authorize",
-                              kind: "Forbidden",
+                              operation: "authentication",
+                              kind: "Unauthenticated",
                               retryable: false,
                               message: "Denied",
                           })
                       ),
         });
+        const handleRequest = yield* makeOntologyHttpHandler(server);
         const connect = (token: string) =>
-            connectOntologyHttp({ url: "https://proxy.test/rpc" }).pipe(
+            makeOntologyHttpClient({ url: "https://proxy.test/rpc" }).pipe(
+                Effect.flatMap((client) => client.ontology()),
                 Effect.provide(FetchHttpClient.layer),
                 Effect.provideService(FetchHttpClient.Fetch, (input, init) => {
                     const request = new Request(input, init);
@@ -132,7 +137,7 @@ export const runProxyScenario = Effect.fnUntraced(function* (
             const repeated = yield* client.backend.applyAction(request);
             const snapshot = yield* client.backend.loadSubset(subset);
             return {
-                denied: denied._tag === "Failure" && denied.failure.kind === "Forbidden",
+                denied: denied._tag === "Failure" && denied.failure.kind === "Unauthenticated",
                 committed: client.replication.kind === "committed",
                 initialLoads,
                 lostReplyUnknown: lost._tag === "Failure" && lost.failure.actionOutcome === "unknown",

@@ -1,6 +1,6 @@
 // Auto-generated file - do not edit manually
 
-import { defineOntology, o } from "@party-stack/ontology";
+import { defineOntology, o } from "@party-stack/ontology-spec";
 export default defineOntology({
     types: [],
     objectTypes: [

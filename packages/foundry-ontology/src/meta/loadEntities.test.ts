@@ -1,12 +1,13 @@
 import { createMetaLiveOntology } from "@party-stack/ontology";
 import { eq, queryOnce } from "@tanstack/db";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { createFoundryMetaOntologyBackendAdapter } from "./createFoundryMetaOntologyBackendAdapter.js";
+import { makeFoundryMetadataBackend } from "./backend.js";
 import type { ObjectTypeV2 } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
 
 const mocks = vi.hoisted(() => ({
     getFullMetadata: vi.fn(),
+    getByRidBatch: vi.fn(),
 }));
 
 vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
@@ -16,6 +17,10 @@ vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
         OntologiesV2: {
             ...original.OntologiesV2,
             getFullMetadata: mocks.getFullMetadata,
+        },
+        ObjectTypesV2: {
+            ...original.ObjectTypesV2,
+            getByRidBatch: mocks.getByRidBatch,
         },
     };
 });
@@ -55,24 +60,14 @@ const client: OntologyClient = {
 
 beforeEach(() => {
     mocks.getFullMetadata.mockReset();
+    mocks.getByRidBatch.mockReset();
 });
 
 describe("Foundry ObjectType metadata queries", () => {
-    it("filters the shared full-metadata snapshot by ID", async () => {
-        mocks.getFullMetadata.mockResolvedValue({
-            objectTypes: {
-                Employee: {
-                    objectType: objectType(),
-                    linkTypes: [],
-                    implementsInterfaces: [],
-                    implementsInterfaces2: {},
-                    sharedPropertyTypeMapping: {},
-                },
-            },
-            valueTypes: {},
-        });
+    it("pushes a live ObjectType RID query into the bounded provider lookup", async () => {
+        mocks.getByRidBatch.mockResolvedValue({ data: [objectType()] });
         const meta = await createMetaLiveOntology({
-            backend: () => createFoundryMetaOntologyBackendAdapter({ client }),
+            backend: makeFoundryMetadataBackend({ client }),
         });
 
         try {
@@ -82,7 +77,13 @@ describe("Foundry ObjectType metadata queries", () => {
                     .where(({ ObjectType }) => eq(ObjectType.id, "ri.ontology.main.object-type.employee"))
             );
 
-            expect(mocks.getFullMetadata).toHaveBeenCalledOnce();
+            expect(mocks.getByRidBatch).toHaveBeenCalledExactlyOnceWith(
+                expect.anything(),
+                client.ontologyRid,
+                { requests: [{ objectTypeRid: "ri.ontology.main.object-type.employee" }] },
+                { preview: true }
+            );
+            expect(mocks.getFullMetadata).not.toHaveBeenCalled();
             expect(rows).toEqual([
                 expect.objectContaining({
                     id: "ri.ontology.main.object-type.employee",

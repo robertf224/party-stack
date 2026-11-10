@@ -1,5 +1,9 @@
 import { applyLensToObject, o } from "@party-stack/ontology";
-import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
+import {
+    makeOntologyBackend,
+    BackendError,
+    type OntologyBackendService,
+} from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { Effect } from "effect";
 import type { OntologyIR } from "@party-stack/ontology";
@@ -28,7 +32,8 @@ export function publicBackend(backend: OntologyBackendService, ir: OntologyIR): 
         });
     const call = <A>(allowed: boolean, effect: Effect.Effect<A, BackendError>) =>
         allowed ? effect : Effect.fail(rejected());
-    return {
+    return makeOntologyBackend({
+        ir,
         name: backend.name,
         sourceId: backend.sourceId,
         supportsIdempotency: backend.supportsIdempotency,
@@ -73,5 +78,5 @@ export function publicBackend(backend: OntologyBackendService, ir: OntologyIR): 
         },
         attachments: backend.attachments,
         encrypted: backend.encrypted,
-    };
+    });
 }

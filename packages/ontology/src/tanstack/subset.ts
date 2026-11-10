@@ -175,6 +175,11 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
             const yes = q.eq(left.operand, q.literal(name === "isNull" ? null : undefined));
             return { yes, no: negate(yes), exact: true };
         }
+        // Physical PlainDate equality follows ISO day ordering, while TanStack
+        // equality also distinguishes calendars. Neither an equality/membership
+        // predicate nor its negation is exact at that boundary. Broaden both
+        // branches and let TanStack filter before applying its window.
+        if (left.family === "date" && (name === "eq" || name === "in")) return unknown;
         if (name === "in" && args[1]?.type === "ref") {
             const array = value(args[1]);
             if (!array?.elementFamily || !isField(array.operand)) return unknown;
@@ -236,9 +241,11 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
         : undefined;
     const orderBy: QueryOrder[] = [];
     let ordered = true;
+    let homogeneousOrder = true;
     for (const order of subset.orderBy ?? []) {
         const v = value(order.expression);
         const compare = order.compareOptions;
+        homogeneousOrder &&= !!v?.family && (compare.nulls === "first" || compare.nulls === "last");
         if (
             order.expression.type !== "ref" ||
             !v ||
@@ -256,6 +263,28 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
     }
     const bounded = filter.exact && ordered && !cursor;
     const limit = bounded && subset.limit !== undefined ? subset.limit + (subset.offset ?? 0) : undefined;
+    const finalOrder = subset.orderBy?.at(-1)?.expression;
+    const finalPath = finalOrder?.type === "ref" ? IR.getPropRefPropertyPath(finalOrder) : [];
+    const finalValue = finalOrder && value(finalOrder);
+    // A finite prefix is independently complete only when the full comparison
+    // has known domains and a unique final key. This is schema evidence, never
+    // an inference from whichever rows happen to be cached.
+    const orderedWindowExact =
+        bounded &&
+        homogeneousOrder &&
+        subset.limit !== undefined &&
+        Number.isSafeInteger(subset.limit) &&
+        subset.limit >= 0 &&
+        limit !== undefined &&
+        Number.isSafeInteger(limit) &&
+        limit >= 0 &&
+        Number.isSafeInteger(subset.offset ?? 0) &&
+        (subset.offset ?? 0) >= 0 &&
+        finalPath.length === 1 &&
+        finalPath[0] === objects.get(objectType ?? "")?.primaryKey &&
+        !!finalValue &&
+        !finalValue.optional &&
+        (finalValue.family === "string" || finalValue.family === "number");
     const subsetIR: Subset = {
         where: predicate(combine("and", [filter.yes, cursor?.yes ?? true])),
         ...(ordered && orderBy.length ? { orderBy } : {}),
@@ -266,6 +295,7 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
         exact: filter.exact && ordered && !cursor,
         filterExact: filter.exact,
         orderExact: ordered,
+        orderedWindowExact,
     };
 }
 

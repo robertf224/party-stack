@@ -307,6 +307,7 @@ export function analyzeQueryDocument(
                             (t) =>
                                 ![
                                     "string",
+                                    "boolean",
                                     "integer",
                                     "float",
                                     "double",

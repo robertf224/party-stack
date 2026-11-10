@@ -1,4 +1,28 @@
 {
     "title": "Documentation",
-    "pages": ["index", "getting-started", "architecture", "replica", "runtimes", "storage", "authorization"]
+    "pages": [
+        "index",
+        "getting-started",
+        "installation",
+        "---App guides---",
+        "tanstack-start",
+        "expo",
+        "---Backends---",
+        "server",
+        "durable-objects",
+        "foundry",
+        "backend-adapters",
+        "---Build your app---",
+        "authentication",
+        "better-auth",
+        "queries",
+        "actions",
+        "attachments",
+        "encrypted-values",
+        "offline",
+        "authorization",
+        "---Understand the system---",
+        "architecture",
+        "authorization-boundaries"
+    ]
 }

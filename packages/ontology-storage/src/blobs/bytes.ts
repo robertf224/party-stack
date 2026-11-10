@@ -121,6 +121,10 @@ export const collectByteBlob = Effect.fnUntraced(function* (
 
 // Effect 4.1's Digest currently accepts a complete Uint8Array. Keep incremental
 // hashing here so attachments stay streamed; revisit if Digest gains streaming IO.
+/** Content identity for an already materialized portable value. */
+export const digestBytesSync = (bytes: Uint8Array): string =>
+    Array.from(sha256(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+
 export const digestBytes = Effect.fnUntraced(function* (input: ByteInput) {
     const hash = sha256.create();
     yield* Stream.runForEach(byteChunks(input), (chunk) => Effect.sync(() => hash.update(chunk)));

@@ -19,6 +19,7 @@ import {
 import { Cause, Context, Deferred, Effect, Fiber, Queue, Schema, Stream } from "effect";
 import { Headers, HttpClient, HttpClientRequest, Multipart } from "effect/http";
 import { Attachment, AttachmentUploadSchema } from "./attachmentTransfers.js";
+import { withExpectedBinding } from "./bindingFence.js";
 import { errorContext } from "./errorProjection.js";
 import { ontologyAttachmentHandlers, type OntologyOperationOptions } from "./operations.js";
 import type { ProtocolAttachments } from "./operations.js";
@@ -59,15 +60,16 @@ export const isAttachmentHttpRequest = (request: Request) => {
 export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
     options: OntologyOperationOptions<R>
 ) {
+    const authorize = withExpectedBinding(options);
     const captured = yield* Effect.context<R>();
     const scope = yield* Effect.scope;
-    const handlers = ontologyAttachmentHandlers(options);
+    const handlers = ontologyAttachmentHandlers(options, authorize);
     const maxBytes = options.attachmentTransfers?.limits?.maxBytes ?? 1024 * 1024 * 1024;
     const maxTotal = options.attachmentTransfers?.limits?.maxReservedBytes ?? 4 * 1024 * 1024 * 1024;
     const idle = options.attachmentTransfers?.limits?.idleTimeoutMs ?? 60_000;
     const duration = options.attachmentTransfers?.limits?.maxDurationMs ?? 30 * 60_000;
     const authorizeUpload = (metadata: typeof AttachmentUploadSchema.Type, headers: Headers.Headers) =>
-        options.authorize({ operation: "CreateAttachment", ...metadata }, headers);
+        authorize({ operation: "CreateAttachment", ...metadata }, headers);
     const checked = (input: ByteInput, complete: Effect.Effect<void, BackendError, R>): ByteSource => {
         const source = byteSource(input);
         let size = 0;
@@ -169,10 +171,7 @@ export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
                         });
                         if (ids.some((id) => !references.has(id)))
                             return yield* invalid("An upload is not referenced by the action parameters.");
-                        yield* options.authorize(
-                            { operation: "ApplyAction", invocation: payload.request },
-                            headers
-                        );
+                        yield* authorize({ operation: "ApplyAction", invocation: payload.request }, headers);
                         queues = yield* Effect.forEach(payload.files, () =>
                             Queue.bounded<Uint8Array, BackendError | Cause.Done>(1)
                         );
@@ -223,7 +222,7 @@ export const makeAttachmentHttpHandler = Effect.fnUntraced(function* <R>(
             );
             if (!payload || nextFile !== queues.length)
                 return yield* invalid("Incomplete action attachment list.");
-            yield* options.authorize({ operation: "ApplyAction", invocation: payload.request }, headers);
+            yield* authorize({ operation: "ApplyAction", invocation: payload.request }, headers);
             yield* Queue.end(queues.at(-1)!);
         }).pipe(
             Effect.provideContext(

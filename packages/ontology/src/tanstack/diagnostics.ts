@@ -9,6 +9,10 @@ export interface CollectionDemandDiagnostic {
     readonly exact?: boolean;
     readonly filterExact?: boolean;
     readonly orderExact?: boolean;
+    /** Whether this acquisition has delivered its first local snapshot. */
+    readonly received?: boolean;
+    /** Whether local delivery and upstream readiness have both completed. */
+    readonly ready?: boolean;
     /** In-process identity only; never serialized or sent to a replica owner. */
     readonly subscription?: object;
 }

@@ -50,7 +50,7 @@ export function makeServerConnectClient(options: {
         completeRedirect,
         /** Resource acquisition can be started in the click handler before other async work. */
         authorize: Effect.fn("Connect.browser.authorize")(function* (input: {
-            connectorId: string;
+            applicationId: string;
             connectionId?: string;
             context?: unknown;
             browserPresentation?: BrowserAuthenticationPresentation;
@@ -74,7 +74,7 @@ export function makeServerConnectClient(options: {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
-                            connectorId: input.connectorId,
+                            applicationId: input.applicationId,
                             connectionId: input.connectionId,
                             context: input.context,
                             returnUrl: options.returnUrl,

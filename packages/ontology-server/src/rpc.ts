@@ -5,20 +5,37 @@ import {
     ClientTokenSchema,
 } from "@party-stack/ontology-backend/clients";
 import { DeliveryFrameCodec, DeliveryPositionSchema } from "@party-stack/ontology-backend/delivery";
+import { OntologyDescriptionCodec } from "@party-stack/ontology-backend/description";
 import {
     CompiledSubsetCodec,
     ClientStateCodec,
     ClientSubmissionCodec,
     ClientViewCodec,
     ObjectSelectionCodec,
-    protocolValueCodec,
 } from "@party-stack/ontology-backend/protocol";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
-import { OntologyIRSchema } from "@party-stack/ontology-spec/effect";
-import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
+import { pinOntology } from "@party-stack/ontology-replica";
+import {
+    ontologyDefinitionSignature,
+    ontologyDefinitionContractSignature,
+} from "@party-stack/ontology-storage";
 import { digestBytes } from "@party-stack/ontology-storage/blobs";
-import { Context, Effect, Schema, Stream, Layer, Scope } from "effect";
+import { Table } from "@party-stack/ontology-storage/tables";
+import {
+    Cause,
+    Context,
+    Deferred,
+    Effect,
+    Exit,
+    Layer,
+    PubSub,
+    Schema,
+    Scope,
+    Stream,
+    SubscriptionRef,
+} from "effect";
 import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcSchema } from "effect/rpc";
+import { expectedBindingHeaders, withExpectedBinding } from "./bindingFence.js";
 import {
     OntologyErrorProjection,
     errorProjectionLayer,
@@ -38,32 +55,17 @@ import { makeRpcBackend } from "./rpcBackend.js";
 import type { AttachmentTransferPolicy } from "./attachmentTransfers.js";
 import type { ObjectSelection } from "@party-stack/ontology-backend";
 import type { ClientSession, ClientToken } from "@party-stack/ontology-backend/clients";
+import type { DeliveryFrame } from "@party-stack/ontology-backend/delivery";
+import type { OntologyDescription } from "@party-stack/ontology-backend/description";
 import type { ClientSubmission, ClientView, OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
-import type { ReplicaService } from "@party-stack/ontology-replica";
+import type { ReplicaService, ReplicaPinControls } from "@party-stack/ontology-replica";
 import type { TraceStore } from "@party-stack/runtime/tracing";
 import type { Headers } from "effect/http/Headers";
 
 const Counter = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }));
 const DeliveryStrategy = Schema.Literals(["auto", "snapshot", "incremental"]);
-const Description = Schema.Struct({
-    version: Schema.Literal(1),
-    replication: Schema.Literals(["committed", "speculative"]),
-    definitionHash: Schema.optional(Schema.String),
-    sourceId: Schema.NonEmptyString,
-    ir: Schema.optional(protocolValueCodec(OntologyIRSchema)),
-    context: Schema.optional(protocolValueCodec(Schema.Record(Schema.String, Schema.Unknown))),
-    supportsIdempotency: Schema.Boolean,
-    delivery: Schema.optional(Schema.Boolean),
-    stateDelivery: Schema.optional(Schema.Boolean),
-    changes: Schema.optional(Schema.Boolean),
-    watchChanges: Schema.optional(Schema.Boolean),
-    watchSubset: Schema.optional(Schema.Boolean),
-    actionParameterResolution: Schema.optional(Schema.Boolean),
-    queries: Schema.optional(Schema.Boolean),
-    attachments: Schema.optional(Schema.Struct({ stage: Schema.Boolean })),
-    encrypted: Schema.optional(Schema.Boolean),
-});
+const Description = OntologyDescriptionCodec;
 const ReplicaRpcs = RpcGroup.make(
     Rpc.make("Describe", { success: Description, error: BackendError }),
     Rpc.make("SubscribeSelection", {
@@ -124,28 +126,75 @@ class SubscriptionTracing extends RpcMiddleware.Service<SubscriptionTracing>()(
     "@party-stack/ontology-server/SubscriptionTracing",
     { requiredForClient: true }
 ) {}
+const subscriptionTracingLayer = RpcMiddleware.layerClient(SubscriptionTracing, ({ rpc, request, next }) =>
+    RpcSchema.isStreamSchema(rpc.successSchema)
+        ? Effect.annotateCurrentSpan("activity", Context.get(rpc.annotations, RpcActivity)).pipe(
+              Effect.andThen(next(request))
+          )
+        : next(request)
+);
 export const makeTracedRpcClient = <Rpcs extends Rpc.Any>(group: RpcGroup.RpcGroup<Rpcs>) =>
-    RpcClient.make(group.middleware(SubscriptionTracing)).pipe(
-        Effect.provide(
-            RpcMiddleware.layerClient(SubscriptionTracing, ({ rpc, request, next }) =>
-                RpcSchema.isStreamSchema(rpc.successSchema)
-                    ? Effect.annotateCurrentSpan("activity", Context.get(rpc.annotations, RpcActivity)).pipe(
-                          Effect.andThen(next(request))
-                      )
-                    : next(request)
-            )
-        )
+    RpcClient.make(group.middleware(SubscriptionTracing)).pipe(Effect.provide(subscriptionTracingLayer));
+
+/** The in-process transport keeps the same subscription/transfer trace classification. */
+export const makeTracedRpcClientNoSerialization = <Rpcs extends Rpc.Any, E>(
+    group: RpcGroup.RpcGroup<Rpcs>,
+    options: Parameters<
+        typeof RpcClient.makeNoSerialization<Rpc.AddMiddleware<Rpcs, typeof SubscriptionTracing>, E>
+    >[1]
+) =>
+    RpcClient.makeNoSerialization(group.middleware(SubscriptionTracing), options).pipe(
+        Effect.provide(subscriptionTracingLayer)
     );
 
 export const makeOntologyRpcClient = makeTracedRpcClient(OntologyRpcs);
 
-export type OntologyDescription = Schema.Schema.Type<typeof Description>;
-export interface OntologyConnection {
+export type { OntologyDescription } from "@party-stack/ontology-backend/description";
+export interface OntologyClientOptions {
+    /** Previously accepted, public source binding; never inferred from cached rows. */
+    readonly description?: OntologyDescription;
+    /** Validate/adopt definition compatibility after source/context/protocol checks. */
+    readonly validate?: (fresh: OntologyDescription) => Effect.Effect<void, BackendError>;
+    /** Notification only. Coordinate replacement outside this client scope. */
+    readonly onIncompatible?: (error: BackendError) => Effect.Effect<void>;
+}
+export interface OntologyClientDefinitionStatus {
+    readonly status: "retained" | "current" | "incompatible";
+    readonly refreshing: boolean;
+    readonly error?: BackendError;
+}
+export interface OntologyClientDefinition {
+    readonly get: Effect.Effect<OntologyClientDefinitionStatus>;
+    readonly changes: Stream.Stream<OntologyClientDefinitionStatus>;
+    /** Explicit, coalesced metadata acquisition. Never required before ordinary operations. */
+    readonly refresh: Effect.Effect<OntologyDescription, BackendError>;
+}
+/** A scoped client of an ontology server, separate from Connect's account connections. */
+/** One transport shared by independently scoped, ontology-bound handles. */
+export interface OntologyServerClient {
+    readonly ontology: (
+        name?: string,
+        options?: OntologyClientOptions
+    ) => Effect.Effect<OntologyClient, BackendError, Scope.Scope>;
+}
+
+export interface OntologyClient {
+    /** The accepted description used to construct this binding's fixed capabilities. */
+    readonly description: OntologyDescription;
+    readonly definition: OntologyClientDefinition;
     readonly sourceId: string;
     readonly definitionHash?: string;
     readonly ir?: import("@party-stack/ontology-spec").OntologyIR;
     readonly context?: Record<string, unknown>;
     readonly operations: OntologyOperationsClient;
+    /** Pin controls on the selected persistent replica, when the server advertises them. */
+    readonly pins?: ReplicaPinControls;
+    /** Ordinary ontology operations over the selected replica's download inventory. */
+    readonly pinBackend?: Effect.Effect<
+        import("@party-stack/ontology-backend").OntologyBackendService,
+        BackendError,
+        Scope.Scope
+    >;
     /** Finite operations are available for all server roles. */
     readonly backend: import("@party-stack/ontology-backend").OntologyBackendService;
     readonly replication:
@@ -183,10 +232,13 @@ export type OntologyRpcRequest =
  * state inspection. Restricted sources must also project their returned state.
  */
 export interface OntologyRpcServerOptions<R = never> extends ErrorProjectionOptions {
-    readonly query?: import("./operations.js").OntologyOperationOptions<R>["query"];
     /** Already projected client context. Never use request payloads as trusted context. */
     readonly context?: Record<string, unknown>;
     readonly attachmentTransfers?: AttachmentTransferPolicy<R>;
+    /** Opt into downstream watches, change reads and replication sessions. Finite
+     * queries/actions and the backend's own upstream lifecycle remain available.
+     */
+    readonly enableRealtime?: boolean;
     /** Outgoing replication only. Snapshot uses invalidations and finite reads;
      * incremental requires native selected delivery. Auto preserves capability selection.
      */
@@ -195,6 +247,7 @@ export interface OntologyRpcServerOptions<R = never> extends ErrorProjectionOpti
     readonly delivery?: import("@party-stack/ontology-backend/delivery").DeliveryPolicy;
     readonly source?: OntologySource;
     readonly replica?: ReplicaService;
+    readonly pins?: ReplicaPinControls;
     readonly traces?: TraceStore;
     readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
     /** Worker bootstrap may run while transport starts accepting requests. */
@@ -208,8 +261,37 @@ export interface OntologyRpcServerOptions<R = never> extends ErrorProjectionOpti
     ) => Effect.Effect<void, BackendError, R>;
 }
 
-export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => {
-    const authorize = options.authorize;
+// This gate also rejects direct RPC calls: capability discovery is not enforcement.
+const clientSyncOperations: ReadonlySet<OntologyRpcRequest["operation"]> = new Set([
+    "WatchSubset",
+    "WatchChanges",
+    "PullChanges",
+    "SubscribeSelection",
+    "AckDelivery",
+    "SubscribeState",
+    "OpenClient",
+    "Read",
+    "Submit",
+    "Accept",
+    "Acknowledge",
+    "Demand",
+    "Changes",
+]);
+
+const baseOntologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => {
+    const clientSync = options.enableRealtime === true;
+    const bindingAuthorization = withExpectedBinding(options);
+    const authorize = Effect.fnUntraced(function* (request: OntologyRpcRequest, headers: Headers) {
+        yield* bindingAuthorization(request, headers);
+        if (!clientSync && clientSyncOperations.has(request.operation))
+            return yield* new BackendError({
+                operation: request.operation,
+                kind: "NotImplemented",
+                message: "Client synchronization is disabled on this endpoint.",
+                retryable: false,
+                actionOutcome: "not-committed",
+            });
+    });
     const snapshots = options.deliveryStrategy === "snapshot";
     // Snapshot readers must not silently switch to the committed journal path.
     // Its watch stream can still provide ordinary subset invalidation hints.
@@ -278,13 +360,16 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                                     })
                             )
                         );
-                        const committedDelivery = Boolean(
-                            options.backend?.subscribeSelection && options.backend.acknowledgeDelivery
-                        );
-                        const speculativeDelivery = Boolean(
-                            source.subscribe && source.acknowledgeDelivery && source.accept
-                        );
+                        const committedDelivery =
+                            clientSync &&
+                            Boolean(
+                                options.backend?.subscribeSelection && options.backend.acknowledgeDelivery
+                            );
+                        const speculativeDelivery =
+                            clientSync &&
+                            Boolean(source.subscribe && source.acknowledgeDelivery && source.accept);
                         if (
+                            clientSync &&
                             strategy === "incremental" &&
                             !(options.source ? speculativeDelivery : committedDelivery)
                         )
@@ -315,28 +400,38 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                             : undefined;
                         return {
                             version: 1 as const,
-                            replication: options.source ? ("speculative" as const) : ("committed" as const),
+                            replication:
+                                clientSync && options.source
+                                    ? ("speculative" as const)
+                                    : ("committed" as const),
                             definitionHash,
-                            sourceId: source.sourceId,
+                            sourceId: options.source?.sourceId ?? options.backend?.sourceId ?? "stateless",
                             ir: options.ir,
                             context: options.context,
-                            supportsIdempotency: source.supportsIdempotency,
+                            supportsIdempotency:
+                                options.source?.supportsIdempotency ??
+                                options.backend?.supportsIdempotency ??
+                                false,
                             delivery: !snapshots && committedDelivery,
-                            stateDelivery: !snapshots && speculativeDelivery,
-                            changes: Boolean(operationOptions.backend?.changes),
-                            watchChanges: Boolean(operationOptions.backend?.changes?.watch),
-                            watchSubset: Boolean(
-                                operationOptions.backend?.watchSubset ||
-                                options.ir?.objectTypes.some(
-                                    (type) =>
-                                        typeof operationOptions.backend?.refresh?.(objectSubset(type.name))
-                                            ?.pollIntervalMs === "number"
-                                )
-                            ),
+                            stateDelivery: Boolean(options.source) && !snapshots && speculativeDelivery,
+                            changes: clientSync && Boolean(operationOptions.backend?.changes),
+                            watchChanges: clientSync && Boolean(operationOptions.backend?.changes?.watch),
+                            watchSubset:
+                                clientSync &&
+                                Boolean(
+                                    operationOptions.backend?.watchSubset ||
+                                    options.ir?.objectTypes.some(
+                                        (type) =>
+                                            typeof operationOptions.backend?.refresh?.(
+                                                objectSubset(type.name)
+                                            )?.pollIntervalMs === "number"
+                                    )
+                                ),
                             actionParameterResolution: Boolean(
                                 options.backend?.resolveActionParameters || options.replica
                             ),
-                            queries: Boolean(options.query),
+                            queries: Boolean(options.backend),
+                            pins: Boolean(options.pins ?? options.replica),
                             attachments: options.backend
                                 ? options.backend.attachments && {
                                       stage: Boolean(options.backend.attachments.stage),
@@ -378,7 +473,13 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                                 // server's committed facet forwards upstream rows under that identity.
                                 return {
                                     ...frame,
-                                    metadata: { ...frame.metadata, sourceId: source.sourceId },
+                                    metadata: {
+                                        ...frame.metadata,
+                                        sourceId:
+                                            options.source?.sourceId ??
+                                            options.backend?.sourceId ??
+                                            "stateless",
+                                    },
                                 };
                             })
                         )
@@ -490,24 +591,381 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => 
                 })
             ),
     }).pipe(
-        Layer.merge(ontologyOperationHandlers(operationOptions)),
+        Layer.merge(ontologyOperationHandlers(operationOptions, authorize)),
         Layer.merge(errorProjectionLayer(options))
     );
 };
+
+const resourceHeader = "x-party-stack-resource";
+
+/** Administrative resources use the same ontology RPCs and transport. Access is
+ * still gated by the parent endpoint before the resource is acquired. */
+export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) =>
+    Layer.unwrap(
+        Effect.gen(function* () {
+            const scope = yield* Effect.scope;
+            const ordinary = yield* Layer.buildWithScope(baseOntologyRpcHandlers(options), scope);
+            const pins = yield* Effect.cached(
+                Effect.gen(function* () {
+                    if (!options.replica)
+                        return yield* new BackendError({
+                            operation: "pins",
+                            kind: "NotImplemented",
+                            retryable: false,
+                            message: "This endpoint does not own downloads.",
+                        });
+                    const backend = yield* options.replica.demand.pins.backend;
+                    return yield* Layer.buildWithScope(
+                        baseOntologyRpcHandlers({
+                            backend,
+                            ir: pinOntology,
+                            context: options.context,
+                            enableRealtime: options.enableRealtime,
+                            errors: options.errors,
+                            authorize: (_, headers) => options.authorize({ operation: "ReadPin" }, headers),
+                        }),
+                        scope
+                    );
+                })
+            );
+            type Rpcs = RpcGroup.Rpcs<typeof OntologyRpcs>;
+            type Handler = RpcGroup.HandlersFrom<Rpcs>[Rpcs["_tag"]];
+            const handlers = Object.fromEntries(
+                [...OntologyRpcs.requests].map(([tag, rpc]) => {
+                    const invoke = (payload: never, request: Parameters<Handler>[1]) =>
+                        Effect.gen(function* () {
+                            const resource = request.headers[resourceHeader];
+                            if (resource !== undefined && resource !== "pins")
+                                return yield* new BackendError({
+                                    operation: "ontology.resource",
+                                    kind: "NotFound",
+                                    retryable: false,
+                                    message: "Unknown ontology resource.",
+                                });
+                            if (resource === "pins")
+                                yield* options.authorize({ operation: "ReadPin" }, request.headers);
+                            const context = resource === "pins" ? yield* pins : ordinary;
+                            const handler = yield* OntologyRpcs.accessHandler(tag as Rpcs["_tag"]).pipe(
+                                Effect.provideContext(context)
+                            );
+                            return handler(payload, request);
+                        });
+                    return [
+                        tag,
+                        RpcSchema.isStreamSchema(rpc.successSchema)
+                            ? (payload: never, request: Parameters<Handler>[1]) =>
+                                  Stream.unwrap(
+                                      invoke(payload, request).pipe(
+                                          Effect.map(
+                                              (result) => result as Stream.Stream<unknown, BackendError, R>
+                                          )
+                                      )
+                                  )
+                            : (payload: never, request: Parameters<Handler>[1]) =>
+                                  Effect.flatten(
+                                      invoke(payload, request).pipe(
+                                          Effect.map(
+                                              (result) => result as Effect.Effect<unknown, BackendError, R>
+                                          )
+                                      )
+                                  ),
+                    ];
+                })
+            ) as unknown as {
+                readonly [Procedure in Rpcs as Procedure["_tag"]]: Rpc.ToHandlerFn<
+                    Procedure,
+                    R | Scope.Scope
+                >;
+            };
+            return Layer.merge(OntologyRpcs.toLayer(handlers), errorProjectionLayer(options));
+        })
+    );
+
+const selectPinResource = (client: OntologyRpcClient): OntologyRpcClient =>
+    Object.fromEntries(
+        [...OntologyRpcs.requests.keys()].map((tag) => [
+            tag,
+            (payload: unknown, settings?: { readonly headers?: Record<string, string> }) =>
+                Reflect.apply(Reflect.get(client, tag), client, [
+                    payload,
+                    { ...settings, headers: { ...settings?.headers, [resourceHeader]: "pins" } },
+                ]),
+        ])
+    ) as OntologyRpcClient;
 
 export type OntologyRpcClient = Effect.Success<
     ReturnType<typeof RpcClient.make<RpcGroup.Rpcs<typeof OntologyRpcs>>>
 >;
 const unavailable = (cause: unknown) => classifyBackendFailure("remote.protocol", cause);
+const copyDescription = (description: OntologyDescription) =>
+    Effect.try({
+        try: () => Schema.decodeUnknownSync(Description)(Schema.encodeSync(Description)(description)),
+        catch: (cause) =>
+            new BackendError({
+                operation: "remote.describe",
+                kind: "InvalidResponse",
+                retryable: false,
+                message: "Invalid ontology description.",
+                cause,
+            }),
+    });
+
+const descriptionValue = Table.make<unknown>({ name: "ontology-description-identity" });
+const sameDescriptionValue = (left: unknown, right: unknown) =>
+    descriptionValue.encode(left) === descriptionValue.encode(right);
+const protocolIdentity = (description: OntologyDescription) => ({
+    version: description.version,
+    replication: description.replication,
+    supportsIdempotency: description.supportsIdempotency,
+    delivery: Boolean(description.delivery),
+    stateDelivery: Boolean(description.stateDelivery),
+    changes: Boolean(description.changes),
+    watchChanges: Boolean(description.watchChanges),
+    watchSubset: Boolean(description.watchSubset),
+    actionParameterResolution: Boolean(description.actionParameterResolution),
+    queries: Boolean(description.queries),
+    pins: Boolean(description.pins),
+    attachments: Boolean(description.attachments),
+    stageAttachments: Boolean(description.attachments?.stage),
+    encrypted: Boolean(description.encrypted),
+});
+const checkBootstrapBinding = (accepted: OntologyDescription, fresh: OntologyDescription) =>
+    Effect.gen(function* () {
+        if (fresh.sourceId !== accepted.sourceId)
+            return yield* new BackendError({
+                operation: "remote.validate",
+                kind: "SourceMismatch",
+                retryable: false,
+                message: "The ontology source changed.",
+            });
+        if (!sameDescriptionValue(fresh.context ?? {}, accepted.context ?? {}))
+            return yield* new BackendError({
+                operation: "remote.validate",
+                kind: "SourceMismatch",
+                retryable: false,
+                message: "The ontology context changed.",
+            });
+        if (!sameDescriptionValue(protocolIdentity(fresh), protocolIdentity(accepted)))
+            return yield* new BackendError({
+                operation: "remote.validate",
+                kind: "SchemaMismatch",
+                retryable: false,
+                message: "The ontology protocol capabilities changed.",
+            });
+    });
+
+const definitionFailure: unique symbol = Symbol("OntologyClient.definitionFailure");
+interface InternalDefinition extends OntologyClientDefinition {
+    readonly [definitionFailure]: (error: BackendError) => Effect.Effect<void>;
+}
+/** HTTP byte operations use the same incompatibility notification as typed RPC. */
+export const observeOntologyClientFailure = <A, R>(
+    client: OntologyClient,
+    work: Effect.Effect<A, BackendError, R>
+) =>
+    work.pipe(
+        Effect.tapError(
+            (error) =>
+                (client.definition as Partial<InternalDefinition>)[definitionFailure]?.(error) ?? Effect.void
+        )
+    );
+
+const makeDefinitionClient = Effect.fnUntraced(function* (
+    raw: OntologyRpcClient,
+    description: OntologyDescription,
+    options?: OntologyClientOptions
+) {
+    const scope = yield* Effect.scope;
+    const state = yield* SubscriptionRef.make<OntologyClientDefinitionStatus>({
+        status: options?.description ? "retained" : "current",
+        refreshing: false,
+    });
+    yield* Effect.addFinalizer(() => PubSub.shutdown(state.pubsub));
+    let attempt: Deferred.Deferred<OntologyDescription, BackendError> | undefined;
+    const incompatible = (error: BackendError) =>
+        error.kind === "SchemaMismatch" || error.kind === "SourceMismatch";
+    const notify = (error: BackendError) => options?.onIncompatible?.(error) ?? Effect.void;
+    const failed = Effect.fnUntraced(function* (error: BackendError) {
+        const previous = yield* SubscriptionRef.get(state);
+        yield* SubscriptionRef.set(state, {
+            ...previous,
+            status: incompatible(error) ? "incompatible" : previous.status,
+            refreshing: false,
+            error: previous.status === "incompatible" && !incompatible(error) ? previous.error : error,
+        });
+        if (
+            incompatible(error) &&
+            (previous.status !== "incompatible" || previous.error?.kind !== error.kind)
+        )
+            yield* notify(error).pipe(
+                Effect.catchCause((cause) =>
+                    Effect.logError("Ontology incompatibility callback failed", cause)
+                ),
+                Effect.forkIn(scope),
+                Effect.asVoid
+            );
+    });
+    const validate =
+        options?.validate ??
+        ((fresh: OntologyDescription) =>
+            (!fresh.ir && !description.ir) ||
+            (fresh.ir &&
+                description.ir &&
+                ontologyDefinitionContractSignature(fresh.ir) ===
+                    ontologyDefinitionContractSignature(description.ir))
+                ? Effect.void
+                : Effect.fail(
+                      new BackendError({
+                          operation: "remote.definition",
+                          kind: "SchemaMismatch",
+                          retryable: false,
+                          message: "The ontology definition changed.",
+                      })
+                  ));
+    const refresh = Effect.uninterruptibleMask((restore) =>
+        Effect.suspend(() => {
+            if (attempt) return restore(Deferred.await(attempt));
+            const pending = Deferred.makeUnsafe<OntologyDescription, BackendError>();
+            attempt = pending;
+            const check = SubscriptionRef.update(state, (current) => ({ ...current, refreshing: true })).pipe(
+                Effect.andThen(
+                    raw.Describe().pipe(Effect.mapError(unavailable), Effect.flatMap(copyDescription))
+                ),
+                Effect.tap((fresh) => checkBootstrapBinding(description, fresh)),
+                Effect.tap(validate),
+                Effect.tap(() => SubscriptionRef.set(state, { status: "current", refreshing: false })),
+                Effect.onExit((exit) =>
+                    Effect.gen(function* () {
+                        if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
+                            const error = Cause.findErrorOption(exit.cause);
+                            yield* failed(
+                                error._tag === "Some" ? error.value : unavailable(Cause.squash(exit.cause))
+                            );
+                        }
+                        if (attempt === pending) attempt = undefined;
+                        yield* Deferred.done(pending, exit);
+                    })
+                ),
+                Effect.catchCause(() => Effect.void)
+            );
+            return Effect.forkIn(check, scope, { startImmediately: true }).pipe(
+                Effect.andThen(restore(Deferred.await(pending)))
+            );
+        })
+    );
+    const report = Effect.fnUntraced(function* (error: BackendError) {
+        if (!incompatible(error)) return;
+        yield* failed(error);
+        // Rebinding a source/account needs an explicit acquisition. A metadata
+        // refresh must not turn that failure into permission to reset its cache.
+        if (error.kind === "SourceMismatch") return;
+        yield* refresh.pipe(
+            Effect.catchCause(() => Effect.void),
+            Effect.forkIn(scope),
+            Effect.asVoid
+        );
+    });
+    const headers = expectedBindingHeaders(description);
+    // Delivery metadata already carries the contract hash. Check it at the
+    // client boundary too, so a receiver's schema failure reaches definition
+    // lifecycle handling even when the transport successfully delivered a frame.
+    const schemaHash = yield* Effect.cached(
+        Effect.suspend(() =>
+            description.ir
+                ? digestBytes({
+                      type: "application/json",
+                      stream: Stream.make(
+                          new TextEncoder().encode(ontologyDefinitionContractSignature(description.ir))
+                      ),
+                  })
+                : Effect.succeed(undefined)
+        ).pipe(Effect.mapError(unavailable))
+    );
+    const checkFrame = Effect.fnUntraced(function* (frame: DeliveryFrame) {
+        if (frame.metadata) {
+            if (frame.metadata.sourceId !== description.sourceId)
+                return yield* new BackendError({
+                    operation: "remote.definition",
+                    kind: "SourceMismatch",
+                    retryable: false,
+                    message: "The delivered ontology source changed.",
+                });
+            const expected = yield* schemaHash;
+            if (expected !== undefined && frame.metadata.schemaHash !== expected)
+                return yield* new BackendError({
+                    operation: "remote.definition",
+                    kind: "SchemaMismatch",
+                    retryable: false,
+                    message: "The delivered ontology definition changed.",
+                });
+        }
+        return frame;
+    });
+    const client = Object.fromEntries(
+        [...OntologyRpcs.requests].map(([tag, rpc]) => [
+            tag,
+            (payload: unknown, options?: { readonly headers?: Record<string, string> }) => {
+                const invoke = () =>
+                    Reflect.apply(Reflect.get(raw, tag), raw, [
+                        payload,
+                        tag === "Describe"
+                            ? options
+                            : { ...options, headers: { ...options?.headers, ...headers } },
+                    ]);
+                if (RpcSchema.isStreamSchema(rpc.successSchema)) {
+                    const stream =
+                        tag === "SubscribeSelection" || tag === "SubscribeState"
+                            ? (invoke() as Stream.Stream<DeliveryFrame, BackendError>).pipe(
+                                  Stream.mapEffect(checkFrame)
+                              )
+                            : (invoke() as Stream.Stream<unknown, BackendError>);
+                    return stream.pipe(Stream.tapError(report));
+                }
+                return (invoke() as Effect.Effect<unknown, BackendError>).pipe(Effect.tapError(report));
+            },
+        ])
+    ) as unknown as OntologyRpcClient;
+    const definition: InternalDefinition = {
+        get: SubscriptionRef.get(state),
+        changes: SubscriptionRef.changes(state),
+        refresh,
+        [definitionFailure]: report,
+    };
+    return {
+        client,
+        definition,
+    };
+});
 
 /** Use the same source contract with Effect RPC's worker, HTTP or socket transport. */
 export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(function* (
-    client: OntologyRpcClient
-): Effect.fn.Return<OntologyConnection, BackendError, Scope.Scope> {
-    const description = yield* client.Describe().pipe(Effect.mapError(unavailable));
+    client: OntologyRpcClient,
+    options?: OntologyClientOptions
+): Effect.fn.Return<OntologyClient, BackendError, Scope.Scope> {
+    const description = yield* options?.description
+        ? copyDescription(options.description)
+        : client.Describe().pipe(Effect.mapError(unavailable), Effect.flatMap(copyDescription));
+    if (options?.description && !description.ir)
+        return yield* new BackendError({
+            operation: "remote.bootstrap",
+            kind: "InvalidConfiguration",
+            retryable: false,
+            message: "A retained ontology description must include its definition.",
+        });
+    const described = yield* makeDefinitionClient(client, description, options);
+    const pinBackend = description.pins
+        ? makeOntologyProtocolClient(selectPinResource(client)).pipe(
+              Effect.map((resource) => resource.backend)
+          )
+        : undefined;
+    client = described.client;
     const operations = yield* makeOntologyOperationsClient(client);
     const common = {
+        description,
+        definition: described.definition,
         operations,
+        pins: description.pins ? operations.pins : undefined,
+        pinBackend,
         sourceId: description.sourceId,
         definitionHash: description.definitionHash,
         ir: description.ir,

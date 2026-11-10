@@ -1,11 +1,11 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { Effect, Redacted, Stream } from "effect";
+import { Effect, Redacted, Scope, Stream } from "effect";
 
 /** Each attempt has its own scope. Terminal failures stay observable; only
  * retryable failures reopen subscriptions. Normal EOF also needs a repair.
  */
 export const superviseWatch = Effect.fnUntraced(function* <A>(options: {
-    readonly stream: () => Stream.Stream<A, BackendError>;
+    readonly acquire: () => Effect.Effect<Stream.Stream<A, BackendError>, BackendError, Scope.Scope>;
     readonly canRun?: Effect.Effect<boolean>;
     readonly authentication?: {
         readonly generation: Effect.Effect<number>;
@@ -26,8 +26,9 @@ export const superviseWatch = Effect.fnUntraced(function* <A>(options: {
         const result = yield* Effect.result(
             Effect.scoped(
                 Effect.gen(function* () {
+                    const stream = yield* options.acquire();
                     yield* options.onError(undefined);
-                    yield* Stream.runForEach(Stream.suspend(options.stream), (value) =>
+                    yield* Stream.runForEach(stream, (value) =>
                         options.onValue(value).pipe(
                             Effect.tap(() =>
                                 Effect.sync(() => {

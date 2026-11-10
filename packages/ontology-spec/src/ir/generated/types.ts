@@ -138,19 +138,19 @@ export type ActionPolicy = {
     actionType: string;
     check: Expression;
     bind?: Array<ActionParameterBinding>;
-    read?: QueryDocument;
+    additionalObjects?: QueryDocument;
 };
 
 /** Authorizes one query function and optional additional trusted implementation reads. */
 export type QueryFunctionPolicy = {
     queryFunctionType: string;
     check: Expression;
-    read?: QueryDocument;
+    additionalObjects?: QueryDocument;
 };
 
 /** One effective policy for an ontology view; grants are evaluated under its trusted context. */
 export type PolicyDef = {
-    read: QueryDocument;
+    objects: QueryDocument;
     actions?: Array<ActionPolicy>;
     queryFunctions?: Array<QueryFunctionPolicy>;
 };

@@ -14,6 +14,7 @@ export class RuntimeError extends Schema.TaggedError<RuntimeError>()("RuntimeErr
 /** Acquired platform capabilities and application-boundary bridges, owned by an Effect Scope. */
 export interface RuntimeService {
     readonly capacity?: ResourceCapacity;
+    /** Context-derived partition key; identity selection uses Connect's userId separately. */
     readonly owner: string;
     readonly namespace: string;
     readonly browserAuthentication?: BrowserAuthentication;

@@ -1,43 +1,16 @@
-import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunner";
-import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
-import { serveInstallationWorker } from "@party-stack/ontology/installation/worker";
+import { runMain } from "@effect/platform-browser/BrowserRuntime";
+import { layer as workerRunner } from "@effect/platform-browser/BrowserWorkerRunner";
+import { serveOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
 import { Runtimes } from "@party-stack/runtime";
-import { Effect, Fiber, Layer, Schema } from "effect";
-import { TRACKER_CACHE_EPOCH } from "./trackerConfig";
+import { TraceRecording } from "@party-stack/runtime/tracing";
+import { Effect, Fiber } from "effect";
+import { makeTrackerOntologyServer, trackerRuntime } from "./ontologyServer";
 
-const Identity = Schema.Struct({
-    cacheEpoch: Schema.Literal(TRACKER_CACHE_EPOCH),
-    installationId: Schema.NonEmptyString,
-});
-const open = Effect.gen(function* () {
-    const identity = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Identity))(
-        (globalThis as unknown as { name: string }).name
-    ).pipe(
-        Effect.mapError(
-            (cause) =>
-                new BackendError({
-                    operation: "installation.identity",
-                    kind: "InvalidConfiguration",
-                    retryable: false,
-                    message: "Invalid installation worker identity.",
-                    cause,
-                })
-        )
-    );
-    const { makeTrackerInstallation, trackerRuntime } = yield* Effect.tryPromise({
-        try: () => import("./installations"),
-        catch: (cause) => classifyBackendFailure("installation.load", cause),
-    });
-    const context = yield* Layer.build(Runtimes.layer(trackerRuntime));
-    return yield* makeTrackerInstallation(identity.installationId).pipe(Effect.provideContext(context));
-});
-Effect.runFork(
-    Effect.scoped(
-        Effect.gen(function* () {
-            const server = yield* serveInstallationWorker({ open }).pipe(
-                Effect.provide(BrowserWorkerRunner.layer)
-            );
-            yield* Fiber.join(server);
-        })
-    )
+serveOntologyWorker(makeTrackerOntologyServer()).pipe(
+    Effect.flatMap(Fiber.join),
+    Effect.scoped,
+    Effect.provide(Runtimes.layer(trackerRuntime)),
+    Effect.provide(workerRunner),
+    Effect.provideService(TraceRecording, "live"),
+    runMain
 );

@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { o } from "@party-stack/ontology-spec";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { MemoryBlobBytesStore } from "@party-stack/runtime";
@@ -8,7 +9,6 @@ import { makeReplicaAttachments } from "../../../../ontology-replica/lib/attachm
 import { createLiveOntology } from "../LiveOntology.js";
 import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
 import type { BlobManagerService } from "../../../../ontology-replica/lib/attachments/manager.js";
-import type { OntologyBackendAdapter } from "../index.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
@@ -66,7 +66,10 @@ describe("createLiveOntologyAttachments", () => {
         const stage = vi.fn(() => Effect.void);
         const attachments = await testAttachments({
             ir,
-            blobManager: { stage } as unknown as BlobManagerService,
+            blobManager: {
+                stage,
+                storage: { readScoped: () => Effect.succeed(undefined) },
+            } as unknown as BlobManagerService,
         });
         const file = new File(["hello"], "evidence.txt", {
             type: "text/plain",
@@ -209,34 +212,33 @@ describe("createLiveOntologyAttachments", () => {
         const materializationStartedSignal = new Promise<void>((resolve) => {
             resolveMaterializationStarted = resolve;
         });
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            open: () =>
-                Effect.succeed({
-                    name: "test",
-                    sourceId: "test",
-                    supportsIdempotency: false,
-                    loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                    applyAction: () => Effect.die("Unexpected action"),
-                    queryFunction: () => Effect.die("Unexpected query"),
-                    attachments: {
-                        stage: (attachment, blob) =>
-                            Effect.promise(async () => {
-                                resolveMaterializationStarted?.();
-                                await materializationStarted;
-                                materialized.push(
-                                    `${attachment.id}:${await (await Effect.runPromise(collectByteBlob(blob))).text()}`
-                                );
-                                return attachment;
-                            }),
-                        read: () => Effect.die("unexpected content read"),
-                        metadata: () => Effect.die("unexpected metadata read"),
-                    },
-                }),
-        };
+        const backendAdapter = Effect.succeed(
+            makeOntologyBackend({
+                ir,
+                name: "test",
+                sourceId: "test",
+                supportsIdempotency: false,
+                loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                applyAction: () => Effect.die("Unexpected action"),
+                queryFunction: () => Effect.die("Unexpected query"),
+                attachments: {
+                    stage: (attachment, blob) =>
+                        Effect.promise(async () => {
+                            resolveMaterializationStarted?.();
+                            await materializationStarted;
+                            materialized.push(
+                                `${attachment.id}:${await (await Effect.runPromise(collectByteBlob(blob))).text()}`
+                            );
+                            return attachment;
+                        }),
+                    read: () => Effect.die("unexpected content read"),
+                    metadata: () => Effect.die("unexpected metadata read"),
+                },
+            })
+        );
         const ontology = await createLiveOntology({
             ir,
-            backend: () => backendAdapter,
+            backend: backendAdapter,
             runtime: asRuntimeLayer(() => runtime),
         });
 
@@ -271,21 +273,20 @@ describe("createLiveOntologyAttachments", () => {
             namespace: "targetless-attachment",
             blobBytes: new MemoryBlobBytesStore(),
         };
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            open: () =>
-                Effect.succeed({
-                    name: "test",
-                    sourceId: "test",
-                    supportsIdempotency: false,
-                    loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                    applyAction: () => Effect.die("Unexpected action"),
-                    queryFunction: () => Effect.die("Unexpected query"),
-                }),
-        };
+        const backendAdapter = Effect.succeed(
+            makeOntologyBackend({
+                ir,
+                name: "test",
+                sourceId: "test",
+                supportsIdempotency: false,
+                loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                applyAction: () => Effect.die("Unexpected action"),
+                queryFunction: () => Effect.die("Unexpected query"),
+            })
+        );
         const ontology = await createLiveOntology({
             ir,
-            backend: () => backendAdapter,
+            backend: backendAdapter,
             runtime: asRuntimeLayer(() => runtime),
         });
 
@@ -304,21 +305,20 @@ describe("createLiveOntologyAttachments", () => {
             namespace: "unsupported-attachment",
             blobBytes: new MemoryBlobBytesStore(),
         };
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            open: () =>
-                Effect.succeed({
-                    name: "test",
-                    sourceId: "test",
-                    supportsIdempotency: false,
-                    loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                    applyAction: () => Effect.die("Unexpected action"),
-                    queryFunction: () => Effect.die("Unexpected query"),
-                }),
-        };
+        const backendAdapter = Effect.succeed(
+            makeOntologyBackend({
+                ir,
+                name: "test",
+                sourceId: "test",
+                supportsIdempotency: false,
+                loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                applyAction: () => Effect.die("Unexpected action"),
+                queryFunction: () => Effect.die("Unexpected query"),
+            })
+        );
         const ontology = await createLiveOntology({
             ir,
-            backend: () => backendAdapter,
+            backend: backendAdapter,
             runtime: asRuntimeLayer(() => runtime),
         });
 
@@ -343,27 +343,26 @@ describe("createLiveOntologyAttachments", () => {
             namespace: "attachment-mapping",
             blobBytes: new MemoryBlobBytesStore(),
         };
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            open: () =>
-                Effect.succeed({
-                    name: "test",
-                    sourceId: "test",
-                    supportsIdempotency: false,
-                    loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-                    applyAction: (action) =>
-                        Effect.succeed({
-                            operationId: action.id,
-                            outcome: "committed",
-                            affected: [],
-                            attachmentIdMappings: [{ localId: "local-id", remoteId: "remote-id" }],
-                        }),
-                    queryFunction: () => Effect.die("Unexpected query"),
-                }),
-        };
+        const backendAdapter = Effect.succeed(
+            makeOntologyBackend({
+                ir,
+                name: "test",
+                sourceId: "test",
+                supportsIdempotency: false,
+                loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                applyAction: (action) =>
+                    Effect.succeed({
+                        operationId: action.id,
+                        outcome: "committed",
+                        affected: [],
+                        attachmentIdMappings: [{ localId: "local-id", remoteId: "remote-id" }],
+                    }),
+                queryFunction: () => Effect.die("Unexpected query"),
+            })
+        );
         const ontology = await createLiveOntology({
             ir: actionIr,
-            backend: () => backendAdapter,
+            backend: backendAdapter,
             runtime: asRuntimeLayer(() => runtime),
         });
         const { attachment } = await ontology.attachments.create(new Blob(["hello"]), {

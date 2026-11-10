@@ -145,7 +145,7 @@ export const authorizeAction = Effect.fn("Policy.authorizeAction")(function* (
         knownInputs,
         check: check as Uncertain<boolean>,
         read: (yield* policyView(reader, context, {
-            extraRead: rule.read,
+            additionalObjects: rule.additionalObjects,
             inputs: parameters,
             inputDefinitions: action.parameters,
         })).tx,

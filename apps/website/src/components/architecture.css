@@ -1,0 +1,258 @@
+.arch-explorer {
+    margin: 2rem 0;
+    border: 1px solid var(--color-fd-border);
+    border-radius: 12px;
+    overflow: hidden;
+    font-size: 14px;
+}
+.arch-modes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 16px;
+    background: var(--color-fd-muted);
+}
+.arch-explorer button {
+    cursor: pointer;
+    border: 1px solid var(--color-fd-border);
+    border-radius: 7px;
+    background: var(--color-fd-card);
+    color: var(--color-fd-foreground);
+    font: inherit;
+}
+.arch-modes button,
+.arch-controls button {
+    padding: 7px 12px;
+}
+.arch-modes button[aria-pressed="true"] {
+    border-color: var(--color-fd-primary);
+    color: var(--color-fd-primary);
+}
+.arch-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 22px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--color-fd-border);
+    color: var(--color-fd-muted-foreground);
+    font-size: 13px;
+}
+.arch-options label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+.arch-options input {
+    accent-color: var(--color-fd-primary);
+}
+.arch-story {
+    min-height: 155px;
+    padding: 20px 22px 8px;
+}
+.arch-story h3 {
+    margin: 4px 0 8px;
+    font-size: 19px;
+}
+.arch-story p {
+    margin: 0;
+    line-height: 1.65;
+}
+.arch-step {
+    color: var(--color-fd-muted-foreground);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+.arch-story .arch-offline {
+    color: var(--color-fd-primary);
+    margin-top: 10px;
+}
+.arch-controls {
+    display: flex;
+    gap: 7px;
+    padding: 10px 22px 20px;
+}
+.arch-controls button:first-child {
+    background: var(--color-fd-primary);
+    color: var(--color-fd-primary-foreground);
+    border-color: transparent;
+    min-width: 70px;
+}
+.arch-explorer button:disabled {
+    cursor: default;
+    opacity: 0.45;
+}
+.arch-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    border-top: 1px solid var(--color-fd-border);
+}
+.arch-tree {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 22px 18px;
+    background: var(--color-fd-muted);
+}
+.arch-explorer .arch-node {
+    display: block;
+    padding: 13px;
+    width: 100%;
+    text-align: left;
+    box-shadow: 0 2px 5px #00000005;
+    transition: border-color 0.2s;
+}
+.arch-explorer .arch-selected {
+    border-color: var(--color-fd-primary);
+}
+.arch-node-heading {
+    display: flex;
+    flex-direction: column;
+    font-weight: 600;
+    font-size: 13px;
+}
+.arch-node-heading small {
+    font-weight: 400;
+    font-size: 10px;
+    color: var(--color-fd-muted-foreground);
+    margin-top: 2px;
+}
+.arch-node-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    margin-top: 13px;
+    font-size: 11px;
+}
+.arch-node-row strong {
+    color: var(--color-fd-primary);
+    font-weight: 500;
+}
+.arch-node-note {
+    display: block;
+    color: var(--color-fd-muted-foreground);
+    font-size: 10px;
+    margin-top: 5px;
+}
+.arch-edge {
+    height: 38px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--color-fd-muted-foreground);
+    font-size: 10px;
+}
+.arch-edge-track {
+    position: relative;
+    display: block;
+    height: 25px;
+    width: 1px;
+    background: var(--color-fd-border);
+}
+.arch-edge-moving .arch-edge-track::after {
+    content: "";
+    position: absolute;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--color-fd-primary);
+    left: -2px;
+    animation: arch-up 1.8s ease-in-out infinite;
+    animation-delay: inherit;
+}
+.arch-edge-moving .arch-down::after {
+    animation-name: arch-down;
+}
+.arch-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.arch-tabs .arch-node-row {
+    flex-direction: column;
+}
+.arch-inside {
+    min-width: 0;
+    padding: 20px;
+}
+.arch-inside-label {
+    color: var(--color-fd-muted-foreground);
+    font-size: 10px;
+    letter-spacing: 0.7px;
+}
+.arch-inside pre {
+    background: transparent;
+    border: 0;
+    margin: 16px 0;
+    padding: 0;
+    overflow: auto;
+    font:
+        11px/1.8 ui-monospace,
+        monospace;
+}
+.arch-inside p {
+    margin: 0;
+    color: var(--color-fd-muted-foreground);
+    font-size: 12px;
+    line-height: 1.7;
+}
+.arch-app-preview {
+    margin-top: 22px;
+    border: 1px solid var(--color-fd-border);
+    border-radius: 7px;
+    padding: 13px;
+    display: grid;
+    gap: 6px;
+    font-size: 12px;
+}
+.arch-app-preview small {
+    color: var(--color-fd-muted-foreground);
+    font-size: 9px;
+    letter-spacing: 1px;
+}
+.arch-app-preview strong {
+    color: var(--color-fd-primary);
+    font-weight: 500;
+}
+@keyframes arch-up {
+    0% {
+        top: 100%;
+        opacity: 0;
+    }
+    20%,
+    80% {
+        opacity: 1;
+    }
+    100% {
+        top: 0;
+        opacity: 0;
+    }
+}
+@keyframes arch-down {
+    0% {
+        top: 0;
+        opacity: 0;
+    }
+    20%,
+    80% {
+        opacity: 1;
+    }
+    100% {
+        top: 100%;
+        opacity: 0;
+    }
+}
+@media (max-width: 800px) {
+    .arch-workspace {
+        grid-template-columns: 1fr;
+    }
+    .arch-inside {
+        border-top: 1px solid var(--color-fd-border);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .arch-edge-moving .arch-edge-track::after {
+        animation: none;
+    }
+}

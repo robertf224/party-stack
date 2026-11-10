@@ -1,22 +1,87 @@
-import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { BackendError } from "@party-stack/ontology-backend";
+import { equalValues } from "@party-stack/ontology-spec/query";
 import { contextPartition } from "@party-stack/ontology-spec/utils";
+import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
+import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Runtime, Runtimes } from "@party-stack/runtime";
-import { Effect, Exit, Scope, Tracer } from "effect";
-import { provide } from "../utils/provide.js";
+import { Effect, Exit, Scope, Tracer, Stream } from "effect";
 import { makeReplicaResource } from "./live.js";
 import { makeReplicaOntologyView } from "./view.js";
-import type { CreateLiveOntologyOpts, LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
+import type { LiveOntologyOptions, LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
 /** Native acquisition. Runtime, backend, collections and replica fibers share the caller's Scope. */
 export const makeOntologyResource = Effect.fn("Ontology.acquire")(function* <
     Ontology extends OntologyDefinition = OntologyDefinition,
     Context extends Record<string, unknown> = Record<string, unknown>,
->(opts: Omit<CreateLiveOntologyOpts<Context>, "runtime">) {
+>(opts: LiveOntologyOptions<Context>) {
     const scope = yield* Scope.fork(yield* Effect.scope);
     const opened = Effect.gen(function* () {
-        const ontologyId = opts.id ?? "default";
-        const context = (opts.context ?? {}) as Context;
+        // Close views/replication first, then transport, then local platform storage.
+        const platformScope = yield* Scope.fork(scope);
+        const transportScope = yield* Scope.fork(scope);
+        const remote = opts.client
+            ? yield* Scope.provide(
+                  Effect.isEffect(opts.client) ? opts.client : Effect.succeed(opts.client),
+                  transportScope
+              )
+            : undefined;
+        const client =
+            remote && "ontology" in remote
+                ? yield* Scope.provide(remote.ontology(opts.ontology), transportScope)
+                : remote;
+        const ir = opts.ir ?? client?.ir;
+        if (!ir)
+            return yield* new BackendError({
+                operation: "ontology.create",
+                kind: "InvalidConfiguration",
+                retryable: false,
+                message: "Supply an ontology definition when the server does not describe one.",
+            });
+        if (client && opts.ir && client.definitionHash) {
+            const signature = yield* Effect.try({
+                try: () => ontologyDefinitionSignature(ir),
+                catch: (cause) =>
+                    new BackendError({
+                        operation: "ontology.create",
+                        kind: "InvalidConfiguration",
+                        retryable: false,
+                        message: "Invalid client ontology definition.",
+                        cause,
+                    }),
+            });
+            const hash = yield* digestBytes({
+                type: "application/json",
+                stream: Stream.make(new TextEncoder().encode(signature)),
+            }).pipe(
+                Effect.mapError(
+                    (cause) =>
+                        new BackendError({
+                            operation: "ontology.create",
+                            kind: "Internal",
+                            retryable: false,
+                            message: "Could not identify the client definition.",
+                            cause,
+                        })
+                )
+            );
+            if (hash !== client.definitionHash)
+                return yield* new BackendError({
+                    operation: "ontology.create",
+                    kind: "SchemaMismatch",
+                    retryable: false,
+                    message: "Server definition differs from this client.",
+                });
+        }
+        if (client?.context && opts.context && !equalValues(client.context, opts.context))
+            return yield* new BackendError({
+                operation: "ontology.create",
+                kind: "InvalidConfiguration",
+                retryable: false,
+                message: "Client context differs from the authenticated server context.",
+            });
+        const ontologyId = opts.id ?? (client ? JSON.stringify(["source", client.sourceId]) : "default");
+        const context = (client?.context ?? opts.context ?? {}) as Context;
         const owner = yield* Effect.try({
-            try: () => contextPartition(opts.ir, context),
+            try: () => contextPartition(ir, context),
             catch: (cause) =>
                 new BackendError({
                     operation: "runtime.partition",
@@ -26,42 +91,54 @@ export const makeOntologyResource = Effect.fn("Ontology.acquire")(function* <
                     cause,
                 }),
         });
-        const runtime = yield* Effect.flatMap(Runtimes, (runtimes) =>
-            runtimes.acquire({ owner, namespace: ontologyId })
+        const runtime = yield* Scope.provide(
+            Effect.flatMap(Runtimes, (runtimes) => runtimes.acquire({ owner, namespace: ontologyId })),
+            platformScope
         );
-        const platform = runtime;
         const resources = yield* Scope.fork(yield* Effect.scope);
         return yield* Scope.provide(
             Effect.gen(function* () {
-                const backendAdapter = yield* Effect.tryPromise({
-                    try: () => provide(opts.backend, opts.ir, context),
-                    catch: (cause) => classifyBackendFailure("backend.configure", cause),
-                });
+                const source =
+                    client?.replication.kind === "speculative" ? client.replication.source : undefined;
+                const backend =
+                    client?.backend ??
+                    (yield* (
+                        Effect.isEffect(opts.backend) ? opts.backend : Effect.succeed(opts.backend!)
+                    ).pipe(Effect.provideService(Runtime, runtime)));
                 const host = yield* makeReplicaResource({
-                    ir: opts.ir,
+                    backend,
+                    source,
+                    ir,
                     traceRecording: opts.traceRecording,
                     context,
-                    backendAdapter,
                     writes: opts.writes,
                     live: opts.live,
                     demand: opts.demand,
                     cache: opts.cache,
-                    connection: opts.connection,
+                    authentication: opts.authentication,
                 }).pipe(Effect.provideService(Runtime, runtime));
                 const close = Scope.close(scope, Exit.void);
-                const destroy = close.pipe(
-                    Effect.andThen(platform.destroy),
-                    Effect.mapError((cause) => classifyBackendFailure("ontology.destroy", cause))
-                );
                 const view = yield* Effect.cached(
                     Scope.provide(
                         makeReplicaOntologyView({
-                            ir: opts.ir,
+                            ir,
                             context,
                             replica: host.replica,
                             writes: opts.writes,
                             attachments: host.attachments,
-                            queryFunction: host.backend.queryFunction,
+                            pins: client?.pins,
+                            pinBackend: client?.pinBackend,
+                            diagnosticLabel: opts.label,
+                            parentDiagnostics:
+                                client && (source || opts.parent)
+                                    ? {
+                                          label: opts.parent?.label ?? "Parent",
+                                          role: "host",
+                                          location: opts.parent?.location,
+                                          replica: client.operations.replicaMonitor,
+                                          traces: client.operations.traces,
+                                      }
+                                    : undefined,
                             traces: host.traces,
                         }).pipe(Effect.provideService(Runtime, runtime), (work) =>
                             host.traces
@@ -75,12 +152,11 @@ export const makeOntologyResource = Effect.fn("Ontology.acquire")(function* <
                                 ({
                                     ...view,
                                     cleanup: () => Effect.runPromise(close),
-                                    destroy: () => Effect.runPromise(destroy),
                                 }) as LiveOntology<Ontology>
                         )
                     )
                 );
-                return { ...host, ir: opts.ir, context, close, destroy, view };
+                return { ...host, ir, context, close, view };
             }),
             resources
         );

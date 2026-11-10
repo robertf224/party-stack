@@ -21,6 +21,10 @@
         "./config": {
             "types": "./lib/config/index.d.ts",
             "default": "./lib/config/index.js"
+        },
+        "./platform/collections": {
+            "types": "./lib/platformCollections.d.ts",
+            "default": "./lib/platformCollections.js"
         }
     },
     "dependencies": {
@@ -47,7 +51,7 @@
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.14.0",
+        "@tanstack/db": "1.0.0-rc.1.4",
         "@types/node": "^24.10.1",
         "@types/react": "^19.3.0",
         "react": "^19.3.0",

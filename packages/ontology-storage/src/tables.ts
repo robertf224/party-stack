@@ -54,8 +54,27 @@ const untypedIR: OntologyIR = {
     actionTypes: [],
     queryFunctionTypes: [],
 };
+export interface TableKeysOptions {
+    /** Exclusive cursor in the table's portable primary-key order. */
+    readonly after?: Key;
+    readonly limit?: number;
+}
 export interface ReadTransaction {
     readonly get: <A>(table: Table<A>, key: Key) => Effect.Effect<A | undefined, OntologyStorageError>;
+    /** Read keys in input order, omitting missing rows. One consistent
+     * transaction read; independent native requests may run in bounded batches.
+     */
+    readonly getMany: <A>(
+        table: Table<A>,
+        keys: readonly Key[]
+    ) => Effect.Effect<Row<A>[], OntologyStorageError>;
+    /** Enumerate primary keys in portable order. Native drivers avoid reading
+     * row values; custom drivers may use the ordinary query fallback. The same
+     * table version and transaction checks apply as for other reads. */
+    readonly keys: <A>(
+        table: ReadTable<A>,
+        options?: TableKeysOptions
+    ) => Effect.Effect<Key[], OntologyStorageError>;
     readonly query: TableQuery;
     /** Optional exact grouped scan for query execution; undefined requests fallback. */
     readonly queryGrouped?: <A>(
@@ -89,6 +108,14 @@ export interface Transaction extends ReadTransaction {
         key: Key,
         value: NoInfer<A>
     ) => Effect.Effect<void, OntologyStorageError>;
+    /** Validate the batch before writing. Independent rows may write concurrently;
+     * duplicate keys and dependent unique claims retain sequential write order.
+     * All changes belong to the caller's transaction.
+     */
+    readonly putMany: <A>(
+        table: Table<A>,
+        rows: readonly Row<NoInfer<A>>[]
+    ) => Effect.Effect<void, OntologyStorageError>;
     readonly delete: <A>(table: Table<A>, key: Key) => Effect.Effect<void, OntologyStorageError>;
     readonly clear: <A>(table: Table<A>) => Effect.Effect<void, OntologyStorageError>;
     readonly ensureIndex: <A>(table: Table<A>, index: Index) => Effect.Effect<void, OntologyStorageError>;
@@ -116,6 +143,107 @@ const attempt = <A>(operation: string, body: () => A): Effect.Effect<A, Ontology
     Effect.try({ try: body, catch: (cause) => queryError(operation, cause) });
 const codec = <A>(direction: "encode" | "decode", body: () => A): Effect.Effect<A, OntologyStorageError> =>
     Effect.try({ try: body, catch: (cause) => codecError(direction, cause) });
+// Only explicitly classified storage failures cross the typed error boundary.
+// Unexpected throws from caller-owned row access retain defect semantics.
+class PreparationFailure {
+    constructor(readonly error: OntologyStorageError) {}
+}
+const preparation = <A>(body: () => A): Effect.Effect<A, OntologyStorageError> =>
+    Effect.suspend(() => {
+        try {
+            return Effect.succeed(body());
+        } catch (cause) {
+            return cause instanceof PreparationFailure ? Effect.fail(cause.error) : Effect.die(cause);
+        }
+    });
+// Pure preparation retains the same tagged failure at each storage boundary.
+// Bulk callers run this work in bounded synchronous units; single writes reuse it.
+const prepareValue = <A>(table: Table<A>, key: Key, value: A) => {
+    let code: string;
+    let data: string;
+    let canonical: A;
+    try {
+        code = keyCode(key);
+    } catch (cause) {
+        throw new PreparationFailure(queryError("key", cause));
+    }
+    try {
+        data = table.encode(value);
+    } catch (cause) {
+        throw new PreparationFailure(codecError("encode", cause));
+    }
+    try {
+        canonical = table.decode(data);
+    } catch (cause) {
+        throw new PreparationFailure(codecError("decode", cause));
+    }
+    return { code, data, canonical };
+};
+const indexCodes = (index: StoredIndex, value: unknown) => {
+    const fieldValue = readField(value, index.field);
+    return index.multiEntry
+        ? [...new Set((Array.isArray(fieldValue) ? fieldValue : []).map(scalarKey))]
+        : [scalarKey(fieldValue)];
+};
+const prepareIndexPlan = <A>(value: ReturnType<typeof prepareValue<A>>, indexes: readonly StoredIndex[]) => {
+    try {
+        return {
+            code: value.code,
+            data: value.data,
+            canonical: value.canonical,
+            indexes,
+            codes: indexes.map((index) => indexCodes(index, value.canonical)),
+        };
+    } catch (cause) {
+        throw new PreparationFailure(indexError("Index values must be queryable scalars", cause));
+    }
+};
+const previousValue = <A>(table: Table<A>, previous: StoredRow | undefined): A | undefined => {
+    if (!previous) return undefined;
+    try {
+        return table.decode(previous.data);
+    } catch (cause) {
+        throw new PreparationFailure(codecError("decode", cause));
+    }
+};
+const indexDifference = (
+    index: StoredIndex,
+    codes: readonly string[],
+    previous: unknown,
+    hasPrevious: boolean
+) => {
+    let previousCodes: string[] | undefined;
+    if (hasPrevious) {
+        try {
+            previousCodes = indexCodes(index, previous);
+        } catch (cause) {
+            throw new PreparationFailure(indexError("Index values must be queryable scalars", cause));
+        }
+    }
+    const prior = previousCodes;
+    const unchanged = prior && codes.length === prior.length && codes.every((value) => prior.includes(value));
+    return { codes, previousCodes, unchanged };
+};
+const indexEntry = (index: StoredIndex, key: string, value: string): Entry => ({
+    table: index.table,
+    index: index.name,
+    key,
+    value,
+    ...(index.multiEntry ? { multiEntry: true } : {}),
+});
+interface EntryChanges {
+    readonly entries: Entry[];
+    readonly removedEntries: Entry[];
+    readonly changedIndexes: StoredIndex[];
+}
+const bulkSpan = <A, E, R>(
+    enabled: boolean,
+    name: string,
+    effect: Effect.Effect<A, E, R>,
+    attributes: Record<string, string | number | boolean> = {}
+) => (enabled ? effect.pipe(Effect.withSpan(name, { attributes })) : effect);
+const bulkAttributes = (enabled: boolean, attributes: Record<string, string | number | boolean>) =>
+    enabled ? Effect.annotateCurrentSpan(attributes) : Effect.void;
 function transaction(
     raw: DriverTransaction,
     writable: boolean,
@@ -179,15 +307,41 @@ function transaction(
         }
         return indexes.filter((index) => index.name !== schemaIndex);
     });
+    const getMany = Effect.fnUntraced(function* <A>(table: Table<A>, keys: readonly Key[]) {
+        if (!keys.length) return [];
+        const codes = yield* attempt("key", () => keys.map(keyCode));
+        yield* definitions(table);
+        const rows = yield* Effect.forEach(codes, (code) => raw.get(table.name, code), { concurrency: 128 });
+        return yield* codec("decode", () =>
+            rows.flatMap((row, i) => (row ? [{ key: keys[i]!, value: table.decode(row.data) }] : []))
+        );
+    });
     const scan = Effect.fnUntraced(function* <A>(table: ReadTable<A>, query: Query = {}) {
         yield* attempt("query", () => validateQuery(query));
         if (query.limit === 0) return [];
         const indexes = yield* definitions(table);
         const result = yield* raw.query(table, indexes, query);
-        const decoded = yield* codec("decode", () =>
-            result.rows.map((row) => ({ key: decodeKey(row.key), value: table.decode(row.data) }))
-        );
+        const decoded = result.decodedRows
+            ? [...result.decodedRows]
+            : yield* codec("decode", () =>
+                  result.rows.map((row) => ({ key: decodeKey(row.key), value: table.decode(row.data) }))
+              );
         return result.complete ? decoded : yield* attempt("query", () => applyQuery(decoded, query));
+    });
+    const keys = Effect.fnUntraced(function* <A>(table: ReadTable<A>, options: TableKeysOptions = {}) {
+        const query: Query = {
+            after: options.after === undefined ? undefined : { key: options.after, values: [] },
+            limit: options.limit,
+        };
+        yield* attempt("query", () => validateQuery(query));
+        if (options.limit === 0) return [];
+        if (!raw.keys) return (yield* scan(table, query)).map((row) => row.key);
+        yield* definitions(table);
+        const encoded = yield* raw.keys(table.name, {
+            after: options.after === undefined ? undefined : keyCode(options.after),
+            limit: options.limit,
+        });
+        return yield* attempt("key", () => encoded.map(decodeKey));
     });
     const scanGrouped = Effect.fnUntraced(function* <A>(table: ReadTable<A>, partition: Field, query: Query) {
         yield* attempt("query", () => {
@@ -259,16 +413,18 @@ function transaction(
             }
         yield* raw.delete(table.name, code);
     });
-    const makeEntries = Effect.fnUntraced(function* (index: StoredIndex, key: string, value: unknown) {
-        const codes = yield* Effect.try({
-            try: () => {
-                const fieldValue = readField(value, index.field);
-                return index.multiEntry
-                    ? [...new Set((Array.isArray(fieldValue) ? fieldValue : []).map(scalarKey))]
-                    : [scalarKey(fieldValue)];
-            },
+    const entryCodes = (index: StoredIndex, value: unknown) =>
+        Effect.try({
+            try: () => indexCodes(index, value),
             catch: (cause) => indexError("Index values must be queryable scalars", cause),
         });
+    const makeEntries = Effect.fnUntraced(function* (
+        index: StoredIndex,
+        key: string,
+        value: unknown,
+        providedCodes?: readonly string[]
+    ) {
+        const codes = providedCodes ?? (yield* entryCodes(index, value));
         const entries: Entry[] = [];
         for (const code of codes) {
             if (index.unique) {
@@ -289,13 +445,7 @@ function transaction(
                         })
                     );
             }
-            entries.push({
-                table: index.table,
-                index: index.name,
-                key,
-                value: code,
-                ...(index.multiEntry ? { multiEntry: true } : {}),
-            });
+            entries.push(indexEntry(index, key, code));
         }
         return entries;
     });
@@ -307,24 +457,145 @@ function transaction(
             value: scalarKey(typeof scalar === "string" ? scalar.toLowerCase() : undefined),
         };
     };
+    const prepareWrite = Effect.fnUntraced(function* <A>(table: Table<A>, key: Key, value: A) {
+        yield* assertWrite();
+        // Preserve key/codec validation before the first definition check.
+        const prepared = yield* preparation(() => prepareValue(table, key, value));
+        const indexes = yield* definitions(table);
+        return yield* preparation(() => prepareIndexPlan(prepared, indexes));
+    });
+    const prepareBatch = Effect.fnUntraced(function* <A>(table: Table<A>, rows: readonly Row<A>[]) {
+        if (!rows.length) return [];
+        const first = yield* prepareWrite(table, rows[0]!.key, rows[0]!.value);
+        const plans = [first];
+        for (let offset = 1; offset < rows.length; offset += 128) {
+            const end = Math.min(offset + 128, rows.length);
+            yield* preparation(() => {
+                for (let index = offset; index < end; index++) {
+                    const row = rows[index]!;
+                    plans.push(prepareIndexPlan(prepareValue(table, row.key, row.value), first.indexes));
+                }
+            });
+            if (end < rows.length) yield* Effect.yieldNow;
+        }
+        return plans;
+    });
+    type PreparedWrite<A> = Effect.Success<ReturnType<typeof prepareWrite<A>>>;
+    // Shared pure append keeps portable-index changes identical in both paths.
+    // The normal path performs unique probes before reaching this stage.
+    const appendEntryChanges = <A>(
+        result: EntryChanges,
+        table: Table<A>,
+        index: StoredIndex,
+        plan: PreparedWrite<A>,
+        previous: StoredRow | undefined,
+        before: A | undefined,
+        difference: ReturnType<typeof indexDifference>,
+        indexed: readonly Entry[]
+    ) => {
+        if (difference.unchanged && !raw.nativeIndexes) return;
+        result.changedIndexes.push(index);
+        if (raw.writeRow && previous && !raw.nativeIndexes)
+            for (const value of difference.previousCodes!) {
+                const entry = { table: table.name, index: index.name, key: plan.code, value };
+                result.removedEntries.push(entry);
+                if (!index.multiEntry) result.removedEntries.push(foldedEntry(entry, before, index));
+            }
+        result.entries.push(...indexed);
+        // Only positive string-prefix ILIKE plans read this hidden index.
+        // Non-strings never match; indexing an undefined placeholder for each
+        // boolean/date/number doubles writes without supplying query candidates.
+        // Keep legacy placeholder removal above when replacing an older row.
+        // Native SQL projections still need the placeholder: SQL NULL would
+        // change negated text predicates through three-valued logic.
+        if (
+            !index.multiEntry &&
+            (raw.nativeIndexes || typeof readField(plan.canonical, index.field) === "string")
+        )
+            result.entries.push(foldedEntry(indexed[0]!, plan.canonical, index));
+    };
+    const prepareEntries = Effect.fnUntraced(function* <A>(
+        table: Table<A>,
+        plan: PreparedWrite<A>,
+        previous: StoredRow | undefined,
+        nativeInsert = false,
+        nativeNew = false
+    ) {
+        const { code, canonical, indexes } = plan;
+        const before = previous ? yield* preparation(() => previousValue(table, previous)) : undefined;
+        const result: EntryChanges = { entries: [], removedEntries: [], changedIndexes: [] };
+        for (const [i, index] of indexes.entries()) {
+            const difference = previous
+                ? yield* preparation(() => indexDifference(index, plan.codes[i]!, before, true))
+                : indexDifference(index, plan.codes[i]!, undefined, false);
+            // Keep IO before folded-entry construction: a unique conflict must
+            // precede a later index/codec failure just as in ordinary put.
+            const indexed = yield* makeEntries(
+                difference.unchanged || nativeInsert || nativeNew ? { ...index, unique: false } : index,
+                code,
+                canonical,
+                difference.codes
+            );
+            appendEntryChanges(result, table, index, plan, previous, before, difference, indexed);
+        }
+        return result;
+    });
+    // Bulk ownership probes happen separately. This stage performs no IO, while
+    // sharing old-value decoding, index differences and append rules above.
+    const prepareValidatedEntries = <A>(
+        table: Table<A>,
+        plan: PreparedWrite<A>,
+        previous: StoredRow | undefined
+    ): EntryChanges => {
+        const before = previousValue(table, previous);
+        const result: EntryChanges = { entries: [], removedEntries: [], changedIndexes: [] };
+        for (const [i, index] of plan.indexes.entries()) {
+            const difference = indexDifference(index, plan.codes[i]!, before, previous !== undefined);
+            if (difference.unchanged && !raw.nativeIndexes) continue;
+            const indexed = difference.codes.map((code) => indexEntry(index, plan.code, code));
+            appendEntryChanges(result, table, index, plan, previous, before, difference, indexed);
+        }
+        return result;
+    };
+    type EntryPlan = Effect.Success<ReturnType<typeof prepareEntries>>;
+    const writePortable = Effect.fnUntraced(function* <A>(
+        table: Table<A>,
+        plan: PreparedWrite<A>,
+        previous: boolean,
+        prepared: EntryPlan
+    ) {
+        const { code, data } = plan;
+        const { entries, removedEntries, changedIndexes } = prepared;
+        if (raw.writeRow) {
+            yield* raw.writeRow({ table: table.name, key: code, data }, removedEntries, entries);
+            return true;
+        }
+        if (previous)
+            for (const index of changedIndexes) {
+                yield* raw.deleteEntries(table.name, index.name, code);
+                if (!index.multiEntry)
+                    yield* raw.deleteEntries(table.name, caseInsensitiveIndex(index.name), code);
+            }
+        for (const entry of entries) yield* raw.putEntry(entry);
+        yield* raw.put({ table: table.name, key: code, data });
+        return true;
+    });
     const writeRow = Effect.fnUntraced(function* <A>(
         table: Table<A>,
         key: Key,
         value: A,
-        insertOnly: boolean
+        insertOnly: boolean,
+        prepared?: PreparedWrite<A>
     ) {
-        yield* assertWrite();
-        const code = yield* attempt("key", () => keyCode(key));
-        const data = yield* codec("encode", () => table.encode(value));
-        // Index canonical decoded values, including custom codec transformations.
-        const canonical = yield* codec("decode", () => table.decode(data));
-        const indexes = yield* definitions(table);
+        const plan = prepared ?? (yield* prepareWrite(table, key, value));
+        const { code, data, canonical, indexes } = plan;
         if (insertOnly && !raw.insert && (yield* raw.get(table.name, code))) return false;
         // Validate every entry before mutating, even when the caller catches
         // a uniqueness/codec error and continues the surrounding transaction.
         const nativeInsert = insertOnly && raw.insert && raw.nativeIndexes;
         const previous =
-            !nativeInsert && indexes.some((index) => index.unique)
+            !insertOnly &&
+            ((!raw.nativeIndexes && indexes.length > 0) || indexes.some((index) => index.unique))
                 ? yield* raw.get(table.name, code)
                 : undefined;
         const nativeNew =
@@ -333,30 +604,8 @@ function transaction(
             raw.insert &&
             raw.nativeIndexes &&
             indexes.some((index) => index.unique);
-        const previousValue = previous
-            ? yield* codec("decode", () => table.decode(previous.data))
-            : undefined;
-        const entries: Entry[] = [];
-        for (const index of indexes) {
-            // An unchanged unique value is already owned by this row. Rechecking
-            // the range adds IO and broad predicate dependencies for no benefit.
-            const unchanged =
-                previous &&
-                index.unique &&
-                (yield* attempt(
-                    "index",
-                    () =>
-                        scalarKey(readField(previousValue, index.field)) ===
-                        scalarKey(readField(canonical, index.field))
-                ));
-            const indexed = yield* makeEntries(
-                unchanged || nativeInsert || nativeNew ? { ...index, unique: false } : index,
-                code,
-                canonical
-            );
-            entries.push(...indexed);
-            if (!index.multiEntry) entries.push(foldedEntry(indexed[0]!, canonical, index));
-        }
+        const preparedEntries = yield* prepareEntries(table, plan, previous, !!nativeInsert, !!nativeNew);
+        const { entries } = preparedEntries;
         if (raw.nativeIndexes) {
             const row: StoredRow = {
                 table: table.name,
@@ -384,14 +633,115 @@ function transaction(
             yield* raw.put(row);
             return true;
         }
-        for (const index of indexes) {
-            yield* raw.deleteEntries(table.name, index.name, code);
-            if (!index.multiEntry)
-                yield* raw.deleteEntries(table.name, caseInsensitiveIndex(index.name), code);
+        return yield* writePortable(table, plan, !!previous, preparedEntries);
+    });
+    const independentUniqueBatch = Effect.fnUntraced(function* <A>(
+        table: Table<A>,
+        plans: readonly PreparedWrite<A>[],
+        diagnostic: boolean
+    ) {
+        // The public operation holds this transaction's gate throughout. A
+        // disjoint incoming slot with no foreign owner remains safe until write.
+        const owners = new Map<string, string>();
+        for (const plan of plans)
+            for (const [i, index] of plan.indexes.entries()) {
+                if (!index.unique) continue;
+                for (const code of plan.codes[i]!) {
+                    const slot = JSON.stringify([index.name, code]);
+                    const owner = owners.get(slot);
+                    if (owner !== undefined && owner !== plan.code) {
+                        yield* bulkAttributes(diagnostic, {
+                            reason: "duplicate-slots",
+                            uniqueSlots: owners.size,
+                        });
+                        return;
+                    }
+                    owners.set(slot, plan.code);
+                }
+            }
+        yield* bulkAttributes(diagnostic, { uniqueSlots: owners.size });
+        const prefetched = yield* Effect.exit(
+            bulkSpan(
+                diagnostic,
+                "Tables.putMany.proof.previous",
+                Effect.forEach(plans, (plan) => raw.get(table.name, plan.code), { concurrency: 128 })
+            )
+        );
+        if (Exit.isFailure(prefetched)) {
+            if (Cause.hasInterrupts(prefetched.cause)) return yield* Effect.failCause(prefetched.cause);
+            yield* bulkAttributes(diagnostic, { reason: "previous-read-failure" });
+            return;
         }
-        for (const entry of entries) yield* raw.putEntry(entry);
-        yield* raw.put({ table: table.name, key: code, data });
-        return true;
+        const previous = prefetched.value;
+        const prepared = yield* bulkSpan(
+            diagnostic,
+            "Tables.putMany.proof.entries",
+            Effect.gen(function* () {
+                const result: EntryPlan[] = [];
+                for (let offset = 0; offset < plans.length; offset += 128) {
+                    const end = Math.min(offset + 128, plans.length);
+                    const page = yield* Effect.exit(
+                        preparation(() => {
+                            for (let i = offset; i < end; i++)
+                                result.push(prepareValidatedEntries(table, plans[i]!, previous[i]));
+                        })
+                    );
+                    if (Exit.isFailure(page)) {
+                        if (Cause.hasInterrupts(page.cause)) return yield* Effect.failCause(page.cause);
+                        return;
+                    }
+                    if (end < plans.length) yield* Effect.yieldNow;
+                }
+                return result;
+            })
+        );
+        if (!prepared) {
+            yield* bulkAttributes(diagnostic, { reason: "previous-entry-failure" });
+            return;
+        }
+        const probes = prepared.flatMap((entryPlan, i) =>
+            entryPlan.changedIndexes.flatMap((index) => {
+                if (!index.unique) return [];
+                const plan = plans[i]!;
+                return plan.codes[plan.indexes.indexOf(index)]!.map((code) => ({
+                    table: index.table,
+                    index: index.name,
+                    key: plan.code,
+                    value: code,
+                }));
+            })
+        );
+        yield* bulkAttributes(diagnostic, { uniqueProbes: probes.length });
+        const checked = yield* Effect.exit(
+            bulkSpan(
+                diagnostic,
+                "Tables.putMany.proof.owners",
+                Effect.forEach(
+                    probes,
+                    (entry) =>
+                        Effect.map(
+                            raw.entries(entry.table, entry.index, {
+                                lower: entry.value,
+                                upper: entry.value,
+                                limit: 2,
+                            }),
+                            (existing) => existing.some((owner) => owner.key !== entry.key)
+                        ),
+                    { concurrency: 128 }
+                )
+            )
+        );
+        if (Exit.isFailure(checked)) {
+            if (Cause.hasInterrupts(checked.cause)) return yield* Effect.failCause(checked.cause);
+            yield* bulkAttributes(diagnostic, { reason: "owner-read-failure" });
+            return;
+        }
+        if (checked.value.some(Boolean)) {
+            yield* bulkAttributes(diagnostic, { reason: "foreign-owner" });
+            return;
+        }
+        yield* bulkAttributes(diagnostic, { reason: "independent" });
+        return prepared.map((entryPlan, i) => ({ entries: entryPlan, previous: !!previous[i] }));
     });
     const api: Transaction = {
         allocateRevision: Effect.fnUntraced(function* (stream: string, minimum = 0) {
@@ -413,8 +763,89 @@ function transaction(
             return revision;
         }),
         get,
+        getMany,
+        keys,
         query,
         put: (table, key, value) => Effect.asVoid(writeRow(table, key, value, false)),
+        putMany: <A>(table: Table<A>, rows: readonly Row<A>[]) => {
+            // Bounded phase diagnostics: no row identifiers, table names or values.
+            const diagnostic = rows.length >= 64;
+            return bulkSpan(
+                diagnostic,
+                "Tables.putMany",
+                Effect.gen(function* () {
+                    yield* assertWrite();
+                    const plans = yield* bulkSpan(
+                        diagnostic,
+                        "Tables.putMany.prepare",
+                        prepareBatch(table, rows)
+                    );
+                    const independentKeys =
+                        !raw.nativeIndexes && new Set(plans.map((plan) => plan.code)).size === plans.length;
+                    const unique = plans[0]?.indexes.some((index) => index.unique);
+                    const prepared =
+                        independentKeys && unique
+                            ? yield* bulkSpan(
+                                  diagnostic,
+                                  "Tables.putMany.proof",
+                                  independentUniqueBatch(table, plans, diagnostic)
+                              )
+                            : undefined;
+                    const concurrency = prepared || (independentKeys && !unique) ? 128 : 1;
+                    yield* bulkAttributes(diagnostic, {
+                        indexes: plans[0]?.indexes.length ?? 0,
+                        concurrency,
+                        state: prepared
+                            ? "independent-unique"
+                            : independentKeys && !unique
+                              ? "independent"
+                              : "sequential",
+                        ...(!independentKeys || !unique
+                            ? {
+                                  reason: raw.nativeIndexes
+                                      ? "native-indexes"
+                                      : !independentKeys
+                                        ? "duplicate-keys"
+                                        : "no-unique-index",
+                              }
+                            : {}),
+                    });
+                    let activeWrites = 0;
+                    let peakWrites = 0;
+                    const writes = Effect.forEach(
+                        plans,
+                        (plan, i) => {
+                            const write = prepared
+                                ? writePortable(table, plan, prepared[i]!.previous, prepared[i]!.entries)
+                                : writeRow(table, rows[i]!.key, rows[i]!.value, false, plan);
+                            return !diagnostic
+                                ? write
+                                : Effect.suspend(() => {
+                                      activeWrites++;
+                                      peakWrites = Math.max(peakWrites, activeWrites);
+                                      return write.pipe(
+                                          Effect.ensuring(
+                                              Effect.sync(() => {
+                                                  activeWrites--;
+                                              })
+                                          )
+                                      );
+                                  });
+                        },
+                        { concurrency, discard: true }
+                    );
+                    yield* bulkSpan(
+                        diagnostic,
+                        "Tables.putMany.write",
+                        diagnostic
+                            ? writes.pipe(Effect.onExit(() => Effect.annotateCurrentSpan({ peakWrites })))
+                            : writes,
+                        { concurrency }
+                    );
+                }),
+                { rows: rows.length }
+            );
+        },
         insert: (table, key, value) =>
             writeRow(table, key, value, true).pipe(
                 Effect.catchReason("OntologyStorageError", "UniqueConstraint", () => Effect.succeed(false))
@@ -464,7 +895,11 @@ function transaction(
                         );
                         for (const entry of entries) {
                             yield* raw.putEntry(entry);
-                            if (!index.multiEntry) yield* raw.putEntry(foldedEntry(entry, value, index));
+                            if (
+                                !index.multiEntry &&
+                                (raw.nativeIndexes || typeof readField(value, index.field) === "string")
+                            )
+                                yield* raw.putEntry(foldedEntry(entry, value, index));
                         }
                     })
                 );
@@ -507,6 +942,8 @@ function transaction(
     return {
         allocateRevision: (stream, minimum) => guarded(api.allocateRevision(stream, minimum)),
         get: (table, key, options) => guarded(api.get(table, key, options)),
+        getMany: (table, keys) => guarded(api.getMany(table, keys)),
+        keys: (table, options) => guarded(api.keys(table, options)),
         query: guardedQuery,
         ...(raw.queryGrouped
             ? {
@@ -515,6 +952,7 @@ function transaction(
               }
             : {}),
         put: (table, key, value) => guarded(api.put(table, key, value)),
+        putMany: (table, rows) => guarded(api.putMany(table, rows)),
         insert: (table, key, value) => guarded(api.insert(table, key, value)),
         delete: (table, key) => guarded(api.delete(table, key)),
         clear: (table) => guarded(api.clear(table)),
@@ -577,8 +1015,11 @@ export function makeTables(driver: Driver): TablesService {
             operation("readwrite", (tx) => tx.allocateRevision(stream, minimum)),
         get: (table, key, options) =>
             operation(options?.forUpdate ? "readwrite" : "readonly", (tx) => tx.get(table, key, options)),
+        getMany: (table, keys) => operation("readonly", (tx) => tx.getMany(table, keys)),
+        keys: (table, options) => operation("readonly", (tx) => tx.keys(table, options)),
         query,
         put: (table, key, value) => operation("readwrite", (tx) => tx.put(table, key, value)),
+        putMany: (table, rows) => operation("readwrite", (tx) => tx.putMany(table, rows)),
         insert: (table, key, value) => operation("readwrite", (tx) => tx.insert(table, key, value)),
         delete: (table, key) => operation("readwrite", (tx) => tx.delete(table, key)),
         clear: (table) => operation("readwrite", (tx) => tx.clear(table)),

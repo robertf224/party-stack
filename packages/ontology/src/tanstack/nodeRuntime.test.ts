@@ -70,7 +70,7 @@ describe("createNodeRuntime", () => {
         });
         try {
             await queryOnce((q) => q.from({ row: first }));
-            await first.insert({ id: "one", instant, nested: { dates: [date] } }).isPersisted.promise;
+            await first.insert({ id: "one", instant, nested: { dates: [date] } }).when("settled");
             await first.cleanup();
             const storage = await runtimeFixtureContext(firstRuntime).runtime.runPromise(Runtime);
             await runtimeFixtureContext(firstRuntime).runtime.runPromise(
@@ -110,10 +110,12 @@ describe("createNodeRuntime", () => {
         const firstRuntime = await acquireRuntime(provider("owner", "namespace"));
         const first = createItems(firstRuntime);
         await queryOnce((q) => q.from({ row: first }));
-        await first.insert({
-            id: "one",
-            title: "Persisted",
-        }).isPersisted.promise;
+        await first
+            .insert({
+                id: "one",
+                title: "Persisted",
+            })
+            .when("settled");
         await first.cleanup();
         await firstRuntime.cleanup?.();
 
@@ -150,8 +152,8 @@ describe("createNodeRuntime", () => {
                 queryOnce((q) => q.from({ row: tasks })),
                 queryOnce((q) => q.from({ row: settings })),
             ]);
-            await tasks.insert({ id: "task", title: "Task" }).isPersisted.promise;
-            await settings.insert({ id: "setting", title: "Setting" }).isPersisted.promise;
+            await tasks.insert({ id: "task", title: "Task" }).when("settled");
+            await settings.insert({ id: "setting", title: "Setting" }).when("settled");
             await tasks.cleanup();
             const incompatible = open("tasks", 3);
             try {
@@ -162,7 +164,7 @@ describe("createNodeRuntime", () => {
             } finally {
                 await incompatible.cleanup();
             }
-            await settings.insert({ id: "other", title: "Still active" }).isPersisted.promise;
+            await settings.insert({ id: "other", title: "Still active" }).when("settled");
             const reopened = open("tasks", 2);
             try {
                 await queryOnce((q) => q.from({ row: reopened }));

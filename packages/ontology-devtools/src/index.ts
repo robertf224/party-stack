@@ -1,10 +1,8 @@
+export { createOntologyDevtoolsPlugin, OntologyDevtoolsPanel, preloadOntologyDevtools } from "./plugin.js";
 export {
-    createOntologyDevtoolsPlugin,
-    OntologyDevtoolsPanel,
     OntologyDevtoolsPluginName,
-    ontologyDevtoolsTrigger,
     OntologyDevtoolsTrigger,
+    ontologyDevtoolsTrigger,
     type OntologyDevtoolsChromeProps,
-    type OntologyDevtoolsPanelProps,
-    type OntologyDevtoolsPluginOptions,
-} from "./OntologyDevtools.js";
+} from "./chrome.js";
+export type { OntologyDevtoolsPanelProps, OntologyDevtoolsPluginOptions } from "./types.js";

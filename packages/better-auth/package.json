@@ -27,14 +27,14 @@
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
         "@party-stack/sql-ontology-storage": "workspace:*",
-        "@tanstack/db": "0.14.0",
+        "@tanstack/db": "1.0.0-rc.1.4",
         "better-auth": "^1.7.1",
         "typescript": "~7.0.2",
         "vite": "catalog:",
         "vite-plus": "catalog:"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.14.0",
+        "@tanstack/db": "1.0.0-rc.1.4",
         "better-auth": "^1.7.1"
     }
 }

@@ -14,6 +14,10 @@
             "types": "./lib/rpc.d.ts",
             "default": "./lib/rpc.js"
         },
+        "./routing": {
+            "types": "./lib/routing.d.ts",
+            "default": "./lib/routing.js"
+        },
         "./rpc/http": {
             "types": "./lib/rpcHttp.d.ts",
             "default": "./lib/rpcHttp.js"
@@ -21,6 +25,14 @@
         "./rpc/worker": {
             "types": "./lib/rpcWorker.d.ts",
             "default": "./lib/rpcWorker.js"
+        },
+        "./rpc/local": {
+            "types": "./lib/rpcLocal.d.ts",
+            "default": "./lib/rpcLocal.js"
+        },
+        "./http": {
+            "types": "./lib/http.d.ts",
+            "default": "./lib/http.js"
         }
     },
     "dependencies": {
@@ -34,6 +46,7 @@
     "devDependencies": {
         "@effect/platform-browser": "^4.0.5",
         "@party-stack/build-config": "workspace:*",
+        "@party-stack/connect": "workspace:*",
         "@types/node": "^24.10.1",
         "temporal-polyfill": "^0.3.0",
         "typescript": "~7.0.2",

@@ -111,5 +111,17 @@ describe("standalone spec codegen", () => {
         expect(await readFile(join(cwd, "generated/effect-types.ts"), "utf8")).toContain(
             "@party-stack/ontology-spec/effect/values"
         );
+        await execute(
+            process.execPath,
+            [cli, "generate", "--ontology", "ontology.ts", "--outDir", "generated", "--namespace", "Example"],
+            { cwd }
+        );
+        const descriptors = await readFile(join(cwd, "generated/collections.ts"), "utf8");
+        expect(descriptors).toContain('import type { ExampleOntology } from "./types.js"');
+        expect(descriptors).toContain(
+            "export const { objects, cachedObjects } = ontologyCollections<ExampleOntology, typeof linkDefinitions>("
+        );
+        expect(descriptors).not.toContain('from "../ontology');
+        expect(descriptors).toContain('User: "id"');
     }, 20000);
 });

@@ -144,7 +144,7 @@ export function Queries({ ontology }: { ontology: LiveOntology }) {
                                 </QueryTarget>
                             </header>
                             <QueryPushdown
-                                key={ontology.storage?.sourceId}
+                                key={ontology.replica?.sourceId}
                                 requests={requests}
                                 demand={demand}
                                 load={latest}

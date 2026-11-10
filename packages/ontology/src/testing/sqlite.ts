@@ -9,7 +9,6 @@ import { collectByteBlob, type ByteInput } from "@party-stack/ontology-storage/b
 import { eq, queryOnce, type Collection } from "@tanstack/db";
 import { Effect } from "effect";
 import {
-    createSQLiteTestBackend,
     makeSQLiteTestBackend,
     type SQLiteAttachmentBytesStore,
     type SQLiteAttachmentStorageOptions,
@@ -221,13 +220,7 @@ const queryFunctions = {
 async function runSchemaCreation(database: SQLiteDatabase): Promise<void> {
     const open = (name: string) =>
         Effect.runPromise(
-            Effect.scoped(
-                createSQLiteTestBackend({
-                    ir: conformanceIR,
-                    database,
-                    name,
-                }).open({})
-            )
+            Effect.scoped(makeSQLiteTestBackend({ ir: conformanceIR, database, name, context: {} }))
         );
     await open("sqlite");
     await open("sqlite");
@@ -242,12 +235,12 @@ async function runSchemaCreation(database: SQLiteDatabase): Promise<void> {
 async function runActionsAndContext(database: SQLiteDatabase): Promise<void> {
     const ontology = await createLiveOntology({
         ir: conformanceIR,
-        backend: () =>
-            createSQLiteTestBackend({
-                ir: conformanceIR,
-                database,
-                name: "sqlite",
-            }),
+        backend: makeSQLiteTestBackend({
+            ir: conformanceIR,
+            database,
+            name: "sqlite",
+            context: { user: "alice" },
+        }),
         context: { user: "alice" },
     });
     try {
@@ -273,14 +266,14 @@ async function runActionsAndContext(database: SQLiteDatabase): Promise<void> {
 async function runHandlers(database: SQLiteDatabase): Promise<void> {
     const ontology = await createLiveOntology({
         ir: conformanceIR,
-        backend: () =>
-            createSQLiteTestBackend({
-                ir: conformanceIR,
-                database,
-                name: "sqlite",
-                mutators,
-                queryFunctions,
-            }),
+        backend: makeSQLiteTestBackend({
+            ir: conformanceIR,
+            database,
+            name: "sqlite",
+            mutators,
+            queryFunctions,
+            context: { user: "alice" },
+        }),
         context: { user: "alice" },
     });
     try {
@@ -310,12 +303,11 @@ async function runHandlers(database: SQLiteDatabase): Promise<void> {
 async function runInlineAttachments(database: SQLiteDatabase): Promise<void> {
     const ontology = await createLiveOntology({
         ir: conformanceIR,
-        backend: () =>
-            createSQLiteTestBackend({
-                ir: conformanceIR,
-                database,
-                name: "sqlite",
-            }),
+        backend: makeSQLiteTestBackend({
+            ir: conformanceIR,
+            database,
+            name: "sqlite",
+        }),
     });
     try {
         const created = await ontology.attachments.create(new Blob(["inline"], { type: "text/plain" }), {
@@ -416,13 +408,12 @@ async function runExternalAttachments(database: SQLiteDatabase): Promise<void> {
     } satisfies SQLiteAttachmentStorageOptions;
     const ontology = await createLiveOntology({
         ir: conformanceIR,
-        backend: () =>
-            createSQLiteTestBackend({
-                ir: conformanceIR,
-                database,
-                name: "sqlite",
-                attachmentStorage: storage,
-            }),
+        backend: makeSQLiteTestBackend({
+            ir: conformanceIR,
+            database,
+            name: "sqlite",
+            attachmentStorage: storage,
+        }),
     });
     try {
         const created = await ontology.attachments.create(new Blob(["external"], { type: "text/plain" }), {
@@ -448,15 +439,14 @@ async function runExternalAttachments(database: SQLiteDatabase): Promise<void> {
     const delayedBytes = new DelayedAttachmentBytesStore();
     const delayed = await createLiveOntology({
         ir: conformanceIR,
-        backend: () =>
-            createSQLiteTestBackend({
-                ir: conformanceIR,
-                database,
-                name: "sqlite",
-                attachmentStorage: {
-                    external: { bytes: delayedBytes },
-                },
-            }),
+        backend: makeSQLiteTestBackend({
+            ir: conformanceIR,
+            database,
+            name: "sqlite",
+            attachmentStorage: {
+                external: { bytes: delayedBytes },
+            },
+        }),
     });
     try {
         const created = await delayed.attachments.create(new Blob(["delayed"], { type: "text/plain" }), {

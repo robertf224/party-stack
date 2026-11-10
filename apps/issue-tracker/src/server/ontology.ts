@@ -29,7 +29,7 @@ const object = (name: string, fields: Record<string, TypeDef>, primaryKey = "id"
 export const serverOntology: OntologyIR = {
     ...ontology,
     policy: {
-        read: {
+        objects: {
             select: ontology.objectTypes.map((type) =>
                 sub(type.name, {
                     from: { source: { objectType: type.name }, binding: type.name },
@@ -39,7 +39,7 @@ export const serverOntology: OntologyIR = {
                                   selectCase({
                                       branches: [
                                           {
-                                              condition: eq(field("User", "id"), context("user")),
+                                              condition: eq(field("User", "id"), context("userId")),
                                               select: [selectField(p.name, field(type.name, p.name))],
                                           },
                                       ],
@@ -54,7 +54,7 @@ export const serverOntology: OntologyIR = {
             actionType: action.name,
             check: exists({
                 from: { source: { objectType: "User" }, binding: "principal" },
-                where: eq(field("principal", "id"), context("user")),
+                where: eq(field("principal", "id"), context("userId")),
                 select: [selectField("id", field("principal", "id"))],
             }),
         })),

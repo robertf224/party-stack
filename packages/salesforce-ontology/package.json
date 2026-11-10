@@ -14,13 +14,13 @@
             "types": "./lib/config/index.d.ts",
             "default": "./lib/config/index.js"
         },
-        "./installation": {
-            "types": "./lib/installation/index.d.ts",
-            "default": "./lib/installation/index.js"
-        },
         "./meta": {
             "types": "./lib/meta/index.d.ts",
             "default": "./lib/meta/index.js"
+        },
+        "./connect": {
+            "types": "./lib/connect.d.ts",
+            "default": "./lib/connect.js"
         }
     },
     "dependencies": {
@@ -38,7 +38,7 @@
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.14.0",
+        "@tanstack/db": "1.0.0-rc.1.4",
         "typescript": "~7.0.2",
         "vite": "catalog:",
         "vite-plus": "catalog:"

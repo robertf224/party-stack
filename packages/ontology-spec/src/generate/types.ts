@@ -38,6 +38,41 @@ export interface GenerateTypeDefinitionsOpts {
 
 interface GenerateTypeContext {
     objectTypes?: ReadonlyMap<string, ObjectTypeDef>;
+    types?: ReadonlyMap<string, TypeDef>;
+    attachmentInputs?: boolean;
+}
+
+function hasAttachments(
+    type: TypeDef,
+    types: ReadonlyMap<string, TypeDef>,
+    seen = new Set<string>()
+): boolean {
+    switch (type.kind) {
+        case "attachment":
+            return true;
+        case "ref": {
+            if (seen.has(type.value.name)) return false;
+            const next = types.get(type.value.name);
+            return next ? hasAttachments(next, types, new Set([...seen, type.value.name])) : false;
+        }
+        case "optional":
+            return hasAttachments(type.value.type, types, seen);
+        case "list":
+            return hasAttachments(type.value.elementType, types, seen);
+        case "map":
+            return hasAttachments(type.value.valueType, types, seen);
+        case "struct":
+            return type.value.fields.some((field) => hasAttachments(field.type, types, seen));
+        case "union":
+            return type.value.variants.some((variant) => hasAttachments(variant.type, types, seen));
+        case "result":
+            return (
+                hasAttachments(type.value.okType, types, seen) ||
+                hasAttachments(type.value.errType, types, seen)
+            );
+        default:
+            return false;
+    }
 }
 
 export function generateForTypeDef(type: TypeDef, ctx: GenerateTypeContext = {}): string {
@@ -73,13 +108,16 @@ export function generateForTypeDef(type: TypeDef, ctx: GenerateTypeContext = {})
 
         case "attachment": {
             const content = type.value.constraint?.content;
-            if (content?.kind !== "image") return "v.attachment";
-            const mediaTypes = content.value.mediaTypes;
-            return mediaTypes
-                ? `v.attachment<${union(mediaTypes.map((mediaType) => JSON.stringify(mediaType)))}>`
-                : `v.attachment<${union(
-                      ImageMediaTypeOptions.map((option) => JSON.stringify(option.value))
-                  )}>`;
+            const mediaTypes = content?.kind === "image" ? content.value.mediaTypes : undefined;
+            const handle =
+                content?.kind !== "image"
+                    ? "v.attachment"
+                    : mediaTypes
+                      ? `v.attachment<${union(mediaTypes.map((mediaType) => JSON.stringify(mediaType)))}>`
+                      : `v.attachment<${union(
+                            ImageMediaTypeOptions.map((option) => JSON.stringify(option.value))
+                        )}>`;
+            return ctx.attachmentInputs ? union([handle, "Blob"]) : handle;
         }
 
         case "objectReference": {
@@ -122,10 +160,12 @@ export function generateForTypeDef(type: TypeDef, ctx: GenerateTypeContext = {})
             return `v.Result<${generateForTypeDef(type.value.okType, ctx)}, ${generateForTypeDef(type.value.errType, ctx)}>`;
 
         case "encrypted":
-            return `v.Encrypted<${generateForTypeDef(type.value.type, ctx)}>`;
+            return `v.Encrypted<${generateForTypeDef(type.value.type, { ...ctx, attachmentInputs: false })}>`;
 
         case "ref":
-            return type.value.name;
+            return ctx.attachmentInputs && ctx.types && hasAttachments(type, ctx.types)
+                ? `${type.value.name}Input`
+                : type.value.name;
     }
 }
 
@@ -252,6 +292,19 @@ function addOntologyAggregateType(
                                       name: "parameters",
                                       type: `${pascalCase(action.name)}Parameters`,
                                   },
+                                  ...(action.parameters.some((parameter) =>
+                                      hasAttachments(
+                                          parameter.type,
+                                          new Map(ir.types.map((type) => [type.name, type.type]))
+                                      )
+                                  )
+                                      ? [
+                                            {
+                                                name: "inputParameters",
+                                                type: `${pascalCase(action.name)}Input`,
+                                            },
+                                        ]
+                                      : []),
                                   {
                                       name: "returnType",
                                       type: action.returnType ? `${pascalCase(action.name)}Return` : "void",
@@ -312,6 +365,7 @@ function addOntologyContextType(
 
 function addActionParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: OntologyIR): void {
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
+    const types = new Map(ir.types.map((type) => [type.name, type.type]));
     for (const actionType of ir.actionTypes) {
         if (actionType.returnType)
             sourceFile.addTypeAlias({
@@ -338,6 +392,32 @@ function addActionParameterTypes(sourceFile: import("ts-morph").SourceFile, ir: 
                 })
             ),
         });
+        if (actionType.parameters.some((parameter) => hasAttachments(parameter.type, types)))
+            sourceFile.addTypeAlias({
+                name: `${pascalCase(actionType.name)}Input`,
+                isExported: true,
+                type: withWriter(
+                    Writers.objectType({
+                        properties: actionType.parameters.map((parameter) => {
+                            const optional = parameter.type.kind === "optional";
+                            const type =
+                                parameter.type.kind === "optional"
+                                    ? parameter.type.value.type
+                                    : parameter.type;
+                            const value = generateForTypeDef(type, {
+                                objectTypes,
+                                types,
+                                attachmentInputs: true,
+                            });
+                            return {
+                                name: renderPropertyName(parameter.name),
+                                type: optional ? union([value, "null"]) : value,
+                                hasQuestionToken: optional || parameter.defaultValue !== undefined,
+                            };
+                        }),
+                    })
+                ),
+            });
     }
 }
 
@@ -384,6 +464,14 @@ export function generateTypes(ir: OntologyIR, opts: GenerateTypesOpts = {}): str
     });
     const project = new Project({ useInMemoryFileSystem: true });
     const aggregateFile = project.createSourceFile("ontology-aggregate.ts", "");
+    const types = new Map(ir.types.map((type) => [type.name, type.type]));
+    for (const type of ir.types)
+        if (hasAttachments(type.type, types))
+            aggregateFile.addTypeAlias({
+                name: `${type.name}Input`,
+                isExported: true,
+                type: generateForTypeDef(type.type, { objectTypes, types, attachmentInputs: true }),
+            });
     addOntologyContextType(aggregateFile, ir, outputTypeName);
     addActionParameterTypes(aggregateFile, ir);
     addQueryParameterTypes(aggregateFile, ir);

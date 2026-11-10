@@ -1,0 +1,278 @@
+---
+title: TanStack Start
+description: Render local queries, submit actions, and share persistent state across tabs.
+---
+
+Start with an ontology server; [Run a server](/docs/server) provides a local SQLite
+example. The same browser setup works in a plain Vite React app.
+
+## Install
+
+```sh
+pnpm add @party-stack/ontology @party-stack/ontology-react @party-stack/web-runtime @tanstack/db@1.0.0-rc.1.4 @tanstack/react-db@1.0.0-rc.1.4
+```
+
+Keep both TanStack packages on these exact versions. [installation instructions](/docs/installation#tanstack-db-fixes)
+describes the optional application-level fixes used by the examples in this repository.
+
+## Configure the tab
+
+Generate the typed SDK from your ontology definition. For the local server guide,
+that definition is `src/server/ontology.ts`:
+
+```sh
+pnpm exec ontology generate --ontology ./src/server/ontology.ts --outDir ./src/ontology/generated --namespace App
+```
+
+For an external provider, [pull its definition first](/docs/foundry#pull-the-definition).
+Generation writes `objects` and `cachedObjects` descriptors to
+`src/ontology/generated/collections.ts`.
+
+```ts title="src/app/ontology-options.ts"
+import { httpClient } from "@party-stack/ontology/http";
+import { webRuntime } from "@party-stack/web-runtime";
+
+export const ontologyOptions = {
+    client: httpClient("/api/ontology/rpc"),
+    runtime: webRuntime({ storage: "memory" }),
+    writes: { defaultVisibility: "optimistic" },
+} as const;
+```
+
+These are lazy setup values. Importing them does not open storage or make requests.
+Relative URLs resolve when the view opens in the browser. Same-origin cookies are
+sent normally. For another origin, use `httpClient(url, { credentials: "include" })`
+and configure that server's CORS policy.
+
+## Let the provider open the view
+
+```tsx title="src/routes/index.tsx"
+import { createFileRoute } from "@tanstack/react-router";
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { Suspense } from "react";
+import { OntologyProvider } from "@party-stack/ontology-react";
+import { ontologyOptions } from "../app/ontology-options";
+import { objects } from "../ontology/generated/collections";
+
+export const Route = createFileRoute("/")({
+    ssr: false,
+    component: Application,
+});
+
+function Application() {
+    return (
+        <Suspense fallback={<p>Loading issues…</p>}>
+            <OntologyProvider {...ontologyOptions}>
+                <Issues />
+            </OntologyProvider>
+        </Suspense>
+    );
+}
+
+function Issues() {
+    const { data } = useLiveSuspenseQuery({
+        query: (q) => q.from({ issue: objects.Issue }),
+    });
+    return (
+        <ul>
+            {data.map((issue) => (
+                <li key={issue.id}>{issue.title}</li>
+            ))}
+        </ul>
+    );
+}
+```
+
+The provider opens a view after mounting and suspends through your `<Suspense>`
+boundary while opening. It closes the view on unmount. Startup failures and initial
+query-load failures reach your React error boundary. Cached rows remain readable
+when background sync fails; those failures are reported in replica status.
+Keep options stable: declare them outside the component, as above, or memoize them
+when they depend on props. Changing options closes the old view and opens a new one.
+
+The generated descriptors carry your object types and resolve through the current
+provider's TanStack DB client. The same imports work with different accounts and
+views; components do not need to pass a client to every query. `cachedObjects`
+reads the existing local cache without acquiring remote demand.
+
+For actions, attachments, or pins, use `useOntology()` inside the provider. See
+[queries](/docs/queries) and [actions](/docs/actions) for typed examples and error handling.
+
+## Queries and route loaders
+
+Use `useLiveSuspenseQuery` inside the ontology provider. Declare child selections
+with [fragments](/docs/queries) beside their components. The query hooks own their
+subscriptions; the provider owns the live ontology and its cleanup.
+
+Keep `ssr: false` on this browser-replica route. Start can still serve your API
+routes and render other pages on the server. A `LiveOntology`, its `dbClient`, and
+live fragment collections are browser resources; returning them from a server
+loader does not hydrate them into a browser replica.
+
+Keep data queries in components for now; replica-aware SSR and route preloading
+are not yet supported. Use a nested Suspense boundary around the changing panel,
+and `useDeferredValue` or a transition to keep previous content visible during
+navigation. [React's Suspense guide](https://react.dev/reference/react/Suspense#showing-stale-content-while-fresh-content-is-loading)
+shows how to dim that content while a replacement loads.
+
+For sign-in and a reactive profile switcher, see [Authentication](/docs/authentication).
+
+## Share persistent state with a SharedWorker
+
+Use a SharedWorker when tabs should share one durable replica and preserve pending
+actions across reloads. The worker owns IndexedDB and OPFS; each tab keeps its own
+memory replica and byte cache.
+
+```ts title="src/app/ontology.worker.ts"
+import { httpClient } from "@party-stack/ontology/http";
+import { serveOntologyWorker } from "@party-stack/ontology/worker";
+import { webRuntime } from "@party-stack/web-runtime";
+
+serveOntologyWorker({
+    enableRealtime: true,
+    client: httpClient("/api/ontology/rpc"),
+    runtime: webRuntime(),
+});
+```
+
+Replace the tab configuration with:
+
+```ts title="src/app/ontology-options.ts"
+import { workerClient } from "@party-stack/ontology/worker";
+import { webRuntime } from "@party-stack/web-runtime";
+
+export const ontologyOptions = {
+    client: workerClient(
+        () =>
+            new SharedWorker(new URL("./ontology.worker.ts", import.meta.url), {
+                type: "module",
+                name: "issues",
+            })
+    ),
+    runtime: webRuntime({ storage: "memory" }),
+    writes: { defaultVisibility: "optimistic" },
+} as const;
+```
+
+The provider code stays the same. Keep the literal `new SharedWorker(new URL(...))`
+form so Vite builds the worker, and use the same name across tabs. The client owns
+its port; closing the view releases it. This binding is for trusted same-origin tabs.
+Do not expose it as a public server endpoint.
+
+This setup uses the authenticated context supplied by your server. Apps with account switching or multiple ontologies can use a
+[named-ontology server and Connect](/docs/foundry). Check SharedWorker support in your
+target browsers; this example does not silently fall back to multiple persistent owners.
+
+## Select among several ontologies
+
+Use this provider when several named ontologies share a server. It shares one
+client transport and common tab options. Each `OntologyProvider` chooses a target,
+opens a local view, and supplies its TanStack DB client to descendants.
+
+```tsx
+import { OntologyProvider, OntologyEnvironmentProvider } from "@party-stack/ontology-react";
+import { httpClient } from "@party-stack/ontology/http";
+import { webRuntime } from "@party-stack/web-runtime";
+
+const client = httpClient("/api/ontology/rpc");
+const options = { runtime: webRuntime({ storage: "memory" }) };
+
+<OntologyEnvironmentProvider client={client} {...options}>
+    <Suspense fallback={<p>Loading…</p>}>
+        <OntologyProvider ontology={selectedOntology}>
+            <Issues />
+        </OntologyProvider>
+    </Suspense>
+</OntologyEnvironmentProvider>;
+```
+
+For a SharedWorker, use `workerClient(spawn)`. The environment owns one port;
+closing a selected view leaves the other views connected.
+Set view-specific props directly, such as
+`<OntologyProvider ontology="issues" label="Issues" demand={issueDemand}>`.
+They override the environment defaults. The merge is shallow: a view's `writes`
+or `cache` replaces that whole group. Keep object-valued inputs such as `runtime`,
+`backend`, `writes`, and `cache` stable between renders.
+
+Changing the selected name releases the previous tab view. Query components keep
+using the generated collection descriptors and need no client argument.
+For an account switcher, keep one provider selected on `connect` to query the
+saved accounts, and a sibling provider selected on that account's data target.
+The [Foundry guide](/docs/foundry#build-the-account-switcher) shows the complete
+picker, sign-in button, selection state, and data view together.
+
+## Use a backend directly
+
+Supply the definition and a native backend acquisition as props instead of a server client:
+
+```tsx
+import { OntologyProvider } from "@party-stack/ontology-react";
+import { makeFoundryOntologyBackend } from "@party-stack/foundry-ontology";
+import { webRuntime } from "@party-stack/web-runtime";
+import { ir } from "./ontology";
+import { authenticatedFoundryClient } from "./foundry-client";
+
+const runtime = webRuntime({ storage: "memory" });
+const context = { userId: "alice" }; // Use the verified identity from your authentication setup.
+const backend = makeFoundryOntologyBackend({ ir, client: authenticatedFoundryClient, context });
+
+<OntologyProvider ir={ir} backend={backend} context={context} runtime={runtime}>
+    <Issues />
+</OntologyProvider>;
+```
+
+The provider runs the backend Effect in its scope and constructs a local replica.
+An already acquired backend service can also be supplied; its existing owner retains
+responsibility for closing it. Backend acquisition binds its own definition/context;
+there is no additional adapter factory or `.open(context)` call.
+An explicit `backend` overrides an environment's server client. Connect is optional
+when the application already supplies authenticated provider access.
+
+Direct construction binds context twice: the backend uses it to evaluate its
+queries/defaults, while the replica uses it for local evaluation and the cache
+partition. Share the same context object, as above. A generic backend service does
+not describe its bound context. With a server client, the provider obtains context
+from `Describe`, so omit the prop unless you want to assert an expected value.
+
+## Choose storage and cache settings
+
+| Location          | Object tables | Attachment bytes | Survives reload? |
+| ----------------- | ------------- | ---------------- | ---------------- |
+| Memory tab        | Memory        | Memory           | No               |
+| Persistent worker | IndexedDB     | OPFS             | Yes              |
+
+All replicas cache loaded objects. `webRuntime()` selects persistent browser
+storage; `webRuntime({ storage: "memory" })` selects an isolated memory replica.
+Use one designated owner for persistent browser storage.
+
+The same setup options accept `cache`, `demand`, `writes`, and `authentication`,
+whether `client` talks to HTTP or a worker. To use a provider adapter in this
+process, pass `{ ir, backend }` instead. Connect's account connections are separate
+from these server clients.
+
+For device-wide [offline pins](/docs/offline), the worker advertises pin controls
+through the normal ontology protocol; tab calls target that persistent owner. Set `cache` on the worker or tab setup options to configure its budgets.
+Reloading the app while offline also needs a service worker to cache its HTML and
+JavaScript; data replication does not cache the app shell.
+
+## Add devtools
+
+Install `@party-stack/ontology-devtools` and `@tanstack/react-devtools`.
+
+```tsx
+import { TanStackDevtools } from "@tanstack/react-devtools";
+import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
+import { useOntology } from "@party-stack/ontology-react";
+import { useMemo } from "react";
+
+const config = { customTrigger: ontologyDevtoolsTrigger, position: "bottom-right" as const };
+
+function Inspector() {
+    const ontology = useOntology();
+    const plugins = useMemo(() => [createOntologyDevtoolsPlugin({ ontology })], [ontology]);
+    return <TanStackDevtools config={config} plugins={plugins} />;
+}
+```
+
+Render `Inspector` inside the ontology provider. It reads cached objects without
+creating remote demand. `OntologyDevtoolsPanel` is also available for embedding.

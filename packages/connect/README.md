@@ -1,196 +1,190 @@
-# @party-stack/connect
+# Connect
 
-Connect models configured service instances, OAuth applications and saved authorizations:
+**Connect’s role is saving connections and turning them into authenticated access.**
+It stores service instances and saved connections as ontology objects. A
+native owner acquires authenticated access from a connection, then passes that
+access to an ordinary backend constructor. The same backend can be exposed over
+HTTP or a worker port using the ontology server.
 
-- **Installation**: a service instance, such as a Foundry deployment or Salesforce organization.
-- **OAuthConnector**: an OAuth app configuration for one installation and one flow (`authorization-code` or `client-credentials`). A connector can designate a saved connection for server-side execution.
-- **OAuthConnection**: a saved provider authorization, with private credentials and lifecycle state.
-- **OAuthAuthorizationAttempt**: a short-lived, single-use PKCE attempt. Completed attempts retain a small completion record until their expiry so a browser can recover a lost response.
+- **Service** identifies an integration such as Foundry or Better Auth.
+- **ServiceInstance** identifies its configured deployment.
+- **ServiceConnector** is the native integration for OAuth, API keys or external sessions, and authenticated egress.
+- **OAuthApplication** stores a registered client configuration.
+- **OAuthConnection**, **ApiKeyConnection** and **ExternalSessionConnection** store concrete saved connections. Token/key properties are encrypted at the top level; an external session stores a selector that its service must verify.
+- **OAuthAuthorizationAttempt** stores the single-use PKCE workflow.
 
-Applications reference connectors. The credential authority resolves their designated connections and authorizes use. Personal and team connectors can be separate records, even when they use the same provider app registration.
+`@party-stack/connect/spec` exports the portable IR and inferred record types.
+Applications can extend its definitions and policy. There is no mandatory user or
+ACL schema in the core ontology.
 
-## Exports
+## Native owner
 
-- `@party-stack/connect/spec`: portable ontology definitions and inferred core types. This entry point does not import Effect.
-- `@party-stack/connect`: Effect service, native storage, OAuth provider integration, browser client, maintenance, and SDK/UI facades.
-- `@party-stack/connect/server`: mountable HTTP handlers for server-mediated authorization.
-
-The former `@party-stack/oauth` and `@party-stack/connections` packages have been consolidated here. Existing provider SDK and UI entry points remain Promise boundaries; OAuth storage and execution underneath them use Effect. The generic connection manager and installation lifecycle now run as scoped Effect services. Connection status is stored through direct native table transactions and exposed as a read-only snapshot plus per-user monitors. Connect has no TanStack DB dependency and creates no UI collection.
-
-## Live sessions and installations
-
-`makeConnectionManager(options)` acquires the typed session manager in `Runtime | Scope`.
-Its `disconnect`, `forget` and `reportUnauthenticated` methods return Effects with
-`ConnectionError`. Adapter construction, restoration, session refresh, logout and
-cleanup also use Effect contracts. Adapters can use `Effect.acquireRelease` directly;
-partial acquisition failure releases what was already acquired.
-
-`manager.connections` is a read-only map of session status, reconciled from shared
-tables. It is distinct from the credential ontology above: SDK sessions/sockets
-remain process-local. `createConnectionMonitor(manager, userId)` exposes a current
-`state`, scoped Effect `changes` stream and a callback `subscribe` boundary. An
-ontology installation provides the same monitor directly:
+`makeConnectManager` requires an Effect `Runtime` and `Scope`. Runtime supplies Tables and
+encryption keys; a persistent browser runtime must opt into persistent key storage.
+`ConnectManager.layer(options)` provides the same service through an Effect Layer.
 
 ```ts
-const monitor = installation.connectionMonitor(userId);
-const unsubscribe = monitor.subscribe((state) => {
-    // Update application state; no query collection is needed for connection status.
-});
-```
-
-The callback owner calls `unsubscribe`; Effect consumers run `monitor.changes` in
-their scope. Persistent status writes still notify other contexts so refresh and
-logout coordination do not depend on a UI subscriber.
-
-`makeOntologyBackendInstallation(options)` from `@party-stack/ontology` acquires an
-installation in the caller's Scope. Its open/close/disconnect/forget methods are
-Effects. Concurrent opens share one scoped cache entry; failed opens can be retried.
-Operations for one user serialize, while other users can open independently.
-
-```ts
-const app = Effect.gen(function* () {
-    const installation = yield* makeOntologyBackendInstallation({
-        installationId: "my-foundry",
-        runtime: createWebRuntime,
-        connections: createFoundryConnectionAdapter(foundryOptions),
-        routes,
+const connect =
+    yield *
+    makeConnectManager({
+        services: [
+            {
+                connector: makeFoundryServiceConnector(),
+                instances: [
+                    {
+                        id: "foundry",
+                        instanceUrl: "https://example.palantirfoundry.com",
+                        OAuthApplications: [
+                            {
+                                id: "app",
+                                clientId,
+                                redirectUrl,
+                                scopes: ["api:use-ontologies-read", "offline_access"],
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
     });
-    // Provider authentication clients retain their SDK-specific UI methods.
-    const connection = yield* connectionOperation("sign-in", () =>
-        installation.authentication.signIn.oauth({ browserPresentation: "popup" })
-    );
-    const ontology = yield* installation.openOntology({
-        userId: connection.userId,
+
+const access = yield * connect.connections.acquire({ objectType: "OAuthConnection", id: connectionId });
+const backend =
+    yield *
+    makeFoundryBackend({
+        baseUrl: access.serviceInstance.instanceUrl,
         ontologyId,
+        ir,
+        context: { userId: access.userId },
+        egress: access.egress,
     });
-    // Use ontology.objects / actions, or expose them to your UI here.
-});
-// The host supplies a Scope for app; closing it releases every acquired resource.
 ```
 
-An installation retains an opened ontology until explicit close or installation
-Scope closure. This preserves the existing cached-open semantics. It does not
-reference-count row retention; replica GC remains mark-and-sweep. Closing resources
-preserves credentials, rows and pending work. `disconnect` revokes/deactivates the
-session; `forget` additionally destroys that user's recorded local partitions.
+The manager holds scoped authenticated I/O, watches credential changes and
+releases sockets/requests when their owner closes. Each outgoing request uses the
+current credential. A response using old credentials cannot pause a newer login.
+It does not persist a second connection inventory.
 
-`Connections.layer(options)` and `OntologyInstallation.layer(options)` supply the
-services through Effect's Context. `make*` is useful when preserving a provider's
-generic authentication-client type. `createConnectionManager` and
-`createOntologyBackendInstallation` are thin Promise facades for framework callers;
-their cleanup methods close the same scopes. There is no second async implementation.
-Egress stays compatible with fetch/WebSocket APIs, and provider sign-in methods
-remain Promise boundaries. Runtime providers now return scoped Effects; route-configuration and remote-placement callbacks remain application boundaries.
+Only an instance URL and each OAuth application's client configuration are required.
+Instance IDs default to a stable service + canonical URL key; application IDs default
+to instance ID + client ID. Titles default to the connector's display name, and flow
+defaults to `authorization-code`. Explicit IDs/titles/flow override those defaults.
+The example keeps `app` as an explicit ID because its tab sign-in helper selects it.
+Changing titles or reordering configuration does not change derived identities.
 
-Refresh runs in a scoped fiber using Effect's Clock and connectivity stream.
-Transactional Connect claims serialize credential rotation across contexts. Durable
-connection metadata is shared through storage; SDK clients and sockets are scoped
-local handles, restored or released on external sign-in/logout notifications. There
-is no dependency on the former coordination package. Session
-replacement is serialized with logout; a late refresh or old request failure cannot
-reactivate or invalidate a newer session. Unadopted sessions are released if their
-submitting fiber is interrupted. Teardown attempts all session finalizers even when
-one fails.
+`OAuthApplications` contains per-application `scopes`. If omitted, the manager uses
+the connector's `defaultOAuthScopes`; an explicit empty array requests no scopes.
+Resolved configuration is persisted as ordinary ServiceInstance/OAuthApplication
+records and exposed through the inventory policy without client secrets.
 
-## Native authority
+CLI/provider bootstrap can use `acquireConfiguredConnection({ manager,
+serviceInstanceId, oauth, userId, browserAuthentication })`. It reuses a saved
+account or runs the configured OAuth flow, then calls the same
+`manager.connections.acquire`. API-key bootstrap supplies `apiKey` instead of
+`oauth`. No separate CLI connection manager or credential inventory is created.
+
+`makeAuthenticationClient({ backend, browserAuthentication })` provides Effect-native
+commands and inventory queries. `createAuthenticationClient` is its Promise SDK facade.
+
+`makeConnectBackend` is the lower-level constructor for owners supplying Tables
+and encrypted values directly. Its `store` is trusted native persistence;
+`backend` is the ordinary read/action interface.
+
+## Serve and use it
+
+Mount `connect.backend` as a named ontology on the normal ontology server. For
+trusted local tabs, `connectPublicOntologyIR` allows inventory reads and explicit
+authentication actions while excluding token properties and PKCE attempts.
+Network servers must also scope that policy to their authenticated callers.
+
+Select `"connect"` through `httpClient` or `workerClient`. No separate installation
+protocol or authentication-method proxy is needed. Browser SDK commands live in
+`@party-stack/ontology/authentication`:
 
 ```ts
-import { makeConnect, makeConnectStore, makeOAuthProvider, maintainConnect } from "@party-stack/connect";
-import { EncryptionKeyring, makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
-import { Tables } from "@party-stack/ontology-storage/tables";
-import { Effect, Schema } from "effect";
+const authentication = await createAuthenticationClient({
+    client: workerClient(spawn, { ontology: "connect" }),
+    runtime,
+});
+const oauth = authentication.oauth({ applicationId: "app", redirectUrl });
+const signedIn = await oauth.signIn({ browserPresentation: "popup" });
+const saved = await authentication.connections();
+await authentication.signOut(signedIn);
+await authentication.forget(signedIn);
+```
 
-const authority = Effect.gen(function* () {
-    const tables = yield* Tables;
-    const keys = yield* EncryptionKeyring;
-    const namespace = "private-connections";
-    const store = yield* makeConnectStore({ tables, namespace });
-    const values = { ...makeEncryptedValues(namespace, keys), evict: () => Effect.void };
-    const connect = yield* makeConnect({
-        store,
-        values,
-        provider: ({ connector, installation }) =>
-            Effect.gen(function* () {
-                // Resolve trusted provider configuration for this installation.
-                const config = providerConfiguration(installation);
-                const secret = connector.clientSecret
-                    ? yield* values.decrypt(Schema.String, connector.clientSecret)
-                    : undefined;
-                return makeOAuthProvider({
-                    ...config,
-                    clientId: connector.clientId,
-                    clientAuthentication: secret
-                        ? { method: "client_secret_basic", secret }
-                        : { method: "none" },
-                });
-            }),
+The popup remains in the tab. `beginAuthorization` persists PKCE state;
+`completeAuthorization` claims the attempt, performs the remote exchange, then
+commits encrypted credentials. It checks state, callback location, expiry and
+single-use consumption. An optional trusted `principalId` binds a server-hosted
+attempt to its initiating caller. These workflow actions execute directly rather
+than through an optimistic outbox.
+
+Better Auth sign-in uses its normal tab SDK. `attachExternalSession` asks the
+registered service connector to verify the actual session before saving its
+selector. The resulting connection acquires a normal backend in the same way as
+an OAuth connection. Neither variant requires forwarding a generic SDK over RPC.
+
+Read inventory reactively using the ordinary Connect ontology and the
+`authenticationObjects` descriptors from `@party-stack/ontology/authentication`.
+
+## Maintenance and local data
+
+The manager starts scoped periodic maintenance by default. Set
+`startMaintenance: false` when an external owner calls `manager.maintenance.run`,
+such as a Durable Object alarm. Configure the interval with `maintenance.intervalMs`. Sweeps expire PKCE attempts, refresh secrets and connection expiry state,
+and collect the owned journal/delivery metadata.
+
+`authentication.signOut(account)` invokes the ordinary Connect disconnect actions;
+`authentication.forget(account)` removes the saved row as well. Both use
+`AccountRef`: `{ kind: "oauth" | "api-key" | "external-session", id }`. Sign-in and
+inventory results include this shape. Native backend acquisition retains
+`ConnectionRef` with `{ objectType, id }`.
+
+Signing out detaches credentials and attempts remote revocation. Forgetting also
+clears the account's OAuth attempts and application reference. Revocation failure
+is reported after the local change commits and cannot restore credentials. Neither operation will
+delete the application's cached objects or pending actions. Managed replica routes on `makeOntologyServer` keep a persisted partition inventory
+so `server.forget(name)` works after credentials expire.
+
+For a private SharedWorker, `connectDeviceRoute(manager)` returns its route binding:
+
+```ts
+const server =
+    yield *
+    makeOntologyServer({
+        enableRealtime: true,
+        routes: { connect: connectDeviceRoute(manager) },
     });
-    yield* maintainConnect(connect);
-    return { connect, store };
-});
 ```
 
-`providerConfiguration` is application/provider configuration, not a package function. It supplies endpoints, scopes and an Effectful `resolveSubject`. Different providers can implement `ConnectOAuthProvider` directly. The optional `refreshTokenExpiry` hook reads trustworthy provider-specific expiry metadata; access-token expiry is never treated as refresh-token expiry.
+This convenience uses `connectPublicOntologyIR`, the device-local inventory policy.
+It does not isolate accounts between network callers. Public Connect deployments
+must supply their own authenticated context and caller-specific policy.
+Forget actions retain typed object-reference parameters and their normal
+existence/visibility checks. Connect's current workflow executor does not provide
+durable invocation receipts; a new command after account deletion can fail
+reference validation. Account queries still reflect committed local deletion if
+the command's reply is lost.
 
-Provide the authority as a Layer or acquire it in the host's scope. `Connect.layer(options)` supplies the `Connect` service when its dependencies are already constructed. `maintainConnect` starts a scoped maintenance fiber; serverless hosts can instead call `collectExpired({ limit })` from a scheduled job/alarm. It uses indexed expiry predicates and bounded batches.
+## OAuth workflow transactions
 
-The native store is backed by ontology-storage on the supplied Tables driver (IndexedDB, memory, SQLite or PostgreSQL). Token ciphertext and record changes share that transaction. The runtime keyring is the single credential-encryption path; native platform key storage holds only encryption key material. There is no direct-credential or plaintext fallback.
+Authentication uses a regular backend `applyAction` implementation that dispatches
+workflow commands. OAuth completion validates and claims its saved attempt in a
+transaction, exchanges the code outside the transaction, then commits encrypted credentials in a second transaction. Refresh uses the
+same claim/request/commit pattern. The remote exchange cannot be rolled back with
+local storage.
 
-## Server-mediated authorization
+These workflows use normal owned persistence, but do not implement the native
+owned mutator's transaction-level authorization hook. Serve this generic backend
+with `kind: "proxy"` and a policy; the name describes its server interface, not a
+remote deployment. Policy checks happen before workflow execution. A public
+server must bind ownership/principal rules in addition to the device-local policy.
+Durable claims are not a general action-result/idempotency system, so these
+commands bypass the replica outbox and ordinary automatic action replay.
 
-```ts
-import { makeConnectServer } from "@party-stack/connect/server";
-
-const handle = makeConnectServer({
-    connect,
-    store,
-    callbackUrl: "https://app.example/api/connect/callback",
-    appOrigin: "https://app.example",
-    authenticate: (request) => authenticateApplicationSession(request),
-    authorize: (input) => authorizeConnectorOperation(input),
-});
-```
-
-Mount the handler under `/api/connect`. The host runs the returned Effect in its existing runtime. `authenticate` returns `{ id, sessionId }`: use a stable, non-secret session identifier, not the session cookie/bearer token. `authorize` handles `begin`, `complete` and `inspect`, and checks application project/org permissions. On begin it may return trusted extra attempt properties. Completion rechecks permissions before exchanging the provider code.
-
-Routes:
-
-- `POST /begin`: `{ connectorId, connectionId?, returnUrl, context? }`; requires the application Origin. Returns an opaque attempt ID and authorization URL. Omitted connection ID reconnects the connector's designated connection when present.
-- `GET /callback`: the provider-registered callback. The server exchanges the code and redirects to the app return URL with `connectAttempt` and `state`, both containing the opaque attempt ID. Provider codes and tokens are not forwarded to the app completion page.
-- `GET /result?state=...`: session-bound completion status and connection ID.
-- `GET /status?connectorId=...`: authorized, credential-free connector connection status.
-
-`makeServerConnectClient` uses the runtime's `BrowserAuthentication` capability for popup or full-page redirect presentation. Its `authorize` method opens the presentation, starts the server attempt and reads the result. After a full-page redirect, call `completeRedirect(location.href)` in the app completion page. For popups, the existing web-runtime callback relay can relay that app completion URL to the opener. No suspended in-memory Effect must survive navigation.
-
-Connection and attempt rows are private to the credential authority. Connector client secrets also need restricted property access. Provider implementations inject credentials into authorized egress; clients use the ontology server protocol to invoke provider operations rather than receiving tokens.
-
-## Application properties
-
-Applications can extend definitions directly, without inheritance or schema lenses:
-
-```ts
-import { connectOntology, oauthConnectorDefinition } from "@party-stack/connect/spec";
-import { o } from "@party-stack/ontology-spec";
-
-const connector = {
-    ...oauthConnectorDefinition,
-    properties: [
-        ...oauthConnectorDefinition.properties,
-        {
-            name: "project",
-            displayName: "Project",
-            type: o.objectReference({ objectType: "Project" }),
-        },
-    ],
-};
-```
-
-Include this replacement and the application's `Project` definition in the IR supplied to `makeConnectStore`. Standard names, property types and primary keys must remain compatible. Extra properties are validated and preserved during updates. Add ownership properties to attempts/connections as needed; `connectionProperties(attempt)` populates trusted application fields when creating a connection. Server authorization determines their values.
-
-Tokens and expiry timestamps are flat properties because Foundry structs do not support Cipher text fields. Native stores index connection, access expiry, refresh expiry and attempt expiry properties. Expired refresh material is removed while retaining connection identity; a still-valid access token may remain usable until its own expiry. Transient provider failures do not erase credentials. Concurrent refresh claims are durable, and an interrupted refresh with unknown outcome requires explicit reconnection rather than blindly reusing a potentially rotated refresh token.
-
-## Remaining integration
-
-The included authority store is the native ontology-storage implementation. Hosting these records in Foundry additionally needs trusted Foundry actions/Cipher writes implementing the same atomic claims and credential commits; ordinary independent SDK reads/writes are not an atomic transaction. That bridge is not supplied yet. Existing Foundry provider login uses native device storage, not Foundry-hosted Connect records.
-
-Public LiveOntology decryption/cache APIs, Better Auth's server database adapter, centralized private-service ownership across browser contexts, and explicit per-purpose browser persistence consent remain migration work. This change does not encrypt action inputs in the outbox.
+This generic backend is temporary. A future owned implementation should use
+first-class durable workflows with persisted steps, separate transactions,
+configurable retries and compensations. No staged `prepare` hook is required for
+the current proxy path. Its storage commits already publish ordinary journal/watch
+notifications, independently of whether a command reply reaches the caller.

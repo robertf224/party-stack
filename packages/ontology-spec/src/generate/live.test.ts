@@ -21,7 +21,7 @@ describe("generateLive", () => {
         );
 
         expect(output).toContain(
-            'import { createLiveOntology, type CreateLiveOntologyOpts, type LiveOntology } from "@party-stack/ontology";'
+            'import { createLiveOntology, type LiveOntologyFactoryOptions, type LiveOntology } from "@party-stack/ontology";'
         );
         expect(output.match(/from "@party-stack\/ontology";/g)).toHaveLength(1);
     });

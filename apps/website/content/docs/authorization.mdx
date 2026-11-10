@@ -1,123 +1,316 @@
 ---
 title: Authorization
-description: Typed context, hierarchical read grants, and action policies.
+description: Grant access to a graph of objects, hide properties, and bind action parameters.
 ---
 
-Authenticate the caller in your HTTP/application boundary. Then construct a server
-with that caller's typed `context`. The ontology's `policy` determines which rows,
-properties, actions, and query functions they can use.
+Write down the data a person may see and the actions they may take. Party Stack
+uses that policy for queries, cached reads, attachments, and actions, regardless
+of how a screen asks for its data.
 
-## Context
+For example: **project administrators can see their projects and the forms inside
+them, and can create new forms in those projects.** Express that relationship once.
+A screen can then start from projects, forms, or revisions without rebuilding the
+authorization join. Party Stack plans the reads and uses the backend's available
+indexes and pushdown; the policy describes access rather than a particular SQL plan.
 
-`ir.context.type` describes one shared contract. The server binds its values after
-authentication, and Describe returns the same definition and values to clients.
-Store credentials and private authentication state in server services.
+[Authentication](/docs/authentication) establishes who is calling. Authorization
+uses that identity to decide what they can do. The examples below use `Project`,
+`Form`, and `FormRevision`, linked by `projectId` and `formId`; projects have an
+`adminIds` array.
+
+## Declare context and its storage partition
 
 ```ts
-const ir = {
-    ...domainIR,
+import { o } from "@party-stack/ontology-spec";
+
+const contextDefinition = {
+    type: o.struct({
+        fields: [
+            { name: "userId", displayName: "User", type: o.string({}) },
+            { name: "tenantId", displayName: "Tenant", type: o.string({}) },
+        ],
+    }),
+    partition: [["tenantId"], ["userId"]],
+};
+```
+
+`partition` determines which context values isolate local caches. Include all
+identity fields needed to prevent different callers sharing private cached data.
+Credentials stay in server services, outside the context returned to clients.
+
+## Grant a project and its descendants
+
+A read policy is a hierarchical query. Its selections grant the named properties
+on matching objects, even when the client queries those objects from another root.
+
+```ts
+import * as q from "@party-stack/ontology/query";
+
+const fields = (binding: string, ...names: string[]) =>
+    names.map((name) => q.selectField(name, q.field(binding, name)));
+
+const projectObjects = {
+    select: [
+        q.sub("projects", {
+            from: { source: { objectType: "Project" }, binding: "p" },
+            where: q.contains(q.field("p", "adminIds"), q.context("userId")),
+            select: [
+                ...fields("p", "id", "name"),
+                q.sub("forms", {
+                    from: { source: { objectType: "Form" }, binding: "f" },
+                    where: q.eq(q.field("f", "projectId"), q.field("p", "id")),
+                    select: [
+                        ...fields("f", "id", "name", "projectId"),
+                        q.sub("revisions", {
+                            from: { source: { objectType: "FormRevision" }, binding: "r" },
+                            where: q.eq(q.field("r", "formId"), q.field("f", "id")),
+                            select: fields("r", "id", "formId", "createdAt"),
+                        }),
+                    ],
+                }),
+            ],
+        }),
+    ],
+};
+```
+
+This grants forms and revisions transitively through projects the user administers.
+Add sibling roots for unrelated public data. Policy selections use actual property
+names; UI query projections can use aliases and computations.
+
+## Check an action
+
+Give `createForm` a `project` parameter declared as an object reference:
+
+```ts
+// Include this field in createForm.parameters.
+const projectParameter = {
+    name: "project",
+    displayName: "Project",
+    type: o.objectReference({ objectType: "Project" }),
+};
+```
+
+The caller supplies a Project primary key. `lookup` uses the parameter's declared
+object type to read that project. Check its administrator list:
+
+```ts
+const targetProject = q.lookup(q.input("project"));
+const canAdministerTarget = q.contains(
+    o.Expression.getAt({ source: targetProject, path: ["adminIds"] }),
+    q.context("userId")
+);
+
+const policy = {
+    objects: projectObjects,
+    actions: [
+        {
+            actionType: "createForm",
+            check: canAdministerTarget,
+            bind: [{ parameter: "createdBy", expression: q.context("userId") }],
+        },
+    ],
+};
+```
+
+`check` is a boolean expression. A missing project or a caller absent from its
+administrator list fails this check. It can inspect stored properties without
+granting those properties to the caller.
+
+The binding removes `createdBy` from the public action parameters and supplies
+the authenticated value. An action without a successful rule is denied.
+Query functions need their own `queryFunctions` rules as well.
+
+### Additional implementation reads
+
+An action or query-function rule can grant its owned implementation extra rows
+and properties for that invocation:
+
+```ts
+queryFunctions: [
+    {
+        queryFunctionType: "quote",
+        check: q.eq(q.context("role"), q.literal("buyer")),
+        additionalObjects: {
+            select: [
+                q.sub("pricing", {
+                    from: { source: { objectType: "PricingRule" }, binding: "price" },
+                    where: q.eq(q.field("price", "product"), q.input("product")),
+                    select: [q.selectField("discount", q.field("price", "discount"))],
+                }),
+            ],
+        },
+    },
+];
+```
+
+These grants **add to** `policy.objects`. They do not replace it or grant those
+reads to the caller's ordinary queries. The example assumes a `quote` function
+with a `product` parameter; its owned handler can read the private pricing rule
+and return a public total.
+
+Action and function results currently follow their declared return types; object
+policy does not redact arbitrary returned structs. Construct public results
+explicitly. Additional implementation access is a trusted computation, so returning
+the private discount would disclose it.
+
+Owned backends run checks and mutations in one transaction. For an upstream
+provider, your server checks its own policy before calling the provider; the
+provider's permissions and transaction still apply.
+
+## Bind the authenticated caller
+
+```ts
+import { makeOntologyServer } from "@party-stack/ontology-server";
+
+const ir = { ...domainIR, context: contextDefinition, policy };
+const openServer = makeOntologyServer({
+    enableRealtime: true,
+    kind: "owned",
+    backend,
+    ir,
+    authenticate: (request) => authenticatedContext(request),
+});
+```
+
+Acquire `openServer` once in the server Layer. `authenticatedContext(request)` is your
+authentication Effect returning `{ userId, tenantId }` for each request; a missing or invalid
+session must fail. The server owns each request's policy binding. A cached proxy enforces the same policy on its final read
+path, including cache hits.
+
+## Grant a conditional property
+
+Add a conditional selection inside a Form query:
+
+```ts
+q.selectCase({
+    branches: [
+        {
+            condition: q.eq(q.context("role"), q.literal("admin")),
+            select: fields("f", "internalNotes"),
+        },
+    ],
+});
+```
+
+Declare `role` in the context type for this example. A context-only condition
+can remove a property from the public definition. A condition depending on each
+row makes that property optional; inaccessible values are omitted.
+
+## Project a provider for a token
+
+A public form might use a Post Approval token instead of a signed-in user.
+Replace the upstream context and policy with your token contract:
+
+```ts
+import { Effect } from "effect";
+
+const tokenIR = {
+    ...upstreamIR,
     context: {
         type: o.struct({
             fields: [
-                { name: "user", displayName: "User", type: o.string({}) },
-                { name: "tenant", displayName: "Tenant", type: o.string({}) },
+                {
+                    name: "approval",
+                    displayName: "Approval",
+                    type: o.objectReference({ objectType: "PostApproval" }),
+                },
             ],
         }),
-        partition: [["tenant"], ["user"]],
+        partition: [["approval"]],
     },
-    policy,
-};
-
-const server =
-    yield *
-    makeOntologyServer({
-        kind: "owned",
-        backend,
-        ir,
-        context: { user: session.user.id, tenant: session.tenantId },
-    });
-```
-
-Partition paths derive distinct local storage partitions from context values.
-There is no mandatory User object or separate `clientContext` setting in this API.
-The bound definition/context are copied when constructing the server; mutating an
-application-owned object later does not change the authenticated binding.
-
-## Read grants
-
-A policy's `read` is a hierarchical query document. Selecting an entity property
-grants that property on the matching rows. Multiple roots and correlated nested
-queries can grant related records. Clients can then query those records directly;
-they receive the same restrictions regardless of the root they start from.
-
-```ts
-import { context, eq, field, selectField, sub } from "@party-stack/ontology/query";
-
-const policy = {
-    read: {
-        select: [
-            sub("issues", {
-                from: { source: { objectType: "Issue" }, binding: "issue" },
-                where: eq(field("issue", "owner"), context("user")),
-                select: ["id", "title", "owner"].map((name) => selectField(name, field("issue", name))),
-            }),
+    policy: {
+        objects: {
+            select: [
+                q.sub("approval", {
+                    from: { source: { objectType: "PostApproval" }, binding: "a" },
+                    where: q.eq(q.field("a", "id"), q.context("approval")),
+                    select: [
+                        ...fields("a", "id", "status"),
+                        q.sub(
+                            "person",
+                            {
+                                from: { source: { objectType: "Person" }, binding: "p" },
+                                where: q.eq(q.field("p", "id"), q.field("a", "personId")),
+                                select: fields("p", "id", "name"),
+                            },
+                            "one"
+                        ),
+                        q.sub("bids", {
+                            from: { source: { objectType: "Bid" }, binding: "b" },
+                            where: q.eq(q.field("b", "approvalId"), q.field("a", "id")),
+                            select: fields("b", "id", "postId", "status"),
+                        }),
+                    ],
+                }),
+                q.sub("posts", {
+                    from: { source: { objectType: "Post" }, binding: "post" },
+                    select: fields("post", "id", "name"),
+                }),
+            ],
+        },
+        actions: [
+            {
+                actionType: "submitBid",
+                check: q.eq(
+                    o.Expression.getAt({
+                        source: q.lookup(q.context("approval")),
+                        path: ["status"],
+                    }),
+                    q.literal("open")
+                ),
+                bind: [{ parameter: "approval", expression: q.context("approval") }],
+            },
         ],
     },
-    actions: [],
 };
+
+const openTokenServer = makeOntologyServer({
+    kind: "proxy",
+    backend: foundryBackend,
+    ir: tokenIR,
+    authenticate: (request) =>
+        verifyFormToken(request).pipe(Effect.map((token) => ({ approval: token.approvalId }))),
+});
 ```
 
-Policy selections use real property names. UI queries can use aliases and computed
-values. Conditional selections can grant properties based on context or row values.
-Context-only conditions specialize the public schema; row-dependent properties
-remain optional and inaccessible cells are omitted from responses.
+This form leaves `enableRealtime` unset: it serves finite reads and submissions
+without watches, change feeds, or client replication sessions. Calling its action
+returns a completion receipt; it does not wait for any watcher.
 
-Safe caller predicates are rewritten into policy queries to reduce source reads.
-Ordering and pagination apply after authorization. Unsupported rewrites preserve
-the original policy semantics. The full-policy evaluator remains a testing oracle.
+The caller can read its approval, the person's name, its bids, and the public list
+of posts. It can submit a bid only while that approval is open, with the approval
+parameter supplied by the server. The server's provider
+credentials are independent of the public token context. `verifyFormToken` is an
+application Effect that verifies the token and returns its approval ID.
 
-## Actions and providers
+## What clients receive
 
-Action rules use `check`, optional parameter `bind` entries, and optional additional
-`read` grants for their mutators. A binding removes its parameter from the public
-action schema and supplies it on the server, overriding spoofed input. An action
-without a successful rule is denied. Query functions require explicit rules too;
-arbitrary function output is not automatically made safe by a row policy.
+`Describe` sends the policy-projected IR and the declared context values. The
+policy itself, including read predicates, action checks and binding expressions,
+stays on the server. Bound action parameters are removed from the public signature;
+the server supplies their values during execution.
 
-Owned execution performs bindings, checks, reference validation, and mutation in
-one storage transaction. A projected provider executes its own authoritative
-transaction after the server's checks. Its existing permissions still apply.
+Clients can call `ontology.actions.submitBid.validate(parameters)` before submitting.
+Parameter constraints and projected defaults can support local validation, but
+policy checks are not currently exported as client validation hints. Forwarding a
+provider's existing definition does not turn its authorization rules into such hints.
+Submission always checks the server policy again.
 
-Queries and action defaults/assignments share scalar expressions: comparisons,
-arithmetic, boolean logic, membership, string patterns, concatenation, coalescing
-and `caseExpression`. Boolean logic, coalescing and CASE short circuit. Action
-UUID/time expressions use deterministic replay values when replaying a submission;
-finite query plans reject clock/random expressions. Query-bearing `exists` is
-supported in queries and policy checks, but is not yet supported in portable action
-defaults/assignments.
-Partial parameter resolution leaves computed defaults unset until their required
-inputs are available; known conditional branches can resolve independently.
+For the Post Approval token above, clients see the allowed PostApproval, Person,
+Bid and Post properties and the permitted actions. They do not receive unrelated
+types/properties or the upstream service user's context. Context-only conditions
+can remove properties/actions from the definition. Row-dependent conditions stay
+server-side; conditionally present properties become optional in the public schema.
 
-`lookup` accepts explicitly typed input/context object-reference paths, including
-paths through optional structs. Use `related` for declared row relationships;
-scalar foreign-key properties are not implicitly object references. Unsupported
-lookup forms fail semantic validation before reading data.
+Visible definitions still carry names, labels and metadata. Valid projected action
+logic/defaults can also be sent for local evaluation; computations incompatible
+with the public definition are omitted. This projection does not scrub arbitrary
+provider metadata or documentation. Remove private annotations/provider details
+when constructing the form IR if they should not be public.
 
-A Gateway can replace an upstream ontology's context and policy with a token-specific
-contract, such as `{ approval }`. A cached proxy can share a trusted provider cache;
-policy enforcement wraps the final read path, including cache hits. Each caller gets
-its own bound server view.
+Treat the declared context as public: a bound approval ID is included in the token
+example. Keep bearer tokens, token secrets and service credentials outside it.
 
-## Schema changes
-
-Invalid policy references, bindings, or public schemas stop server construction.
-When replacing an upstream context makes an optional client default or optimistic
-program incompatible, projection omits it and logs a warning with the action and
-validation paths. It omits the whole prediction to avoid displaying partial actions.
-Warnings do not contain bound context values. Server execution remains available
-when the resulting public contract is valid.
-
-Rebuild and validate a projection against current provider metadata when schemas
-change. Automatic schema migrations and metadata-driven rebinding are not provided.
-Projected endpoints expose stateless queries/actions and guarded attachment reads;
-raw journals and speculative replica-state access require a trusted deployment.
+Read [Authorization boundaries](/docs/authorization-boundaries) for receipt
+visibility, error projection, watches, and privileged diagnostics.

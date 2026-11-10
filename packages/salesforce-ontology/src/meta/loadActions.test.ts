@@ -1,7 +1,7 @@
 import { createMetaLiveOntology } from "@party-stack/ontology";
 import { eq, ilike, queryOnce } from "@tanstack/db";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { createSalesforceMetaOntologyBackendAdapter } from "./createSalesforceMetaOntologyBackendAdapter.js";
+import { makeSalesforceMetadataBackend } from "./backend.js";
 
 describe("Salesforce ActionType metadata queries", () => {
     it("describes an exact action without listing every action", async () => {
@@ -14,15 +14,14 @@ describe("Salesforce ActionType metadata queries", () => {
         });
         const describeStandardAction = vi.fn().mockRejectedValue(new Error("Not a standard action"));
         const meta = await createMetaLiveOntology({
-            backend: () =>
-                createSalesforceMetaOntologyBackendAdapter({
-                    client: {
-                        listFlowActions,
-                        listStandardActions,
-                        describeFlowAction,
-                        describeStandardAction,
-                    } as never,
-                }),
+            backend: makeSalesforceMetadataBackend({
+                client: {
+                    listFlowActions,
+                    listStandardActions,
+                    describeFlowAction,
+                    describeStandardAction,
+                } as never,
+            }),
         });
 
         try {
@@ -80,17 +79,16 @@ describe("Salesforce ActionType metadata queries", () => {
         const describeFlowAction = vi.fn();
         const describeStandardAction = vi.fn();
         const meta = await createMetaLiveOntology({
-            backend: () =>
-                createSalesforceMetaOntologyBackendAdapter({
-                    client: {
-                        listFlowActions,
-                        listStandardActions,
-                        describeFlowActions,
-                        describeStandardActions,
-                        describeFlowAction,
-                        describeStandardAction,
-                    } as never,
-                }),
+            backend: makeSalesforceMetadataBackend({
+                client: {
+                    listFlowActions,
+                    listStandardActions,
+                    describeFlowActions,
+                    describeStandardActions,
+                    describeFlowAction,
+                    describeStandardAction,
+                } as never,
+            }),
         });
 
         try {
@@ -110,7 +108,12 @@ describe("Salesforce ActionType metadata queries", () => {
                     parameters: [{ name: "company" }],
                 },
             ]);
-            expect(describeFlowActions).toHaveBeenCalledExactlyOnceWith(["Create_Lead"]);
+            // TanStack can widen the ordered window to confirm that it is exhausted.
+            // Every request must still batch only names matching the predicate.
+            expect(describeFlowActions).toHaveBeenCalledWith(["Create_Lead"]);
+            for (const args of describeFlowActions.mock.calls) {
+                expect(args).toEqual([["Create_Lead"]]);
+            }
             expect(describeStandardActions).not.toHaveBeenCalled();
             expect(describeFlowAction).not.toHaveBeenCalled();
             expect(describeStandardAction).not.toHaveBeenCalled();
@@ -146,20 +149,19 @@ describe("Salesforce ActionType metadata queries", () => {
             ],
         });
         const meta = await createMetaLiveOntology({
-            backend: () =>
-                createSalesforceMetaOntologyBackendAdapter({
-                    client: {
-                        describeFlowAction,
-                        describeStandardAction,
-                        describeSObject,
-                    } as never,
-                    crudActionTypes: [
-                        {
-                            objectType: "Task",
-                            operations: ["create"],
-                        },
-                    ],
-                }),
+            backend: makeSalesforceMetadataBackend({
+                client: {
+                    describeFlowAction,
+                    describeStandardAction,
+                    describeSObject,
+                } as never,
+                crudActionTypes: [
+                    {
+                        objectType: "Task",
+                        operations: ["create"],
+                    },
+                ],
+            }),
         });
 
         try {

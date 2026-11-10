@@ -1,26 +1,10 @@
 import { pull as pullNative } from "@party-stack/ontology-backend/meta";
 import { Effect } from "effect";
-import type { LiveOntology } from "../live/LiveOntology.js";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { PullOptions } from "@party-stack/ontology-backend/meta";
-import type { MetaOntology } from "@party-stack/ontology-spec/meta";
 export type { PullOptions } from "@party-stack/ontology-backend/meta";
 
-/** Promise facade over native metadata loading. */
-export async function pull(ontology: LiveOntology<MetaOntology>, options: PullOptions) {
-    const replica = ontology.storage;
-    if (!replica) throw new Error("Metadata pull requires a native replica.");
-    return Effect.runPromise(
-        pullNative(
-            {
-                loadSubset: (subset) =>
-                    Effect.scoped(
-                        Effect.gen(function* () {
-                            yield* replica.demand.acquire(subset);
-                            return { rows: yield* replica.readSubset(subset), complete: true };
-                        })
-                    ),
-            },
-            options
-        )
-    );
+/** Promise facade over native metadata queries; no replica or UI collections are acquired. */
+export async function pull(backend: Pick<OntologyBackendService, "query">, options: PullOptions) {
+    return Effect.runPromise(pullNative(backend, options));
 }

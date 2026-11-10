@@ -1,4 +1,5 @@
 import { ActionTypesV2 } from "@osdk/foundry.ontologies";
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import {
     BackendError,
     classifyBackendFailure,
@@ -8,45 +9,26 @@ import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend
 import metaOntology from "@party-stack/ontology-spec/meta";
 import { isField } from "@party-stack/ontology-storage/tables";
 import { Effect, Redacted, Schema } from "effect";
+import { foundryContext } from "../context.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import { convertFoundryMetaActionType } from "./convertMetaActionType.js";
 import { convertFoundryMetaQueryFunctionType } from "./convertMetaQueryFunctionType.js";
 import { loadActionTypesFullMetadata } from "./loadActions.js";
 import { loadActionTypeOmsMetadata } from "./loadActionTypeOmsMetadata.js";
-import { loadFoundryMetaOntology } from "./loadEntities.js";
+import {
+    loadFoundryMetaLinkTypes,
+    loadFoundryMetaObjectTypes,
+    loadFoundryMetaValueTypes,
+} from "./loadEntities.js";
 import { getQueryFunctionTypes, listQueryFunctionTypes } from "./loadQueryFunctions.js";
+import { planMetaLookup } from "./planMetaLookup.js";
 import type { ActionTypeSearchJsonQueryV2 } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { Predicate } from "@party-stack/ontology-storage";
 
 const failure = (operation: string, cause: unknown) => classifyBackendFailure(operation, cause);
-// Candidate selection is deliberately a superset. Residual predicates are evaluated on decoded metadata.
-const names = (predicate?: Predicate): string[] | undefined => {
-    if (!predicate) return;
-    if (predicate.op === "eq") {
-        const value =
-            isField(predicate.left) && predicate.left.path.join(".") === "name"
-                ? predicate.right
-                : isField(predicate.right) && predicate.right.path.join(".") === "name"
-                  ? predicate.left
-                  : undefined;
-        return typeof value === "string" ? [value] : undefined;
-    }
-    if (
-        predicate.op === "in" &&
-        isField(predicate.left) &&
-        predicate.left.path.join(".") === "name" &&
-        predicate.values.every((value) => typeof value === "string")
-    )
-        return [...predicate.values] as string[];
-    if (predicate.op === "and") return predicate.predicates.map(names).find((value) => value !== undefined);
-    if (predicate.op === "or") {
-        const children = predicate.predicates.map(names);
-        if (children.every((value) => value !== undefined)) return [...new Set(children.flat())];
-    }
-};
 function actionCandidates(predicate?: Predicate): ActionTypeSearchJsonQueryV2 | undefined {
     if (!predicate) return;
     if (predicate.op === "and" || predicate.op === "or") {
@@ -96,7 +78,8 @@ export function makeFoundryMetadataBackend(options: {
                 retryable: false,
             })
         );
-    return {
+    return makeOntologyBackend({
+        ir: metaOntology,
         name: "foundry-metadata",
         sourceId: `foundry-metadata:${options.client.baseUrl}:${options.client.ontologyRid}`,
         supportsIdempotency: false,
@@ -116,10 +99,10 @@ export function makeFoundryMetadataBackend(options: {
             if (subset.objectType === "Ontology")
                 return {
                     complete: true,
-                    rows: [{ key: "ontology", value: { id: "ontology" } }],
+                    rows: [{ key: "ontology", value: { id: "ontology", context: foundryContext } }],
                     fulfilledSubset: objectSubset("Ontology"),
                 };
-            const candidates = names(subset.query?.where);
+            const candidates = planMetaLookup(subset.query?.where, { name: "name" })?.values;
             const values = yield* Effect.tryPromise({
                 try: async (signal) => {
                     const client: OntologyClient = {
@@ -162,23 +145,18 @@ export function makeFoundryMetadataBackend(options: {
                             : await listQueryFunctionTypes({ client });
                         return types.map(convertFoundryMetaQueryFunctionType);
                     }
-                    const metadata = await loadFoundryMetaOntology(client);
                     return subset.objectType === "ObjectType"
-                        ? metadata.objectTypes
+                        ? loadFoundryMetaObjectTypes(client, subset.query?.where)
                         : subset.objectType === "ValueType"
-                          ? metadata.valueTypes
-                          : metadata.linkTypes;
+                          ? loadFoundryMetaValueTypes(client, subset.query?.where)
+                          : loadFoundryMetaLinkTypes(client, subset.query?.where);
                 },
                 catch: (cause) => failure("metadata.load", cause),
             });
             return {
                 complete: true,
                 fulfilledSubset: objectSubset(subset.objectType, {
-                    where:
-                        candidates?.length !== 0 &&
-                        ["ObjectType", "LinkType", "ValueType"].includes(subset.objectType)
-                            ? undefined
-                            : subset.query?.where,
+                    where: subset.query?.where,
                 }),
                 fetchedRows: values.length,
                 rows: yield* Effect.try({
@@ -200,5 +178,7 @@ export function makeFoundryMetadataBackend(options: {
                 }),
             };
         }),
-    };
+    });
 }
+
+export type FoundryMetadataBackendOptions = Parameters<typeof makeFoundryMetadataBackend>[0];

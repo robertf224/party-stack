@@ -10,7 +10,7 @@ import { classifySqliteError, SqlError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 import { makeBytes } from "./sqlite-bytes.js";
 import * as SqlTables from "./tables.js";
-import type { Cause } from "effect";
+import type { Cause, Scope } from "effect";
 import type { Connection } from "effect/sql/SqlConnection";
 
 export interface SQLiteStatement {
@@ -124,25 +124,49 @@ export const layer = (database: SQLiteDatabase) =>
 /** SQLite byte storage is replaceable independently of Tables. */
 export { makeBytes } from "./sqlite-bytes.js";
 
-/** Convenience composition; clients can also supply SqlClient, Tables and BlobBytes Layers separately. */
-export const makeStorage = Effect.fn("SQLiteStorage.make")(function* (
-    database: SQLiteDatabase,
-    options: {
-        readonly namespace: string;
-        readonly bytes?: BlobBytesService;
-        readonly mode?: "replica" | "authoritative";
-        readonly ownerLiveness?: Pick<BlobStorageOptions, "registerOwner" | "isOwnerAlive">;
-    }
-) {
-    const sql = yield* makeClient(database).pipe(Effect.provide(Reactivity.layer));
-    const tables = yield* SqlTables.make().pipe(Effect.provideService(SqlClient.SqlClient, sql));
+export interface SQLiteStorageOptions {
+    readonly namespace: string;
+    readonly bytes?: BlobBytesService;
+    /** Attachment byte retention only. Replica caches can evict downloadable copies;
+     * authoritative storage preserves referenced bytes. Defaults to cache.
+     */
+    readonly attachmentBytesRetentionMode?: BlobStorageOptions["attachmentBytesRetentionMode"];
+    readonly ownerLiveness?: Pick<BlobStorageOptions, "registerOwner" | "isOwnerAlive">;
+}
+const makeStorageFromClient = Effect.fn("SQLiteStorage.make")(function* (options: SQLiteStorageOptions) {
+    const sql = yield* SqlClient.SqlClient;
+    const tables = yield* SqlTables.make();
     const bytes = options.bytes ?? (yield* makeBytes(sql));
     const blobs = yield* makeBlobStorage({
         namespace: options.namespace,
-        mode: options.mode,
+        attachmentBytesRetentionMode: options.attachmentBytesRetentionMode,
         tables,
         bytes,
         ...options.ownerLiveness,
     });
-    return { tables, blobs };
+    return { namespace: options.namespace, tables, blobs };
 });
+
+/** Compose storage using an Effect SQL SQLite client, or adapt an existing platform database. */
+export function makeStorage(options: SQLiteStorageOptions): ReturnType<typeof makeStorageFromClient>;
+export function makeStorage(
+    database: SQLiteDatabase,
+    options: SQLiteStorageOptions
+): Effect.Effect<
+    Omit<Effect.Success<ReturnType<typeof makeStorageFromClient>>, "namespace">,
+    Effect.Error<ReturnType<typeof makeStorageFromClient>> | SqlError,
+    Scope.Scope
+>;
+export function makeStorage(
+    databaseOrOptions: SQLiteDatabase | SQLiteStorageOptions,
+    options?: SQLiteStorageOptions
+) {
+    if (!options) return makeStorageFromClient(databaseOrOptions as SQLiteStorageOptions);
+    return makeClient(databaseOrOptions as SQLiteDatabase).pipe(
+        Effect.provide(Reactivity.layer),
+        Effect.flatMap((sql) =>
+            makeStorageFromClient(options).pipe(Effect.provideService(SqlClient.SqlClient, sql))
+        ),
+        Effect.map(({ tables, blobs }) => ({ tables, blobs }))
+    );
+}

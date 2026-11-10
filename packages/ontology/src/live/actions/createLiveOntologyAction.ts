@@ -1,6 +1,6 @@
-import type { LiveOntologyWriteMode, LiveOntologyWriteVisibility } from "../LiveOntology.js";
-import type { OntologyApplyActionResult } from "../OntologyBackendAdapter.js";
+import type { LiveOntologyWriteVisibility } from "../LiveOntology.js";
 import type { OntologyActionRequest } from "../outbox/types.js";
+import type { OntologyApplyActionResult } from "./types.js";
 import type { ActionRequest } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { Uncertain } from "@party-stack/ontology-spec/utils";
@@ -11,10 +11,6 @@ export interface LiveOntologyActionOptions {
     idempotencyKey?: string;
     /** Portable inputs supplied by a forwarding ontology. */
     replay?: NonNullable<ActionRequest["replay"]>;
-    /** Direct requires connectivity before admission; outbox permits offline queueing.
-     * Both modes return a Promise of authoritative confirmation and local reconciliation.
-     */
-    mode?: LiveOntologyWriteMode;
     visibility?: LiveOntologyWriteVisibility;
 }
 
@@ -25,9 +21,12 @@ export interface LiveOntologyActionDraftValidationOptions<Parameters extends Rec
 export type LiveOntologyAction<
     Parameters extends Record<string, unknown> = Record<string, unknown>,
     Return = unknown,
+    Input extends Record<string, unknown> = Parameters,
 > = {
-    /** Optimistic visibility is independent of waiting: the Promise resolves after confirmation. */
-    (parameters: Parameters, options?: LiveOntologyActionOptions): Promise<OntologyApplyActionResult<Return>>;
+    /** Queue in the replica's outbox, including offline. Visibility controls prediction;
+     * the Promise resolves after authoritative confirmation and local reconciliation.
+     */
+    (parameters: Input, options?: LiveOntologyActionOptions): Promise<OntologyApplyActionResult<Return>>;
     resolveParameters(parameters: Partial<Parameters>): Promise<Partial<Parameters>>;
     validate(parameters: Parameters): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>>;
     validateDraft(

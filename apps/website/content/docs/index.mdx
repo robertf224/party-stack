@@ -1,45 +1,39 @@
 ---
-title: Party Stack
-description: An ontology-aware stack for local interaction and connected data.
+title: Overview
+description: Build apps that query local data and synchronize actions with a backend.
 ---
 
-Party Stack brings together domain definitions, storage, optimistic actions,
-replication, and application collections. Its infrastructure uses Effect for
-services, errors, and scoped lifetimes. TanStack DB is an application query layer
-over the replica.
+import { ReplicaOverview } from "../../src/components/replica-overview";
 
-This project is in **early development**. The documentation describes the
-implemented APIs on the current migration branch.
+Party Stack brings reactive queries, optimistic actions, offline data, files,
+authentication, and authorization into one TypeScript framework. Connect an
+existing system or host your own backend.
 
-## Start with the concepts
+Each replica stores the parent data it needs, pending actions, and their predicted
+changes. Query demand determines what it loads from its parent.
 
-- [Installation and setup](/docs/getting-started): Vite/TanStack Start, SharedWorker,
-  and native platform composition.
-- [Architecture](/docs/architecture): what the backend, replica, and server each own.
-- [Browser runtimes](/docs/runtimes): persistent workers and memory tab replicas.
-- [Storage and attachments](/docs/storage): transactions, byte streams, and retention.
+<ReplicaOverview />
 
-## Follow a write
+## Get an app running
 
-1. An application applies an action, such as changing an issue's status.
-2. The local replica records it in its outbox and computes an optimistic overlay.
-3. The replica forwards the action upstream. A persistent intermediate can accept
-   it durably before the authoritative backend finishes.
-4. An authoritative result is reconciled with the base rows. Removing the settled
-   local prediction and publishing the new view happen transactionally.
+| You want to…                          | Start here                                 |
+| ------------------------------------- | ------------------------------------------ |
+| Try the smallest example              | [Get started](/docs/getting-started)       |
+| Build a TanStack Start app            | [TanStack Start](/docs/tanstack-start)     |
+| Sign into Foundry and switch accounts | [Foundry](/docs/foundry)                   |
+| Store your own objects in SQLite      | [Run a server](/docs/server)               |
+| Host a project on Cloudflare          | [Durable Objects](/docs/durable-objects)   |
+| Build a mobile object browser         | [Expo](/docs/expo)                         |
+| Connect another API                   | [Build an adapter](/docs/backend-adapters) |
 
-The normal UI can respond optimistically while the action's completion Promise
-waits for confirmation. Offline action replay reads persisted data; replay does
-not trigger remote query loads.
+## Build the UI
 
-## Effect in this stack
+- [Queries](/docs/queries): render reactive collections.
+- [Actions](/docs/actions): submit changes and handle failures.
+- [Attachments](/docs/attachments): attach files, display images, and read metadata.
+- [Encrypted values](/docs/encrypted-values): decrypt properties and choose whether to cache them.
+- [Offline data](/docs/offline): keep a project available and choose cache limits.
+- [Authorization](/docs/authorization): scope rows, properties, and actions to a caller.
 
-A **service** is an interface available through an Effect context, such as Runtime.
-A **Layer** constructs services and supplies their dependencies. A **Scope** owns
-their lifetime: closing it interrupts fibers and releases acquired resources.
-
-See Effect's guides to [services](https://effect.website/docs/v4/requirements-management/services/),
-[layers](https://effect.website/docs/v4/requirements-management/layers/), and
-[scoped resources](https://effect.website/docs/v4/resource-management/scope/).
-The higher application API can expose ordinary collections and Promises while
-the infrastructure uses scoped Effects underneath.
+For the conceptual model, [step through an issue update](/docs/architecture).
+For a complete application, browse [issue-tracker](https://github.com/robertf224/party-stack/tree/codex/effect-ontology-migration/apps/issue-tracker).

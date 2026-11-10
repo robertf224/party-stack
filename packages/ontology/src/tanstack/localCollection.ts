@@ -16,7 +16,6 @@ export function createEffectLocalCollection<A extends object, K extends string |
     const managed = { runPromise: Effect.runPromiseWith(Context.make(Runtime, options.runtime)) };
     let closed = false;
     let collection: Collection<A, K>;
-    let scopeClosing = false;
     const initialized = managed.runPromise(
         Effect.gen(function* () {
             const scope = yield* Scope.fork(options.scope);
@@ -24,8 +23,8 @@ export function createEffectLocalCollection<A extends object, K extends string |
                 scope,
                 Effect.promise(async () => {
                     if (closed) return;
-                    scopeClosing = true;
-                    await collection.cleanup();
+                    closed = true;
+                    await collection.cleanup({ dependents: true });
                 })
             );
             const config = yield* Scope.provide(localCollectionOptions<A, K>(options), scope);
@@ -46,32 +45,33 @@ export function createEffectLocalCollection<A extends object, K extends string |
         onUpdate: async (args) => (await initialized).config.onUpdate!(args),
         onDelete: async (args) => (await initialized).config.onDelete!(args),
         sync: {
+            rowUpdateMode: "full",
             sync: (args) => {
+                let alive = true;
                 const started = initialized.then(({ config }) => {
-                    if (closed) return undefined;
+                    if (closed || !alive) return undefined;
                     return config.sync.sync(args);
                 });
-                void started.catch(args.markError);
+                void started.catch((error) => {
+                    if (alive && !closed) args.fail(error);
+                });
                 return {
                     loadSubset: async (subset) => {
                         const sync = await started;
                         if (sync && typeof sync === "object") await sync.loadSubset?.(subset);
                     },
                     unloadSubset: (subset) => {
-                        void started.then((sync) => {
-                            if (sync && typeof sync === "object") sync.unloadSubset?.(subset);
-                        });
+                        void started
+                            .then((sync) => {
+                                if (sync && typeof sync === "object") sync.unloadSubset?.(subset);
+                            })
+                            .catch(() => undefined);
                     },
                     cleanup: async () => {
-                        closed = true;
-                        try {
-                            const sync = await started;
-                            if (typeof sync === "function") sync();
-                            else await sync?.cleanup?.();
-                        } finally {
-                            const state = await initialized;
-                            if (!scopeClosing) await Effect.runPromise(Scope.close(state.scope, Exit.void));
-                        }
+                        alive = false;
+                        const sync = await started;
+                        if (typeof sync === "function") await sync();
+                        else await sync?.cleanup?.();
                     },
                 };
             },

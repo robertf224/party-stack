@@ -1,66 +1,76 @@
 /** Optional in-memory backend. Import explicitly; the main/SQL entry points do not load it. */
-import { Effect, Exit, Layer, Semaphore, Stream } from "effect";
+import { Effect, Equal, Exit, HashMap, HashSet, Layer, Option, Order, Semaphore, Stream } from "effect";
 import { INDEX_BACKFILL_BATCH_SIZE } from "../driver/index.js";
 import { transactionError, type OntologyStorageError } from "../errors.js";
 import { queryRows } from "../planner/index.js";
 import { makeTables, Tables } from "../tables.js";
+import * as BTree from "./btree.js";
 import type { DriverTransaction, Entry, Range, StoredIndex, StoredRow } from "../driver/index.js";
 
-const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-const bucketKey = (table: string, index: string) => JSON.stringify([table, index]);
-function position(entries: readonly Entry[], value: string, key: string, exclusive: boolean): number {
-    let lo = 0,
-        hi = entries.length;
-    while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        const entry = entries[mid]!;
-        const cmp = compare(entry.value, value) || compare(entry.key, key);
-        if (cmp < 0 || (exclusive && cmp === 0)) lo = mid + 1;
-        else hi = mid;
-    }
-    return lo;
+const entryOrder = Order.make<Entry>((a, b) => Order.String(a.value, b.value) || Order.String(a.key, b.key));
+const get = <K, V>(map: HashMap.HashMap<K, V>, key: K): V | undefined =>
+    Option.getOrUndefined(HashMap.get(map, key));
+// These freshly allocated containers are implementation roots, not user values.
+// Structural equality would recursively hash their entire trees on each update.
+const setRoot = <K, V extends object>(map: HashMap.HashMap<K, V>, key: K, value: V) =>
+    HashMap.set(map, key, Equal.byReferenceUnsafe(value));
+interface Rows {
+    readonly byKey: HashMap.HashMap<string, StoredRow>;
+    readonly keys: BTree.BTree<string>;
 }
-function window(entries: readonly Entry[], range: Range): [number, number] {
+interface Index {
+    readonly sorted: BTree.BTree<Entry>;
+    readonly byRow: HashMap.HashMap<string, Memberships>;
+}
+interface TableIndexes {
+    readonly byName: HashMap.HashMap<string, Index>;
+}
+type Memberships = string | HashSet.HashSet<string>;
+const addMembership = (previous: Memberships | undefined, value: string): Memberships =>
+    previous === undefined
+        ? value
+        : typeof previous === "string"
+          ? previous === value
+              ? previous
+              : HashSet.make(previous, value)
+          : HashSet.add(previous, value);
+interface State {
+    rows: HashMap.HashMap<string, Rows>;
+    definitions: Map<string, Map<string, StoredIndex>>;
+    entries: HashMap.HashMap<string, TableIndexes>;
+}
+function window(entries: BTree.BTree<Entry>, range: Range): [number, number] {
     let start =
         range.lower === undefined
             ? 0
-            : position(entries, range.lower, range.lowerOpen ? "\uffff" : "", !!range.lowerOpen);
+            : BTree.rank(entries, (entry) => Order.String(entry.value, range.lower!), !!range.lowerOpen);
     let end =
         range.upper === undefined
-            ? entries.length
-            : position(entries, range.upper, range.upperOpen ? "" : "\uffff", !range.upperOpen);
+            ? BTree.size(entries)
+            : BTree.rank(entries, (entry) => Order.String(entry.value, range.upper!), !range.upperOpen);
     if (range.after) {
-        if (range.direction === "desc")
-            end = Math.min(end, position(entries, range.after.value, range.after.key, false));
-        else start = Math.max(start, position(entries, range.after.value, range.after.key, true));
+        const after = range.after;
+        const compare = (entry: Entry) =>
+            Order.String(entry.value, after.value) || Order.String(entry.key, after.key);
+        if (range.direction === "desc") end = Math.min(end, BTree.rank(entries, compare));
+        else start = Math.max(start, BTree.rank(entries, compare, true));
     }
     return [start, Math.max(start, end)];
-}
-interface State {
-    rows: Map<string, Map<string, StoredRow>>;
-    definitions: Map<string, Map<string, StoredIndex>>;
-    entries: Map<string, Entry[]>;
 }
 /** Each construction owns an independent database, retained by the service instance. */
 export const make = () =>
     Effect.sync(() => {
-        let state: State = { rows: new Map(), definitions: new Map(), entries: new Map() };
+        let state: State = { rows: HashMap.empty(), definitions: new Map(), entries: HashMap.empty() };
         const gate = Semaphore.makeUnsafe(1);
         return makeTables({
             transaction: (mode, body) =>
                 gate.withPermits(1)(
                     Effect.suspend(() => {
-                        const working: State =
-                            mode === "readonly"
-                                ? state
-                                : {
-                                      rows: new Map(state.rows),
-                                      definitions: new Map(state.definitions),
-                                      entries: new Map(state.entries),
-                                  };
-                        const changedRows = new Set<string>(),
-                            changedDefinitions = new Set<string>(),
-                            changedEntries = new Set<string>();
+                        // The working roots share immutable paths. Even a one-row edit never
+                        // copies a table or sorted index; aborted roots are simply discarded.
+                        const working: State = { ...state };
+                        const changedDefinitions = new Set<string>();
+                        let definitionsCopied = false;
                         let active = true;
                         const run = <A>(write: boolean, f: () => A): Effect.Effect<A, OntologyStorageError> =>
                             Effect.suspend(() => {
@@ -70,119 +80,156 @@ export const make = () =>
                                     return Effect.fail(transactionError("ReadOnly", "Read-only transaction"));
                                 return Effect.sync(f);
                             });
-                        const rowsForWrite = (table: string) => {
-                            if (!changedRows.has(table)) {
-                                working.rows.set(table, new Map(working.rows.get(table)));
-                                changedRows.add(table);
-                            }
-                            return working.rows.get(table)!;
-                        };
                         const definitionsForWrite = (table: string) => {
+                            if (!definitionsCopied) {
+                                working.definitions = new Map(working.definitions);
+                                definitionsCopied = true;
+                            }
                             if (!changedDefinitions.has(table)) {
                                 working.definitions.set(table, new Map(working.definitions.get(table)));
                                 changedDefinitions.add(table);
                             }
                             return working.definitions.get(table)!;
                         };
-                        const entriesForWrite = (bucket: string) => {
-                            if (!changedEntries.has(bucket)) {
-                                working.entries.set(bucket, [...(working.entries.get(bucket) ?? [])]);
-                                changedEntries.add(bucket);
-                            }
-                            return working.entries.get(bucket)!;
+                        const index = (table: string, name: string) => {
+                            const indexes = get(working.entries, table);
+                            return indexes ? get(indexes.byName, name) : undefined;
+                        };
+                        const putIndex = (table: string, name: string, value: Index | undefined) => {
+                            const indexes =
+                                get(working.entries, table)?.byName ?? HashMap.empty<string, Index>();
+                            const updated = value
+                                ? setRoot(indexes, name, value)
+                                : HashMap.remove(indexes, name);
+                            working.entries = HashMap.size(updated)
+                                ? setRoot(working.entries, table, { byName: updated })
+                                : HashMap.remove(working.entries, table);
                         };
                         const raw: DriverTransaction = {
-                            query: (table, indexes, query) =>
-                                queryRows(raw, table, indexes, query).pipe(
-                                    Effect.map((rows) => ({ rows, complete: true }))
-                                ),
-                            get: (table, key) => run(false, () => working.rows.get(table)?.get(key)),
+                            query: (table, indexes, query) => queryRows(raw, table, indexes, query),
+                            get: (table, key) =>
+                                run(false, () => {
+                                    const rows = get(working.rows, table);
+                                    return rows ? get(rows.byKey, key) : undefined;
+                                }),
+                            keys: (table, options) =>
+                                run(false, () => {
+                                    const keys = get(working.rows, table)?.keys;
+                                    const start =
+                                        options.after === undefined
+                                            ? 0
+                                            : BTree.rank(
+                                                  keys,
+                                                  (key) => Order.String(key, options.after!),
+                                                  true
+                                              );
+                                    return BTree.slice(keys, start, BTree.size(keys), false, options.limit);
+                                }),
                             rows: (table) =>
-                                run(false, () =>
-                                    [...(working.rows.get(table)?.values() ?? [])].sort((a, b) =>
-                                        compare(a.key, b.key)
-                                    )
-                                ),
+                                run(false, () => {
+                                    const rows = get(working.rows, table);
+                                    return rows
+                                        ? Array.from(BTree.values(rows.keys), (key) => get(rows.byKey, key)!)
+                                        : [];
+                                }),
                             scanRows: (table) =>
                                 Stream.unwrap(
-                                    run(false, () =>
-                                        Stream.fromIterable(working.rows.get(table)?.values() ?? [], {
+                                    run(false, () => {
+                                        const rows = get(working.rows, table);
+                                        return Stream.fromIterable(rows ? BTree.values(rows.keys) : [], {
                                             chunkSize: INDEX_BACKFILL_BATCH_SIZE,
-                                        })
-                                    )
+                                        }).pipe(Stream.map((key) => get(rows!.byKey, key)!));
+                                    })
                                 ).pipe(Stream.mapEffect((row) => run(false, () => row))),
                             put: (row) =>
                                 run(true, () => {
-                                    rowsForWrite(row.table).set(row.key, row);
+                                    const previous = get(working.rows, row.table);
+                                    const byKey = previous?.byKey ?? HashMap.empty<string, StoredRow>();
+                                    working.rows = setRoot(working.rows, row.table, {
+                                        byKey: HashMap.set(byKey, row.key, row),
+                                        keys: HashMap.has(byKey, row.key)
+                                            ? previous!.keys
+                                            : BTree.set(previous?.keys, row.key, Order.String),
+                                    });
                                 }),
                             delete: (table, key) =>
                                 run(true, () => {
-                                    rowsForWrite(table).delete(key);
+                                    const rows = get(working.rows, table);
+                                    if (!rows || !HashMap.has(rows.byKey, key)) return;
+                                    const byKey = HashMap.remove(rows.byKey, key);
+                                    working.rows = HashMap.size(byKey)
+                                        ? setRoot(working.rows, table, {
+                                              byKey,
+                                              keys: BTree.remove(rows.keys, key, Order.String),
+                                          })
+                                        : HashMap.remove(working.rows, table);
                                 }),
                             clear: (table) =>
                                 run(true, () => {
-                                    working.rows.set(table, new Map());
-                                    changedRows.add(table);
-                                    for (const [bucket, entries] of working.entries)
-                                        if (entries[0]?.table === table) {
-                                            working.entries.set(bucket, []);
-                                            changedEntries.add(bucket);
-                                        }
+                                    working.rows = HashMap.remove(working.rows, table);
+                                    working.entries = HashMap.remove(working.entries, table);
                                 }),
                             indexes: (table) =>
                                 run(false, () => [...(working.definitions.get(table)?.values() ?? [])]),
-                            putIndex: (index) =>
+                            putIndex: (definition) =>
                                 run(true, () => {
-                                    definitionsForWrite(index.table).set(index.name, index);
+                                    definitionsForWrite(definition.table).set(definition.name, definition);
                                 }),
                             putEntry: (entry) =>
                                 run(true, () => {
-                                    const entries = entriesForWrite(bucketKey(entry.table, entry.index));
-                                    const at = position(entries, entry.value, entry.key, false);
-                                    if (entries[at]?.value === entry.value && entries[at]?.key === entry.key)
-                                        entries[at] = entry;
-                                    else entries.splice(at, 0, entry);
+                                    const previous = index(entry.table, entry.index);
+                                    const byRow = previous?.byRow ?? HashMap.empty<string, Memberships>();
+                                    const values = get(byRow, entry.key);
+                                    putIndex(entry.table, entry.index, {
+                                        sorted: BTree.set(previous?.sorted, entry, entryOrder),
+                                        byRow: HashMap.set(
+                                            byRow,
+                                            entry.key,
+                                            addMembership(values, entry.value)
+                                        ),
+                                    });
                                 }),
-                            deleteEntries: (table, index, key) =>
+                            deleteEntries: (table, name, key) =>
                                 run(true, () => {
-                                    const bucket = bucketKey(table, index);
-                                    const remaining =
-                                        key === undefined
-                                            ? []
-                                            : (working.entries.get(bucket) ?? []).filter(
-                                                  (e) => e.key !== key
-                                              );
-                                    if (remaining.length) {
-                                        working.entries.set(bucket, remaining);
-                                        changedEntries.add(bucket);
-                                    } else {
-                                        working.entries.delete(bucket);
-                                        changedEntries.delete(bucket);
+                                    const previous = index(table, name);
+                                    if (!previous) return;
+                                    if (key === undefined) {
+                                        putIndex(table, name, undefined);
+                                        return;
                                     }
-                                }),
-                            countEntries: (table, index, range = {}) =>
-                                run(false, () => {
-                                    const [start, end] = window(
-                                        working.entries.get(bucketKey(table, index)) ?? [],
-                                        range
+                                    const values = get(previous.byRow, key);
+                                    if (!values) return;
+                                    let sorted = previous.sorted;
+                                    for (const value of typeof values === "string" ? [values] : values)
+                                        sorted = BTree.remove(
+                                            sorted,
+                                            { table, index: name, value, key },
+                                            entryOrder
+                                        );
+                                    putIndex(
+                                        table,
+                                        name,
+                                        sorted
+                                            ? { sorted, byRow: HashMap.remove(previous.byRow, key) }
+                                            : undefined
                                     );
+                                }),
+                            countEntries: (table, name, range = {}) =>
+                                run(false, () => {
+                                    const [start, end] = window(index(table, name)?.sorted, range);
                                     return end - start;
                                 }),
-                            entries: (table, index, range = {}) =>
+                            entries: (table, name, range = {}) =>
                                 run(false, () => {
-                                    const source = working.entries.get(bucketKey(table, index)) ?? [];
-                                    const [start, end] = window(source, range);
-                                    return range.direction === "desc"
-                                        ? source
-                                              .slice(
-                                                  Math.max(start, end - (range.limit ?? source.length)),
-                                                  end
-                                              )
-                                              .reverse()
-                                        : source.slice(
-                                              start,
-                                              Math.min(end, start + (range.limit ?? source.length))
-                                          );
+                                    const sorted = index(table, name)?.sorted;
+                                    const [start, end] = window(sorted, range);
+                                    return BTree.slice(
+                                        sorted,
+                                        start,
+                                        end,
+                                        range.direction === "desc",
+                                        range.limit
+                                    );
                                 }),
                         };
                         return Effect.suspend(() => body(raw)).pipe(

@@ -1,267 +1,52 @@
 ---
-title: Installation and setup
-description: Choose a platform runtime, connect an ontology, and give it an application lifetime.
+title: Get started
+description: Open an ontology, query its objects, and submit an action.
 ---
 
-This guide targets the migration branch. Its new package APIs need to be released
-before these examples can be used against published packages. In this repository,
-add dependencies with `workspace:*` and run `pnpm install --filter your-app`.
+Try the [live todo playground](/#playground), or connect your own app below.
 
-## Choose your platform
+## Open an ontology
 
-| Environment               | Platform package                               | Local storage                                                                    |
-| ------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------- |
-| Browser tab or worker     | `@party-stack/web-runtime`                     | Memory tables/bytes, or IndexedDB tables and OPFS bytes.                         |
-| Node.js desktop/server    | `@party-stack/node-runtime`                    | SQLite tables and filesystem bytes.                                              |
-| Expo / React Native       | `@party-stack/expo-runtime`                    | Native SQLite, filesystem bytes, SecureStore keys.                               |
-| Cloudflare Durable Object | `@party-stack/durable-object-ontology-storage` | DO SQL and composed R2/SQL bytes; this is server storage, not a browser runtime. |
+This example connects to an existing server. The [server guide](/docs/server)
+creates the `Issue` type and `createIssue` action used here.
 
-Your ontology definitions and backend determine domain behavior. The platform
-runtime supplies storage, connectivity, keys, and scope-owned resources.
-TanStack DB collection integration is in `@party-stack/ontology/tanstack`;
-ordinary applications usually consume `ontology.objects` instead.
-
-## Web: Vite or TanStack Start
-
-Add these dependencies to your app: `@party-stack/ontology`,
-`@party-stack/ontology-server`, `@party-stack/web-runtime`,
-`@effect/platform-browser`, `effect`, `@tanstack/db`, and `@tanstack/react-db`.
-Use compatible TanStack DB versions from this workspace (`0.14.0` and React DB
-`0.5.9` at this checkpoint).
-
-The same client setup works in Vite and TanStack Start. In Start, call it only
-from client lifecycle code, such as a profile provider's effect. Do not construct
-a shared client at module scope during SSR or share one between server requests.
-
-### A memory tab connected to an ontology server
-
-```ts title="src/open-ontology.ts"
-import { createConnectedLiveOntology } from "@party-stack/ontology/client";
-import { connectOntologyHttp } from "@party-stack/ontology-server/rpc/http";
-import * as WebRuntime from "@party-stack/web-runtime";
-import { Effect } from "effect";
-import { FetchHttpClient } from "effect/http";
-import ir from "./ontology";
-
-export function openOntology() {
-    return createConnectedLiveOntology({
-        ir,
-        connection: connectOntologyHttp({
-            url: new URL("/api/ontology/rpc", window.location.origin).href,
-        }).pipe(Effect.provide(FetchHttpClient.layer)),
-        runtime: WebRuntime.layer({
-            storage: "memory",
-        }),
-        writes: { defaultMode: "outbox", defaultVisibility: "optimistic" },
-    });
-}
+```sh
+pnpm add @party-stack/ontology @tanstack/db@1.0.0-rc.1.4
 ```
 
-The endpoint must expose native ontology RPC and authorize this user. The client
-automatically uses the committed backend API for owned/proxy/cached-proxy servers,
-or the speculative state extension for an intermediate replica server. Both use
-normal local row and attachment storage.
-With memory-only storage, actions not yet durably accepted by a persistent parent
-are lost on page exit. Offline queuing needs a reachable persistent device owner
-or a directly persistent replica, rather than only a remote HTTP parent.
-
-### Add a persistent SharedWorker installation
-
-An installation worker owns Connect and all persistent ontology partitions for
-that installation. A page connects once, then opens memory views of its ontologies:
-
-```ts title="src/installation.ts"
-import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
-import { connectInstallationWorker } from "@party-stack/ontology/installation/worker";
-import { Effect, Exit, Scope } from "effect";
-
-const scope = Effect.runSync(Scope.make());
-const installation = await Effect.runPromise(
-    Scope.provide(
-        connectInstallationWorker({
-            runtime: WebRuntime.layer({ storage: "memory" }),
-            browserAuthentication: WebRuntime.createWebBrowserAuthentication(),
-            writes: { defaultMode: "outbox", defaultVisibility: "optimistic" },
-        }).pipe(
-            Effect.provide(
-                BrowserWorker.layer(
-                    () =>
-                        new SharedWorker(new URL("./installation.worker.ts", import.meta.url), {
-                            type: "module",
-                            name: installationId,
-                        })
-                )
-            )
-        ),
-        scope
-    )
-);
-const ontology = await installation.openOntology({ userId, ontologyId });
-// On application teardown:
-await Effect.runPromise(Scope.close(scope, Exit.void));
-```
-
-Keep `new URL(..., import.meta.url)` literal so Vite builds the worker entry.
-A worker name routes to an installation; it must not contain credentials and
-is not proof of authorization. This control plane is for trusted same-origin tabs.
-
-```ts title="src/installation.worker.ts"
-import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunner";
-import { makeOntologyBackendInstallation } from "@party-stack/ontology";
-import { serveInstallationWorker } from "@party-stack/ontology/installation/worker";
-import { Runtimes } from "@party-stack/runtime";
-import * as WebRuntime from "@party-stack/web-runtime";
-import { Effect, Fiber, Layer } from "effect";
-import { installationOptions } from "./installation-config";
-
-Effect.runFork(
-    Effect.scoped(
-        Effect.gen(function* () {
-            const platform = yield* Layer.build(
-                Runtimes.layer(WebRuntime.layer({ persistEncryptionKeys: true }))
-            );
-            const installation = yield* makeOntologyBackendInstallation(installationOptions).pipe(
-                Effect.provideContext(platform)
-            );
-            const server = yield* serveInstallationWorker({ installation }).pipe(
-                Effect.provide(BrowserWorkerRunner.layer)
-            );
-            yield* Fiber.join(server);
-        })
-    )
-);
-```
-
-`installationOptions` supplies the installation identity, connection adapter and
-ontology routes. The connection adapter requests Runtime/Scope through Effect.
-No page-side Connect manager or shared private tables are needed. The helper starts serving before installation acquisition finishes, so startup
-failures reach clients as typed errors. The worker multiplexes ontology endpoints and retains active endpoint Layers; idle endpoints
-close after `idleTimeToLive` (60 seconds by default).
-
-OAuth popup/callback presentation runs in the page; PKCE and token exchange run
-in the worker. A browser-only third-party sign-in widget can finish in the page
-and then call `installation.refreshConnections()` to ask the owner to restore
-its provider sessions. Connection records update through RPC subscriptions.
-
-Persistent browser mode requires IndexedDB and OPFS. Unsupported worker startup
-fails explicitly; it does not open the same persistent namespace in the page.
-`persistEncryptionKeys: true` is explicit consent to browser-local key persistence;
-see [platform runtimes](/docs/runtimes) for its implications.
-
-### Use the collections and close the profile
-
-Pass the acquired ontology to the application subtree:
-
-```tsx
-import { DbProvider, useLiveQuery } from "@tanstack/react-db";
-import type { LiveOntology } from "@party-stack/ontology";
-
-function OntologyApp({ ontology }: { ontology: LiveOntology }) {
-    return (
-        <DbProvider client={ontology.dbClient}>
-            <Issues ontology={ontology} />
-        </DbProvider>
-    );
-}
-
-function Issues({ ontology }: { ontology: LiveOntology }) {
-    const { data } = useLiveQuery((q) => q.from({ issue: ontology.objects.Issue! }));
-    return (
-        <ul>
-            {data.map((issue) => (
-                <li key={String(issue.id)}>{String(issue.title)}</li>
-            ))}
-        </ul>
-    );
-}
-```
-
-The example assumes your definition contains `Issue`. Close with
-`await ontology.cleanup()` when the owning profile/provider ends. If acquisition
-finishes after the component has unmounted, close that result immediately too.
-`destroy()` is explicit partition administration; it requests parent-local data
-deletion and should not be used for routine unmounts. A disconnected tab cleanup
-does not delete work already accepted by the worker.
-
-TanStack's current delayed observer disposal can still emit a cleanup warning
-when a source closes before a derived query is collected. This existing limitation
-is tracked separately; the scoped constructor does not claim to fix it.
-
-## Native Effect applications
-
-Use `connectLiveOntology` in a service Layer and provide a platform Layer. Keep
-the Layer's scope alive while the ontology is used:
+Party Stack currently targets this exact TanStack DB release. For the optional
+ordered-query and React Suspense fixes, see [installation instructions](/docs/installation#tanstack-db-fixes).
 
 ```ts
-import { connectLiveOntology } from "@party-stack/ontology/client";
-import { Context, Layer } from "effect";
-import type { LiveOntology } from "@party-stack/ontology";
+import { createLiveOntology } from "@party-stack/ontology";
+import { httpClient } from "@party-stack/ontology/http";
+import { queryOnce } from "@tanstack/db";
 
-class ApplicationOntology extends Context.Service<ApplicationOntology, LiveOntology>()("app/Ontology") {
-    static readonly layer = Layer.effect(
-        ApplicationOntology,
-        connectLiveOntology({
-            ir,
-            connection,
-        })
-    ).pipe(Layer.provide(platformLayer));
-}
+const ontology = await createLiveOntology({
+    client: httpClient("https://example.com/api/ontology/rpc"),
+    writes: { defaultVisibility: "optimistic" },
+});
+
+const issues = await queryOnce((q) => q.from({ issue: ontology.objects.Issue! }));
+
+await ontology.actions.createIssue!({ title: "Try Party Stack" });
+
+await ontology.cleanup();
 ```
 
-For Node, `platformLayer` can be
-`NodeRuntime.layer({ dataDirectory })`. For Expo it can be
-`ExpoRuntime.layer()`; configure the native dependencies and
-the package's Expo config plugin in your native app. Provide `RuntimePartition`
-with `{ owner, namespace }` separately. Both use the same ontology
-client composer. A server opening many users must isolate Runtime/source storage
-by principal, not share a single mutable namespace across them.
+The server supplies the definition and authenticated context. Objects are cached
+in memory by default. `cleanup()` closes this view and its subscriptions; it does
+not delete data on the server.
 
-`createConnectedLiveOntology` is the Promise bridge for frameworks; internally it
-owns a ManagedRuntime so platform resources outlive construction. Supplying a
-scoped Layer just to an Effect that immediately returns a facade would close its
-resources too early.
+Action calls predict the change locally and resolve when the authoritative result
+arrives. Catch a rejected call to display a failure. With generated types, you can
+use `ontology.objects.Issue` and `ontology.actions.createIssue` without the `!`.
 
-### Replica without the collection facade
+## Choose a guide
 
-Native Effect consumers can acquire `Replica` directly. The Layer takes its
-platform resources from `Runtime` and its acquired upstream from `ReplicaUpstream`:
+- [TanStack Start](/docs/tanstack-start): React queries, automatic cleanup, and a persistent SharedWorker.
+- [Run a server](/docs/server): define an ontology and store your own objects in SQLite.
+- [Foundry](/docs/foundry): sign in, switch accounts, and share persistent replicas across tabs.
 
-```ts
-import { Replica, ReplicaUpstream } from "@party-stack/ontology-replica";
-import { MemoryRuntime, RuntimePartition } from "@party-stack/runtime";
-import { Effect, Layer } from "effect";
-
-// backend is an already acquired OntologyBackendService in the enclosing Scope.
-const replicaLayer = Replica.layer({ ir }).pipe(
-    Layer.provide(Layer.succeed(ReplicaUpstream)({ kind: "committed", backend })),
-    Layer.provide(MemoryRuntime.layer),
-    Layer.provide(Layer.succeed(RuntimePartition)({ owner: userId, namespace: ontologyId }))
-);
-
-const read = Effect.scoped(
-    Effect.gen(function* () {
-        const replica = yield* Replica;
-        yield* replica.demand.acquire({
-            from: { source: { objectType: "Issue" }, binding: "issue" },
-        });
-        return yield* replica.get("Issue", issueId);
-    })
-).pipe(Effect.provide(replicaLayer));
-```
-
-Provide `WebRuntime.layer(...)` or another platform Layer instead for persistent
-storage. The backend must outlive this replica. A speculative upstream additionally
-supplies `source` with `kind: "speculative"`; the same Layer then uses parent-state
-delivery. Scope owns the replica, its demand leases and local attachment manager.
-Application code supplies custom native `mutators` when needed, rather than an
-execution/replay callback. Portable action execution reads only its supplied local
-transaction. The `ontology` package adds Promise/TanStack authoring conveniences.
-
-## Attachment storage at this checkpoint
-
-Every replica uses the same local attachment machinery: memory or durable
-metadata/bytes, with parent access for cache misses and uploads. Tabs stage bytes
-in memory; their persistent worker stages and caches its own durable copies.
-Cold reads stream through while filling the local cache. Metadata-only requests
-use the provider metadata capability when available. This does not fetch every
-attachment or keep duplicate bytes forever; each replica owns its byte GC.
+Then read [queries](/docs/queries) and [actions](/docs/actions), [attachments](/docs/attachments), or
+[offline data](/docs/offline) for the app APIs.

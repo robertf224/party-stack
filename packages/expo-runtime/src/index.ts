@@ -1,1 +1,1 @@
-export { make, layer } from "./createExpoRuntime.js";
+export { make, layer, expoRuntime, type ExpoRuntimeOptions } from "./createExpoRuntime.js";

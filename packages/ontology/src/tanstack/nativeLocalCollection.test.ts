@@ -44,7 +44,9 @@ test("default runtime collections use owned memory tables and survive collection
     const first = open(runtime);
     try {
         await rows(first);
-        await first.insert({ id: "one", title: "Stored" }).isPersisted.promise;
+        await first.insert({ id: "one", title: "Stored" }).when("settled");
+        await first.reload();
+        expect(await rows(first)).toMatchObject([{ id: "one", title: "Stored" }]);
         await first.cleanup();
         const second = open(runtime);
         try {
@@ -95,13 +97,15 @@ test("collections in one owner observe committed local writes", async () => {
     );
     try {
         await Promise.all([rows(first), rows(second)]);
-        await first.insert({ id: "one", title: "Initial" }).isPersisted.promise;
+        await first.insert({ id: "one", title: "Initial" }).when("settled");
         await vi.waitFor(() => expect(second.get("one")?.title).toBe("Initial"));
-        await second.update("one", (draft) => {
-            draft.title = "Other collection";
-        }).isPersisted.promise;
+        await second
+            .update("one", (draft) => {
+                draft.title = "Other collection";
+            })
+            .when("settled");
         await vi.waitFor(() => expect(first.get("one")?.title).toBe("Other collection"));
-        await first.delete("one").isPersisted.promise;
+        await first.delete("one").when("settled");
         await vi.waitFor(() => expect(second.has("one")).toBe(false));
     } finally {
         subscriptions.forEach((subscription) => subscription.unsubscribe());
@@ -124,10 +128,8 @@ test("concurrent collections in one owner preserve all rows in native transactio
     try {
         await Promise.all([rows(first), rows(second)]);
         await Promise.all(
-            Array.from(
-                { length: 20 },
-                (_, i) =>
-                    (i % 2 ? first : second).insert({ id: String(i), title: `Item ${i}` }).isPersisted.promise
+            Array.from({ length: 20 }, (_, i) =>
+                (i % 2 ? first : second).insert({ id: String(i), title: `Item ${i}` }).when("settled")
             )
         );
         await vi.waitFor(() => {
@@ -151,7 +153,7 @@ test("namespace and schema guards preserve existing local rows", async () => {
     const other = open(b);
     try {
         await Promise.all([rows(first), rows(other)]);
-        await first.insert({ id: "one", title: "Private" }).isPersisted.promise;
+        await first.insert({ id: "one", title: "Private" }).when("settled");
         expect(other.has("one")).toBe(false);
         await first.cleanup();
         const incompatible = open(a, "items", 2);
@@ -197,7 +199,7 @@ test("failed storage writes roll back optimistic publication", async () => {
     try {
         await rows(collection);
         await expect(
-            collection.insert({ id: "failed", title: "Not committed" }).isPersisted.promise
+            collection.insert({ id: "failed", title: "Not committed" }).when("settled")
         ).rejects.toBeDefined();
         expect(collection.has("failed")).toBe(false);
     } finally {

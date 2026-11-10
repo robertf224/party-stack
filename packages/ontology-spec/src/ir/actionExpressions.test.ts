@@ -48,7 +48,6 @@ test.each([
     [q.and(q.input("label")), "Expected a boolean expression."],
     [q.contains(q.input("amount"), q.literal(1)), "Membership requires a list operand."],
     [q.ilike(q.input("amount"), q.literal("%")), "Expected a string expression."],
-    [q.lt(q.literal(true), q.literal(false)), "Ordered comparisons require compatible scalar operands."],
     [q.gt(q.literal([1]), q.literal([2])), "Ordered comparisons require compatible scalar operands."],
     [
         q.caseExpression({
@@ -67,6 +66,20 @@ test.each([
     expect(q.validateQueryDocument(ir, { inputs, select: [q.selectField("result", expression)] })).toEqual(
         expect.arrayContaining([expect.objectContaining({ message })])
     );
+});
+
+test("queries and action defaults accept ordered booleans without accepting mixed scalar families", () => {
+    for (const op of [q.lt, q.lte, q.gt, q.gte]) {
+        const expression = op(q.literal(false), q.literal(true));
+        const ir = definition(expression, o.boolean({}));
+        expect(validate(ir)).toEqual({ kind: "ok", value: undefined });
+        expect(q.validateQueryDocument(ir, { select: [q.selectField("result", expression)] })).toEqual([]);
+        expect(
+            q.validateQueryDocument(ir, {
+                select: [q.selectField("result", op(q.literal(false), q.literal(1)))],
+            }).length
+        ).toBeGreaterThan(0);
+    }
 });
 
 test("action clocks and UUIDs remain unavailable to query plans", () => {

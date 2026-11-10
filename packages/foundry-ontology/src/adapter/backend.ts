@@ -1,18 +1,21 @@
 import { makeObjectSetWatcher } from "@party-stack/foundry-object-set-watcher";
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import { QuerySchema } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
-import { Effect, Schema, Stream, Redacted } from "effect";
+import { Deferred, Effect, Queue, Schema, Stream, Redacted } from "effect";
 import { searchFoundryObjects } from "./foundryObjectSearch.js";
 import { analyzeSubsetFilter, subsetFilter } from "./subsetFilter.js";
 import type { Actions } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
+import type { ObjectSetSubscriptionMessage, WatcherError } from "@party-stack/foundry-object-set-watcher";
 import type {
     OntologyBackendService,
     ActionRequest,
     ActionReceipt,
     SourceQueryPlan,
+    SubsetWatchEvent,
 } from "@party-stack/ontology-backend";
 import type { BackendSnapshot } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -59,6 +62,43 @@ const invalidResponse = (operation: string, cause: unknown) =>
     });
 const unavailable = (cause: unknown) => classifyBackendFailure("foundry.sync", cause);
 
+/** Each logical object set has its own acknowledgement. Pump before returning so
+ * changes between that acknowledgement and the snapshot read remain observable.
+ */
+const acquireWatch = Effect.fn("Foundry.acquireWatch")(function* (
+    messages: Stream.Stream<ObjectSetSubscriptionMessage, WatcherError>
+) {
+    const ready = yield* Deferred.make<void, BackendError>();
+    const events = yield* Effect.acquireRelease(Queue.sliding<SubsetWatchEvent, BackendError>(1), (queue) =>
+        Queue.shutdown(queue).pipe(Effect.asVoid)
+    );
+    const interrupted = () =>
+        new BackendError({
+            operation: "foundry.watchSubset",
+            kind: "Unavailable",
+            retryable: true,
+            message: "The Foundry object-set subscription is no longer active.",
+        });
+    const receive = Stream.runForEach(messages, (message) => {
+        if (message.type !== "state") return Queue.offer(events, undefined).pipe(Effect.asVoid);
+        return message.status === "open"
+            ? Deferred.succeed(ready, undefined).pipe(Effect.asVoid)
+            : Effect.fail(interrupted());
+    }).pipe(
+        Effect.mapError(unavailable),
+        Effect.andThen(Effect.fail(interrupted())),
+        Effect.catchCause((cause) =>
+            Deferred.failCause(ready, cause).pipe(
+                Effect.andThen(Queue.failCause(events, cause)),
+                Effect.asVoid
+            )
+        )
+    );
+    yield* Effect.forkScoped(receive, { startImmediately: true });
+    yield* Deferred.await(ready);
+    return Stream.fromQueue(events);
+});
+
 /** One scoped watcher multiplexes the live object types used by this binding.
  * Watch messages invalidate snapshots; they do not pretend to be durable journal cursors.
  */
@@ -91,7 +131,9 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
         options.watch === false
             ? undefined
             : yield* makeObjectSetWatcher(options.client).pipe(Effect.mapError(unavailable));
-    return {
+    return makeOntologyBackend({
+        ir: options.ir,
+        context: options.context,
         name: "foundry",
         sourceId: `foundry:${options.client.baseUrl}:${options.client.ontologyRid}`,
         supportsIdempotency: false,
@@ -265,29 +307,21 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
             ? (request: ObjectSubset) =>
                   request.from.source.objectType === options.users?.objectType
                       ? undefined
-                      : Stream.unwrap(
-                            Effect.map(compileObjectSubset(options.ir, request, options.context), (subset) =>
-                                watcher
-                                    .subscribe(
-                                        subsetFilter(subset.query?.where)
-                                            ? {
-                                                  type: "filter",
-                                                  objectSet: { type: "base", objectType: subset.objectType },
-                                                  where: subsetFilter(subset.query?.where)!,
-                                              }
-                                            : { type: "base", objectType: subset.objectType }
-                                    )
-                                    .pipe(
-                                        Stream.mapEffect((message) =>
-                                            message.type === "state" &&
-                                            (message.status === "qos" || message.status === "error")
-                                                ? Effect.fail(unavailable(message.status))
-                                                : Effect.void
-                                        ),
-                                        Stream.mapError(unavailable)
-                                    )
-                            )
-                        )
+                      : Effect.gen(function* () {
+                            const subset = yield* compileObjectSubset(options.ir, request, options.context);
+                            const filter = subsetFilter(subset.query?.where);
+                            return yield* acquireWatch(
+                                watcher.subscribe(
+                                    filter
+                                        ? {
+                                              type: "filter",
+                                              objectSet: { type: "base", objectType: subset.objectType },
+                                              where: filter,
+                                          }
+                                        : { type: "base", objectType: subset.objectType }
+                                )
+                            );
+                        })
             : undefined,
-    };
+    });
 });

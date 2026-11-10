@@ -1,0 +1,97 @@
+---
+title: Attachments
+description: Attach files to actions, display images, and read file metadata.
+---
+
+## Attach a file to an action
+
+```ts
+async function createIssueWithFile(file: File) {
+    await ontology.actions.createIssue({
+        title: "Review this image",
+        attachments: [file],
+    });
+}
+```
+
+Pass a `File` or `Blob` at an attachment parameter, including nested lists and
+structs. Replica derives the target constraints and stages bytes before enqueueing.
+The outbox and transports contain handles. Regenerate your ontology types to get
+the action input signatures.
+
+Use `attachments.create` when you need a handle before submitting an action—for
+example to embed it in Markdown or reuse it in several actions:
+
+```ts
+const { attachment } = await ontology.attachments.create(file, {
+    target: { kind: "actionParameter", actionType: "createIssue", parameter: "attachments" },
+});
+```
+
+`create` also accepts a byte source. A source can supply an Effect byte stream
+and optional `name`, `type`, and `size`. Unknown sizes are allowed. Streaming
+support at the final provider boundary depends on the adapter.
+
+## Display an image
+
+`useAttachmentUrl` suspends while downloading the bytes. Put the component inside
+a `Suspense` boundary; failures go to the nearest error boundary.
+
+```tsx
+import { useAttachmentUrl } from "@party-stack/ontology-react";
+import { Suspense } from "react";
+import type { attachment } from "@party-stack/ontology/values";
+
+function AttachmentPreview({ file }: { file: attachment }) {
+    return (
+        <Suspense fallback={<span>Loading image…</span>}>
+            <AttachmentImage file={file} />
+        </Suspense>
+    );
+}
+
+function AttachmentImage({ file }: { file: attachment }) {
+    const url = useAttachmentUrl(file);
+    return <img src={url} alt="Issue attachment" />;
+}
+```
+
+## Read metadata without downloading the file
+
+```ts
+const metadata = await ontology.attachments.metadata(attachment, {
+    select: ["name", "size", "type"],
+});
+```
+
+For a component, select only the metadata it needs:
+
+```tsx
+const data = useAttachmentMetadata(file, {
+    select: ["name", "size"],
+});
+```
+
+Import `useAttachmentMetadata` from `@party-stack/ontology-react`. It also suspends
+until the selected metadata is available. Both hooks accept `enabled: false` to
+postpone a read and return an undefined value while disabled.
+
+When the provider supports metadata reads, the request stays a metadata read.
+Requesting image dimensions can require reading image bytes.
+
+For stream processing, `attachments.source(handle, { signal })` returns a byte
+source. Consume or cancel its stream, or abort the signal, to release the read.
+
+## Cache cleanup
+
+Matching attachment reads share a request within an `OntologyProvider`. Settled
+reads stay cached for five minutes after their last consumer unmounts or stops
+using them; then their object URLs are revoked. Pending reads remain owned by the
+provider even without a committed consumer. Closing the provider aborts pending
+reads and revokes its cached URLs.
+
+This request cache is separate from the replica's stored attachment bytes.
+Attachment bytes are downloaded on use. Keeping an object offline does not
+automatically download its attachments; [pins can opt in](/docs/offline).
+Unused bytes are collected separately from objects, subject to their age and
+budget settings. Deleting an object does not immediately erase every cached byte.

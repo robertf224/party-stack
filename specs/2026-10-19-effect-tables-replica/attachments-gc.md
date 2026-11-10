@@ -61,7 +61,7 @@ step and is retried from durable intents. Releasing the last reference starts a
 new orphan grace period. The caller may request zero grace for an explicit sweep;
 there is no automatic short-lived lease for raw attachment creation.
 
-A storage binding with `mode: "authoritative"` only collects unreferenced orphans;
+A storage binding with `attachmentBytesRetentionMode: "authoritative"` only collects unreferenced orphans;
 access age cannot evict referenced authoritative bytes. Authority belongs to the
 binding and namespace, not to SQLite, IndexedDB or the device where it runs. Do not
 share a blob namespace between independent authority/cache policies.

@@ -6,6 +6,7 @@ import type { ValueCodec } from "@party-stack/ontology-storage/tables";
 const localCopy = Symbol("replica.encryptedCache");
 type Cached = Encrypted & { readonly [localCopy]?: Encrypted };
 const Local = Schema.Struct({ ciphertext: Schema.NonEmptyString });
+const decodeLocal = Schema.decodeUnknownOption(Local);
 export const cachedCopy = (value: Encrypted): Encrypted | undefined => (value as Cached)[localCopy];
 export const withCachedCopy = (value: Encrypted, local: Encrypted): Encrypted =>
     Object.defineProperty({ ...value }, localCopy, { value: local });
@@ -29,7 +30,8 @@ export function encryptedCacheCodec(
             const row = codec.decode(encoded);
             for (const name of properties) {
                 const stored = (encoded as Record<string, { localCache?: unknown } | undefined>)[name];
-                const local = Schema.decodeUnknownOption(Local)(stored?.localCache);
+                if (stored?.localCache === undefined) continue;
+                const local = decodeLocal(stored.localCache);
                 if (row[name] && local._tag === "Some")
                     row[name] = withCachedCopy(row[name] as Encrypted, local.value);
             }

@@ -1,5 +1,7 @@
 import { storageError } from "@party-stack/ontology-storage/driver";
+import * as MemoryTables from "@party-stack/ontology-storage/memory/tables";
 import { Runtime, RuntimeError, RuntimePartition, makeKeyMaterialStoreKeyring } from "@party-stack/runtime";
+import { Runtimes, MemoryBlobBytesStore, type KeyMaterialStore } from "@party-stack/runtime";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import * as SqlTables from "@party-stack/sql-ontology-storage/tables";
 import { Effect, Layer, Schema } from "effect";
@@ -15,11 +17,38 @@ import { makeExpoNetworkConnectivity } from "./ExpoNetworkConnectivity.js";
 import { hashStorageName } from "./hashStorageName.js";
 import type { SQLiteBindValue } from "expo-sqlite";
 
-export const make = Effect.fn("ExpoRuntime.make")(function* () {
+export interface ExpoRuntimeOptions {
+    /** Persistent SQLite/filesystem storage by default; memory keeps native platform capabilities. */
+    readonly storage?: "persistent" | "memory";
+}
+
+export const make = Effect.fn("ExpoRuntime.make")(function* (options: ExpoRuntimeOptions = {}) {
     const { owner, namespace } = yield* RuntimePartition;
+    const connectivity = yield* makeExpoNetworkConnectivity();
+    if (options.storage === "memory") {
+        const materials = new Map<string, string>();
+        const secrets: KeyMaterialStore = {
+            get: (id) => Effect.sync(() => materials.get(id)),
+            set: (id, value) =>
+                Effect.sync(() => {
+                    materials.set(id, value);
+                }),
+            delete: (id) =>
+                Effect.sync(() => {
+                    materials.delete(id);
+                }),
+        };
+        return yield* Runtime.make({
+            tables: yield* MemoryTables.make(),
+            blobBytes: new MemoryBlobBytesStore(),
+            encryptionKeyring: yield* makeKeyMaterialStoreKeyring(secrets, nativeKeyCodec),
+            browserAuthentication: createExpoBrowserAuthentication(),
+            connectivity,
+            capacity: { memory: Effect.succeed(undefined), storage: Effect.succeed(undefined) },
+        });
+    }
     const name = `party-stack:${owner}:${namespace}`;
     const storageName = `party-stack-${yield* Effect.tryPromise({ try: () => hashStorageName(JSON.stringify([owner, namespace])), catch: (cause) => new RuntimeError({ operation: "expoRuntime.name", cause }) })}`;
-    const connectivity = yield* makeExpoNetworkConnectivity();
     const blobBytes = new ExpoFileSystemBlobBytesStore({
         directoryName: `${storageName}-blobs`,
     });
@@ -96,4 +125,6 @@ export const make = Effect.fn("ExpoRuntime.make")(function* () {
         }),
     });
 });
-export const layer = () => Layer.effect(Runtime, make());
+export const layer = (options: ExpoRuntimeOptions = {}) => Layer.effect(Runtime, make(options));
+export const expoRuntime = (options: ExpoRuntimeOptions = {}) =>
+    Runtimes.layer(layer(options), { browserAuthentication: createExpoBrowserAuthentication() });

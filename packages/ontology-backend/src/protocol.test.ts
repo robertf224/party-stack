@@ -1,7 +1,9 @@
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Schema } from "effect";
 import { expect, test } from "vitest";
+import { DeliveryFrameCodec } from "./delivery.js";
 import { ClientStateCodec, ClientViewCodec } from "./protocol.js";
+import type { DeliveryFrame } from "./delivery.js";
 import type { ClientState } from "./protocol.js";
 
 test("protocol codecs preserve storage values through an actual JSON round trip", () => {
@@ -54,3 +56,65 @@ test("protocol decoding rejects invalid counters and unsupported query operators
         /Invalid ontology protocol encoding/
     );
 });
+
+test.each(["HTTP JSON", "worker structured clone"] as const)(
+    "%s preserves cached availability independently of complete coverage in both state protocols",
+    (transport) => {
+        const wire = (encoded: string): unknown =>
+            transport === "HTTP JSON" ? JSON.parse(JSON.stringify(encoded)) : structuredClone(encoded);
+        for (const proof of [
+            { complete: false, cached: true },
+            { complete: false, cached: false },
+            { complete: false },
+            { complete: true },
+        ]) {
+            const coverage = [{ subset: { objectType: "Item" }, ...proof }];
+            const state: ClientState = {
+                coverage,
+                state: {
+                    sourceId: "source",
+                    revision: 1,
+                    definition: "{}",
+                    objects: [],
+                    pending: [],
+                    completed: [],
+                },
+                client: {
+                    client: { sourceId: "source", clientId: "client", resumeKey: "key" },
+                    connectionId: "connection",
+                    expiresAt: 100,
+                    acceptedThrough: 0,
+                    acknowledgedThrough: 0,
+                    deliveredThrough: 0,
+                    deliveredRevision: 1,
+                    appliedRevision: 0,
+                },
+            };
+            const frame: DeliveryFrame = {
+                streamId: "stream",
+                sequence: 1,
+                previous: 0,
+                part: 0,
+                kind: "snapshot",
+                end: true,
+                changes: [],
+                metadata: {
+                    sourceId: "source",
+                    schemaHash: "schema",
+                    generation: 1,
+                    revision: 1,
+                    coverage,
+                },
+            };
+            expect(
+                Schema.decodeUnknownSync(ClientStateCodec)(wire(Schema.encodeSync(ClientStateCodec)(state)))
+                    .coverage
+            ).toEqual(coverage);
+            expect(
+                Schema.decodeUnknownSync(DeliveryFrameCodec)(
+                    wire(Schema.encodeSync(DeliveryFrameCodec)(frame))
+                ).metadata?.coverage
+            ).toEqual(coverage);
+        }
+    }
+);

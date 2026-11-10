@@ -58,7 +58,7 @@ export function validatePolicy(ir: OntologyIR): ValidationIssue[] {
                 );
     }
     if (!policy) return issues;
-    validate(policy.read, ["policy", "read"], "entity");
+    validate(policy.objects, ["policy", "objects"], "entity");
     const seen = new Set<string>();
     for (const [index, rule] of (policy.actions ?? []).entries()) {
         const path = ["policy", "actions", index];
@@ -129,7 +129,8 @@ export function validatePolicy(ir: OntologyIR): ValidationIssue[] {
         };
         if ([...dependencies.keys()].some((name) => !walk(name)))
             add("Cyclic action parameter bindings.", [...path, "bind"]);
-        if (rule.read) validate(rule.read, [...path, "read"], "entity", action.parameters);
+        if (rule.additionalObjects)
+            validate(rule.additionalObjects, [...path, "additionalObjects"], "entity", action.parameters);
     }
     const functions = new Set<string>();
     for (const [index, rule] of (policy.queryFunctions ?? []).entries()) {
@@ -153,7 +154,8 @@ export function validatePolicy(ir: OntologyIR): ValidationIssue[] {
             "projection",
             query.parameters
         );
-        if (rule.read) validate(rule.read, [...path, "read"], "entity", query.parameters);
+        if (rule.additionalObjects)
+            validate(rule.additionalObjects, [...path, "additionalObjects"], "entity", query.parameters);
     }
     return issues;
 }

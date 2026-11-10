@@ -1,3 +1,5 @@
+import { it } from "@effect/vitest";
+import { Effect, Schema } from "effect";
 import { expect, test } from "vitest";
 import {
     and,
@@ -14,7 +16,40 @@ import {
     gt,
     isField,
 } from "../table-api.js";
-import { matches, matchLike } from "./evaluate.js";
+import { compareScalar, matches, matchLike, scalarKey } from "./evaluate.js";
+
+const scalar = Schema.Union([
+    Schema.String,
+    Schema.Finite,
+    Schema.Boolean,
+    Schema.BigInt,
+    Schema.Undefined,
+    Schema.Null,
+]);
+it.live.prop(
+    "in-process comparisons preserve the physical index encoding's total order",
+    [scalar, scalar],
+    ([a, b]) =>
+        Effect.sync(() => {
+            const left = scalarKey(a),
+                right = scalarKey(b);
+            expect(compareScalar(a, b)).toBe(left < right ? -1 : left > right ? 1 : 0);
+        }),
+    { arbitrary: { runs: 1000 } }
+);
+
+test("primitive fast paths preserve UTF-16 order and reject invalid scalar values", () => {
+    const strings = ["", "\0", "a", "a\0", "aa", "é", "\ud800", "😀", "\uffff"];
+    for (const a of strings)
+        for (const b of strings) {
+            const left = scalarKey(a),
+                right = scalarKey(b);
+            expect(compareScalar(a, b)).toBe(left < right ? -1 : left > right ? 1 : 0);
+        }
+    for (const value of [NaN, Infinity, -Infinity, new Date(NaN), {}, Symbol("invalid")])
+        expect(() => compareScalar(value, value)).toThrow();
+    expect(compareScalar(-0, 0)).toBe(0);
+});
 
 test("LIKE and ILIKE follow TanStack's wildcard and JS lowercase semantics", () => {
     for (const [value, pattern, expected] of [

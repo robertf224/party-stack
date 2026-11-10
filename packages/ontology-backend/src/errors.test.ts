@@ -240,3 +240,14 @@ it("keeps HTTP status separate from the detailed error kind", async () => {
     expect(backendErrorStatus({ kind: "HistoryExpired" })).toBe(409);
     expect(backendErrorStatus({ kind: "SchemaMismatch" })).toBe(409);
 });
+
+it("forwarding preserves the original typed error and its cause", () => {
+    const error = new BackendError({
+        operation: "query",
+        kind: "Unavailable",
+        message: "connection closed",
+        cause: new Error("socket detail"),
+        retryable: true,
+    });
+    expect(projectBackendError(error, "forward")).toBe(error);
+});

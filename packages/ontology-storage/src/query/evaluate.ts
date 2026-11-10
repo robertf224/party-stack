@@ -73,6 +73,17 @@ export function readField(value: unknown, path: Field): unknown {
 export const sameField = (a: Field, b: Field): boolean =>
     a.path.length === b.path.length && a.path.every((part, i) => part === b.path[i]);
 export const compareScalar = (a: unknown, b: unknown): number => {
+    // Index keys need a portable encoding; in-process comparisons do not.
+    // UTF-16 lexicographic and finite numeric order are exactly that encoding's
+    // order, without allocating two strings for every predicate/sort comparison.
+    if (typeof a === "string" && typeof b === "string") return a < b ? -1 : a > b ? 1 : 0;
+    if (typeof a === "number" && typeof b === "number") {
+        if (!Number.isFinite(a) || !Number.isFinite(b))
+            throw new Error("Only finite numbers and valid dates are queryable.");
+        return a < b ? -1 : a > b ? 1 : 0;
+    }
+    if (typeof a === "bigint" && typeof b === "bigint") return a < b ? -1 : a > b ? 1 : 0;
+    if (typeof a === "boolean" && typeof b === "boolean") return a === b ? 0 : a ? 1 : -1;
     const left = scalarKey(a),
         right = scalarKey(b);
     return left < right ? -1 : left > right ? 1 : 0;
@@ -122,10 +133,11 @@ export function matches(value: unknown, predicate?: Predicate): boolean {
                 matchLike(resolveOperand(value, predicate.left), pattern, predicate.op === "ilike")
             );
         }
-        case "in":
-            return predicate.values.some(
-                (candidate) => compareScalar(resolveOperand(value, predicate.left), candidate) === 0
-            );
+        case "in": {
+            if (predicate.values.length === 0) return false;
+            const left = resolveOperand(value, predicate.left);
+            return predicate.values.some((candidate) => compareScalar(left, candidate) === 0);
+        }
         case "contains": {
             const array = readField(value, predicate.left);
             const needle = scalarKey(resolveOperand(value, predicate.right));
@@ -162,10 +174,28 @@ export function matches(value: unknown, predicate?: Predicate): boolean {
         }
     }
 }
+// Validation needs the scalar domain, not its allocated physical index key.
+// Keep rich-value parsing and all unsupported-value errors in the shared codec.
+function validateScalar(value: unknown): void {
+    switch (typeof value) {
+        case "undefined":
+        case "boolean":
+        case "string":
+        case "bigint":
+            return;
+        case "number":
+            if (!Number.isFinite(value))
+                throw new Error("Only finite numbers and valid dates are queryable.");
+            return;
+        default:
+            if (value !== null) scalarKey(value);
+    }
+}
+
 export function validateQuery(query: Query): void {
     validateQueryShape(query);
     const validateOperand = (operand: Operand) => {
-        if (!isField(operand)) scalarKey(operand);
+        if (!isField(operand)) validateScalar(operand);
     };
     const validatePredicate = (predicate: Predicate): void => {
         if (predicate.op === "and" || predicate.op === "or") {
@@ -173,14 +203,17 @@ export function validateQuery(query: Query): void {
         } else if (predicate.op === "not") validatePredicate(predicate.predicate);
         else {
             validateOperand(predicate.left);
-            if (predicate.op === "in") for (const value of predicate.values) scalarKey(value);
+            if (predicate.op === "in") for (const value of predicate.values) validateScalar(value);
             else validateOperand(predicate.right);
         }
     };
     if (query.where) validatePredicate(query.where);
     if (query.after) {
-        keyCode(query.after.key);
-        for (const value of query.after.values) scalarKey(value);
+        const key = query.after.key;
+        if (typeof key !== "string" && typeof key !== "number")
+            throw new Error("Row keys must be strings or finite numbers.");
+        validateScalar(key);
+        for (const value of query.after.values) validateScalar(value);
     }
     for (const value of [query.offset, query.limit]) {
         if (value !== undefined && (!Number.isSafeInteger(value) || value < 0))

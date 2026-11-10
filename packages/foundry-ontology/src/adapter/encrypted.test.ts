@@ -3,9 +3,9 @@ import { Effect, Exit } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { convertFoundryMetaObjectType } from "../meta/convertMetaObjectType.js";
 import { convertFoundryObjectPropertyType } from "../meta/convertMetaTypeDef.js";
-import { createFoundryOntologyBackendAdapter } from "./createFoundryOntologyBackendAdapter.js";
 import { makeFoundryEncryptedValues } from "./encrypted.js";
 import { createFoundryCodec } from "./foundryCodec.js";
+import { makeFoundryOntologyBackend } from "./makeFoundryOntologyBackend.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
@@ -88,11 +88,12 @@ describe("Foundry encrypted properties", () => {
         await Effect.runPromise(
             Effect.scoped(
                 Effect.gen(function* () {
-                    const native = yield* createFoundryOntologyBackendAdapter({
+                    const native = yield* makeFoundryOntologyBackend({
                         client,
                         ir,
                         watch: false,
-                    }).open({});
+                        context: {},
+                    });
                     expect(native.encrypted).toBeDefined();
                     expect(yield* native.encrypted!.decrypt({ ciphertext: cipher, source })).toEqual({
                         value: "value",

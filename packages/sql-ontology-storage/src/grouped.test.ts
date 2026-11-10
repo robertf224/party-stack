@@ -6,8 +6,7 @@ import { executeQuery } from "@party-stack/ontology-backend/query";
 import { o, type OntologyIR, type QueryDocument, type TypeDef } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
 import { Table, field } from "@party-stack/ontology-storage/tables";
-import { Effect } from "effect";
-import fc from "fast-check";
+import { Effect, Schema, Arbitrary } from "effect";
 import { expect, test } from "vitest";
 import { make } from "./tables.js";
 import type { QueryReader } from "@party-stack/ontology-backend/query";
@@ -136,7 +135,7 @@ test.each(["sqlite", "pg"] as const)(
                         });
                     })
                 );
-            const replace = (data: Issue[], allowed = [true, true, true]) =>
+            const replace = (data: Issue[], allowed: readonly boolean[] = [true, true, true]) =>
                 tables.transaction((tx) =>
                     Effect.gen(function* () {
                         yield* tx.clear(parents);
@@ -182,97 +181,100 @@ test.each(["sqlite", "pg"] as const)(
             );
             expect(nativeCalls).toBe(beforeLike + 1);
 
-            const context = yield* Effect.context<never>();
-            const execute = Effect.runPromiseWith(context);
-            yield* Effect.promise(() =>
-                fc.assert(
-                    fc.asyncProperty(
-                        fc.array(
-                            fc.record({
-                                group: fc.integer({ min: 0, max: 3 }),
-                                rank: fc.option(fc.integer({ min: -3, max: 3 }), { nil: undefined }),
-                                visible: fc.boolean(),
-                            }),
-                            { maxLength: 45 }
-                        ),
-                        fc.array(fc.boolean(), { minLength: 3, maxLength: 3 }),
-                        fc.integer({ min: 0, max: 4 }),
-                        fc.integer({ min: 0, max: 3 }),
-                        fc.boolean(),
-                        fc.boolean(),
-                        async (rows, allowed, limit, offset, descending, nullsFirst) => {
-                            const data: Issue[] = rows.map((row, i) => ({
-                                id: `i${String(i).padStart(2, "0")}`,
-                                projectId: `p${row.group}`,
-                                rank: row.rank,
-                                visible: row.visible,
-                                title: "matchA",
-                            }));
-                            await execute(replace(data, allowed));
-                            const nulls = nullsFirst ? "first" : "last";
-                            const child = childQuery(limit, offset, descending, nulls);
-                            const compare = (a: Issue, b: Issue) => {
-                                let result = 0;
-                                if (a.rank === undefined || b.rank === undefined)
-                                    result =
-                                        a.rank === b.rank
-                                            ? 0
-                                            : (a.rank === undefined ? -1 : 1) * (nullsFirst ? 1 : -1);
-                                else result = (a.rank - b.rank) * (descending ? -1 : 1);
-                                return result || a.id.localeCompare(b.id);
-                            };
-                            const expected = allowed.map((_, i) => ({
-                                id: `p${i}`,
-                                issues: data
-                                    .filter((row) => row.projectId === `p${i}` && row.visible)
-                                    .sort(compare)
-                                    .slice(offset, offset + limit)
-                                    .map(select),
-                            }));
-                            const query = document(child);
-                            expect((await execute(run(query))).value).toEqual({ projects: expected });
-                            expect((await execute(run(query, ir, true))).value).toEqual({
-                                projects: expected,
-                            });
-                            const definition: OntologyIR = {
-                                ...ir,
-                                policy: {
-                                    read: {
-                                        select: [
-                                            q.sub("projects", {
-                                                from: { source: { objectType: "Project" }, binding: "p" },
-                                                where: q.eq(q.field("p", "allowed"), q.context("allowed")),
-                                                select: [
-                                                    q.selectField("id", q.field("p", "id")),
-                                                    q.sub("issues", child),
-                                                ],
-                                            }),
-                                        ],
-                                    },
-                                },
-                            };
-                            const caller: QueryDocument = {
-                                select: [
-                                    q.sub("issues", {
-                                        from: { source: { objectType: "Issue" }, binding: "i" },
-                                        select: selections,
-                                    }),
-                                ],
-                            };
-                            const visible = expected
-                                .flatMap((row, i) => (allowed[i] ? row.issues : []))
-                                .sort((a, b) => a.id.localeCompare(b.id));
-                            expect((await execute(run(caller, definition, false, true))).value).toEqual({
-                                issues: visible,
-                            });
-                            expect((await execute(run(caller, definition, true, true))).value).toEqual({
-                                issues: visible,
-                            });
-                        }
+            const propertyResult = yield* Arbitrary.checkEffect(
+                Arbitrary.all([
+                    Arbitrary.schema(
+                        Schema.Array(
+                            Schema.Struct({
+                                group: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 })),
+                                rank: Schema.UndefinedOr(
+                                    Schema.Int.check(Schema.isBetween({ minimum: -3, maximum: 3 }))
+                                ),
+                                visible: Schema.Boolean,
+                            })
+                        ).check(Schema.isMaxLength(45))
                     ),
-                    { numRuns: 35 }
-                )
+                    Arbitrary.schema(
+                        Schema.Array(Schema.Boolean).check(Schema.isMinLength(3), Schema.isMaxLength(3))
+                    ),
+                    Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 4 }))),
+                    Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 }))),
+                    Arbitrary.schema(Schema.Boolean),
+                    Arbitrary.schema(Schema.Boolean),
+                ]),
+                ([rows, allowed, limit, offset, descending, nullsFirst]) =>
+                    Effect.gen(function* () {
+                        const data: Issue[] = rows.map((row, i) => ({
+                            id: `i${String(i).padStart(2, "0")}`,
+                            projectId: `p${row.group}`,
+                            rank: row.rank,
+                            visible: row.visible,
+                            title: "matchA",
+                        }));
+                        yield* replace(data, allowed);
+                        const nulls = nullsFirst ? "first" : "last";
+                        const child = childQuery(limit, offset, descending, nulls);
+                        const compare = (a: Issue, b: Issue) => {
+                            let result = 0;
+                            if (a.rank === undefined || b.rank === undefined)
+                                result =
+                                    a.rank === b.rank
+                                        ? 0
+                                        : (a.rank === undefined ? -1 : 1) * (nullsFirst ? 1 : -1);
+                            else result = (a.rank - b.rank) * (descending ? -1 : 1);
+                            return result || a.id.localeCompare(b.id);
+                        };
+                        const expected = allowed.map((_, i) => ({
+                            id: `p${i}`,
+                            issues: data
+                                .filter((row) => row.projectId === `p${i}` && row.visible)
+                                .sort(compare)
+                                .slice(offset, offset + limit)
+                                .map(select),
+                        }));
+                        const query = document(child);
+                        expect((yield* run(query)).value).toEqual({ projects: expected });
+                        expect((yield* run(query, ir, true)).value).toEqual({
+                            projects: expected,
+                        });
+                        const definition: OntologyIR = {
+                            ...ir,
+                            policy: {
+                                objects: {
+                                    select: [
+                                        q.sub("projects", {
+                                            from: { source: { objectType: "Project" }, binding: "p" },
+                                            where: q.eq(q.field("p", "allowed"), q.context("allowed")),
+                                            select: [
+                                                q.selectField("id", q.field("p", "id")),
+                                                q.sub("issues", child),
+                                            ],
+                                        }),
+                                    ],
+                                },
+                            },
+                        };
+                        const caller: QueryDocument = {
+                            select: [
+                                q.sub("issues", {
+                                    from: { source: { objectType: "Issue" }, binding: "i" },
+                                    select: selections,
+                                }),
+                            ],
+                        };
+                        const visible = expected
+                            .flatMap((row, i) => (allowed[i] ? row.issues : []))
+                            .sort((a, b) => a.id.localeCompare(b.id));
+                        expect((yield* run(caller, definition, false, true)).value).toEqual({
+                            issues: visible,
+                        });
+                        expect((yield* run(caller, definition, true, true)).value).toEqual({
+                            issues: visible,
+                        });
+                    }).pipe(Effect.as(true), Effect.catchDefect(Effect.fail)),
+                { runs: 35 }
             );
+            expect(Arbitrary.formatCheckFailure(propertyResult)).toBeUndefined();
 
             const escaped = yield* tables.read((tx) =>
                 Effect.succeed(tx.queryGrouped!(children, field("projectId"), { limit: 1 }))

@@ -2,7 +2,7 @@ import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { MemoryBlobBytesStore, Runtimes } from "@party-stack/runtime";
+import { MemoryBlobBytesStore } from "@party-stack/runtime";
 import { asRuntimeLayer } from "@party-stack/runtime/testing";
 import { defineRuntimeFixture, runtimeFixtureContext } from "@party-stack/runtime/testing";
 import { createLiveQueryCollection, queryOnce } from "@tanstack/db";
@@ -11,6 +11,7 @@ import { expect, test, vi, onTestFinished } from "vite-plus/test";
 import { replicaController } from "../../../ontology-replica/lib/internal.js";
 import { createLiveOntology, makeLiveOntology } from "../live/LiveOntology.js";
 import { makeReplicaHost } from "./host.js";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
 
 const openOwnedBackend = (options: Parameters<typeof makeOwnedBackend>[0]) => {
     const owner = Effect.runSync(Scope.make());
@@ -71,19 +72,15 @@ test.each([false, true])(
         );
         const live = await createLiveOntology({
             ir,
-            backend: () => ({
-                name: "delayed",
-                open: () =>
-                    Effect.succeed({
-                        ...owned,
-                        applyAction: (request) =>
-                            Deferred.succeed(entered, undefined).pipe(
-                                Effect.andThen(Deferred.await(release)),
-                                Effect.andThen(owned.applyAction(request))
-                            ),
-                    }),
+            backend: Effect.succeed({
+                ...owned,
+                applyAction: (request) =>
+                    Deferred.succeed(entered, undefined).pipe(
+                        Effect.andThen(Deferred.await(release)),
+                        Effect.andThen(owned.applyAction(request))
+                    ),
             }),
-            writes: { defaultMode: "outbox", defaultVisibility: "optimistic" },
+            writes: { defaultVisibility: "optimistic" },
         });
         const query = createLiveQueryCollection({
             query: (q) => q.from({ note: live.objects.Note! }).orderBy(({ note }) => note.title, "asc"),
@@ -132,33 +129,30 @@ test("LiveOntology persists and restores offline projections, exposes local-only
     let online = true;
     const listeners = new Set<(value: boolean) => void>();
     const requests = vi.fn();
-    const adapter = (): import("../live/OntologyBackendAdapter.js").OntologyBackendAdapter => ({
-        name: "test",
-        open: () =>
-            Effect.succeed({
-                ...backend,
-                loadSubset: (subset) =>
+    const adapter = () =>
+        Effect.succeed<OntologyBackendService>({
+            ...backend,
+            loadSubset: (subset) =>
+                Effect.suspend(() => {
+                    requests();
+                    if (!online) throw new Error("Network load during offline replay");
+                    return backend.loadSubset(subset);
+                }),
+            applyAction: (action) =>
+                Effect.suspend(() => {
+                    requests();
+                    if (!online) throw new Error("Offline dispatch");
+                    return backend.applyAction(action);
+                }),
+            changes: {
+                pull: (query) =>
                     Effect.suspend(() => {
                         requests();
-                        if (!online) throw new Error("Network load during offline replay");
-                        return backend.loadSubset(subset);
+                        if (!online) throw new Error("Offline pull");
+                        return backend.changes!.pull(query);
                     }),
-                applyAction: (action) =>
-                    Effect.suspend(() => {
-                        requests();
-                        if (!online) throw new Error("Offline dispatch");
-                        return backend.applyAction(action);
-                    }),
-                changes: {
-                    pull: (query) =>
-                        Effect.suspend(() => {
-                            requests();
-                            if (!online) throw new Error("Offline pull");
-                            return backend.changes!.pull(query);
-                        }),
-                },
-            }),
-    });
+            },
+        });
     const runtime = defineRuntimeFixture((owner, namespace) => {
         return {
             owner,
@@ -181,16 +175,16 @@ test("LiveOntology persists and restores offline projections, exposes local-only
     });
     const settings = {
         ir,
-        backend: adapter,
+        backend: adapter(),
         runtime: asRuntimeLayer(runtime),
         traceRecording: "buffer" as const,
-        writes: { defaultMode: "outbox" as const, defaultVisibility: "optimistic" as const },
+        writes: { defaultVisibility: "optimistic" as const },
     };
     const first = await createLiveOntology(settings);
     try {
         await queryOnce((q) => q.from({ note: first.objects.Note! }));
         await vi.waitFor(async () =>
-            expect((await Effect.runPromise(first.storage!.get("Note", "one")))?.title).toBe("Before")
+            expect((await Effect.runPromise(first.replica!.get("Note", "one")))?.title).toBe("Before")
         );
         online = false;
         for (const cb of listeners) cb(false);
@@ -198,14 +192,13 @@ test("LiveOntology persists and restores offline projections, exposes local-only
         const action = first.actions.rename!({ note: "one", title: "Offline" });
         void action.catch(() => undefined);
         await vi.waitFor(async () =>
-            expect((await Effect.runPromise(first.storage!.get("Note", "one")))?.title).toBe("Offline")
+            expect((await Effect.runPromise(first.replica!.get("Note", "one")))?.title).toBe("Offline")
         );
         expect(requests.mock.calls.length).toBe(before);
-        expect(first.persistedObjects).toBeDefined();
         await first.cleanup();
         const reopened = await createLiveOntology(settings);
         try {
-            expect((await Effect.runPromise(reopened.storage!.get("Note", "one")))?.title).toBe("Offline");
+            expect((await Effect.runPromise(reopened.replica!.get("Note", "one")))?.title).toBe("Offline");
             expect(requests.mock.calls.length).toBe(before);
             expect(reopened.traces?.getSnapshot().some((trace) => trace.name === "Replica.rebase")).toBe(
                 true
@@ -213,7 +206,7 @@ test("LiveOntology persists and restores offline projections, exposes local-only
             online = true;
             for (const cb of listeners) cb(true);
             await vi.waitFor(async () =>
-                expect(await Effect.runPromise(replicaController(reopened.storage!).pending)).toEqual([])
+                expect(await Effect.runPromise(replicaController(reopened.replica!).pending)).toEqual([])
             );
             expect(
                 (await Effect.runPromise(backend.loadSubset(objectSubset("Note")))).rows[0]?.value.title
@@ -240,30 +233,25 @@ test("closing the owning Effect scope closes DbClient collections and replica fi
     const cleanupBackend = vi.fn();
     const scope = Effect.runSync(Scope.make());
     const services = await Effect.runPromise(
-        Layer.buildWithScope(Runtimes.layer(asRuntimeLayer(() => runtime)), scope)
+        Layer.buildWithScope(
+            asRuntimeLayer(() => runtime),
+            scope
+        )
     );
     const ontology = await Effect.runPromise(
         Scope.provide(
             makeLiveOntology({
                 ir,
-                backend: () => ({
-                    name: "lifetime",
-                    open: () =>
-                        Effect.acquireRelease(Effect.succeed(backend), () => Effect.sync(cleanupBackend)),
-                }),
+                backend: Effect.acquireRelease(Effect.succeed(backend), () => Effect.sync(cleanupBackend)),
             }).pipe(Effect.provideContext(services)),
             scope
         )
     );
+    const collections = Object.values(ontology.objects);
     await Effect.runPromise(Scope.close(scope, Exit.void));
-    expect(Object.values(ontology.objects).every((collection) => collection.status === "cleaned-up")).toBe(
-        true
-    );
-    expect(
-        Object.values(ontology.persistedObjects!).every((collection) => collection.status === "cleaned-up")
-    ).toBe(true);
+    expect(collections.every((collection) => collection.status === "cleaned-up")).toBe(true);
     expect(ontology.outbox.collection.status).toBe("cleaned-up");
-    await expect(Effect.runPromise(replicaController(ontology.storage!).pending)).rejects.toMatchObject({
+    await expect(Effect.runPromise(replicaController(ontology.replica!).pending)).rejects.toMatchObject({
         kind: "InvalidRequest",
     });
     expect(cleanupBackend).toHaveBeenCalledOnce();
@@ -275,20 +263,17 @@ test("a scoped replica host runs without application collections and outlives in
     const server = await Effect.runPromise(Memory.make());
     const backend = await openOwnedBackend({ namespace: "host-server", ir, tables: server, mutators: {} });
     const released = vi.fn();
-    const adapter: import("../live/OntologyBackendAdapter.js").OntologyBackendAdapter = {
-        name: "host",
-        open: () =>
-            Effect.gen(function* () {
-                yield* Effect.addFinalizer(() => Effect.sync(released));
-                return {
-                    ...backend,
-                    attachments: {
-                        read: (value) => Effect.promise(() => readAttachment(value)),
-                        metadata: () => Effect.succeed({ size: 12, type: "" }),
-                    },
-                };
-            }),
-    };
+    const adapter = Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => Effect.sync(released));
+        return {
+            ...backend,
+            attachments: {
+                read: (value: import("@party-stack/ontology-spec/values").attachment) =>
+                    Effect.promise(() => readAttachment(value)),
+                metadata: () => Effect.succeed({ size: 12, type: "" }),
+            },
+        };
+    });
     const readAttachment = vi.fn((_value: import("@party-stack/ontology-spec/values").attachment) =>
         Promise.resolve(new Blob(["remote bytes"]))
     );
@@ -306,7 +291,10 @@ test("a scoped replica host runs without application collections and outlives in
     const secondSession = Effect.runSync(Scope.make());
     try {
         const host = await managed.runPromise(
-            Scope.provide(makeReplicaHost({ ir, context: {}, backendAdapter: adapter }), owner)
+            Scope.provide(
+                Effect.flatMap(adapter, (backend) => makeReplicaHost({ ir, context: {}, backend })),
+                owner
+            )
         );
         await Effect.runPromise(
             Scope.provide(replicaController(host.replica).retainLocal("Note"), firstSession)

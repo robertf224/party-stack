@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError } from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
@@ -31,7 +32,8 @@ const ir: OntologyIR = {
     actionTypes: [{ name: "write", displayName: "Write", parameters: [], logic: [] }],
 };
 const connectivity = { online: Effect.succeed(true), changes: Stream.never };
-const quiet: OntologyBackendService = {
+const quiet: OntologyBackendService = makeOntologyBackend({
+    ir,
     name: "fixture",
     sourceId: "fixture",
     supportsIdempotency: false,
@@ -39,7 +41,53 @@ const quiet: OntologyBackendService = {
     refresh: () => ({ pollIntervalMs: false }),
     loadSubset: () => Effect.succeed({ complete: true, rows: [] }),
     applyAction: (request) => Effect.succeed({ operationId: request.id, outcome: "committed", affected: [] }),
-};
+});
+
+test("parent acceptance forwards consecutive offline edits without waiting for row delivery", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const offline = yield* makeNetworkConnectivity(false);
+                const execute = (tx: OwnedTransaction, request: { id: string }) =>
+                    tx.put("Item", { id: request.id, count: 1 });
+                const parent = yield* makeReplica({
+                    namespace: "offline-owner",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend: quiet,
+                    connectivity: offline,
+                    execute,
+                    startSync: false,
+                });
+                const original = replicaStateSource(parent);
+                const source = {
+                    ...original,
+                    // Hold all row/action-state delivery back. Acceptance must still let
+                    // the ephemeral child hand its entire action tail to the owner.
+                    subscribe: () => Effect.succeed({ frames: Stream.never, acknowledge: () => Effect.void }),
+                };
+                const child = yield* makeReplica({
+                    namespace: "offline-tab",
+                    ir,
+                    tables: yield* Memory.make(),
+                    source,
+                    connectivity: offline,
+                    execute,
+                });
+                for (const id of ["create", "edit", "another-edit"]) {
+                    yield* child.enqueue({ id, name: "write", parameters: {} });
+                    yield* child.awaitAction(id, { until: "accepted" }).pipe(Effect.timeout(1_000));
+                }
+                expect((yield* parent.pending).map((entry) => entry.invocation.id)).toEqual([
+                    "create",
+                    "edit",
+                    "another-edit",
+                ]);
+                expect((yield* child.pending).every((entry) => entry.state === "acknowledged")).toBe(true);
+            })
+        )
+    );
+});
 
 test.each([100, 600_000])(
     "receipt read-back recovery is independent of the %s ms data polling cadence",
@@ -664,28 +712,30 @@ test("journal watch recovery catches up missed commits without a polling heartbe
                                                 : [],
                                     };
                                 }),
-                            watch: Stream.suspend(() =>
-                                ++attempts === 1
-                                    ? Stream.fromEffect(
-                                          Deferred.await(drop).pipe(
-                                              Effect.andThen(
-                                                  Effect.sync(() => {
-                                                      dropped = true;
-                                                  })
-                                              ),
-                                              Effect.andThen(
-                                                  Effect.fail(
-                                                      new BackendError({
-                                                          operation: "watch",
-                                                          kind: "Unavailable",
-                                                          retryable: true,
-                                                          message: "Disconnected.",
+                            watch: Effect.succeed(
+                                Stream.suspend(() =>
+                                    ++attempts === 1
+                                        ? Stream.fromEffect(
+                                              Deferred.await(drop).pipe(
+                                                  Effect.andThen(
+                                                      Effect.sync(() => {
+                                                          dropped = true;
                                                       })
+                                                  ),
+                                                  Effect.andThen(
+                                                      Effect.fail(
+                                                          new BackendError({
+                                                              operation: "watch",
+                                                              kind: "Unavailable",
+                                                              retryable: true,
+                                                              message: "Disconnected.",
+                                                          })
+                                                      )
                                                   )
                                               )
                                           )
-                                      )
-                                    : Stream.never
+                                        : Stream.never
+                                )
                             ),
                         },
                     },

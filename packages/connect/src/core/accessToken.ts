@@ -1,9 +1,7 @@
 import { BackendError, EncryptedValueSchema } from "@party-stack/ontology-backend";
-import { backendQueryReader } from "@party-stack/ontology-backend/query";
 import { TemporalTimestamp } from "@party-stack/ontology-spec/effect";
-import { eq, field } from "@party-stack/ontology-storage";
+import * as q from "@party-stack/ontology-spec/query";
 import { Clock, Effect, Schema } from "effect";
-import { connectOntology } from "../spec/index.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 
 const State = Schema.Struct({
@@ -28,18 +26,18 @@ export const connectionAccessToken = Effect.fn("Connect.accessToken")(function* 
             message: "Connection property decryption is unavailable.",
         });
     const read = Effect.fnUntraced(function* () {
-        const rows = yield* backendQueryReader(connectOntology, backend).loadSubset("OAuthConnection", {
-            where: eq(field("id"), connectionId),
+        const result = yield* backend.query({
+            select: [
+                q.sub("connections", {
+                    from: { source: { objectType: "OAuthConnection" }, binding: "connection" },
+                    where: q.eq(q.field("connection", "id"), q.literal(connectionId)),
+                    select: ["status", "accessToken", "accessTokenExpiresAt"].map((name) =>
+                        q.selectField(name, q.field("connection", name))
+                    ),
+                }),
+            ],
         });
-        const row = rows.find((row) => row.key === connectionId);
-        if (!row)
-            return yield* new BackendError({
-                operation: "connect.read",
-                kind: "NotFound",
-                retryable: false,
-                message: "Connection is unavailable.",
-            });
-        return yield* Schema.decodeUnknownEffect(State)(row.value).pipe(
+        const rows = yield* Schema.decodeUnknownEffect(Schema.Array(State))(result.connections).pipe(
             Effect.mapError(
                 () =>
                     new BackendError({
@@ -50,6 +48,15 @@ export const connectionAccessToken = Effect.fn("Connect.accessToken")(function* 
                     })
             )
         );
+        const row = rows[0];
+        if (!row)
+            return yield* new BackendError({
+                operation: "connect.read",
+                kind: "NotFound",
+                retryable: false,
+                message: "Connection is unavailable.",
+            });
+        return row;
     });
     let current = yield* read();
     const now = yield* Clock.currentTimeMillis;

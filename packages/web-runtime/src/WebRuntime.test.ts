@@ -1,17 +1,17 @@
+import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { collectByteBlob } from "@party-stack/runtime";
-import { Runtime, RuntimePartition } from "@party-stack/runtime";
+import { Runtime, RuntimeError, RuntimePartition } from "@party-stack/runtime";
 import { Deferred, Effect, Fiber, Layer } from "effect";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { layer as platformLayer } from "./WebRuntime.js";
+import { layer as platformLayer, type WebRuntimeOptions } from "./WebRuntime.js";
 const layer = ({
     owner,
     namespace,
     ...options
-}: {
+}: WebRuntimeOptions & {
     owner: string;
     namespace: string;
-    storage?: "indexeddb" | "memory";
 }) => platformLayer(options).pipe(Layer.provide(Layer.succeed(RuntimePartition)({ owner, namespace })));
 
 afterEach(() => vi.unstubAllGlobals());
@@ -106,4 +106,138 @@ test("memory runtimes do not report browser disk quota as cache capacity", async
         }).pipe(Effect.provide(layer({ owner: "test", namespace: "capacity", storage: "memory" })))
     );
     expect(estimate).not.toHaveBeenCalled();
+});
+
+test("forget waits for IndexedDB deletion to finish after a blocked notification", async () => {
+    platform();
+    type Request = { result?: unknown; onsuccess?: () => void; onblocked?: () => void };
+    const deletes: Request[] = [];
+    vi.stubGlobal("indexedDB", {
+        open: () => {
+            const request: Request = { result: { close: vi.fn() } };
+            queueMicrotask(() => request.onsuccess?.());
+            return request;
+        },
+        deleteDatabase: () => {
+            const request: Request = {};
+            deletes.push(request);
+            queueMicrotask(() => {
+                request.onblocked?.();
+                request.onsuccess?.();
+            });
+            return request;
+        },
+    });
+    vi.stubGlobal("IDBKeyRange", {});
+    vi.stubGlobal("navigator", {
+        onLine: true,
+        storage: { getDirectory: async () => ({ removeEntry: async () => {} }) },
+    });
+    const runtime = await Effect.runPromise(
+        Runtime.pipe(Effect.provide(layer({ owner: "test", namespace: "forget" })))
+    );
+    await Effect.runPromise(runtime.destroy);
+    expect(deletes).toHaveLength(3);
+});
+
+test("custom table acquisition is lazy, partition-scoped, and remains destroyable after release", async () => {
+    platform();
+    let opened = 0;
+    let closed = 0;
+    let destroyed = 0;
+    const custom = Effect.gen(function* () {
+        const partition = yield* RuntimePartition;
+        expect(partition).toEqual({ owner: "device", namespace: "custom" });
+        const tables = yield* Effect.acquireRelease(
+            Memory.make().pipe(
+                Effect.tap(() =>
+                    Effect.sync(() => {
+                        opened++;
+                    })
+                )
+            ),
+            () =>
+                Effect.sync(() => {
+                    closed++;
+                })
+        );
+        return {
+            tables,
+            destroy: Effect.sync(() => {
+                destroyed++;
+            }),
+        };
+    });
+    const runtimeLayer = layer({ owner: "device", namespace: "custom", storage: "memory", tables: custom });
+    expect(opened).toBe(0);
+    const runtime = await Effect.runPromise(Runtime.pipe(Effect.provide(runtimeLayer)));
+    expect(opened).toBe(1);
+    expect(closed).toBe(1);
+    expect(destroyed).toBe(0);
+    await Effect.runPromise(runtime.destroy);
+    expect(destroyed).toBe(1);
+});
+
+test("persistent custom tables retain browser capabilities without opening or deleting built-in table databases", async () => {
+    platform();
+    const open = vi.fn(() => {
+        throw new Error("Built-in table database must not open");
+    });
+    const deleted: string[] = [];
+    let destroyed = 0;
+    vi.stubGlobal("indexedDB", {
+        open,
+        deleteDatabase: (name: string) => {
+            deleted.push(name);
+            const request: { onsuccess?: () => void } = {};
+            queueMicrotask(() => request.onsuccess?.());
+            return request;
+        },
+    });
+    vi.stubGlobal("IDBKeyRange", {});
+    vi.stubGlobal("navigator", {
+        onLine: true,
+        storage: { getDirectory: async () => ({ removeEntry: async () => {} }) },
+    });
+    const runtime = await Effect.runPromise(
+        Runtime.pipe(
+            Effect.provide(
+                layer({
+                    owner: "device",
+                    namespace: "sql",
+                    tables: Effect.map(Memory.make(), (tables) => ({
+                        tables,
+                        destroy: Effect.sync(() => {
+                            destroyed++;
+                        }),
+                    })),
+                })
+            )
+        )
+    );
+    expect(open).not.toHaveBeenCalled();
+    await Effect.runPromise(runtime.destroy);
+    expect(destroyed).toBe(1);
+    expect(deleted).toEqual(['party-stack:["device","sql"]:keys']);
+});
+
+test("failed custom table acquisition releases the platform scope and preserves the typed error", async () => {
+    const p = platform();
+    const failure = new RuntimeError({ operation: "custom.tables", cause: new Error("Denied") });
+    const result = await Effect.runPromise(
+        Effect.result(
+            Runtime.pipe(
+                Effect.provide(
+                    layer({
+                        owner: "device",
+                        namespace: "failed",
+                        storage: "memory",
+                        tables: Effect.fail(failure),
+                    })
+                )
+            )
+        )
+    );
+    expect(result).toMatchObject({ _tag: "Failure", failure });
+    expect(p.remove).toHaveBeenCalledTimes(2);
 });

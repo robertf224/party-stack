@@ -20,9 +20,8 @@ import {
     type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
 import { BackendError } from "@party-stack/ontology-backend";
-import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
+import { OntologyProvider, useOntology } from "@party-stack/ontology-react";
 import { eq, ilike, inArray, or, useLiveQuery } from "@tanstack/react-db";
-import { TanStackDevtools } from "@tanstack/react-devtools";
 import { useNavigate } from "@tanstack/react-router";
 import {
     useEffect,
@@ -33,9 +32,12 @@ import {
     type FormEvent,
     type KeyboardEvent as ReactKeyboardEvent,
     type ReactNode,
+    type Dispatch,
+    type SetStateAction,
 } from "react";
 import { Temporal } from "temporal-polyfill";
 import { FormInput, FormSelect, FormTextarea } from "../components/FormControls";
+import { objects as trackerObjects } from "../ontology/generated/collections";
 import {
     connectFoundryProfile,
     connectGoogleProfile,
@@ -46,12 +48,14 @@ import {
     type ConnectedProfile,
     type TrackerOntology,
 } from "./profiles";
+import { TrackerDevtools } from "./TrackerDevtools";
 import type {
     CreateIssueParameters,
     Issue,
     Project,
     UpdateIssueParameters,
     User,
+    IssueTrackerOntology,
 } from "../ontology/generated/types";
 import type { AttachmentMetadata } from "@party-stack/ontology";
 
@@ -425,13 +429,19 @@ function UserAvatar({
 }
 
 function ProfileIdentity({ profile }: { profile: ConnectedProfile }) {
+    return (
+        <OntologyProvider ontology={profile.ontology}>
+            <ProfileIdentityView profile={profile} />
+        </OntologyProvider>
+    );
+}
+function ProfileIdentityView({ profile }: { profile: ConnectedProfile }) {
     const ontology = profile.ontology;
     const { data: user } = useLiveQuery({
-        client: ontology.dbClient,
         query: (q) =>
             q
-                .from({ User: ontology.objects.User })
-                .where(({ User }) => eq(User.id, ontology.context.user))
+                .from({ User: trackerObjects.User })
+                .where(({ User }) => eq(User.id, ontology.context.userId))
                 .findOne(),
     });
     return (
@@ -1036,10 +1046,9 @@ function IssueDetails({
     const { updateIssue, deleteIssue } = ontology.actions;
     const [editing, setEditing] = useState(false);
     const { data: issue } = useLiveQuery({
-        client: ontology.dbClient,
         query: (q) =>
             q
-                .from({ Issue: ontology.objects.Issue })
+                .from({ Issue: trackerObjects.Issue })
                 .where(({ Issue }) => eq(Issue.issueId, issueId))
                 .findOne(),
     });
@@ -1782,19 +1791,48 @@ function ConnectedIssueTracker({
     initialProfiles: ConnectedProfile[];
 }) {
     const [profiles, setProfiles] = useState<ConnectedProfile[]>(initialProfiles);
-    const navigate = useNavigate();
     const [activeProfileId, setActiveProfileId] = useState(() => {
         if (typeof window === "undefined") return profiles[0]!.id;
         const stored = window.localStorage.getItem("issue-tracker-active-profile");
         return profiles.some((profile) => profile.id === stored) ? stored! : profiles[0]!.id;
     });
+    const activeProfile =
+        profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0] ?? initialProfiles[0]!;
+    return (
+        <OntologyProvider ontology={activeProfile.ontology}>
+            <ConnectedIssueTrackerView
+                initialProjectId={initialProjectId}
+                profiles={profiles}
+                setProfiles={setProfiles}
+                activeProfileId={activeProfileId}
+                setActiveProfileId={setActiveProfileId}
+                activeProfile={activeProfile}
+            />
+        </OntologyProvider>
+    );
+}
+function ConnectedIssueTrackerView({
+    initialProjectId,
+    profiles,
+    setProfiles,
+    activeProfileId,
+    setActiveProfileId,
+    activeProfile,
+}: {
+    initialProjectId: string;
+    profiles: ConnectedProfile[];
+    setProfiles: Dispatch<SetStateAction<ConnectedProfile[]>>;
+    activeProfileId: string;
+    setActiveProfileId: Dispatch<SetStateAction<string>>;
+    activeProfile: ConnectedProfile;
+}) {
+    const navigate = useNavigate();
     const [profileDialogOpen, setProfileDialogOpen] = useState(false);
     const [profileMenuOpen, setProfileMenuOpen] = useState(false);
     const [signedOut, setSignedOut] = useState(false);
     const [profileError, setProfileError] = useState<string>();
     const [connectingProfile, setConnectingProfile] = useState(false);
-    const activeProfile = profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0]!;
-    const ontology = activeProfile.ontology;
+    const ontology = useOntology<IssueTrackerOntology>();
     const toastManager = Toast.useToastManager();
     const { deleteIssue, updateIssue, createProject, updateProject, deleteProject } = ontology.actions;
     const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId);
@@ -1890,34 +1928,26 @@ function ConnectedIssueTracker({
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, []);
 
-    const devtoolsPlugins = useMemo(() => [createOntologyDevtoolsPlugin({ ontology })], [ontology]);
-
     const { data: projects, isLoading: projectsLoading } = useLiveQuery({
-        client: ontology.dbClient,
         query: (q) =>
-            q
-                .from({ Project: ontology.objects.Project })
-                .orderBy(({ Project }) => Project.projectTitle, "asc"),
+            q.from({ Project: trackerObjects.Project }).orderBy(({ Project }) => Project.projectTitle, "asc"),
     });
 
     const { data: users } = useLiveQuery({
-        client: ontology.dbClient,
-        query: (q) => q.from({ User: ontology.objects.User }).orderBy(({ User }) => User.familyName, "asc"),
+        query: (q) => q.from({ User: trackerObjects.User }).orderBy(({ User }) => User.familyName, "asc"),
     });
-    const currentUser = users.find((user) => user.id === ontology.context.user);
+    const currentUser = users.find((user) => user.id === ontology.context.userId);
 
     const { data: allIssueIds } = useLiveQuery({
-        client: ontology.dbClient,
         query: (q) =>
-            q.from({ Issue: ontology.objects.Issue }).select(({ Issue }) => ({
+            q.from({ Issue: trackerObjects.Issue }).select(({ Issue }) => ({
                 issueId: Issue.issueId,
             })),
     });
 
     const { data: issues, isLoading: issuesLoading } = useLiveQuery({
-        client: ontology.dbClient,
         query: (q) => {
-            let query = q.from({ Issue: ontology.objects.Issue });
+            let query = q.from({ Issue: trackerObjects.Issue });
             if (search)
                 query = query.where(({ Issue }) =>
                     or(ilike(Issue.issueTitle, `${search}%`), inArray(search, Issue.issueLabels))
@@ -1926,7 +1956,7 @@ function ConnectedIssueTracker({
             if (statusFilter !== "All")
                 query = query.where(({ Issue }) => eq(Issue.issueStatus, statusFilter));
             return query
-                .leftJoin({ Project: ontology.objects.Project }, ({ Issue, Project }) =>
+                .leftJoin({ Project: trackerObjects.Project }, ({ Issue, Project }) =>
                     eq(Issue.projectId, Project.projectId)
                 )
                 .select(({ Issue, Project }) => ({
@@ -2637,10 +2667,7 @@ function ConnectedIssueTracker({
                     </DialogFrame>
                 </Dialog.Root>
 
-                <TanStackDevtools
-                    config={{ customTrigger: ontologyDevtoolsTrigger }}
-                    plugins={devtoolsPlugins}
-                />
+                <TrackerDevtools ontology={ontology} ready={!issuesLoading || issues.length > 0} />
             </div>
         </Tooltip.Provider>
     );

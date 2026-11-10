@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { Effect } from "effect";
 import type { ReplicaService } from "./engine.js";
@@ -15,24 +16,26 @@ export const makeCachedProxy = Effect.fn("OntologyProxy.make")(function* (option
     readonly backend: OntologyBackendService;
     readonly eager?: readonly ObjectSubset[];
     readonly confirmed?: boolean;
+    readonly context?: Record<string, unknown>;
 }): Effect.fn.Return<OntologyBackendService, BackendError, Scope.Scope> {
     const eager = yield* Effect.forEach(options.eager ?? [], (subset) =>
         compileObjectSubset(options.replica.ir, subset)
     );
     for (const subset of eager) yield* options.replica.demand(subset);
     for (const subset of eager) yield* options.replica.syncSubset(subset);
-    let writeGeneration = 0;
-    let invalidatedGeneration = 0;
-    let dirtyTypes: readonly string[] | undefined = [];
+    const state = options.replica.proxyInvalidation;
     const repairInvalidation = Effect.fnUntraced(function* () {
-        const generation = writeGeneration;
-        if (generation <= invalidatedGeneration) return;
-        yield* options.replica.invalidate(dirtyTypes);
-        invalidatedGeneration = Math.max(invalidatedGeneration, generation);
-        if (generation === writeGeneration) dirtyTypes = [];
+        const generation = state.writeGeneration;
+        if (generation <= state.invalidatedGeneration) return;
+        yield* options.replica.invalidate(state.dirtyTypes);
+        state.invalidatedGeneration = Math.max(state.invalidatedGeneration, generation);
+        if (generation === state.writeGeneration) state.dirtyTypes = [];
     });
-    return {
-        ...options.backend,
+    const { query: _upstreamQuery, ...upstream } = options.backend;
+    return makeOntologyBackend({
+        ...upstream,
+        ir: options.replica.ir,
+        context: options.context,
         name: `cached:${options.backend.name}`,
         subscribeSelection: Effect.fnUntraced(function* (selection, policy, resume) {
             const subsets = yield* Effect.forEach(selection.subsets, (subset) =>
@@ -63,11 +66,11 @@ export const makeCachedProxy = Effect.fn("OntologyProxy.make")(function* (option
                 receipt.affectedComplete === false || receipt.affected === undefined
                     ? undefined
                     : receipt.affected.map((target) => target.objectType);
-            dirtyTypes =
-                affected === undefined || dirtyTypes === undefined
+            state.dirtyTypes =
+                affected === undefined || state.dirtyTypes === undefined
                     ? undefined
-                    : [...new Set([...dirtyTypes, ...affected])];
-            writeGeneration++;
+                    : [...new Set([...state.dirtyTypes, ...affected])];
+            state.writeGeneration++;
             // Preserve the successful outcome even if cache IO fails. A dirty generation
             // forces the next read to retry invalidation before serving retained coverage.
             yield* repairInvalidation().pipe(
@@ -75,5 +78,5 @@ export const makeCachedProxy = Effect.fn("OntologyProxy.make")(function* (option
             );
             return receipt;
         }),
-    };
+    });
 });

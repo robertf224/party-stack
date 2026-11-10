@@ -10,8 +10,8 @@ import { FetchHttpClient } from "effect/http";
 import { Temporal } from "temporal-polyfill";
 import { expect, test, vi } from "vite-plus/test";
 import { makeReplica } from "../../ontology-replica/lib/service.js";
-import { makeOntologyServer } from "./composition.js";
-import { connectOntologyHttp, makeOntologyHttpHandler } from "./rpcHttp.js";
+import { makeOntologyServer } from "./routing.js";
+import { makeOntologyHttpClient, makeOntologyHttpHandler } from "./rpcHttp.js";
 
 const ir: OntologyIR = {
     types: [],
@@ -56,6 +56,7 @@ test("Effect HTTP RPC explicitly authorizes decrypt and preserves plaintext repr
                 const { owned, decrypt } = yield* setup();
                 let allowed = false;
                 const handler = yield* makeOntologyHttpHandler({
+                    enableRealtime: true,
                     backend: owned,
                     authorize: (request) =>
                         request.operation !== "Decrypt" || allowed
@@ -69,12 +70,14 @@ test("Effect HTTP RPC explicitly authorizes decrypt and preserves plaintext repr
                                   })
                               ),
                 });
-                const client = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" }).pipe(
-                    Effect.provide(FetchHttpClient.layer),
-                    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
-                        handler(new Request(input, init))
-                    )
-                );
+                const client = yield* makeOntologyHttpClient({ url: "https://ontology.test/rpc" })
+                    .pipe(Effect.flatMap((server) => server.ontology()))
+                    .pipe(
+                        Effect.provide(FetchHttpClient.layer),
+                        Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                            handler(new Request(input, init))
+                        )
+                    );
                 expect((yield* Effect.result(client.operations.decrypt(value)))._tag).toBe("Failure");
                 expect(decrypt).not.toHaveBeenCalled();
                 allowed = true;
@@ -124,16 +127,19 @@ test("memory clients forward cache policy to their persistent ontology owner", a
                 });
                 const replica = { ...owner, decrypt };
                 const handler = yield* makeOntologyHttpHandler({
+                    enableRealtime: true,
                     source: replicaStateSource(owner),
                     replica,
                     authorize: () => Effect.void,
                 });
-                const client = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" }).pipe(
-                    Effect.provide(FetchHttpClient.layer),
-                    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
-                        handler(new Request(input, init))
-                    )
-                );
+                const client = yield* makeOntologyHttpClient({ url: "https://ontology.test/rpc" })
+                    .pipe(Effect.flatMap((server) => server.ontology()))
+                    .pipe(
+                        Effect.provide(FetchHttpClient.layer),
+                        Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                            handler(new Request(input, init))
+                        )
+                    );
                 expect(yield* client.operations.decrypt(value, { cache: true })).toBe(plaintext);
                 expect(decrypt).toHaveBeenCalledWith(value, { cache: true });
             })
@@ -149,7 +155,7 @@ test("native policy HTTP requires a readable source row/property and matching ci
                 const definition: OntologyIR = {
                     ...ir,
                     policy: {
-                        read: {
+                        objects: {
                             select: [
                                 sub("people", {
                                     from: { source: { objectType: "Person" }, binding: "person" },
@@ -163,17 +169,23 @@ test("native policy HTTP requires a readable source row/property and matching ci
                     },
                 };
                 const server = yield* makeOntologyServer({
+                    enableRealtime: true,
                     kind: "owned",
                     backend: owned,
                     ir: definition,
                     context: {},
-                });
-                const client = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" }).pipe(
-                    Effect.provide(FetchHttpClient.layer),
-                    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
-                        server.handleRequest(new Request(input, init))
-                    )
+                }).pipe(
+                    Effect.flatMap((server) => makeOntologyHttpHandler(server)),
+                    Effect.map((handleRequest) => ({ handleRequest }))
                 );
+                const client = yield* makeOntologyHttpClient({ url: "https://ontology.test/rpc" })
+                    .pipe(Effect.flatMap((server) => server.ontology()))
+                    .pipe(
+                        Effect.provide(FetchHttpClient.layer),
+                        Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                            server.handleRequest(new Request(input, init))
+                        )
+                    );
                 for (const forged of [
                     { ...value, ciphertext: "other" },
                     { ...value, source: { ...value.source, primaryKey: "other" } },
@@ -222,16 +234,19 @@ test("cancelling decrypt RPC aborts the persistent owner's operation", async () 
                         ),
                 };
                 const handler = yield* makeOntologyHttpHandler({
+                    enableRealtime: true,
                     source: replicaStateSource(owner),
                     replica,
                     authorize: () => Effect.void,
                 });
-                const client = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" }).pipe(
-                    Effect.provide(FetchHttpClient.layer),
-                    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
-                        handler(new Request(input, init))
-                    )
-                );
+                const client = yield* makeOntologyHttpClient({ url: "https://ontology.test/rpc" })
+                    .pipe(Effect.flatMap((server) => server.ontology()))
+                    .pipe(
+                        Effect.provide(FetchHttpClient.layer),
+                        Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                            handler(new Request(input, init))
+                        )
+                    );
                 const pending = yield* Effect.forkChild(client.operations.decrypt(value));
                 yield* Deferred.await(started);
                 yield* Fiber.interrupt(pending);

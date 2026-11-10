@@ -47,7 +47,7 @@ these keys. The flag enables persistent local credentials but does not opt ordin
 encrypted properties into caching. `ontology.decrypt(value, { cache: true })` is a
 separate per-call choice; the default bypasses persistent cached plaintext copies.
 Cached copies are themselves encrypted with the device key. This runtime must be
-partitioned by authenticated owner/installation/ontology as usual; never reuse a
+partitioned by authenticated owner and ontology namespace as usual; never reuse a
 private runtime for unrelated users. See [encrypted values](../ontology/encrypted-values.md).
 
 `createWebRuntime(owner, namespace, options?)` returns the same scoped Effect as

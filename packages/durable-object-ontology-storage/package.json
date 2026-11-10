@@ -33,7 +33,7 @@
         "@party-stack/build-config": "workspace:*",
         "@party-stack/ontology": "workspace:*",
         "@party-stack/ontology-replica": "workspace:*",
-        "@tanstack/db": "0.14.0",
+        "@tanstack/db": "1.0.0-rc.1.4",
         "alchemy": "^2.0.0-beta.83",
         "esbuild": "^0.28.1",
         "typescript": "~7.0.2",

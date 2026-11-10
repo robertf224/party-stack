@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { expect, test } from "vitest";
 import * as Memory from "../memory/tables.js";
 import { field, Table } from "../model.js";
-import { getBaseline, getVisible, loadBaseline, loadVisible, overlay } from "./index.js";
+import { getBaseline, getVisible, getVisibleMany, loadBaseline, loadVisible, overlay } from "./index.js";
 
 test("received predictions compose below local predictions without materializing another base", async () => {
     await Effect.runPromise(
@@ -27,6 +27,9 @@ test("received predictions compose below local predictions without materializing
                     expect(yield* getVisible(tx, view, "b")).toEqual({ rank: -1 });
                     expect(yield* getVisible(tx, view, "a")).toBeUndefined();
                     expect(yield* getVisible(tx, view, "x")).toBeUndefined();
+                    const keys = ["a", "b", "c", "d", "x", "missing"];
+                    const batch = yield* getVisibleMany(tx, view, keys);
+                    for (const key of keys) expect(batch.get(key)).toEqual(yield* getVisible(tx, view, key));
                     yield* tx.put(view.overrides, "a", { deleted: false, value: { rank: 5 } });
                     expect(yield* getVisible(tx, view, "a")).toEqual({ rank: 5 });
                     expect(yield* getBaseline(tx, view, "a")).toBeUndefined();

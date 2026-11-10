@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { ActionReceiptSchema, BackendError } from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
@@ -47,7 +48,8 @@ test("partial synthetic receipt identities survive restart and do not hide autom
                     affected: [{ objectType: "Counter", keys: ["one"] }],
                     affectedComplete: false,
                 });
-                const backend: OntologyBackendService = {
+                const backend: OntologyBackendService = makeOntologyBackend({
+                    ir,
                     name: "test",
                     sourceId: "test",
                     supportsIdempotency: false,
@@ -82,7 +84,7 @@ test("partial synthetic receipt identities survive restart and do not hide autom
                             })
                         ),
                     queryFunction: () => Effect.void,
-                };
+                });
                 const options = {
                     namespace: "partial-receipt",
                     ir: definition,
@@ -124,7 +126,8 @@ test("receipt targets read only changed identities and publish read-back with ov
                 const requests: CompiledSubset[] = [];
                 const observed: (number | undefined)[] = [];
                 let replica: Effect.Success<ReturnType<typeof makeReplica>> | undefined;
-                const backend: OntologyBackendService = {
+                const backend: OntologyBackendService = makeOntologyBackend({
+                    ir,
                     name: "test",
                     sourceId: "test",
                     supportsIdempotency: false,
@@ -145,7 +148,7 @@ test("receipt targets read only changed identities and publish read-back with ov
                             } satisfies ActionReceipt;
                         }),
                     queryFunction: () => Effect.succeed(undefined),
-                };
+                });
                 replica = yield* makeReplica({
                     namespace: "targeted-receipt",
                     ir,
@@ -191,7 +194,8 @@ test("read-back failure retains the receipt across restart and never redispatche
                 const tables = yield* Memory.make();
                 let invocations = 0;
                 let phase: "offline" | "incomplete" | "ready" = "offline";
-                const backend: OntologyBackendService = {
+                const backend: OntologyBackendService = makeOntologyBackend({
+                    ir,
                     name: "test",
                     sourceId: "test",
                     supportsIdempotency: false,
@@ -220,7 +224,7 @@ test("read-back failure retains the receipt across restart and never redispatche
                                   rows: [{ key: "one", value: { id: "one", count: 2 } }],
                               }),
                     queryFunction: () => Effect.succeed(undefined),
-                };
+                });
                 const settings = {
                     namespace: "receipt-restart",
                     ir,
@@ -264,7 +268,8 @@ test("a complete identity read-back can remove a deleted object without evicting
                     { key: "one", value: { id: "one", count: 1 } },
                     { key: "two", value: { id: "two", count: 2 } },
                 ];
-                const backend: OntologyBackendService = {
+                const backend: OntologyBackendService = makeOntologyBackend({
+                    ir,
                     name: "test",
                     sourceId: "test",
                     supportsIdempotency: false,
@@ -285,7 +290,7 @@ test("a complete identity read-back can remove a deleted object without evicting
                             };
                         }),
                     queryFunction: () => Effect.succeed(undefined),
-                };
+                });
                 const replica = yield* makeReplica({
                     namespace: "deleted-receipt",
                     ir,
@@ -317,7 +322,8 @@ test("restart confirms a saved receipt before active demand can publish the remo
                 let fail = false;
                 let invocations = 0;
                 const reads: CompiledSubset[] = [];
-                const backend: OntologyBackendService = {
+                const backend: OntologyBackendService = makeOntologyBackend({
+                    ir,
                     name: "test",
                     sourceId: "restart-demand",
                     supportsIdempotency: false,
@@ -352,7 +358,7 @@ test("restart confirms a saved receipt before active demand can publish the remo
                             };
                         }),
                     queryFunction: () => Effect.succeed(undefined),
-                };
+                });
                 let current: Effect.Success<ReturnType<typeof makeReplica>> | undefined;
                 const published: unknown[] = [];
                 const settings = {
@@ -407,7 +413,8 @@ test.each([false, true])(
                     const entered = yield* Deferred.make<void>();
                     let calls = 0;
                     let hold = true;
-                    const backend: OntologyBackendService = {
+                    const backend: OntologyBackendService = makeOntologyBackend({
+                        ir,
                         name: "interrupted",
                         sourceId: "interrupted",
                         supportsIdempotency,
@@ -424,7 +431,7 @@ test.each([false, true])(
                                     affected: [],
                                 };
                             }),
-                    };
+                    });
                     const options = {
                         namespace: "interrupted-dispatch",
                         ir,
@@ -476,7 +483,8 @@ test("retry attempts advance once per submission, and acceptance never resets or
                     outbox: { retryDelayMs: 0 },
                     objectCacheGc: false,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "retry",
                         sourceId: "retry",
                         supportsIdempotency: true,
@@ -500,7 +508,7 @@ test("retry attempts advance once per submission, and acceptance never resets or
                                           affected: [],
                                       });
                             }),
-                    },
+                    }),
                 });
                 yield* replica.enqueue({ id: "once", name: "increment", parameters: {} });
                 expect((yield* Effect.result(replica.syncOnce))._tag).toBe("Failure");

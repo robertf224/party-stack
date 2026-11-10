@@ -1,4 +1,4 @@
-import { fc } from "@fast-check/vitest";
+import { it } from "@effect/vitest";
 import { o } from "@party-stack/ontology-spec";
 import {
     context,
@@ -17,10 +17,13 @@ import {
     caseExpression,
 } from "@party-stack/ontology-spec/query";
 import { evaluateQuery } from "@party-stack/ontology-storage";
-import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import * as Memory from "@party-stack/ontology-storage/memory/tables";
+import { Effect, Schema } from "effect";
+import { describe, expect } from "vitest";
+import { makeOwnedBackend } from "./owned.js";
 import { authorizeAction, policyView } from "./policy.js";
-import { executeQuery, queryExecutor } from "./query.js";
+import { executeQuery, queryExecutor, makeOntologyBackend } from "./query.js";
+import { compileObjectSubset } from "./subset.js";
 import type { QueryReader } from "./query.js";
 import type { OntologyIR, QueryDocument } from "@party-stack/ontology-spec";
 import type { Query as Scan } from "@party-stack/ontology-storage";
@@ -94,6 +97,162 @@ const projects = [
     { id: "a", title: "A", admins: ["user"] },
     { id: "b", title: "B", admins: [] },
 ];
+
+it("backend queries use bound context and keep caller inputs separate", async () => {
+    const source = reader({ Project: projects, Issue: [] }).source;
+    const backend = makeOntologyBackend({
+        ir,
+        context: { user: "user" },
+        name: "provider",
+        sourceId: "provider",
+        supportsIdempotency: false,
+        loadSubset: (request) =>
+            compileObjectSubset(ir, request).pipe(
+                Effect.flatMap((subset) => source.loadSubset(subset.objectType, subset.query)),
+                Effect.map((rows) => ({ rows, complete: true }))
+            ),
+        applyAction: () => Effect.die("unused"),
+        queryFunction: () => Effect.die("unused"),
+    });
+    const query: QueryDocument = {
+        ...document(),
+        inputs: [p("user")],
+        select: [
+            ...document().select,
+            selectField("principal", context("user")),
+            selectField("argument", input("user")),
+        ],
+    };
+    expect(await Effect.runPromise(backend.query(query, { inputs: { user: "spoofed" } }))).toEqual({
+        projects: [{ id: "a", issues: [], hasIssues: false }],
+        principal: "user",
+        argument: "spoofed",
+    });
+    const incomplete = makeOntologyBackend({
+        ...backend,
+        ir,
+        query: undefined,
+        loadSubset: () => Effect.succeed({ rows: [], complete: false }),
+    });
+    expect(await Effect.runPromise(incomplete.query(document()).pipe(Effect.result))).toMatchObject({
+        _tag: "Failure",
+        failure: { kind: "InvalidResponse" },
+    });
+});
+
+it("query aliases preserve the source property of attachment and encrypted handles", async () => {
+    const definition: OntologyIR = {
+        ...ir,
+        context: undefined,
+        objectTypes: [
+            {
+                ...ir.objectTypes[0]!,
+                properties: [
+                    p("id"),
+                    p("file", o.attachment({})),
+                    p("secret", o.encrypted({ type: o.string({}) })),
+                ],
+            },
+        ],
+    };
+    const backend = makeOntologyBackend({
+        ir: definition,
+        name: "handles",
+        sourceId: "handles",
+        supportsIdempotency: false,
+        loadSubset: () =>
+            Effect.succeed({
+                complete: true,
+                rows: [
+                    {
+                        key: "a",
+                        value: {
+                            id: "a",
+                            file: { id: "file" },
+                            secret: { ciphertext: "encrypted" },
+                        },
+                    },
+                ],
+            }),
+        applyAction: () => Effect.die("unused"),
+        queryFunction: () => Effect.die("unused"),
+    });
+    const result = await Effect.runPromise(
+        backend.query({
+            select: [
+                sub("projects", {
+                    from: { source: { objectType: "Project" }, binding: "project" },
+                    select: [
+                        selectField("download", field("project", "file")),
+                        selectField("value", field("project", "secret")),
+                    ],
+                }),
+            ],
+        })
+    );
+    expect(result.projects).toEqual([
+        {
+            download: { id: "file", source: { objectType: "Project", primaryKey: "a", property: "file" } },
+            value: {
+                ciphertext: "encrypted",
+                source: { objectType: "Project", primaryKey: "a", property: "secret" },
+            },
+        },
+    ]);
+});
+
+it("owned hierarchical queries share one read transaction, and provider-native queries bypass subset fallback", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                let snapshots = 0;
+                const owned = yield* makeOwnedBackend({
+                    ir,
+                    namespace: "native-query",
+                    mutators: {},
+                    tables: {
+                        ...tables,
+                        read: (body) => {
+                            snapshots++;
+                            return tables.read(body);
+                        },
+                    },
+                });
+                yield* owned.storage.transaction((tx) =>
+                    Effect.gen(function* () {
+                        yield* tx.put("Project", projects[0]!);
+                        yield* tx.put("Issue", {
+                            id: "i",
+                            projectId: "a",
+                            title: "Issue",
+                            rank: 1,
+                            secret: "private",
+                        });
+                    })
+                );
+                snapshots = 0;
+                const answer = yield* owned.query({
+                    select: [
+                        sub("projects", {
+                            from: { source: { objectType: "Project" }, binding: "p" },
+                            select: [selectField("id", field("p", "id")), sub("issues", issueQuery())],
+                        }),
+                    ],
+                });
+                expect(answer).toEqual({ projects: [{ id: "a", issues: [{ id: "i", title: "Issue" }] }] });
+                expect(snapshots).toBe(1);
+                const native = makeOntologyBackend({
+                    ...owned,
+                    ir,
+                    query: () => Effect.succeed({ native: true }),
+                    loadSubset: () => Effect.die("Native query loaded a subset"),
+                });
+                expect(yield* native.query(document())).toEqual({ native: true });
+            })
+        )
+    );
+});
 
 it("invalid policy configuration is a typed failure, not an Effect defect", async () => {
     const { source } = reader({});
@@ -191,66 +350,65 @@ describe("finite hierarchical queries", () => {
         });
         expect(empty.calls.map((call) => call.objectType)).toEqual(["Project"]);
     });
-    it("matches a domain oracle with duplicate correlation keys and missing children", async () => {
-        await fc.assert(
-            fc.asyncProperty(
-                fc.array(
-                    fc.record({
-                        project: fc.integer({ min: 0, max: 3 }),
-                        rank: fc.integer({ min: -3, max: 3 }),
-                    }),
-                    { maxLength: 35 }
-                ),
-                async (data) => {
-                    const parents = Array.from({ length: 6 }, (_, i) => ({
-                        id: `p${i}`,
-                        title: `group${i % 3}`,
-                        admins: [],
-                    }));
-                    const issues = data.map((row, i) => ({
-                        id: `i${String(i).padStart(2, "0")}`,
-                        projectId: `group${row.project}`,
-                        title: `Issue ${i}`,
-                        rank: row.rank,
-                    }));
-                    const query: QueryDocument = {
-                        select: [
-                            sub("projects", {
-                                from: { source: { objectType: "Project" }, binding: "p" },
-                                select: [
-                                    selectField("id", field("p", "id")),
-                                    sub("issues", {
-                                        ...issueQuery(),
-                                        page: undefined,
-                                        where: and(
-                                            eq(field("i", "projectId"), field("p", "title")),
-                                            gt(field("i", "rank"), literal(0))
-                                        ),
-                                    }),
-                                ],
-                            }),
-                        ],
-                    };
-                    const expected = {
-                        projects: parents.map((parent) => ({
-                            id: parent.id,
-                            issues: issues
-                                .filter((issue) => issue.projectId === parent.title && issue.rank > 0)
-                                .sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id))
-                                .map(({ id, title }) => ({ id, title })),
-                        })),
-                    };
-                    for (const strategy of ["planned", "reference"] as const) {
-                        const { source } = reader({ Project: parents, Issue: issues });
-                        expect(
-                            (await Effect.runPromise(executeQuery(query, { reader: source, strategy }))).value
-                        ).toEqual(expected);
-                    }
+    it.live.prop(
+        "matches a domain oracle with duplicate correlation keys and missing children",
+        [
+            Schema.Array(
+                Schema.Struct({
+                    project: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 })),
+                    rank: Schema.Int.check(Schema.isBetween({ minimum: -3, maximum: 3 })),
+                })
+            ).check(Schema.isMaxLength(35)),
+        ],
+        ([data]) =>
+            Effect.gen(function* () {
+                const parents = Array.from({ length: 6 }, (_, i) => ({
+                    id: `p${i}`,
+                    title: `group${i % 3}`,
+                    admins: [],
+                }));
+                const issues = data.map((row, i) => ({
+                    id: `i${String(i).padStart(2, "0")}`,
+                    projectId: `group${row.project}`,
+                    title: `Issue ${i}`,
+                    rank: row.rank,
+                }));
+                const query: QueryDocument = {
+                    select: [
+                        sub("projects", {
+                            from: { source: { objectType: "Project" }, binding: "p" },
+                            select: [
+                                selectField("id", field("p", "id")),
+                                sub("issues", {
+                                    ...issueQuery(),
+                                    page: undefined,
+                                    where: and(
+                                        eq(field("i", "projectId"), field("p", "title")),
+                                        gt(field("i", "rank"), literal(0))
+                                    ),
+                                }),
+                            ],
+                        }),
+                    ],
+                };
+                const expected = {
+                    projects: parents.map((parent) => ({
+                        id: parent.id,
+                        issues: issues
+                            .filter((issue) => issue.projectId === parent.title && issue.rank > 0)
+                            .sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id))
+                            .map(({ id, title }) => ({ id, title })),
+                    })),
+                };
+                for (const strategy of ["planned", "reference"] as const) {
+                    const { source } = reader({ Project: parents, Issue: issues });
+                    expect((yield* executeQuery(query, { reader: source, strategy })).value).toEqual(
+                        expected
+                    );
                 }
-            ),
-            { numRuns: 60 }
-        );
-    });
+            }),
+        { arbitrary: { runs: 60 } }
+    );
     it("keeps per-parent top-K queries on the ordinary path", async () => {
         const parents = Array.from({ length: 3 }, (_, i) => ({ id: `p${i}`, title: "", admins: [] }));
         const issues = parents.flatMap((parent, p) =>
@@ -348,52 +506,57 @@ describe("finite hierarchical queries", () => {
                 });
             }
     });
-    it("matches an independent domain oracle for planned and reference strategies", async () => {
-        await fc.assert(
-            fc.asyncProperty(
-                fc.array(fc.record({ project: fc.boolean(), rank: fc.integer({ min: -5, max: 5 }) }), {
-                    maxLength: 20,
-                }),
-                async (rows) => {
-                    const issues = rows.map((r, n) => ({
-                        id: `i${String(n).padStart(2, "0")}`,
-                        title: `Issue ${n}`,
-                        projectId: r.project ? "a" : "b",
-                        rank: r.rank,
-                        secret: "hidden",
-                    }));
-                    const expected = {
-                        projects: [
-                            {
-                                id: "a",
-                                issues: issues
-                                    .filter((i) => i.projectId === "a")
-                                    .sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id))
-                                    .slice(0, 2)
-                                    .map(({ id, title }) => ({ id, title })),
-                                hasIssues: issues.some((i) => i.projectId === "a"),
-                            },
-                        ],
-                    };
-                    for (const strategy of ["planned", "reference"] as const) {
-                        const { source } = reader({ Project: projects, Issue: issues });
-                        const result = await Effect.runPromise(
-                            executeQuery(document(), { reader: source, context: { user: "user" }, strategy })
-                        );
-                        expect(result.value).toEqual(expected);
-                    }
+    it.live.prop(
+        "matches an independent domain oracle for planned and reference strategies",
+        [
+            Schema.Array(
+                Schema.Struct({
+                    project: Schema.Boolean,
+                    rank: Schema.Int.check(Schema.isBetween({ minimum: -5, maximum: 5 })),
+                })
+            ).check(Schema.isMaxLength(20)),
+        ],
+        ([rows]) =>
+            Effect.gen(function* () {
+                const issues = rows.map((r, n) => ({
+                    id: `i${String(n).padStart(2, "0")}`,
+                    title: `Issue ${n}`,
+                    projectId: r.project ? "a" : "b",
+                    rank: r.rank,
+                    secret: "hidden",
+                }));
+                const expected = {
+                    projects: [
+                        {
+                            id: "a",
+                            issues: issues
+                                .filter((i) => i.projectId === "a")
+                                .sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id))
+                                .slice(0, 2)
+                                .map(({ id, title }) => ({ id, title })),
+                            hasIssues: issues.some((i) => i.projectId === "a"),
+                        },
+                    ],
+                };
+                for (const strategy of ["planned", "reference"] as const) {
+                    const { source } = reader({ Project: projects, Issue: issues });
+                    const result = yield* executeQuery(document(), {
+                        reader: source,
+                        context: { user: "user" },
+                        strategy,
+                    });
+                    expect(result.value).toEqual(expected);
                 }
-            ),
-            { numRuns: 60 }
-        );
-    });
+            }),
+        { arbitrary: { runs: 60 } }
+    );
     it("keeps an existential action check uncertain until its draft parameter is known", async () => {
         const definition = structuredClone(ir);
         definition.actionTypes = [
             { name: "edit", displayName: "Edit", parameters: [p("project")], logic: [] },
         ];
         definition.policy = {
-            read: { select: [] },
+            objects: { select: [] },
             actions: [
                 {
                     actionType: "edit",
@@ -453,50 +616,48 @@ describe("finite hierarchical queries", () => {
             expect(strict).toMatchObject({ _tag: "Failure", failure: { kind: "Forbidden" } });
         }
     });
-    it("never proves an existential draft check contradicted by a completed input", async () => {
-        await fc.assert(
-            fc.asyncProperty(
-                fc.array(fc.boolean(), { maxLength: 12 }),
-                fc.nat({ max: 14 }),
-                fc.nat({ max: 3 }),
-                async (known, offset, limit) => {
-                    const data = known.map((match, i) => ({
-                        id: `p${i}`,
-                        title: match ? "known" : "other",
-                        admins: [],
-                    }));
-                    const query = {
-                        from: { source: { objectType: "Project" }, binding: "p" },
-                        where: or(
-                            eq(field("p", "title"), literal("known")),
-                            eq(field("p", "id"), input("project"))
-                        ),
-                        page: { offset, limit },
-                        select: [],
-                    };
-                    const completions = ["missing", ...data.map((r) => r.id)].map(
-                        (project) =>
-                            limit > 0 &&
-                            data.filter((r) => r.title === "known" || r.id === project).length > offset
-                    );
-                    for (const strategy of ["planned", "reference"] as const) {
-                        const result = await Effect.runPromise(
-                            queryExecutor({
-                                reader: reader({ Project: data }).source,
-                                knownInputs: new Set(),
-                                strategy,
-                            }).evaluate(exists(query))
-                        );
-                        if (result.certain)
-                            expect(completions.every((value) => value === result.value)).toBe(true);
-                        if (limit > 0 && known.filter(Boolean).length > offset)
-                            expect(result).toEqual({ certain: true, value: true });
-                    }
+    it.live.prop(
+        "never proves an existential draft check contradicted by a completed input",
+        [
+            Schema.Array(Schema.Boolean).check(Schema.isMaxLength(12)),
+            Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 14 })),
+            Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 })),
+        ],
+        ([known, offset, limit]) =>
+            Effect.gen(function* () {
+                const data = known.map((match, i) => ({
+                    id: `p${i}`,
+                    title: match ? "known" : "other",
+                    admins: [],
+                }));
+                const query = {
+                    from: { source: { objectType: "Project" }, binding: "p" },
+                    where: or(
+                        eq(field("p", "title"), literal("known")),
+                        eq(field("p", "id"), input("project"))
+                    ),
+                    page: { offset, limit },
+                    select: [],
+                };
+                const completions = ["missing", ...data.map((r) => r.id)].map(
+                    (project) =>
+                        limit > 0 &&
+                        data.filter((r) => r.title === "known" || r.id === project).length > offset
+                );
+                for (const strategy of ["planned", "reference"] as const) {
+                    const result = yield* queryExecutor({
+                        reader: reader({ Project: data }).source,
+                        knownInputs: new Set(),
+                        strategy,
+                    }).evaluate(exists(query));
+                    if (result.certain)
+                        expect(completions.every((value) => value === result.value)).toBe(true);
+                    if (limit > 0 && known.filter(Boolean).length > offset)
+                        expect(result).toEqual({ certain: true, value: true });
                 }
-            ),
-            { numRuns: 100 }
-        );
-    });
+            }),
+        { arbitrary: { runs: 100 } }
+    );
     it("keeps structural equality out of scalar storage predicates", async () => {
         for (const strategy of ["planned", "reference"] as const) {
             const { source, calls } = reader({ Project: projects });
@@ -546,7 +707,7 @@ describe("finite hierarchical queries", () => {
     it("projects policy cells and preserves top-K grants when a caller narrows the request", async () => {
         const definition = structuredClone(ir);
         definition.policy = {
-            read: {
+            objects: {
                 select: [
                     sub("issues", {
                         from: { source: { objectType: "Issue" }, binding: "i" },
@@ -590,7 +751,7 @@ it("Query IR aliases retain attachment/encrypted provenance without selecting th
         .find((type) => type.name === "Issue")!
         .properties.push(p("file", o.attachment({})), p("encrypted", o.encrypted({ type: text })));
     definition.policy = {
-        read: {
+        objects: {
             select: [
                 sub("issues", {
                     from: { source: { objectType: "Issue" }, binding: "i" },

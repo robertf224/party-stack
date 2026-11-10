@@ -86,8 +86,11 @@ export interface BlobStorageOptions {
     readonly namespace: string;
     readonly tables: TablesService;
     readonly bytes: BlobBytesService;
-    /** Authoritative bytes are collectible only when their identity is unreferenced. */
-    readonly mode?: "replica" | "authoritative";
+    /** Attachment byte retention only, defaulting to cache. Authoritative bytes
+     * are collectible only when their identity is unreferenced; replica caches
+     * can also evict downloadable copies while keeping the attachment identity.
+     */
+    readonly attachmentBytesRetentionMode?: "cache" | "authoritative";
     readonly registerOwner?: (owner: string) => Effect.Effect<void, Failure, Scope.Scope>;
     readonly isOwnerAlive?: (owner: string) => Effect.Effect<boolean, Failure>;
 }
@@ -155,13 +158,12 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
             where: and(eq(field("blob"), id), eq(field("bytes"), true)),
             limit: 1,
         });
-        yield* tx.put(records, id, {
-            ...record,
-            unreferencedAt: references.length
-                ? undefined
-                : (record.unreferencedAt ?? (yield* Clock.currentTimeMillis)),
-            bytesRetained: byteReferences.length > 0,
-        });
+        const unreferencedAt = references.length
+            ? undefined
+            : (record.unreferencedAt ?? (yield* Clock.currentTimeMillis));
+        const bytesRetained = byteReferences.length > 0;
+        if (record.unreferencedAt !== unreferencedAt || record.bytesRetained !== bytesRetained)
+            yield* tx.put(records, id, { ...record, unreferencedAt, bytesRetained });
     });
     const release = Effect.fnUntraced(function* (tx: Transaction, rootOwner: string) {
         const previous = yield* tx.query(roots, { where: eq(field("owner"), rootOwner) });
@@ -243,29 +245,50 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
             ids: readonly string[],
             settings?: { readonly bytes?: boolean; readonly group?: string }
         ) {
-            const selected: BlobRecord[] = [];
+            const selected = new Map<string, { record: BlobRecord; missing: boolean }>();
             const now = yield* Clock.currentTimeMillis;
             for (const id of new Set(ids)) {
                 if (!id) return yield* blobFailure("InvalidValue", "A blob handle needs an ID.");
-                const record = (yield* find(tx, id)) ?? empty(id, now);
-                if (options.mode === "authoritative" && !record.byteKey)
+                const existing = yield* find(tx, id);
+                const record = existing ?? empty(id, now);
+                if (options.attachmentBytesRetentionMode === "authoritative" && !record.byteKey)
                     return yield* blobFailure("NotFound", "Authoritative attachment bytes are unavailable.");
                 if (record.writing) return yield* blobFailure("Busy", "Blob staging has not completed.");
                 if (record.state === "staged" && !record.byteKey)
                     return yield* blobFailure("NotFound", "Staged bytes are unavailable.");
-                selected.push(record);
+                selected.set(record.id, { record, missing: !existing });
             }
-            yield* release(tx, rootOwner);
-            for (const record of selected) {
-                yield* tx.put(records, record.id, record);
-                yield* tx.put(roots, JSON.stringify([rootOwner, record.id]), {
-                    owner: rootOwner,
-                    blob: record.id,
-                    bytes: settings?.bytes ?? true,
-                    group: settings?.group,
-                });
-                yield* refreshRetention(tx, record.id);
+            const previous = new Map(
+                (yield* tx.query(roots, { where: eq(field("owner"), rootOwner) })).map((row) => [
+                    row.value.blob,
+                    row,
+                ])
+            );
+            const changed = new Set<string>();
+            for (const [id, row] of previous)
+                if (!selected.has(id)) {
+                    yield* tx.delete(roots, row.key);
+                    changed.add(id);
+                }
+            for (const { record, missing } of selected.values()) {
+                const prior = previous.get(record.id)?.value;
+                if (missing) yield* tx.put(records, record.id, record);
+                if (
+                    !prior ||
+                    prior.bytes !== (settings?.bytes ?? true) ||
+                    prior.group !== settings?.group ||
+                    prior.process !== undefined
+                ) {
+                    yield* tx.put(roots, JSON.stringify([rootOwner, record.id]), {
+                        owner: rootOwner,
+                        blob: record.id,
+                        bytes: settings?.bytes ?? true,
+                        group: settings?.group,
+                    });
+                    changed.add(record.id);
+                } else if (missing) changed.add(record.id);
             }
+            for (const id of changed) yield* refreshRetention(tx, id);
         }),
     });
     const io = <A>(work: Effect.Effect<A, unknown>) =>
@@ -561,7 +584,7 @@ export const makeBlobStorage = Effect.fn("BlobStorage.open")(function* (
                         yield* tx.delete(records, record.id);
                         count++;
                     }
-                    if (options.mode === "authoritative") return count;
+                    if (options.attachmentBytesRetentionMode === "authoritative") return count;
                     const candidates = yield* tx.query(
                         {
                             select: [

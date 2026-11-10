@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { executeAction } from "@party-stack/ontology-backend/actions";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { CurrentExecutionContext } from "@party-stack/ontology-backend/policy";
@@ -26,9 +27,10 @@ import { RpcTest } from "effect/rpc";
 import { expect, test } from "vite-plus/test";
 import { makeReplica } from "../../ontology-replica/lib/service.js";
 import { projectOntologyBackend } from "./authorization.js";
-import { makeOntologyServer } from "./composition.js";
+import { makeOntologyServer } from "./routing.js";
 import { OntologyRpcs, ontologyRpcHandlers } from "./rpc.js";
-import { connectOntologyHttp } from "./rpcHttp.js";
+import { makeOntologyHttpHandler } from "./rpcHttp.js";
+import { makeOntologyHttpClient } from "./rpcHttp.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type {
     OwnedReadTransaction,
@@ -85,7 +87,7 @@ function definition(): OntologyIR {
             returnType: o.optional({ type: o.string({}) }),
         })),
         policy: {
-            read: {
+            objects: {
                 select: [
                     sub("items", {
                         from: { source: { objectType: "Item" }, binding: "i" },
@@ -124,7 +126,7 @@ function definition(): OntologyIR {
                 {
                     queryFunctionType: "privileged",
                     check: exists(target),
-                    read: {
+                    additionalObjects: {
                         select: [
                             sub("privateRead", {
                                 ...target,
@@ -142,42 +144,53 @@ function definition(): OntologyIR {
 }
 const principal = { user: "alice", tenant: "org", role: "member" };
 
-test("policy projection and RPC preserve authoritative action results", async () => {
-    await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                const ir = definition();
-                ir.actionTypes[0]!.returnType = o.string({});
-                const backend = yield* makeOwnedBackend({
-                    ir,
-                    namespace: "projected-result",
-                    tables: yield* Memory.make(),
-                    mutators: { edit: () => Effect.succeed("saved") },
-                });
-                yield* backend.storage.transaction((tx) =>
-                    tx.put("Item", { id: "a", owner: "alice", title: "A" })
-                );
-                const view = yield* projectOntologyBackend({ ir, backend, context: principal }, "owned");
-                const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
-                    Effect.provide(ontologyRpcHandlers(view))
-                );
-                const receipt = yield* client.ApplyAction({
-                    id: "result",
-                    name: "edit",
-                    parameters: { item: "a", title: "New" },
-                });
-                expect(receipt.result).toBe("saved");
-                expect(
-                    (yield* client.ApplyAction({
+test.each(["inline", "named"] as const)(
+    "policy projection and RPC preserve %s action results",
+    async (kind) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const ir = definition();
+                    const resultType = o.struct({ fields: [property("message")] });
+                    if (kind === "named") ir.types.push({ name: "SaveResult", type: resultType });
+                    ir.actionTypes[0]!.returnType =
+                        kind === "named" ? o.ref({ name: "SaveResult" }) : resultType;
+                    const result = { message: "saved" };
+                    const backend = yield* makeOwnedBackend({
+                        ir,
+                        namespace: "projected-result",
+                        tables: yield* Memory.make(),
+                        mutators: { edit: () => Effect.succeed(result) },
+                    });
+                    yield* backend.storage.transaction((tx) =>
+                        tx.put("Item", { id: "a", owner: "alice", title: "A" })
+                    );
+                    const view = yield* projectOntologyBackend({ ir, backend, context: principal }, "owned");
+                    if (kind === "named")
+                        expect(view.ir.types.find((type) => type.name === "SaveResult")?.type).toEqual(
+                            resultType
+                        );
+                    const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
+                        Effect.provide(ontologyRpcHandlers({ ...view, enableRealtime: true }))
+                    );
+                    const receipt = yield* client.ApplyAction({
                         id: "result",
                         name: "edit",
                         parameters: { item: "a", title: "New" },
-                    })).result
-                ).toBe("saved");
-            })
-        )
-    );
-});
+                    });
+                    expect(receipt.result).toEqual(result);
+                    expect(
+                        (yield* client.ApplyAction({
+                            id: "result",
+                            name: "edit",
+                            parameters: { item: "a", title: "New" },
+                        })).result
+                    ).toEqual(result);
+                })
+            )
+        );
+    }
+);
 
 test("draft checks preserve unknown parameters without permitting an unknown action check", async () => {
     await Effect.runPromise(
@@ -231,7 +244,7 @@ test("schema projection includes grants from repeated types and ancestor selecti
             Effect.gen(function* () {
                 const ir = definition();
                 ir.policy = {
-                    read: {
+                    objects: {
                         select: [
                             sub("first", {
                                 from: { source: { objectType: "Item" }, binding: "a" },
@@ -387,7 +400,7 @@ test("generated action updates preserve unread properties and untouched nested f
             ir.objectTypes[0]!.properties.push(
                 property("profile", o.struct({ fields: [property("visible"), property("hidden")] }))
             );
-            const root = ir.policy!.read.select[0]!;
+            const root = ir.policy!.objects.select[0]!;
             if (root.kind === "sub")
                 root.value.query.select = root.value.query.select.filter(
                     (s) => s.kind !== "field" || s.value.name !== "owner"
@@ -472,7 +485,7 @@ test("a shared native backend uses each invocation's trusted context without ret
             const blobs = yield* makeBlobStorage({
                 namespace: "shared-context",
                 tables,
-                mode: "authoritative",
+                attachmentBytesRetentionMode: "authoritative",
                 bytes: {
                     read: () => Effect.succeed(undefined),
                     write: () => Effect.void,
@@ -497,13 +510,14 @@ test("a shared native backend uses each invocation's trusted context without ret
             );
             for (const user of ["alice", "bob"]) {
                 const view = yield* makeOntologyServer({
+                    enableRealtime: true,
                     kind: "owned",
                     backend: owned,
                     ir,
                     context: { ...principal, user },
-                });
-                expect(yield* view.backend.queryFunction("actor", {})).toBe(user);
-                yield* view.backend.applyAction({
+                }).pipe(Effect.flatMap((server) => server.bind("")));
+                expect(yield* view.options.backend!.queryFunction("actor", {})).toBe(user);
+                yield* view.options.backend!.applyAction({
                     id: "same-operation-id",
                     name: "edit",
                     parameters: { item: user, title: "New" },
@@ -567,7 +581,7 @@ test("projected discovery, finite queries and private protocol boundaries use th
                 });
                 expect(admin.ir.objectTypes[0]?.properties.some((p) => p.name === "secret")).toBe(true);
                 const client = yield* RpcTest.makeClient(OntologyRpcs).pipe(
-                    Effect.provide(ontologyRpcHandlers(view))
+                    Effect.provide(ontologyRpcHandlers({ ...view, enableRealtime: true }))
                 );
                 const description = yield* client.Describe();
                 expect(description.ir).toEqual(view.ir);
@@ -599,14 +613,15 @@ test("projected discovery, finite queries and private protocol boundaries use th
 });
 
 test("an incomplete provider subset cannot establish an authorization grant or absence", async () => {
-    const backend: OntologyBackendService = {
+    const backend: OntologyBackendService = makeOntologyBackend({
+        ir: definition(),
         name: "partial",
         sourceId: "partial",
         supportsIdempotency: false,
         loadSubset: () => Effect.succeed({ rows: [], complete: false }),
         applyAction: () => Effect.die("Unexpected write"),
         queryFunction: () => Effect.void,
-    };
+    });
     const view = await Effect.runPromise(
         projectOntologyBackend({ backend, ir: definition(), context: principal })
     );
@@ -637,14 +652,15 @@ test("HTTP cached-proxy views guard warm shared data independently for each prin
                         yield* tx.put("Item", { id: "b", owner: "bob", title: "Bob", secret: "bob-secret" });
                     })
                 );
-                const upstream: OntologyBackendService = {
+                const upstream: OntologyBackendService = makeOntologyBackend({
+                    ir,
                     name: owned.name,
                     sourceId: owned.sourceId,
                     supportsIdempotency: true,
                     loadSubset: owned.loadSubset,
                     applyAction: owned.applyAction,
                     queryFunction: owned.queryFunction,
-                };
+                });
                 const cache = yield* makeReplica({
                     ir,
                     namespace: "shared-private-cache",
@@ -658,14 +674,20 @@ test("HTTP cached-proxy views guard warm shared data independently for each prin
                 const partitions: string[] = [];
                 for (const user of ["alice", "bob"]) {
                     const server = yield* makeOntologyServer({
+                        enableRealtime: true,
                         kind: "cached-proxy",
                         backend: upstream,
                         cache,
                         ir,
                         context: { ...principal, user },
-                    });
+                    }).pipe(
+                        Effect.flatMap((server) => makeOntologyHttpHandler(server)),
+                        Effect.map((handleRequest) => ({ handleRequest }))
+                    );
                     yield* Effect.gen(function* () {
-                        const connection = yield* connectOntologyHttp({ url: "https://ontology.test/rpc" });
+                        const connection = yield* makeOntologyHttpClient({
+                            url: "https://ontology.test/rpc",
+                        }).pipe(Effect.flatMap((server) => server.ontology()));
                         partitions.push(contextPartition(connection.ir!, connection.context!));
                         expect(connection.context?.user).toBe(user);
                         expect(connection.backend.changes).toBeUndefined();
@@ -778,14 +800,15 @@ test("a token gateway replaces upstream context and policy, strips bindings and 
                         yield* tx.put("Post", { id: "anywhere", name: "Anywhere" });
                     })
                 );
-                const upstream: OntologyBackendService = {
+                const upstream: OntologyBackendService = makeOntologyBackend({
+                    ir: sourceIR,
                     name: owned.name,
                     sourceId: owned.sourceId,
                     supportsIdempotency: true,
                     loadSubset: owned.loadSubset,
                     applyAction: owned.applyAction,
                     queryFunction: owned.queryFunction,
-                };
+                });
                 const cache = yield* makeReplica({
                     ir: sourceIR,
                     namespace: "token-gateway-cache",
@@ -809,7 +832,7 @@ test("a token gateway replaces upstream context and policy, strips bindings and 
                         partition: [["approval"]],
                     },
                     policy: {
-                        read: {
+                        objects: {
                             select: [
                                 sub("approval", {
                                     from: { source: { objectType: "PostApproval" }, binding: "a" },
@@ -851,18 +874,37 @@ test("a token gateway replaces upstream context and policy, strips bindings and 
                 for (const approval of ["a", "b"]) {
                     const bound = { approval };
                     const server = yield* makeOntologyServer({
+                        enableRealtime: true,
                         kind: "cached-proxy",
                         backend: upstream,
                         cache,
                         ir: tokenIR,
                         context: bound,
-                    });
+                    }).pipe(
+                        Effect.flatMap((server) => makeOntologyHttpHandler(server)),
+                        Effect.map((handleRequest) => ({ handleRequest }))
+                    );
                     // Mutating application-owned configuration cannot change an authenticated binding.
                     bound.approval = approval === "a" ? "b" : "a";
                     yield* Effect.gen(function* () {
-                        const client = yield* connectOntologyHttp({ url: "https://gateway.test/rpc" });
+                        const client = yield* makeOntologyHttpClient({
+                            url: "https://gateway.test/rpc",
+                        }).pipe(Effect.flatMap((server) => server.ontology()));
                         expect(client.context).toEqual({ approval });
                         expect(client.ir?.context).toEqual(tokenIR.context);
+                        expect(client.ir?.policy).toBeUndefined();
+                        const publicProperties = Object.fromEntries(
+                            client.ir!.objectTypes.map((type) => [
+                                type.name,
+                                type.properties.map((property) => property.name),
+                            ])
+                        );
+                        expect(publicProperties).toEqual({
+                            PostApproval: ["id", "person"],
+                            Person: ["id", "name"],
+                            Bid: ["id", "approval", "title"],
+                            Post: ["id", "name"],
+                        });
                         const action = client.ir!.actionTypes[0]!;
                         expect(action.parameters.map((p) => p.name)).toEqual(["title", "note"]);
                         expect(action.parameters[1]!.defaultValue).toBeUndefined();
@@ -905,7 +947,8 @@ test("a token gateway replaces upstream context and policy, strips bindings and 
 
 test("ontology drift in policy fields, bound parameters or their types fails closed before provider access", async () => {
     let providerCalls = 0;
-    const backend: OntologyBackendService = {
+    const backend: OntologyBackendService = makeOntologyBackend({
+        ir: definition(),
         name: "drift",
         sourceId: "drift",
         supportsIdempotency: false,
@@ -923,7 +966,7 @@ test("ontology drift in policy fields, bound parameters or their types fails clo
             Effect.sync(() => {
                 providerCalls++;
             }),
-    };
+    });
     const changedField = definition();
     changedField.objectTypes[0]!.properties = changedField.objectTypes[0]!.properties.filter(
         (p) => p.name !== "owner"

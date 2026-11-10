@@ -1,6 +1,6 @@
 import { Clock, Effect, Schema } from "effect";
 import { connectError, type ConnectError } from "../core/errors.js";
-import type { ConnectService } from "../core/Connect.js";
+import type { OAuthAuthorityService } from "../core/oauthAuthority.js";
 import type { ConnectStore } from "../core/store.js";
 
 export interface ConnectPrincipal {
@@ -8,7 +8,7 @@ export interface ConnectPrincipal {
     sessionId: string;
 }
 export interface ConnectServerOptions {
-    connect: ConnectService;
+    connect: OAuthAuthorityService;
     store: ConnectStore;
     /** Fixed, provider-registered URL. Never accepted from a browser request. */
     callbackUrl: string;
@@ -18,14 +18,14 @@ export interface ConnectServerOptions {
     authorize(input: {
         operation: "begin" | "complete" | "inspect";
         principal: ConnectPrincipal;
-        connectorId: string;
+        applicationId: string;
         connectionId?: string;
         context?: unknown;
         attempt?: import("../spec/index.js").OAuthAuthorizationAttemptRecord;
     }): Effect.Effect<Record<string, unknown> | void, ConnectError>;
 }
 const Start = Schema.Struct({
-    connectorId: Schema.NonEmptyString,
+    applicationId: Schema.NonEmptyString,
     connectionId: Schema.optional(Schema.NonEmptyString),
     returnUrl: Schema.NonEmptyString,
     context: Schema.optional(Schema.Unknown),
@@ -68,15 +68,15 @@ export function makeConnectServer(options: ConnectServerOptions) {
                 const properties = yield* options.authorize({
                     operation: "begin",
                     principal,
-                    connectorId: input.connectorId,
+                    applicationId: input.applicationId,
                     connectionId: input.connectionId,
                     context: input.context,
                 });
                 const selected =
                     input.connectionId ??
-                    (yield* options.connect.connectionForConnector(input.connectorId))?.id;
+                    (yield* options.connect.connectionForApplication(input.applicationId))?.id;
                 const started = yield* options.connect.begin({
-                    connectorId: input.connectorId,
+                    applicationId: input.applicationId,
                     connectionId: selected,
                     principalId: principalKey(principal),
                     redirectUrl: options.callbackUrl,
@@ -86,12 +86,12 @@ export function makeConnectServer(options: ConnectServerOptions) {
                 return response(started);
             }
             if (request.method === "GET" && url.pathname.endsWith("/status")) {
-                const connectorId = url.searchParams.get("connectorId");
-                if (!connectorId) return yield* connectError("Configuration", "Connector ID is required.");
-                yield* options.authorize({ operation: "inspect", principal, connectorId });
-                const connection = yield* options.connect.connectionForConnector(connectorId);
+                const applicationId = url.searchParams.get("applicationId");
+                if (!applicationId) return yield* connectError("Configuration", "Connector ID is required.");
+                yield* options.authorize({ operation: "inspect", principal, applicationId });
+                const connection = yield* options.connect.connectionForApplication(applicationId);
                 return response({
-                    connectorId,
+                    applicationId,
                     connectionId: connection?.id,
                     status: connection?.status ?? "unconnected",
                 });
@@ -112,12 +112,17 @@ export function makeConnectServer(options: ConnectServerOptions) {
             yield* options.authorize({
                 operation: "complete",
                 principal,
-                connectorId: attempt.connector,
+                applicationId: attempt.application,
                 connectionId: attempt.connectionId,
                 attempt,
             });
             if (url.pathname.endsWith("/result")) {
                 if (attempt.status !== "completed") return response({ status: attempt.status });
+                if (!attempt.connectionId)
+                    return yield* connectError(
+                        "InvalidAttempt",
+                        "Completed authorization has no connection."
+                    );
                 const connection = yield* options.store.get("OAuthConnection", attempt.connectionId);
                 return response({ status: "completed", connectionId: connection?.id });
             }

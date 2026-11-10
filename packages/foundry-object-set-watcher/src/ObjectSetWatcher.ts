@@ -114,7 +114,7 @@ export const makeObjectSetWatcher = Effect.fn("ObjectSetWatcher.make")(function*
                 heartbeatMs: heartbeat,
                 responseTimeoutMs: timeout,
             }),
-        disconnected: publishState("closed"),
+        disconnected: Effect.suspend(() => publishState("closed")),
         retryDelayMs: retry,
     });
     const service: ObjectSetWatcherService = {

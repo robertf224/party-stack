@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import nextEnv from "@next/env";
+import { pull } from "@party-stack/ontology-backend/meta";
 import { generateOntology } from "@party-stack/ontology-spec/generate";
 import { formatGeneratedFile } from "@party-stack/ontology-spec/generate";
+import { Effect, Predicate } from "effect";
 import { createJiti } from "jiti";
-import { pull } from "../meta/pull.js";
-import type { OntologyPullContext, OntologyPullSource, OntologyPullConfig } from "../OntologyPullConfig.js";
+import type { OntologyPullContext, OntologyPullConfig } from "../OntologyPullConfig.js";
 
 const { loadEnvConfig } = nextEnv;
 
@@ -14,23 +15,12 @@ export const ONTOLOGY_IR_PATH = "src/ontology/ontology.ts";
 
 type ConfigModule = Record<string, unknown> & { default?: unknown };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
-function isOntologyPullSource(value: unknown): value is OntologyPullSource {
-    return (
-        isRecord(value) &&
-        typeof value.ontologyId === "string" &&
-        typeof value.createInstallation === "function" &&
-        typeof value.resolveConnection === "function"
-    );
-}
-
 function isOntologyPullConfig(value: unknown): value is OntologyPullConfig {
     return (
-        isRecord(value) &&
-        isOntologyPullSource(value.source) &&
+        Predicate.isObject(value) &&
+        Effect.isEffect(value.backend) &&
+        (value.transformPulledOntology === undefined ||
+            typeof value.transformPulledOntology === "function") &&
         Array.isArray(value.objectTypeNames) &&
         value.objectTypeNames.every((entry) => typeof entry === "string") &&
         Array.isArray(value.actionTypeNames) &&
@@ -64,32 +54,26 @@ export async function writePulledOntology(
     config: OntologyPullConfig,
     outPath: string,
     context: OntologyPullContext,
-    ontologyImportPath = "@party-stack/ontology"
+    ontologyImportPath = "@party-stack/ontology-spec"
 ): Promise<void> {
-    const installation = await config.source.createInstallation(context);
+    const ontology = await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* config.backend;
+                return yield* pull(backend, {
+                    objectTypeNames: config.objectTypeNames,
+                    actionTypeNames: config.actionTypeNames,
+                    queryFunctionTypeNames: config.queryFunctionTypeNames ?? [],
+                    transformPulledOntology: config.transformPulledOntology,
+                });
+            })
+        ).pipe(Effect.provide(context.runtime))
+    );
+    const output = generateOntology(ontology, { ontologyImportPath });
 
-    try {
-        const connection = await config.source.resolveConnection(installation);
-        const liveOntology = await installation.openMetaOntology({
-            userId: connection.userId,
-            ontologyId: config.source.ontologyId,
-        });
-        const pulledOntology = await pull(liveOntology, {
-            objectTypeNames: config.objectTypeNames,
-            actionTypeNames: config.actionTypeNames,
-            queryFunctionTypeNames: config.queryFunctionTypeNames ?? [],
-        });
-        const ontology = config.source.transformPulledOntology
-            ? await config.source.transformPulledOntology(pulledOntology)
-            : pulledOntology;
-        const output = generateOntology(ontology, { ontologyImportPath });
+    mkdirSync(dirname(outPath), { recursive: true });
 
-        mkdirSync(dirname(outPath), { recursive: true });
+    const formatted = await formatGeneratedFile(outPath, output);
 
-        const formatted = await formatGeneratedFile(outPath, output);
-
-        writeFileSync(outPath, formatted, "utf-8");
-    } finally {
-        await installation.cleanup();
-    }
+    writeFileSync(outPath, formatted, "utf-8");
 }

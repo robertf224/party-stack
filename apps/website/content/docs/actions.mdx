@@ -1,0 +1,123 @@
+---
+title: Actions
+description: Submit changes, handle validation failures, and recover paused actions.
+---
+
+## Call an action
+
+Use `useOntology` inside an [OntologyProvider](/docs/tanstack-start#let-the-provider-open-the-view).
+Import `AppOntology` from your generated types:
+
+```tsx
+import { useOntology } from "@party-stack/ontology-react";
+import type { AppOntology } from "./ontology/generated/types";
+
+function CreateButton() {
+    const ontology = useOntology<AppOntology>();
+    return (
+        <button
+            onClick={() =>
+                void ontology.actions
+                    .createIssue({ title: "New issue" })
+                    .catch((cause) =>
+                        showToast(cause instanceof Error ? cause.message : "Could not create issue.")
+                    )
+            }
+        >
+            Create
+        </button>
+    );
+}
+```
+
+## Submit an optimistic action
+
+```ts
+async function createIssue(title: string) {
+    try {
+        await ontology.actions.createIssue({ title });
+        showToast("Issue created.");
+    } catch (cause) {
+        showToast(cause instanceof Error ? cause.message : "Could not create the issue.");
+    }
+}
+```
+
+With the [setup guide's write settings](/docs/tanstack-start#configure-the-tab), the issue
+appears optimistically while this Promise is pending. The Promise resolves after
+authoritative confirmation and local reconciliation. You can close a form
+immediately and handle that Promise in the background.
+
+For an operation that should wait without a prediction:
+
+```ts
+await ontology.actions.createIssue({ title: "Review launch" }, { visibility: "confirmed" });
+```
+
+Replica actions always enter the outbox, including while offline. `visibility`
+controls whether they produce an optimistic prediction; the Promise still waits
+for authoritative confirmation and local reconciliation. A forwarding proxy calls
+its backend directly and does not create a local outbox or speculative overlay.
+
+## Handle a failure
+
+```ts
+import { BackendError } from "@party-stack/ontology-backend";
+
+try {
+    await ontology.actions.createIssue({ title, project });
+} catch (cause) {
+    if (cause instanceof BackendError && cause.kind === "ValidationFailed") {
+        let shown = false;
+        for (const issue of cause.issues ?? []) {
+            const parameter = issue.path?.[0];
+            if (typeof parameter === "string") {
+                setFieldError(parameter, issue.message);
+                shown = true;
+            }
+        }
+        if (!shown) showToast(cause.message);
+    } else {
+        showToast(cause instanceof Error ? cause.message : "Could not create the issue.");
+    }
+}
+```
+
+Validation issues can include parameter paths for field highlighting. A server's
+disclosure policy determines which issues reach the caller.
+
+Automatic retries and recovery belong to the replica. A retryable transport error
+does not by itself prove that an action was never committed. An unknown outcome
+requires recovery or an explicit user decision.
+
+## Resolve defaults and validate a draft
+
+```ts
+const parameters = await ontology.actions.createIssue.resolveParameters({
+    title: "Review launch",
+});
+
+const report = await ontology.actions.createIssue.validateDraft(parameters, { knownParameters: ["title"] });
+```
+
+Draft validation preserves uncertainty when required inputs are missing.
+Submission still validates authoritatively.
+
+## Show paused work
+
+Query `ontology.outbox.collection` with `useLiveQuery` to build a recovery screen.
+For an entry the user has inspected:
+
+```ts
+await ontology.outbox.edit(entry.id, (request) => {
+    request.parameters.title = correctedTitle;
+});
+await ontology.outbox.retry(entry.id);
+
+// Or discard an entry the user no longer wants.
+await ontology.outbox.remove(entry.id);
+```
+
+By default, failed actions can remain paused for correction. Configure
+`outbox.failureStrategy: "discard-all"` on the owning replica when the app should
+drop failed actions and only display a toast, as issue-tracker does.

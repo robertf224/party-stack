@@ -1,12 +1,14 @@
-import { type SalesforceAuthenticationClient, type SalesforceOAuthConnectionOptions } from "../connection.js";
-import {
-    createSalesforceBackendInstallation,
-    createSalesforceOntologyRoute,
-} from "../installation/createSalesforceBackendInstallation.js";
+import { makeConnectManager, acquireConfiguredConnection } from "@party-stack/connect";
+import { classifyBackendFailure } from "@party-stack/ontology-backend";
+import { Runtimes, Runtime } from "@party-stack/runtime";
+import { Effect } from "effect";
+import { makeSalesforceMetadataBackend } from "../connect.js";
+import { makeSalesforceServiceConnector } from "../serviceConnector.js";
 import { salesforceCrudActionTypeName } from "../utils/ids.js";
+import type { SalesforceOAuthConnectionOptions } from "../connectionOptions.js";
 import type { SalesforceCrudActionTypeSelection } from "../crud.js";
-import type { Connection } from "@party-stack/connect";
-import type { OntologyPullConfig, OntologyPullSource, OntologyIR, TypeDef } from "@party-stack/ontology";
+import type { OntologyPullConfig } from "@party-stack/ontology-backend/meta";
+import type { OntologyIR, TypeDef } from "@party-stack/ontology-spec";
 
 export interface SalesforceOntologyPullConnectionOptions {
     oauth?: SalesforceOAuthConnectionOptions;
@@ -14,7 +16,7 @@ export interface SalesforceOntologyPullConnectionOptions {
     userId?: string;
 }
 
-export interface CreateSalesforceOntologyPullSourceOptions {
+export interface SalesforcePullBackendOptions {
     instanceUrl: string;
     apiVersion: string;
     ontologyId: string;
@@ -24,7 +26,6 @@ export interface CreateSalesforceOntologyPullSourceOptions {
     standardQueryFunctionTypeNames?: string[];
     crudActionTypes?: readonly SalesforceCrudActionTypeSelection[];
     connection: SalesforceOntologyPullConnectionOptions;
-    transformPulledOntology?: (ontology: OntologyIR) => OntologyIR | Promise<OntologyIR>;
 }
 
 function scopeObjectReferences(type: TypeDef, objectTypeNames: ReadonlySet<string>): TypeDef {
@@ -110,6 +111,7 @@ function scopePulledOntology(ontology: OntologyIR): OntologyIR {
         })),
         actionTypes: ontology.actionTypes.map((actionType) => ({
             ...actionType,
+            ...(actionType.returnType ? { returnType: scope(actionType.returnType) } : {}),
             parameters: actionType.parameters.map((parameter) => ({
                 ...parameter,
                 type: scope(parameter.type),
@@ -129,79 +131,61 @@ function scopePulledOntology(ontology: OntologyIR): OntologyIR {
     };
 }
 
-export function createSalesforceOntologyPullSource(
-    options: CreateSalesforceOntologyPullSourceOptions
-): OntologyPullSource<SalesforceAuthenticationClient> {
-    return {
-        ontologyId: options.ontologyId,
-        createInstallation: ({ runtime }) =>
-            createSalesforceBackendInstallation({
-                installationId: `salesforce-pull:${options.instanceUrl}:${options.ontologyId}`,
-                instanceUrl: options.instanceUrl,
-                apiVersion: options.apiVersion,
-                runtime,
-                connections: {
-                    token: options.connection.token,
-                    userId: options.connection.userId,
-                    oauth: options.connection.oauth,
-                },
-                routes: [
-                    createSalesforceOntologyRoute({
-                        ontologyId: options.ontologyId,
-                        objectTypeNames: options.objectTypeNames,
-                        flowActionTypeNames: options.flowActionTypeNames,
-                        standardActionTypeNames: options.standardActionTypeNames,
-                        standardQueryFunctionTypeNames: options.standardQueryFunctionTypeNames,
-                        crudActionTypes: options.crudActionTypes,
-                    }),
+export const makeSalesforcePullBackend = Effect.fn("Salesforce.makePullBackend")(function* (
+    options: SalesforcePullBackendOptions
+) {
+    const oauth = options.connection.oauth;
+    const identity = `salesforce:${options.instanceUrl}:${oauth?.clientId ?? "api-key"}:${[...(oauth?.scopes ?? ["api", "refresh_token", "openid"])].sort().join(",")}`;
+    const runtimes = yield* Runtimes;
+    const runtime = yield* runtimes
+        .acquire({ owner: "connect", namespace: identity })
+        .pipe(Effect.mapError((cause) => classifyBackendFailure("pull.runtime", cause)));
+    const manager = yield* makeConnectManager({
+        services: [
+            {
+                connector: makeSalesforceServiceConnector({
+                    loginUrl: oauth?.loginUrl,
+                    fetch: oauth?.fetch,
+                }),
+                instances: [
+                    {
+                        id: options.instanceUrl,
+                        title: "Salesforce",
+                        instanceUrl: options.instanceUrl,
+                        OAuthApplications: oauth
+                            ? [
+                                  {
+                                      id: oauth.clientId,
+                                      title: "Salesforce",
+                                      clientId: oauth.clientId,
+                                      scopes: oauth.scopes,
+                                      redirectUrl: oauth.redirectUrl,
+                                      flow: "authorization-code",
+                                  },
+                              ]
+                            : [],
+                    },
                 ],
-            }),
-        async resolveConnection(installation) {
-            const configuredUserId = options.connection.userId;
-            const activeConnections = [...installation.connections.values()]
-                .filter((connection) => connection.state.status === "active")
-                .map((connection): Connection<"active"> => ({
-                    userId: connection.userId,
-                    state: connection.state as Connection<"active">["state"],
-                }));
+            },
+        ],
+    }).pipe(Effect.provideService(Runtime, runtime));
+    const access = yield* acquireConfiguredConnection({
+        manager,
+        serviceInstanceId: options.instanceUrl,
+        userId: options.connection.userId,
+        apiKey: options.connection.token,
+        oauth: oauth ? { applicationId: oauth.clientId, redirectUrl: oauth.redirectUrl } : undefined,
+        browserAuthentication: runtimes.browserAuthentication ?? runtime.browserAuthentication,
+    });
+    return yield* makeSalesforceMetadataBackend({ ...options, egress: access.egress });
+});
 
-            if (!options.connection.token && !configuredUserId && activeConnections.length > 1) {
-                throw new Error(
-                    "Multiple Salesforce users are signed in for this project. Set connection.userId in the ontology pull source."
-                );
-            }
-            let connection = options.connection.token
-                ? await installation.authentication.signIn.accessToken({
-                      userId: configuredUserId,
-                  })
-                : configuredUserId
-                  ? activeConnections.find((candidate) => candidate.userId === configuredUserId)
-                  : activeConnections[0];
-            if (!connection && options.connection.oauth) {
-                connection = await installation.authentication.signIn.oauth();
-            }
-            if (!connection) {
-                throw new Error("Salesforce ontology pull requires connection.oauth or connection.token.");
-            }
-            if (configuredUserId && connection.userId !== configuredUserId) {
-                throw new Error(
-                    `Salesforce signed in as "${connection.userId}", but connection.userId is "${configuredUserId}".`
-                );
-            }
-            return connection;
-        },
-        async transformPulledOntology(ontology) {
-            const scoped = scopePulledOntology(ontology);
-            return options.transformPulledOntology ? options.transformPulledOntology(scoped) : scoped;
-        },
-    };
-}
+export type SalesforceOntologyPullConfig = OntologyPullConfig<Runtimes>;
 
-export type SalesforceOntologyPullConfig = OntologyPullConfig<SalesforceAuthenticationClient>;
-
-export interface CreateSalesforceOntologyPullConfigOptions extends CreateSalesforceOntologyPullSourceOptions {
+export interface CreateSalesforceOntologyPullConfigOptions extends SalesforcePullBackendOptions {
     flowActionTypeNames: string[];
     queryFunctionTypeNames?: string[];
+    transformPulledOntology?: (ontology: OntologyIR) => OntologyIR | Promise<OntologyIR>;
 }
 
 export function createSalesforceOntologyPullConfig(
@@ -219,7 +203,11 @@ export function createSalesforceOntologyPullConfig(
         selection.operations.map((operation) => salesforceCrudActionTypeName(operation, selection.objectType))
     );
     return {
-        source: createSalesforceOntologyPullSource(options),
+        backend: makeSalesforcePullBackend(options),
+        async transformPulledOntology(ontology) {
+            const scoped = scopePulledOntology(ontology);
+            return options.transformPulledOntology ? options.transformPulledOntology(scoped) : scoped;
+        },
         objectTypeNames: options.objectTypeNames,
         actionTypeNames: [
             ...options.flowActionTypeNames,

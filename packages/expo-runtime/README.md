@@ -1,6 +1,6 @@
 # Expo runtime
 
-This runtime targets Expo SDK 57. Install `@party-stack/expo-runtime` and its Expo peer dependencies using SDK 57-compatible versions. Expo installs `expo/fetch` as the default native fetch starting in SDK 56; no separate `expo-fetch` package or fetch installer is needed. The runtime includes `expo-blob`.
+This runtime targets Expo SDK 57. Install `@party-stack/expo-runtime` and its Expo peer dependencies using SDK 57-compatible versions. Use Expo's installed native fetch; no separate `expo-fetch` package or fetch installer is needed. The runtime includes `expo-blob`.
 
 Import the required polyfill first in your application entry point, before importing application code or creating clients:
 
@@ -9,7 +9,22 @@ import "@party-stack/expo-runtime/polyfill";
 import "expo-router/entry";
 ```
 
-Then use `createExpoRuntime` from `@party-stack/expo-runtime` as your installation's runtime provider.
+Use the lazy `expoRuntime()` layer from `@party-stack/expo-runtime` for native persistence:
+
+```ts
+import { expoRuntime } from "@party-stack/expo-runtime";
+
+const runtime = expoRuntime(); // persistent SQLite, filesystem bytes, SecureStore keys
+const uiRuntime = expoRuntime({ storage: "memory" });
+```
+
+`storage: "memory"` uses memory tables, attachment bytes, and ephemeral native encryption
+keys. It retains Expo browser authentication and network connectivity without opening
+SQLite, creating filesystem directories, or accessing SecureStore. This is useful for
+`AuthenticationProvider` and a memory UI replica that needs Expo's platform capabilities.
+Both modes acquire partitions lazily and release their NetInfo listeners with the scope.
+
+For a durable parent plus a memory UI replica, build this layer in the application's Effect scope, provide its context while constructing the ontology server, then connect with `localClient(server)` from `@party-stack/ontology/local`. Use `expoRuntime({ storage: "memory" })` for React views that need Expo's native browser authentication without persistent UI storage. The [Expo guide](../../apps/website/content/docs/expo.mdx) shows Connect sign-in, saved Foundry accounts, ontology selection, object browsing, and background checkpoints through one shared device owner. Passing the default persistent runtime directly to `OntologyProvider` or `createLiveOntology` instead creates one persistent UI replica.
 
 The polyfill replaces global `Blob` with Expo Blob and global `File` with a compatible class extending Expo Blob. It also supplies secure native randomness when the host lacks it and leaves Expo’s installed fetch unchanged. Import it once at startup; it is a separate entry point so importing the runtime alone does not replace Blob or File. Attachment uploads use Expo’s default fetch; do not opt back into React Native fetch with `EXPO_PUBLIC_USE_RN_FETCH`.
 
@@ -17,11 +32,13 @@ Attachment storage requires blobs with `arrayBuffer()`, as provided by Expo Blob
 
 ## Effect lifetime
 
-`createExpoRuntime(owner, namespace)` and `make({ owner, namespace })` return Effects
-requiring `Scope`. `layer({ owner, namespace })` provides the Runtime service. Runtime
-acquisition is lazy; completion, failure or interruption closes SQLite and removes
-NetInfo listeners. There is no runtime Promise factory or manual cleanup API.
-Installations accept `createExpoRuntime` directly as their runtime provider.
+`expoRuntime()` provides `Runtimes`, which lazily acquires each requested partition.
+The lower-level `make()` requires `RuntimePartition` and `Scope`; `layer()` provides
+one `Runtime` from that partition. Both accept the same optional `storage` setting; neither accepts owner/namespace arguments.
+The view or managed server selects the partition and owns its scope. Completion, failure
+or interruption closes persistent SQLite connections and removes NetInfo listeners. There is no runtime
+Promise factory or manual runtime cleanup API; a Promise-based ontology view has
+its own `cleanup()`.
 
 ## Platform secrets
 

@@ -4,11 +4,14 @@ import { field } from "@party-stack/ontology-storage";
 import { Context, Effect } from "effect";
 import { connectOntology } from "../spec/index.js";
 import { connectError, type ConnectError } from "./errors.js";
+import { migrateConnectCredentials } from "./migrate.js";
 import type {
     OAuthConnectionRecord,
-    OAuthConnectorRecord,
-    InstallationRecord,
+    OAuthApplicationRecord,
+    ServiceInstanceRecord,
     OAuthAuthorizationAttemptRecord,
+    ApiKeyConnectionRecord,
+    ExternalSessionConnectionRecord,
 } from "../spec/index.js";
 import type { OwnedReadTransaction, OwnedStorageTransaction } from "@party-stack/ontology-backend/owned";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -16,10 +19,12 @@ import type { Query } from "@party-stack/ontology-storage";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
 
 type Records = {
-    Installation: InstallationRecord;
-    OAuthConnector: OAuthConnectorRecord;
+    ServiceInstance: ServiceInstanceRecord;
+    OAuthApplication: OAuthApplicationRecord;
     OAuthConnection: OAuthConnectionRecord;
     OAuthAuthorizationAttempt: OAuthAuthorizationAttemptRecord;
+    ApiKeyConnection: ApiKeyConnectionRecord;
+    ExternalSessionConnection: ExternalSessionConnectionRecord;
 };
 /** Remote implementations may implement this boundary with trusted ontology actions.
  * transaction must atomically enforce the read/write decisions in its body.
@@ -37,6 +42,7 @@ export const makeConnectPersistence = Effect.fn("Connect.persistence")(function*
     tables: TablesService;
     namespace: string;
     ir?: OntologyIR;
+    maintenance?: false | { readonly intervalMs?: number };
 }) {
     const ir = options.ir ?? connectOntology;
     const protect = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -65,7 +71,14 @@ export const makeConnectPersistence = Effect.fn("Connect.persistence")(function*
                 "Connect definitions must retain their standard properties and primary keys."
             ),
     });
-    const backend = yield* makeOwnedBackend({ ...options, ir, mutators: {} });
+    const backend = yield* makeOwnedBackend({
+        ...options,
+        // Version 3 adds per-application OAuth scopes. Import v2 records below;
+        // credential encryption uses options.namespace, so handles retain their AAD.
+        namespace: JSON.stringify([options.namespace, "connect", 3]),
+        ir,
+        mutators: {},
+    });
     // Each persistence instance has its own transaction binding. Nested calls compose;
     // concurrent effects and different Connect authorities never share a transaction.
     const CurrentTransaction = Context.Service<OwnedStorageTransaction>(
@@ -102,9 +115,17 @@ export const makeConnectPersistence = Effect.fn("Connect.persistence")(function*
             ),
     };
     for (const [name, fields] of Object.entries({
-        OAuthConnector: ["installation"],
-        OAuthConnection: ["connector", "accessTokenExpiresAt", "refreshTokenExpiresAt", "operationExpiresAt"],
-        OAuthAuthorizationAttempt: ["expiresAt", "connector"],
+        OAuthApplication: ["serviceInstance", "connection"],
+        OAuthConnection: [
+            "application",
+            "userId",
+            "accessTokenExpiresAt",
+            "refreshTokenExpiresAt",
+            "operationExpiresAt",
+        ],
+        OAuthAuthorizationAttempt: ["expiresAt", "application", "connectionId"],
+        ApiKeyConnection: ["serviceInstance", "userId", "expiresAt"],
+        ExternalSessionConnection: ["serviceInstance", "userId", "sessionId", "expiresAt"],
     }))
         for (const property of fields)
             yield* protect(
@@ -112,6 +133,7 @@ export const makeConnectPersistence = Effect.fn("Connect.persistence")(function*
                     tx.ensureIndex(name, { name: property, field: field(property) })
                 )
             );
+    yield* protect(migrateConnectCredentials({ ...options, ir, store }));
     return { store, backend };
 });
 

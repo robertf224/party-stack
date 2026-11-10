@@ -1,58 +1,82 @@
-import { BackendError } from "@party-stack/ontology-backend";
-import { executeQuery, backendQueryReader } from "@party-stack/ontology-backend/query";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { makeCachedProxy, replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { sliceByteSource } from "@party-stack/ontology-storage/blobs";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema, Scope } from "effect";
 import { projectOntologyBackend } from "./authorization.js";
+import { withInternalCommands } from "./internalAccess.js";
+import { validateContext } from "./policyDefinition.js";
 import { ontologyRpcHandlers } from "./rpc.js";
-import { makeOntologyHttpHandler } from "./rpcHttp.js";
+import type { OntologyInternalAccess } from "./internalAccess.js";
 import type { OntologyRpcServerOptions } from "./rpc.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OwnedBackendService } from "@party-stack/ontology-backend/owned";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { ReplicaService } from "@party-stack/ontology-replica";
 
-type Common<R> = Omit<OntologyRpcServerOptions<R>, "source" | "backend" | "authorize" | "context"> &
+export type OntologyAuthenticate<R = never> = (
+    request: Request
+) => Effect.Effect<Record<string, unknown>, BackendError, R | Scope.Scope>;
+export type { OntologyInternalAccess } from "./internalAccess.js";
+
+type Common<R> = Omit<
+    OntologyRpcServerOptions<R>,
+    "source" | "backend" | "authorize" | "context" | "replica" | "errors"
+>;
+type Role =
+    | { readonly kind: "owned"; readonly backend: OwnedBackendService }
+    | { readonly kind: "proxy"; readonly backend: OntologyBackendService }
+    | {
+          readonly kind: "cached-proxy";
+          readonly backend: OntologyBackendService;
+          readonly cache: ReplicaService;
+      }
+    | {
+          readonly kind: "replica";
+          readonly backend: OntologyBackendService;
+          readonly replica: ReplicaService;
+          readonly dangerouslyAllowInternalAccess: true;
+          readonly context?: never;
+      };
+type Binding =
+    | {
+          readonly context: Record<string, unknown>;
+          readonly dangerouslyAllowInternalAccess?: OntologyInternalAccess;
+      }
+    | { readonly context?: never; readonly dangerouslyAllowInternalAccess: true };
+
+/** Transport-neutral construction for an already authenticated principal or trusted peer. */
+export type OntologyServerBindingOptions<R = never> = Common<R> & Role & Binding;
+/** HTTP authentication runs per request; internal commands require explicit opt-in. */
+export type OntologyBindingOptions<R = never> = Common<R> &
+    Role &
     (
-        | { readonly context: Record<string, unknown>; readonly authorize?: never }
-        | { readonly context?: undefined; readonly authorize: OntologyRpcServerOptions<R>["authorize"] }
-    );
-export type OntologyServerOptions<R = never> = Common<R> &
-    (
-        | { readonly kind: "owned"; readonly backend: OwnedBackendService }
+        | (Binding & { readonly authenticate?: never })
         | {
-              readonly kind: "proxy";
-              readonly backend: OntologyBackendService;
-          }
-        | {
-              readonly kind: "cached-proxy";
-              readonly backend: OntologyBackendService;
-              readonly cache: ReplicaService;
-          }
-        | {
-              readonly kind: "replica";
-              readonly backend: OntologyBackendService;
-              readonly replica: ReplicaService;
               readonly context?: never;
+              readonly dangerouslyAllowInternalAccess: true;
+              readonly authenticate?: OntologyAuthenticate<R>;
+          }
+        | {
+              readonly context?: never;
+              readonly dangerouslyAllowInternalAccess?: OntologyInternalAccess;
+              readonly authenticate: OntologyAuthenticate<R>;
           }
     );
 
-/** Roles define execution responsibility. Authorization defines which operations
- * are exposed, including read-only access. Scope owns demand and server resources.
- */
-const configureOntologyServer = Effect.fn("OntologyServer.configure")(function* <R = never>(
-    options: OntologyServerOptions<R>
+// Role composition is acquired once. In particular, every caller must share the
+// cached proxy's invalidation generation, backend owner and maintenance lifecycle.
+export const prepareOntologyServer = Effect.fn("OntologyServer.prepare")(function* <R>(
+    options: Common<R> & Role
 ) {
     let backend: OntologyBackendService = options.backend;
     let source: OntologySource | undefined;
-    if (options.kind === "cached-proxy") {
+    if (options.kind === "cached-proxy")
         backend = yield* makeCachedProxy({ replica: options.cache, backend });
-    } else if (options.kind === "replica") {
-        const replica = options.replica;
-        source = replicaStateSource(replica);
-        backend = replicaServerBackend(replica, backend);
+    else if (options.kind === "replica") {
+        source = replicaStateSource(options.replica);
+        backend = replicaServerBackend(options.replica, backend);
     }
-    let ir =
+    const ir =
         options.ir ??
         (options.kind === "owned"
             ? options.backend.storage.ir
@@ -61,66 +85,63 @@ const configureOntologyServer = Effect.fn("OntologyServer.configure")(function* 
               : options.kind === "cached-proxy"
                 ? options.cache.ir
                 : undefined);
-    let context = options.kind === "replica" ? options.replica.context : options.context;
-    let query = options.query;
-    let authorize = options.authorize;
-    if (options.context) {
-        if (source || !ir)
-            return yield* new BackendError({
-                operation: "server.project",
-                kind: "InvalidConfiguration",
-                message: "A projected server requires an ordinary backend and its ontology definition.",
-                retryable: false,
-            });
-        // Authorization wraps the role's final read path, including cache hits.
-        // Applying it to only the upstream adapter would leave cached rows unguarded.
-        const maintenance = backend.maintenance;
-        const view = yield* projectOntologyBackend(
-            { backend, ir, context: options.context, errors: options.errors },
-            options.kind === "owned" ? "owned" : "upstream"
-        );
-        backend = { ...view.backend, maintenance };
-        ir = view.ir;
-        context = view.context;
-        query = view.query;
-        authorize = view.authorize;
-    }
-    if (!authorize)
-        return yield* new BackendError({
-            operation: "server.authorize",
-            kind: "InvalidConfiguration",
-            message: "A trusted transport gate or authenticated policy binding is required.",
-            retryable: false,
-        });
-    if (!query && ir) {
-        const definition = ir;
-        if (options.kind === "owned") {
-            const storage = options.backend.storage;
-            query = (document, inputs) =>
-                storage.read((tx) =>
-                    executeQuery(document, {
-                        reader: {
-                            ir: definition,
-                            loadSubset: (type, subset) => tx.loadSubset(type, subset),
-                            loadGroupedSubset: tx.loadGroupedSubset,
-                        },
-                        inputs,
-                    }).pipe(Effect.map((result) => result.value))
-                );
-        } else {
-            const reader = backendQueryReader(definition, backend);
-            query = (document, inputs) =>
-                executeQuery(document, { reader, inputs }).pipe(Effect.map((result) => result.value));
-        }
-    }
     return {
         ...options,
-        ir,
-        context,
-        query,
-        authorize,
         backend,
         source,
+        ir,
+        context: options.kind === "replica" ? options.replica.context : undefined,
+    };
+});
+
+export const bindOntologyServer = Effect.fn("OntologyServer.bind")(function* <R>(
+    prepared: Effect.Success<ReturnType<typeof prepareOntologyServer<R>>>,
+    context: Record<string, unknown> | undefined,
+    internalAccess: OntologyInternalAccess | undefined
+) {
+    context ??= prepared.context;
+    if (prepared.ir?.policy) context ??= {};
+    if (context && prepared.ir) context = yield* validateContext(prepared.ir, context);
+    const allowInternal =
+        typeof internalAccess === "function"
+            ? yield* Effect.try({
+                  try: () => internalAccess(context ?? {}),
+                  catch: (cause) => classifyBackendFailure("server.internalAccess", cause),
+              }).pipe(
+                  Effect.flatMap(Schema.decodeUnknownEffect(Schema.Boolean)),
+                  Effect.mapError(
+                      () =>
+                          new BackendError({
+                              operation: "server.internalAccess",
+                              kind: "InvalidConfiguration",
+                              retryable: false,
+                              message: "The internal-access predicate must return a boolean.",
+                          })
+                  )
+              )
+            : internalAccess === true;
+    if (!prepared.ir?.policy) {
+        if (allowInternal)
+            return { ...prepared, context, errors: "forward" as const, authorize: () => Effect.void };
+        return yield* new BackendError({
+            operation: "server.bind",
+            kind: "InvalidConfiguration",
+            retryable: false,
+            message: "An endpoint requires an IR policy or explicit internal access.",
+        });
+    }
+    const view = yield* projectOntologyBackend(
+        { backend: prepared.backend, ir: prepared.ir, context: context! },
+        prepared.kind === "owned" ? "owned" : "upstream"
+    );
+    return {
+        ...prepared,
+        ...view,
+        errors: "projected" as const,
+        // Raw journals and speculative state are not policy-projected yet.
+        source: undefined,
+        backend: { ...view.backend, maintenance: prepared.backend.maintenance },
+        authorize: withInternalCommands(view.authorize, allowInternal),
     };
 });
 
@@ -163,21 +184,19 @@ export const replicaServerBackend = (
                     yield* replica.attachments.create(upload.blob, { id: upload.attachment.id });
                 return yield* replica.actions.apply(
                     { ...invocation, attachmentUploads: undefined },
-                    { mode: "outbox", optimistic: true }
+                    { optimistic: true }
                 );
             }),
     };
 };
 
-/** The same role and authorization composition for any Effect RPC transport. */
-export const ontologyServerHandlers = <R = never>(options: OntologyServerOptions<R>) =>
-    Layer.unwrap(Effect.map(configureOntologyServer(options), ontologyRpcHandlers));
-
-/** HTTP binding, including streamed action uploads. */
-export const makeOntologyServer = Effect.fn("OntologyServer.make")(function* <R = never>(
-    options: OntologyServerOptions<R>
-) {
-    const configured = yield* configureOntologyServer(options);
-    const handleRequest = yield* makeOntologyHttpHandler(configured);
-    return { handleRequest, backend: configured.backend };
-});
+/** One role/policy composition for transports with an already authenticated binding. */
+export const ontologyServerHandlers = <R = never>(options: OntologyServerBindingOptions<R>) =>
+    Layer.unwrap(
+        prepareOntologyServer(options).pipe(
+            Effect.flatMap((prepared) =>
+                bindOntologyServer(prepared, options.context, options.dangerouslyAllowInternalAccess)
+            ),
+            Effect.map(ontologyRpcHandlers)
+        )
+    );

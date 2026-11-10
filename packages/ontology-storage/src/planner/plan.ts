@@ -115,20 +115,27 @@ export function executePlan(
     ): Effect.fn.Return<void, OntologyStorageError> {
         if (current.kind === "none") return;
         if (current.kind === "lookup") {
-            for (const range of current.ranges) {
-                let after: Range["after"];
-                while (true) {
-                    const entries = yield* raw.entries(table, current.index, {
-                        ...range,
-                        after,
-                        limit: INDEX_BATCH_SIZE,
-                    });
-                    for (const entry of entries) visit(entry.key);
-                    if (entries.length < INDEX_BATCH_SIZE) break;
-                    const last = entries.at(-1)!;
-                    after = { value: last.value, key: last.key };
-                }
-            }
+            // Independent IN ranges need no serial round trip per value. Each
+            // range still advances its own bounded cursor; result ordering is
+            // applied after hydration, never inferred from candidate arrival.
+            yield* Effect.forEach(
+                current.ranges,
+                Effect.fnUntraced(function* (range) {
+                    let after: Range["after"];
+                    while (true) {
+                        const entries = yield* raw.entries(table, current.index, {
+                            ...range,
+                            after,
+                            limit: INDEX_BATCH_SIZE,
+                        });
+                        for (const entry of entries) visit(entry.key);
+                        if (entries.length < INDEX_BATCH_SIZE) break;
+                        const last = entries.at(-1)!;
+                        after = { value: last.value, key: last.key };
+                    }
+                }),
+                { concurrency: INDEX_BATCH_SIZE, discard: true }
+            );
         } else if (current.kind === "or") {
             for (const child of current.children) yield* iterate(child, visit);
         } else {

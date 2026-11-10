@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError } from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
@@ -91,7 +92,8 @@ test("network and connection state remain independent and either can pause remot
                     connectivity,
                     connection,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: true,
@@ -125,7 +127,7 @@ test("network and connection state remain independent and either can pause remot
                                     affected: [],
                                 };
                             }),
-                    },
+                    }),
                 });
                 expect(replica.connectivity).toBe(connectivity);
                 expect(replica.connection).toBe(connection);
@@ -267,7 +269,8 @@ test("inspection streams do not acquire demand, and record live loads, failures,
                     objectCacheGc: false,
                     connectivity: { online: Effect.sync(() => online), changes: Stream.never },
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
@@ -299,7 +302,7 @@ test("inspection streams do not acquire demand, and record live loads, failures,
                                     rows: [{ key: "one", value: { id: "one" } }],
                                 };
                             }),
-                    },
+                    }),
                 });
                 const updates: ReplicaStatus[] = [];
                 yield* Effect.forkScoped(
@@ -385,13 +388,14 @@ test("watch-maintained whole-collection coverage explains search reuse without a
                     startSync: false,
                     objectCacheGc: false,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
                         applyAction: () => Effect.die("Unexpected invocation"),
                         queryFunction: () => Effect.void,
-                        watchSubset: () => Stream.never,
+                        watchSubset: () => Effect.succeed(Stream.never),
                         loadSubset: (request) =>
                             Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
                                 Effect.sync(() => {
@@ -399,7 +403,7 @@ test("watch-maintained whole-collection coverage explains search reuse without a
                                     return { rows: evaluateQuery(rows, subset.query ?? {}), complete: true };
                                 })
                             ),
-                    },
+                    }),
                 });
                 const all = yield* Scope.make();
                 yield* Scope.provide(replica.demand({ objectType: "Item" }), all);
@@ -449,13 +453,14 @@ test.each([true, false])(
                         startSync: false,
                         objectCacheGc: false,
                         execute: () => Effect.void,
-                        backend: {
+                        backend: makeOntologyBackend({
+                            ir,
                             name: "fixture",
                             sourceId: "fixture",
                             supportsIdempotency: false,
                             applyAction: () => Effect.die("Unexpected invocation"),
                             queryFunction: () => Effect.void,
-                            watchSubset: () => Stream.never,
+                            watchSubset: () => Effect.succeed(Stream.never),
                             loadSubset: (request) =>
                                 Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
                                     Effect.sync(() => {
@@ -463,7 +468,7 @@ test.each([true, false])(
                                         return { rows: evaluateQuery(rows, subset.query ?? {}), complete };
                                     })
                                 ),
-                        },
+                        }),
                     });
                     const broad = { objectType: "Item", query: { where: ilike(field("id"), "hi%") } };
                     const broadScope = yield* Scope.make();
@@ -517,7 +522,8 @@ test("configured subset polling invalidates coverage on its interval and stops w
                     startSync: false,
                     objectCacheGc: false,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
@@ -529,7 +535,7 @@ test("configured subset polling invalidates coverage on its interval and stops w
                                 requests++;
                                 return { rows: [{ key: "one", value: { id: "one" } }], complete: true };
                             }),
-                    },
+                    }),
                 });
                 const scope = yield* Scope.make();
                 yield* Scope.provide(replica.demand({ objectType: "Item" }), scope);
@@ -569,7 +575,8 @@ test("disabled polling revalidates expired coverage on demand without claiming a
                     startSync: false,
                     objectCacheGc: false,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
@@ -581,7 +588,7 @@ test("disabled polling revalidates expired coverage on demand without claiming a
                                 requests++;
                                 return { rows: [{ key: "one", value: { id: "one" } }], complete: true };
                             }),
-                    },
+                    }),
                 });
                 yield* replica.demand({ objectType: "Item" });
                 yield* replica.syncOnce;
@@ -609,7 +616,8 @@ test("load history stays bounded and cancellation does not leave running diagnos
                     startSync: false,
                     objectCacheGc: false,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
@@ -623,7 +631,7 @@ test("load history stays bounded and cancellation does not leave running diagnos
                                 }
                                 return { complete: false, rows: [] };
                             }),
-                    },
+                    }),
                 });
                 yield* replica.demand({ objectType: "Item" });
                 for (let index = 0; index < 102; index++) yield* replica.syncOnce;

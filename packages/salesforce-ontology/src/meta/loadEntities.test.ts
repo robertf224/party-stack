@@ -1,7 +1,7 @@
 import { createMetaLiveOntology } from "@party-stack/ontology";
 import { eq, queryOnce } from "@tanstack/db";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { createSalesforceMetaOntologyBackendAdapter } from "./createSalesforceMetaOntologyBackendAdapter.js";
+import { makeSalesforceMetadataBackend } from "./backend.js";
 
 function taskDescribe() {
     return {
@@ -33,13 +33,12 @@ describe("Salesforce ObjectType metadata queries", () => {
         const describeGlobal = vi.fn();
         const describeSObject = vi.fn().mockResolvedValue(taskDescribe());
         const meta = await createMetaLiveOntology({
-            backend: () =>
-                createSalesforceMetaOntologyBackendAdapter({
-                    client: {
-                        describeGlobal,
-                        describeSObject,
-                    } as never,
-                }),
+            backend: makeSalesforceMetadataBackend({
+                client: {
+                    describeGlobal,
+                    describeSObject,
+                } as never,
+            }),
         });
 
         try {
@@ -81,13 +80,12 @@ describe("Salesforce ObjectType metadata queries", () => {
         });
         const describeSObject = vi.fn().mockResolvedValue(taskDescribe());
         const meta = await createMetaLiveOntology({
-            backend: () =>
-                createSalesforceMetaOntologyBackendAdapter({
-                    client: {
-                        describeGlobal,
-                        describeSObject,
-                    } as never,
-                }),
+            backend: makeSalesforceMetadataBackend({
+                client: {
+                    describeGlobal,
+                    describeSObject,
+                } as never,
+            }),
         });
 
         try {

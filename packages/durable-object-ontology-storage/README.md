@@ -53,13 +53,14 @@ This package targets `alchemy@2.0.0-beta.83` and Effect 4.
 ```ts
 import { OntologyDurableObject } from "@party-stack/durable-object-ontology-storage/alchemy";
 import { Bucket } from "alchemy/Cloudflare/R2/Bucket";
-import { authorizeRequest } from "./authorization.js";
+import { authenticateRequest } from "./authorization.js";
 import { ir } from "./ontology.js";
 
 export const Notes = OntologyDurableObject("Notes", {
     ir,
     bucket: Bucket("Attachments"),
-    authorize: authorizeRequest,
+    authenticate: authenticateRequest,
+    dangerouslyAllowInternalAccess: true, // Authenticated internal service peer.
 });
 ```
 
@@ -68,7 +69,13 @@ forward requests with `notes.getByName("primary").fetch(request)`. Alchemy regis
 the binding and exported DO class; application code does not extend DurableObject.
 The factory supplies native SQL/R2 storage, the owned backend, authenticated Effect
 RPC, a stable encryption key provisioned through Alchemy/Cloudflare Secrets Store,
-and a bounded hourly GC alarm. Authorization is required for every RPC operation.
+and a bounded hourly GC alarm. `authenticateRequest(request)` returns an Effect
+containing the IR context (or `{}` for an internal service with no declared context),
+and fails when credentials are invalid. Omit `dangerouslyAllowInternalAccess` and declare an IR policy for
+public caller access. `dangerouslyAllowInternalAccess: true` adds endpoint-wide diagnostics
+and administrative commands; a synchronous `(context) => boolean` can restrict them
+to selected callers. IR policy, context binding and action checks always apply. Without
+a policy, this explicit opt-in also exposes raw backend capabilities.
 `ontologyId` defaults to the resource name; each DO instance has isolated SQL state
 and its own R2 key prefix.
 
@@ -124,7 +131,8 @@ supply pre-provisioned Alchemy Secrets Store resources instead:
 export const Notes = OntologyDurableObject("Notes", {
     ir,
     bucket: Bucket("Attachments"),
-    authorize: authorizeRequest,
+    authenticate: authenticateRequest,
+    dangerouslyAllowInternalAccess: true, // Authenticated internal service peer.
     encryptionKeys: {
         active: "2026-11",
         secrets: {

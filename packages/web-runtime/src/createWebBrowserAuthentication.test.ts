@@ -20,6 +20,26 @@ afterEach(() => {
 });
 
 describe("createWebBrowserAuthentication", () => {
+    it("reports a blocked popup without falling back to a full-page redirect", () => {
+        const redirect = vi.fn();
+        vi.stubGlobal("window", { open: () => null });
+        vi.stubGlobal("location", { assign: redirect });
+        const result = Effect.runSync(
+            Scope.provide(
+                createWebBrowserAuthentication().start({
+                    redirectUrl: "https://app.example/auth/callback",
+                    presentation: "popup",
+                }),
+                scope
+            ).pipe(Effect.result)
+        );
+        expect(result).toMatchObject({
+            _tag: "Failure",
+            failure: { reason: "Platform", message: "The authentication popup was blocked." },
+        });
+        expect(redirect).not.toHaveBeenCalled();
+    });
+
     it("reserves a popup and resolves its return URL", async () => {
         vi.useFakeTimers();
         const popup = {

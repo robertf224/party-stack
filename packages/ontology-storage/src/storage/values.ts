@@ -39,7 +39,6 @@ const EncodedValueSchema: Schema.Codec<EncodedValue> = Schema.suspend(() =>
 const Storage = Schema.fromJsonString(
     Schema.Struct({ version: Schema.Literal(2), value: EncodedValueSchema })
 );
-const encodeStorage = Schema.encodeSync(Storage);
 const decodeStorage = Schema.decodeUnknownSync(Storage);
 
 /** JSON-shaped values with a small, explicit set of additional database value types. */
@@ -56,7 +55,10 @@ export function encodeValue(value: unknown): string {
         if (typeof value !== "object") throw new Error(`Cannot persist ${typeof value}`);
         if (value instanceof Date) {
             if (!Number.isFinite(value.getTime())) throw new Error("Invalid dates cannot be persisted.");
-            return { tag: "date", value: value.getTime() };
+            // A Date subclass can return a different value on this second read.
+            const timestamp = value.getTime();
+            if (!Number.isFinite(timestamp)) throw new Error("Invalid dates cannot be persisted.");
+            return { tag: "date", value: timestamp };
         }
         const temporal = Reflect.get(value, Symbol.toStringTag) as unknown;
         if (temporal === "Temporal.Instant" || temporal === "Temporal.PlainDate")
@@ -92,7 +94,9 @@ export function encodeValue(value: unknown): string {
             ancestors.delete(value);
         }
     };
-    return encodeStorage({ version: 2, value: encode(value) });
+    // Only fresh tagged containers and validated scalar values reach JSON.
+    // Persisted input still passes the complete Schema decoder below.
+    return JSON.stringify({ version: 2, value: encode(value) });
 }
 
 export function decodeValue(encoded: string): unknown {

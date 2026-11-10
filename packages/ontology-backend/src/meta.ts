@@ -1,9 +1,10 @@
 import { validate } from "@party-stack/ontology-spec";
 import metaOntology from "@party-stack/ontology-spec/meta";
+import * as q from "@party-stack/ontology-spec/query";
 import { and, inArray, field, evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
-import { backendQueryReader } from "./query.js";
-import { compileObjectSubset } from "./subset.js";
+import { makeOntologyBackend } from "./query.js";
+import { compileObjectSubset, objectSubset } from "./subset.js";
 import { BackendError } from "./index.js";
 import type { OntologyBackendService } from "./index.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -14,6 +15,7 @@ import type {
     TypeDef,
     Ontology as OntologyDescriptor,
 } from "@party-stack/ontology-spec/meta";
+import type { Scope } from "effect";
 
 function getValueTypes(type: TypeDef): string[] {
     switch (type.kind) {
@@ -57,49 +59,88 @@ function getQueryFunctionTypeValueTypes(queryFunctionType: QueryFunctionType): s
 }
 
 export interface PullOptions {
-    objectTypeNames: string[];
-    actionTypeNames: string[];
-    queryFunctionTypeNames: string[];
+    /** Omitted selects all definitions of this kind; an empty array selects none. */
+    objectTypeNames?: string[];
+    actionTypeNames?: string[];
+    queryFunctionTypeNames?: string[];
+    /** App-specific definition edits, applied before the final IR validation. */
+    transformPulledOntology?: (ontology: OntologyIR) => OntologyIR | Promise<OntologyIR>;
 }
 
 /** Pull selected definitions directly from a metadata backend, without a replica or UI collections. */
 export const pull = Effect.fn("Metadata.pull")(function* (
-    backend: Pick<OntologyBackendService, "loadSubset">,
-    options: PullOptions
+    backend: Pick<OntologyBackendService, "query">,
+    options: PullOptions = {}
 ) {
-    const reader = backendQueryReader(metaOntology, backend);
+    const select = (objectType: string, scan: Parameters<typeof objectSubset>[1]) => ({
+        ...objectSubset(objectType, scan),
+        select: metaOntology.objectTypes
+            .find((type) => type.name === objectType)!
+            .properties.map((property) => q.selectField(property.name, q.field("row", property.name))),
+    });
     const load = Effect.fnUntraced(function* <A>(
         objectType: string,
-        query: Parameters<typeof reader.loadSubset>[1]
+        scan: Parameters<typeof objectSubset>[1]
     ) {
-        return (yield* reader.loadSubset(objectType, query)).map((row) => row.value as A);
+        const result = yield* backend.query({ select: [q.sub("rows", select(objectType, scan))] });
+        return result.rows as A[];
     });
     const { objectTypeNames, actionTypeNames, queryFunctionTypeNames } = options;
-    const [objectTypes, descriptors, linkTypes, actionTypes, queryFunctionTypes] = yield* Effect.all(
-        [
-            load<ObjectType>("ObjectType", { where: inArray(field("name"), objectTypeNames) }),
-            load<OntologyDescriptor>("Ontology", {
-                orderBy: [{ field: field("id"), direction: "asc" }],
-                limit: 2,
-            }),
-            load<OntologyIR["linkTypes"][number]>("LinkType", {
-                where: and(
-                    inArray(field("source", "objectType"), objectTypeNames),
-                    inArray(field("target", "objectType"), objectTypeNames)
-                ),
-            }),
-            load<ActionType>("ActionType", { where: inArray(field("name"), actionTypeNames) }),
-            load<QueryFunctionType>("QueryFunctionType", {
-                where: inArray(field("name"), queryFunctionTypeNames),
-            }),
+    const result = yield* backend.query({
+        select: [
+            q.sub(
+                "objectTypes",
+                select("ObjectType", { where: objectTypeNames && inArray(field("name"), objectTypeNames) })
+            ),
+            q.sub(
+                "descriptors",
+                select("Ontology", { orderBy: [{ field: field("id"), direction: "asc" }], limit: 2 })
+            ),
+            q.sub(
+                "linkTypes",
+                select("LinkType", {
+                    where:
+                        objectTypeNames &&
+                        and(
+                            inArray(field("source", "objectType"), objectTypeNames),
+                            inArray(field("target", "objectType"), objectTypeNames)
+                        ),
+                })
+            ),
+            q.sub(
+                "actionTypes",
+                select("ActionType", { where: actionTypeNames && inArray(field("name"), actionTypeNames) })
+            ),
+            q.sub(
+                "queryFunctionTypes",
+                select("QueryFunctionType", {
+                    where: queryFunctionTypeNames && inArray(field("name"), queryFunctionTypeNames),
+                })
+            ),
         ],
-        { concurrency: "unbounded" }
-    );
+    });
+    const objectTypes = result.objectTypes as ObjectType[];
+    const descriptors = result.descriptors as OntologyDescriptor[];
+    const linkTypes = result.linkTypes as OntologyIR["linkTypes"];
+    const actionTypes = result.actionTypes as ActionType[];
+    const queryFunctionTypes = result.queryFunctionTypes as QueryFunctionType[];
     const invalid = (message: string) =>
         new BackendError({ operation: "metadata.pull", kind: "InvalidResponse", retryable: false, message });
     if (descriptors.length !== 1 || descriptors[0]?.id !== "ontology")
         return yield* invalid("Metadata must expose exactly one Ontology descriptor with id ontology.");
     const descriptor = descriptors[0];
+
+    for (const [kind, requested, definitions] of [
+        ["object types", objectTypeNames, objectTypes],
+        ["action types", actionTypeNames, actionTypes],
+        ["query function types", queryFunctionTypeNames, queryFunctionTypes],
+    ] as const) {
+        if (!requested) continue;
+        const returned = new Set(definitions.map((definition) => definition.name));
+        const missing = [...new Set(requested)].filter((name) => !returned.has(name));
+        if (missing.length)
+            return yield* invalid(`Missing requested metadata ${kind}: ${missing.join(", ")}.`);
+    }
 
     const valueTypeNames = Array.from(
         new Set([
@@ -128,7 +169,7 @@ export const pull = Effect.fn("Metadata.pull")(function* (
         );
     }
 
-    const result: OntologyIR = {
+    const pulled: OntologyIR = {
         types,
         objectTypes,
         linkTypes,
@@ -139,13 +180,34 @@ export const pull = Effect.fn("Metadata.pull")(function* (
         ...(descriptor?.context === undefined ? {} : { context: descriptor.context }),
         ...(descriptor?.policy === undefined ? {} : { policy: descriptor.policy }),
     };
-    const valid = validate(result);
+    const definition = options.transformPulledOntology
+        ? yield* Effect.tryPromise({
+              try: async () => options.transformPulledOntology!(pulled),
+              catch: (cause) =>
+                  new BackendError({
+                      operation: "metadata.pull.transform",
+                      kind: "InvalidConfiguration",
+                      retryable: false,
+                      message: cause instanceof Error ? cause.message : "The ontology transform failed.",
+                      cause,
+                  }),
+          })
+        : pulled;
+    const valid = validate(definition);
     if (valid.kind === "err")
-        return yield* invalid(
-            `Pulled ontology is incomplete or invalid: ${valid.value.map((issue) => issue.message).join(" ")}`
-        );
-    return result;
+        return yield* new BackendError({
+            operation: "metadata.pull",
+            kind: options.transformPulledOntology ? "InvalidConfiguration" : "InvalidResponse",
+            retryable: false,
+            message: `Pulled ontology is incomplete or invalid: ${valid.value.map((issue) => issue.message).join(" ")}`,
+        });
+    return definition;
 });
+
+/** Assemble a runtime definition through ordinary metadata queries. Completeness
+ * is the adapter's query contract; this does not invent an atomic provider revision.
+ */
+export const loadDefinition = (backend: Pick<OntologyBackendService, "query">) => pull(backend);
 
 function localId(kind: "ActionType" | "ObjectType" | "Property", name: string): string {
     return `local:${kind}:${encodeURIComponent(name)}`;
@@ -166,7 +228,8 @@ export function makeMetadataBackend(ir: OntologyIR): OntologyBackendService {
         id: localId("ActionType", actionType.name),
     }));
 
-    return {
+    return makeOntologyBackend({
+        ir: metaOntology,
         name: "local-metadata",
         sourceId: "local-metadata",
         supportsIdempotency: false,
@@ -229,5 +292,10 @@ export function makeMetadataBackend(ir: OntologyIR): OntologyBackendService {
                     retryable: false,
                 })
             ),
-    };
+    });
+}
+
+export interface OntologyPullConfig<R = never> extends Omit<PullOptions, "queryFunctionTypeNames"> {
+    readonly queryFunctionTypeNames?: string[];
+    readonly backend: Effect.Effect<OntologyBackendService, BackendError, R | Scope.Scope>;
 }

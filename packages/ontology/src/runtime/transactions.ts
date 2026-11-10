@@ -73,8 +73,9 @@ export const withTransactionCollections = <A, E, R>(
                             autoIndex: "eager",
                             startSync: true,
                             sync: {
-                                sync: ({ begin, write, commit, markReady, markError }) => {
-                                    const published = new Set<string | number>();
+                                rowUpdateMode: "full",
+                                sync: ({ begin, write, commit, markReady, fail, collection }) => {
+                                    const published = new Set(collection.keys());
                                     const requests = new Map<string, Promise<void>>();
                                     publishers.set(definition.name, async (rows) => {
                                         if (closed) throw failure("Transaction query scope is closed.");
@@ -87,7 +88,7 @@ export const withTransactionCollections = <A, E, R>(
                                             published.add(row.key);
                                         }
                                         const receipt = commit();
-                                        if (receipt !== true) void receipt.catch(markError);
+                                        if (receipt !== true) void receipt.catch(fail);
                                         await whenSyncAccepted(receipt);
                                     });
                                     markReady();

@@ -2,9 +2,9 @@ import { Clock, Effect, Redacted } from "effect";
 import * as oauth from "oauth4webapi";
 import { Temporal } from "temporal-polyfill";
 import { connectError } from "./errors.js";
-import type { ConnectOAuthProvider, OAuthTokens } from "./Connect.js";
+import type { ConnectOAuthService, OAuthTokens } from "./oauthAuthority.js";
 
-export interface OAuthProviderOptions {
+export interface OAuthServiceOptions {
     issuer: string;
     authorizationEndpoint: string;
     tokenEndpoint: string;
@@ -26,7 +26,7 @@ export interface OAuthProviderOptions {
     fetch?: typeof globalThis.fetch;
 }
 
-export function makeOAuthProvider(options: OAuthProviderOptions): ConnectOAuthProvider {
+export function makeOAuthService(options: OAuthServiceOptions): ConnectOAuthService {
     const server: oauth.AuthorizationServer = {
         issuer: options.issuer,
         authorization_endpoint: options.authorizationEndpoint,
@@ -70,12 +70,12 @@ export function makeOAuthProvider(options: OAuthProviderOptions): ConnectOAuthPr
                             )
                           : connectError(
                                 "Provider",
-                                "OAuth provider request failed.",
+                                "OAuth oauth request failed.",
                                 error instanceof oauth.ResponseBodyError && error.status >= 500
                             ),
             });
             const now = yield* Clock.currentTimeMillis;
-            const providerSubjectId = yield* options
+            const userId = yield* options
                 .resolveSubject(result.access_token)
                 .pipe(
                     Effect.mapError((error) =>
@@ -96,7 +96,7 @@ export function makeOAuthProvider(options: OAuthProviderOptions): ConnectOAuthPr
                 refreshToken: result.refresh_token,
                 refreshTokenExpiresAt: options.refreshTokenExpiry?.(result, now),
                 grantedScopes: result.scope,
-                providerSubjectId,
+                userId,
             } satisfies OAuthTokens;
         });
     return {

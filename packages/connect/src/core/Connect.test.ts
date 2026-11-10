@@ -1,13 +1,13 @@
 import { o } from "@party-stack/ontology-spec";
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect, Schema, Scope, Exit } from "effect";
+import { Deferred, Effect, Schema, Scope, Exit } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { describe, expect, it, vi, afterEach } from "vite-plus/test";
 import { makeConnectServer } from "../server/index.js";
 import { connectOntology } from "../spec/index.js";
-import { makeConnect, type ConnectOAuthProvider } from "./Connect.js";
 import { connectError } from "./errors.js";
+import { makeOAuthAuthority, type ConnectOAuthService } from "./oauthAuthority.js";
 import { makeConnectStore } from "./store.js";
 
 const run = Effect.runPromise;
@@ -26,7 +26,7 @@ async function fixture(extended = false) {
         active: Effect.succeed({ id: "key", key }),
         get: () => Effect.succeed(key),
     });
-    const values = { ...cryptoValues, evict: () => Effect.void };
+    const values = { ...cryptoValues, evict: vi.fn(() => Effect.void) };
     const ir = structuredClone(connectOntology);
     if (extended) {
         ir.objectTypes
@@ -40,18 +40,18 @@ async function fixture(extended = false) {
     scopes.push(scope);
     const store = await run(Scope.provide(makeConnectStore({ tables, namespace: "connect", ir }), scope));
     await run(
-        store.put("Installation", {
-            id: "installation",
+        store.put("ServiceInstance", {
+            id: "serviceInstance",
             title: "Example",
-            providerId: "example",
+            service: "example",
             instanceUrl: "https://example.com",
         })
     );
     await run(
-        store.put("OAuthConnector", {
-            id: "connector",
+        store.put("OAuthApplication", {
+            id: "application",
             title: "Example",
-            installation: "installation",
+            serviceInstance: "serviceInstance",
             clientId: "app",
             flow: "authorization-code",
         })
@@ -61,7 +61,7 @@ async function fixture(extended = false) {
             accessToken: "access",
             refreshToken: "refresh",
             accessTokenExpiresAt: time(3_600_000),
-            providerSubjectId: "user",
+            userId: "user",
         })
     );
     const refresh = vi.fn(() =>
@@ -69,33 +69,34 @@ async function fixture(extended = false) {
             accessToken: "new-access",
             refreshToken: "rotated",
             accessTokenExpiresAt: time(3_600_000),
-            providerSubjectId: "user",
+            userId: "user",
         })
     );
-    const provider: ConnectOAuthProvider = {
+    const oauth: ConnectOAuthService = {
         authorizationUrl: (input) =>
             Effect.succeed(
                 `https://auth.example/authorize?state=${input.state}&code_challenge=${input.codeChallenge}`
             ),
         exchange,
         refresh,
-        clientCredentials: Effect.succeed({ accessToken: "service-access", providerSubjectId: "service" }),
+        clientCredentials: Effect.succeed({ accessToken: "service-access", userId: "service" }),
     };
     const connect = await run(
-        makeConnect({
+        makeOAuthAuthority({
             store,
             values,
-            provider: () => Effect.succeed(provider),
+            oauth: () => Effect.succeed(oauth),
             connectionProperties: extended
                 ? (attempt) =>
                       Effect.succeed({ project: (attempt as unknown as { project: string }).project })
                 : undefined,
         })
     );
-    const begin = () =>
+    const begin = (connectionId?: string) =>
         run(
             connect.begin({
-                connectorId: "connector",
+                applicationId: "application",
+                connectionId,
                 principalId: "principal",
                 redirectUrl: "https://app.example/connect/callback",
                 properties: extended ? { project: "project-1" } : undefined,
@@ -108,7 +109,7 @@ async function fixture(extended = false) {
                 callbackUrl: `https://app.example/connect/callback?state=${id}&code=secret-code`,
             })
         );
-    return { tables, values, store, connect, provider, exchange, refresh, begin, complete };
+    return { tables, values, store, connect, oauth, exchange, refresh, begin, complete };
 }
 
 describe("Connect authority", () => {
@@ -129,7 +130,7 @@ describe("Connect authority", () => {
         expect(connection.accessToken?.ciphertext).not.toContain("access");
         expect((await f.complete(started.id)).id).toBe(connection.id);
         expect(f.exchange).toHaveBeenCalledTimes(1);
-        expect((await run(f.store.get("OAuthConnector", "connector")))?.connection).toBe(connection.id);
+        expect((await run(f.store.get("OAuthApplication", "application")))?.connection).toBe(connection.id);
     });
     it("checks principal, expiry, callback location and prevents duplicate in-flight exchanges", async () => {
         const f = await fixture();
@@ -169,7 +170,7 @@ describe("Connect authority", () => {
         const f = await fixture();
         const { id } = await f.begin();
         const next = await run(
-            makeConnect({ store: f.store, values: f.values, provider: () => Effect.succeed(f.provider) })
+            makeOAuthAuthority({ store: f.store, values: f.values, oauth: () => Effect.succeed(f.oauth) })
         );
         const connection = await run(
             next.complete({
@@ -197,7 +198,7 @@ describe("Connect authority", () => {
     it("retains identity and valid access on terminal refresh failure, without rolling back cleanup", async () => {
         const f = await fixture();
         const connection = await f.complete((await f.begin()).id);
-        f.provider.refresh = () => Effect.fail(connectError("NeedsAuthentication", "Reconnect."));
+        f.oauth.refresh = () => Effect.fail(connectError("NeedsAuthentication", "Reconnect."));
         await expect(run(f.connect.refresh(connection.id))).rejects.toThrow(/Reconnect/);
         const next = (await run(f.store.get("OAuthConnection", connection.id)))!;
         expect(next.status).toBe("needs-auth");
@@ -212,10 +213,10 @@ describe("Connect authority", () => {
             )
         ).toBe("access");
     });
-    it("keeps credentials after a definite transient provider failure", async () => {
+    it("keeps credentials after a definite transient oauth failure", async () => {
         const f = await fixture();
         const connection = await f.complete((await f.begin()).id);
-        f.provider.refresh = () => Effect.fail(connectError("Provider", "Unavailable", true));
+        f.oauth.refresh = () => Effect.fail(connectError("Provider", "Unavailable", true));
         await expect(run(f.connect.refresh(connection.id))).rejects.toThrow(/Unavailable/);
         const next = (await run(f.store.get("OAuthConnection", connection.id)))!;
         expect(next.refreshToken).toEqual(connection.refreshToken);
@@ -233,7 +234,7 @@ describe("Connect authority", () => {
             })
         );
         const other = await run(
-            makeConnect({ store: f.store, values: f.values, provider: () => Effect.succeed(f.provider) })
+            makeOAuthAuthority({ store: f.store, values: f.values, oauth: () => Effect.succeed(f.oauth) })
         );
         expect((await run(Effect.flip(other.refresh(connection.id)))).kind).toBe("Busy");
         expect(f.refresh).not.toHaveBeenCalled();
@@ -251,7 +252,7 @@ describe("Connect authority", () => {
         expect((await run(Effect.flip(f.connect.refresh(connection.id)))).kind).toBe("NeedsAuthentication");
         const next = await run(
             f.connect.begin({
-                connectorId: "connector",
+                applicationId: "application",
                 connectionId: connection.id,
                 principalId: "principal",
                 redirectUrl: "https://app.example/connect/callback",
@@ -291,19 +292,19 @@ describe("Connect authority", () => {
     });
     it("keeps client-credentials and interactive connectors separate", async () => {
         const f = await fixture();
-        await expect(run(f.connect.clientCredentials({ connectorId: "connector" }))).rejects.toThrow(
+        await expect(run(f.connect.clientCredentials({ applicationId: "application" }))).rejects.toThrow(
             /client credentials/
         );
         await run(
-            f.store.put("OAuthConnector", {
+            f.store.put("OAuthApplication", {
                 id: "service",
                 title: "Service",
-                installation: "installation",
+                serviceInstance: "serviceInstance",
                 clientId: "service-app",
                 flow: "client-credentials",
             })
         );
-        const connection = await run(f.connect.clientCredentials({ connectorId: "service" }));
+        const connection = await run(f.connect.clientCredentials({ applicationId: "service" }));
         expect(
             await run(
                 f.values.decrypt(
@@ -315,7 +316,7 @@ describe("Connect authority", () => {
         await expect(
             run(
                 f.connect.begin({
-                    connectorId: "service",
+                    applicationId: "service",
                     principalId: "principal",
                     redirectUrl: "https://app.example/callback",
                 })
@@ -325,14 +326,14 @@ describe("Connect authority", () => {
     it("disconnect removes local credentials even when revocation fails", async () => {
         const f = await fixture();
         const connection = await f.complete((await f.begin()).id);
-        f.provider.revoke = () => Effect.fail(connectError("Provider", "Unavailable", true));
+        f.oauth.revoke = () => Effect.fail(connectError("Provider", "Unavailable", true));
         await expect(run(f.connect.disconnect(connection.id))).rejects.toThrow(/Unavailable/);
         expect((await run(f.store.get("OAuthConnection", connection.id)))?.status).toBe("inactive");
     });
 });
 
 describe("Connect HTTP boundary", () => {
-    it("completes server-mediated auth and returns no credentials or provider code", async () => {
+    it("completes server-mediated auth and returns no credentials or oauth code", async () => {
         const f = await fixture();
         const authorize = vi.fn(() => Effect.void);
         const handler = makeConnectServer({
@@ -348,7 +349,7 @@ describe("Connect HTTP boundary", () => {
                 new Request("https://app.example/connect/begin", {
                     method: "POST",
                     headers: { Origin: "https://app.example", "Content-Type": "application/json" },
-                    body: JSON.stringify({ connectorId: "connector", returnUrl: "/done" }),
+                    body: JSON.stringify({ applicationId: "application", returnUrl: "/done" }),
                 })
             )
         );
@@ -384,7 +385,7 @@ describe("Connect HTTP boundary", () => {
                     new Request("https://app.example/connect/begin", {
                         method: "POST",
                         headers: { Origin: origin },
-                        body: JSON.stringify({ connectorId: "connector", returnUrl }),
+                        body: JSON.stringify({ applicationId: "application", returnUrl }),
                     })
                 )
             );
@@ -406,7 +407,15 @@ it("rolls back embedded credentials if saving rotated credentials fails", async 
     let failedHandle: string | undefined;
     const faulted = {
         ...f.store,
-        put: <N extends "Installation" | "OAuthConnector" | "OAuthConnection" | "OAuthAuthorizationAttempt">(
+        put: <
+            N extends
+                | "ServiceInstance"
+                | "OAuthApplication"
+                | "OAuthConnection"
+                | "OAuthAuthorizationAttempt"
+                | "ApiKeyConnection"
+                | "ExternalSessionConnection",
+        >(
             name: N,
             value: Parameters<typeof f.store.put<N>>[1]
         ) => {
@@ -425,7 +434,7 @@ it("rolls back embedded credentials if saving rotated credentials fails", async 
         },
     };
     const connect = await run(
-        makeConnect({ store: faulted, values: f.values, provider: () => Effect.succeed(f.provider) })
+        makeOAuthAuthority({ store: faulted, values: f.values, oauth: () => Effect.succeed(f.oauth) })
     );
     await expect(run(connect.refresh(connection.id))).rejects.toThrow(/Injected/);
     const stored = (await run(f.store.get("OAuthConnection", connection.id)))!;
@@ -443,9 +452,9 @@ it("a late refresh response cannot reactivate a disconnected connection", async 
     const waiting = new Promise<void>((resolve) => {
         release = resolve;
     });
-    f.provider.refresh = () =>
+    f.oauth.refresh = () =>
         Effect.promise(() => waiting).pipe(
-            Effect.as({ accessToken: "late-access", refreshToken: "late-refresh", providerSubjectId: "user" })
+            Effect.as({ accessToken: "late-access", refreshToken: "late-refresh", userId: "user" })
         );
     const pending = run(f.connect.refresh(connection.id)).catch((error: unknown) => error);
     await vi.waitFor(async () =>
@@ -464,12 +473,126 @@ it("can disconnect locally when the decryption key is unavailable", async () => 
     const f = await fixture();
     const connection = await f.complete((await f.begin()).id);
     const connect = await run(
-        makeConnect({
+        makeOAuthAuthority({
             store: f.store,
             values: { ...f.values, decrypt: () => Effect.fail(connectError("Storage", "Key unavailable")) },
-            provider: () => Effect.succeed(f.provider),
+            oauth: () => Effect.succeed(f.oauth),
         })
     );
     await run(connect.disconnect(connection.id));
     expect((await run(f.store.get("OAuthConnection", connection.id)))?.status).toBe("inactive");
+});
+
+it("forget removes the account, credentials and OAuth references without touching other accounts", async () => {
+    const f = await fixture();
+    const connection = await f.complete((await f.begin()).id);
+    const other = {
+        id: "other-account",
+        application: "application",
+        title: "Other",
+        userId: "other",
+        status: "active" as const,
+    };
+    await run(f.store.put("OAuthConnection", other));
+    const reconnect = await f.begin(connection.id);
+    const unrelated = await f.begin();
+    f.values.evict.mockClear();
+    const revoked = vi.fn(() => Effect.void);
+    f.oauth.revoke = revoked;
+    await run(f.connect.forget(connection.id));
+    expect(await run(f.store.get("OAuthConnection", connection.id))).toBeUndefined();
+    expect(await run(f.store.get("OAuthConnection", other.id))).toEqual(other);
+    expect(await run(f.store.get("OAuthApplication", "application"))).toHaveProperty("connection", undefined);
+    expect(await run(f.connect.connectionForApplication("application"))).toBeUndefined();
+    expect(await run(f.store.get("OAuthAuthorizationAttempt", reconnect.id))).toBeUndefined();
+    expect(await run(f.store.load("OAuthAuthorizationAttempt", {}))).toMatchObject([{ id: unrelated.id }]);
+    expect(revoked).toHaveBeenCalledWith("refresh");
+    expect(f.values.evict).toHaveBeenCalledWith(connection.accessToken);
+    expect(f.values.evict).toHaveBeenCalledWith(connection.refreshToken);
+    await run(f.connect.forget(connection.id));
+    expect(revoked).toHaveBeenCalledOnce();
+    expect((await f.complete(unrelated.id)).id).not.toBe(connection.id);
+});
+
+it("forget commits local deletion even if remote revocation fails", async () => {
+    const f = await fixture();
+    const connection = await f.complete((await f.begin()).id);
+    f.oauth.revoke = () => Effect.fail(connectError("Provider", "Revocation unavailable"));
+    await expect(run(f.connect.forget(connection.id))).rejects.toThrow(/Revocation unavailable/);
+    expect(await run(f.store.get("OAuthConnection", connection.id))).toBeUndefined();
+    expect(await run(f.store.load("OAuthAuthorizationAttempt", {}))).toEqual([]);
+    await run(f.connect.forget(connection.id));
+});
+
+it("a late refresh cannot recreate a forgotten account", async () => {
+    const f = await fixture();
+    const connection = await f.complete((await f.begin()).id);
+    const started = Effect.runSync(Deferred.make<void>());
+    const reply = Effect.runSync(Deferred.make<void>());
+    f.oauth.refresh = () =>
+        Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(reply);
+            return { accessToken: "late-access", refreshToken: "late-refresh", userId: "user" };
+        });
+    const pending = run(Effect.result(f.connect.refresh(connection.id)));
+    await run(Deferred.await(started));
+    try {
+        await run(f.connect.forget(connection.id));
+    } finally {
+        await run(Deferred.succeed(reply, undefined));
+    }
+    expect(await pending).toMatchObject({ _tag: "Failure", failure: { kind: "NotFound" } });
+    expect(await run(f.store.get("OAuthConnection", connection.id))).toBeUndefined();
+});
+
+it.each([false, true])(
+    "a late OAuth exchange cannot recreate a forgotten account or attempt (provider failure: %s)",
+    async (fail) => {
+        const f = await fixture();
+        const connection = await f.complete((await f.begin()).id);
+        const reconnect = await f.begin(connection.id);
+        const started = Effect.runSync(Deferred.make<void>());
+        const reply = Effect.runSync(Deferred.make<void>());
+        f.oauth.exchange = () =>
+            Effect.gen(function* () {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(reply);
+                if (fail) return yield* connectError("Provider", "Provider failed");
+                return { accessToken: "late-access", refreshToken: "late-refresh", userId: "user" };
+            });
+        const pending = f.complete(reconnect.id).then(
+            () => undefined,
+            (error: unknown) => error
+        );
+        await run(Deferred.await(started));
+        try {
+            await run(f.connect.forget(connection.id));
+        } finally {
+            await run(Deferred.succeed(reply, undefined));
+        }
+        expect(await pending).toBeInstanceOf(Error);
+        expect(await run(f.store.get("OAuthConnection", connection.id))).toBeUndefined();
+        expect(await run(f.store.get("OAuthAuthorizationAttempt", reconnect.id))).toBeUndefined();
+        expect(await run(f.connect.connectionForApplication("application"))).toBeUndefined();
+    }
+);
+
+it("a repeated login refreshes one connection while trusted ownership properties keep bindings separate", async () => {
+    const f = await fixture(true);
+    const first = await f.complete((await f.begin()).id);
+    const second = await f.complete((await f.begin()).id);
+    expect(second.id).toBe(first.id);
+    expect(await run(f.store.load("OAuthConnection", {}))).toHaveLength(1);
+    const other = await run(
+        f.connect.begin({
+            applicationId: "application",
+            principalId: "principal",
+            redirectUrl: "https://app.example/connect/callback",
+            properties: { project: "project-2" },
+        })
+    );
+    const third = await f.complete(other.id);
+    expect(third.id).not.toBe(first.id);
+    expect(await run(f.store.load("OAuthConnection", {}))).toHaveLength(2);
 });

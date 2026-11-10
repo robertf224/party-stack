@@ -6,7 +6,7 @@ interface Graph {
     getSourceCollections(): readonly object[];
     readonly subscriptions: Record<string, object>;
 }
-/** TanStack DB 0.14 adapter. Private inspection is confined here and fails closed.
+/** TanStack DB 1.0 adapter. Private inspection is confined here and fails closed.
  * No subscriptions, sync runs, queries, or row reads are created by inspection.
  */
 function queryGraph(collection: object): Graph | undefined {

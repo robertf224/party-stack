@@ -2,7 +2,7 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { OntologyStorageError } from "@party-stack/ontology-storage";
 import { Effect, Redacted } from "effect";
 import { preserveCachedCopies } from "./encryptedCache.js";
-import type { Key } from "@party-stack/ontology-storage";
+import type { Key, Row } from "@party-stack/ontology-storage";
 import type { Overlay, Override } from "@party-stack/ontology-storage/overlay";
 import type { Transaction } from "@party-stack/ontology-storage/tables";
 
@@ -56,6 +56,58 @@ export const putIncomingRow = Effect.fnUntraced(
                       }
             );
         }
+    },
+    (work) =>
+        work.pipe(
+            Effect.mapError((error) =>
+                error instanceof OntologyStorageError && error.reason._tag === "CodecError"
+                    ? new BackendError({
+                          operation: "replica.install",
+                          kind: "InvalidResponse",
+                          retryable: false,
+                          message: "Incoming row does not match its definition.",
+                          cause: Redacted.make(error),
+                      })
+                    : error
+            )
+        )
+);
+
+/** Distinct base keys can be installed together without observing intermediate rows.
+ * The caller flushes before dependent changes and retains the enclosing transaction.
+ */
+export const putIncomingBaseRows = Effect.fnUntraced(
+    function* (
+        tx: Transaction,
+        view: Overlay<Record<string, unknown>>,
+        primaryKey: string,
+        properties: readonly string[],
+        rows: readonly Row<Record<string, unknown>>[]
+    ) {
+        if (!rows.length) return;
+        for (const row of rows)
+            if (row.value[primaryKey] !== row.key)
+                return yield* new BackendError({
+                    operation: "replica.install",
+                    kind: "InvalidResponse",
+                    retryable: false,
+                    message: "Incoming row key does not match its primary key.",
+                });
+        const previous = properties.length
+            ? new Map(
+                  (yield* tx.getMany(
+                      view.base,
+                      rows.map((row) => row.key)
+                  )).map((row) => [row.key, row.value])
+              )
+            : undefined;
+        yield* tx.putMany(
+            view.base,
+            rows.map((row) => ({
+                key: row.key,
+                value: preserveCachedCopies(previous?.get(row.key), row.value, properties),
+            }))
+        );
     },
     (work) =>
         work.pipe(

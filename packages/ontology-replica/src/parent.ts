@@ -1,9 +1,15 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { Clock, Effect, Exit, Queue, Ref, Scope, Stream } from "effect";
+import { Clock, Effect, Queue, Ref, Stream } from "effect";
 import { deliveryRecovery } from "./recovery.js";
 import { superviseWatch } from "./watch.js";
 import type { ReplicaService } from "./engine.js";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
+
+interface ParentAuthentication {
+    readonly awaitActive?: Effect.Effect<void>;
+    readonly generation: Effect.Effect<number>;
+    readonly awaitActivation: (after: number) => Effect.Effect<void>;
+}
 
 /** Parent forwarding owns action events/deadlines, independently of read heartbeats. */
 const runParentActions = Effect.fnUntraced(function* (options: {
@@ -15,13 +21,15 @@ const runParentActions = Effect.fnUntraced(function* (options: {
 }) {
     for (;;) {
         yield* Queue.clear(options.queue);
-        const first = (yield* options.child.pending)[0];
+        // Acceptance has already transferred this action to the parent. Its row
+        // delivery may lag; that must not block handing off the next action.
+        const first = (yield* options.child.pending).find((entry) => entry.state !== "acknowledged");
         const result =
             first && (first.state === "queued" || first.state === "sending")
                 ? yield* Effect.result(options.run)
                 : undefined;
         if (result?._tag === "Failure") yield* options.onError(result.failure);
-        const head = (yield* options.child.pending)[0];
+        const head = (yield* options.child.pending).find((entry) => entry.state !== "acknowledged");
         const now = yield* Clock.currentTimeMillis;
         const retryAt =
             !head || head.state === "blocked" || head.state === "acknowledged"
@@ -58,13 +66,18 @@ export const replicaStateSource = (parent: ReplicaService): OntologySource => ({
     acknowledge: parent.acknowledgeClient,
 });
 
-/** Selected delivery has one installer. Local selection changes cancel its Scope
- * and start a new snapshot; ordinary row changes keep the same stream alive.
+/** Selected delivery has one installer. Local selection changes reacquire its
+ * scoped producer; installed row witnesses survive action-only interest changes.
+ * A changed row region requires an installed baseline. An uninstalled target
+ * with unchanged row selection can replay before newer action interests.
  */
 export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(function* (
     child: ReplicaService,
     source?: OntologySource,
-    options?: { readonly retryIntervalMs?: number }
+    options?: {
+        readonly retryIntervalMs?: number;
+        readonly authentication?: ParentAuthentication;
+    }
 ) {
     const retry = options?.retryIntervalMs ?? 1_000;
     const error = yield* Ref.make<BackendError | undefined>(undefined);
@@ -74,7 +87,12 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
     yield* Effect.forkScoped(
         Effect.gen(function* () {
             const span = yield* Effect.currentSpan;
+            let immediateSnapshotRecovery = true;
             for (;;) {
+                yield* options?.authentication?.awaitActive ?? Effect.void;
+                const authenticationGeneration = yield* (
+                    options?.authentication?.generation ?? Effect.succeed(0)
+                );
                 const result = yield* Effect.result(
                     Effect.scoped(
                         Effect.gen(function* () {
@@ -88,7 +106,7 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
                                 Effect.gen(function* () {
                                     if (frame.part === 0) changes = 0;
                                     changes += frame.changes.length;
-                                    const installed = yield* child.receiveDelivery(frame);
+                                    const installed = yield* child.receiveDelivery(frame, opened.generation);
                                     if (!installed) return;
                                     span.event("replica.applied", yield* Clock.currentTimeNanos, {
                                         diagnostic: true,
@@ -99,7 +117,14 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
                                     yield* Ref.set(error, undefined);
                                     yield* child.reportReplicationFailure();
                                     const meta = installed.metadata;
-                                    if (source && meta.client)
+                                    // A replayed same-row target can precede the current
+                                    // action interests. Its delivery ACK unlocks the latest
+                                    // capture; semantic pruning waits for that current view.
+                                    if (
+                                        source &&
+                                        meta.client &&
+                                        meta.generation === (yield* child.parentDeliveryGeneration)
+                                    )
                                         yield* source
                                             .acknowledge(
                                                 opened.session ?? meta.client,
@@ -125,6 +150,7 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
                                             },
                                         })
                                     );
+                                    immediateSnapshotRecovery = true;
                                 })
                             );
                             const changed = Effect.gen(function* () {
@@ -147,13 +173,29 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
                     const recovery = deliveryRecovery(result.failure);
                     span.event("replica.disconnected", yield* Clock.currentTimeNanos, {
                         diagnostic: true,
-                        kind: result.failure.kind,
-                        recovery,
+                        errorKind: result.failure.kind,
+                        recovery:
+                            result.failure.kind === "Unauthenticated" && options?.authentication
+                                ? "authentication"
+                                : recovery,
                     });
                     if (recovery === "selection") continue;
                     yield* Ref.set(error, result.failure);
                     yield* child.reportReplicationFailure(result.failure);
-                    if (recovery === "snapshot") yield* child.resetParentDelivery;
+                    if (result.failure.kind === "Unauthenticated" && options?.authentication) {
+                        yield* options.authentication.awaitActivation(authenticationGeneration);
+                        continue;
+                    }
+                    if (recovery === "snapshot") {
+                        yield* child.resetParentDelivery;
+                        // A lost delivery baseline needs a new snapshot, not a
+                        // timed transport retry. Allow one immediate rebuild;
+                        // repeated failures without an install still back off.
+                        if (immediateSnapshotRecovery) {
+                            immediateSnapshotRecovery = false;
+                            continue;
+                        }
+                    }
                     if (source && recovery === "session")
                         yield* child
                             .refreshParent(source)
@@ -197,10 +239,7 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
     options?: {
         readonly retryIntervalMs?: number;
         readonly heartbeatIntervalMs?: number;
-        readonly authentication?: {
-            readonly generation: Effect.Effect<number>;
-            readonly awaitActivation: (after: number) => Effect.Effect<void>;
-        };
+        readonly authentication?: ParentAuthentication;
     }
 ) {
     const retryIntervalMs = options?.retryIntervalMs ?? 1_000;
@@ -218,24 +257,7 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
             retryable: false,
         });
     const error = yield* Ref.make<BackendError | undefined>(undefined);
-    const initialWatchScope = yield* Scope.fork(yield* Effect.scope);
-    const parentChanges = yield* Effect.result(
-        Scope.provide(source.subscribeChanges, initialWatchScope).pipe(
-            Effect.onExit((exit) =>
-                Exit.isFailure(exit) ? Scope.close(initialWatchScope, exit) : Effect.void
-            )
-        )
-    );
-    if (parentChanges._tag === "Failure") {
-        if (!parentChanges.failure.retryable) return yield* parentChanges.failure;
-        yield* Ref.set(error, parentChanges.failure);
-    }
     const childChanges = yield* child.subscribeChanges;
-    const initial = yield* Effect.result(child.refreshParent(source));
-    if (initial._tag === "Failure") {
-        if (!initial.failure.retryable) return yield* initial.failure;
-        yield* Ref.set(error, initial.failure);
-    }
     const queue = yield* Queue.sliding<void>(1);
     let closed = false;
     yield* Effect.addFinalizer(() =>
@@ -266,29 +288,23 @@ export const connectReplicaParent = Effect.fn("Replica.connectParent")(function*
     yield* Effect.forkScoped(
         Effect.gen(function* () {
             const span = yield* Effect.currentSpan;
-            let first = true;
             yield* superviseWatch({
                 authentication: options?.authentication,
                 retryDelayMs: retryIntervalMs,
-                stream: () =>
-                    Stream.unwrap(
-                        Effect.gen(function* () {
-                            const initial = first ? parentChanges : undefined;
-                            first = false;
-                            const changes = initial
-                                ? initial._tag === "Success"
-                                    ? initial.success.pipe(
-                                          Stream.ensuring(Scope.close(initialWatchScope, Exit.void))
-                                      )
-                                    : yield* Effect.fail(initial.failure)
-                                : yield* source.subscribeChanges;
-                            span.event("replica.subscribed", yield* Clock.currentTimeNanos, {
-                                diagnostic: true,
-                            });
-                            // Refresh after every acquisition: events during a gap are not replayable hints.
-                            yield* wake;
-                            return changes;
-                        })
+                acquire: () =>
+                    Effect.succeed(
+                        Stream.unwrap(
+                            Effect.gen(function* () {
+                                yield* options?.authentication?.awaitActive ?? Effect.void;
+                                const changes = yield* source.subscribeChanges;
+                                span.event("replica.subscribed", yield* Clock.currentTimeNanos, {
+                                    diagnostic: true,
+                                });
+                                // Refresh after every acquisition: events during a gap are not replayable hints.
+                                yield* wake;
+                                return changes;
+                            })
+                        )
                     ),
                 onValue: () =>
                     Effect.gen(function* () {

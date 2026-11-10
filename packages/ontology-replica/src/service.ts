@@ -2,17 +2,21 @@ import { BackendError, classifyBackendFailure } from "@party-stack/ontology-back
 import { executeAction, resolveReadActionParameters } from "@party-stack/ontology-backend/actions";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { eq, field } from "@party-stack/ontology-storage";
+import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Stream, Scope } from "effect";
+import { makeActionAttachmentInputs } from "./attachments/inputs.js";
 import { makeBlobManagerFromStorage } from "./attachments/manager.js";
 import { prepareActionParameters } from "./attachments/prepare.js";
 import { makeReplicaAttachments } from "./attachments/service.js";
 import { makeReplicaDecryption } from "./decrypt.js";
 import { makeReplicaKernel } from "./engine.js";
 import { kernel } from "./internal.js";
+import { makePinManager } from "./pinManager.js";
 import { makeQueryPin } from "./pins.js";
 import type { ReplicaAttachments } from "./attachments/service.js";
 import type { DemandPolicy } from "./demandCache.js";
 import type { ReplicaService as KernelService } from "./engine.js";
+import type { ReplicaPins } from "./pinManager.js";
 import type { PinOptions, PinStatus } from "./pins.js";
 import type { ObjectCachePolicy, ObjectCacheSweepOptions } from "./policies.js";
 import type { ReplicaStatus } from "./status.js";
@@ -75,7 +79,7 @@ export type ReplicaOptions = ReplicaConfiguration & {
     readonly encryptionKeyring?: EncryptionKeyringService;
     readonly network?: NetworkConnectivity;
     readonly capacity?: ResourceCapacity;
-    readonly authentication?: Pick<ConnectionMonitor, "state" | "changes">;
+    readonly authentication?: ConnectionMonitor;
 } & (
         | { readonly backend: OntologyBackendService; readonly source?: never }
         | { readonly source: OntologySource; readonly backend?: OntologyBackendService }
@@ -129,12 +133,13 @@ export interface ReplicaService extends ReplicaReads {
     readonly sourceId: string;
     readonly upstreamKind: "committed" | "speculative";
     readonly network: NetworkConnectivity;
-    readonly authentication?: Pick<ConnectionMonitor, "state" | "changes">;
+    readonly authentication?: ConnectionMonitor;
     readonly decrypt: (
         value: Encrypted,
         options?: { readonly cache?: boolean }
     ) => Effect.Effect<{ readonly value: unknown; readonly ciphertext?: string }, BackendError>;
     readonly attachments: ReplicaAttachments;
+    readonly queryFunction: OntologyBackendService["queryFunction"];
     readonly actions: {
         readonly resolveParameters: (
             name: string,
@@ -145,21 +150,26 @@ export interface ReplicaService extends ReplicaReads {
             parameters: Record<string, unknown>,
             options?: { readonly knownParameters?: readonly string[] }
         ) => Effect.Effect<ValidationReport, BackendError>;
-        /** Defaults to direct admission; both modes await authoritative confirmation and local reconciliation. */
+        /** Queue local intent and await authoritative confirmation and local reconciliation. */
         readonly apply: (
             request: ActionRequest,
-            options?: { readonly mode?: "direct" | "outbox"; readonly optimistic?: boolean }
+            options?: { readonly optimistic?: boolean }
         ) => Effect.Effect<ActionReceipt, BackendError>;
     };
     readonly confirmed: ReplicaReads;
     readonly observeSubset: (subset: ObjectSubset) => Stream.Stream<ReplicaRowsBatch, BackendError>;
     readonly demand: {
+        readonly pins: ReplicaPins;
         readonly setPin: (query: QueryDocument, options?: PinOptions) => Effect.Effect<void, BackendError>;
         readonly clearPin: Effect.Effect<void, BackendError>;
         readonly pinStatus: Effect.Effect<PinStatus | undefined, BackendError>;
+        /** Emits the current pin status, then status after each saved intent/readiness change. */
+        readonly pinStatusChanges: Stream.Stream<PinStatus | undefined, BackendError>;
+        /** Live demand defaults to cached availability while freshness repairs
+         * continue. One-shot replicas and explicit complete reads await current coverage. */
         readonly acquire: (
             subset: ObjectSubset,
-            options?: { readonly localOnly?: boolean }
+            options?: { readonly localOnly?: boolean; readonly resultType?: "cached" | "complete" }
         ) => Effect.Effect<void, BackendError, Scope.Scope>;
     };
     readonly outbox: ReplicaOutbox;
@@ -171,6 +181,12 @@ export interface ReplicaService extends ReplicaReads {
     readonly syncOnce: Effect.Effect<void, BackendError>;
     readonly collectGarbage: (options?: ObjectCacheSweepOptions) => Effect.Effect<number, BackendError>;
 }
+/** Pin operations may be delegated to the device's persistent replica owner. */
+export type ReplicaPinControls = Pick<
+    ReplicaService["demand"],
+    "setPin" | "clearPin" | "pinStatus" | "pinStatusChanges"
+>;
+
 export const makeReplica = Effect.fn("Replica.open")(function* (
     options: ReplicaOptions
 ): Effect.fn.Return<ReplicaService, BackendError, Scope.Scope> {
@@ -265,6 +281,7 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         manager,
         stage: remoteAttachments?.stage,
     });
+    const actionInputs = yield* makeActionAttachmentInputs({ ir: options.ir, manager });
     const prepare = (request: ActionRequest) =>
         prepareActionParameters({
             ir: options.ir,
@@ -272,6 +289,31 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
             parameters: request.parameters,
             blobManager: manager,
         });
+    const handoffAttachments = Effect.fnUntraced(function* (
+        uploads: Effect.Success<ReturnType<typeof prepare>>["attachmentUploads"]
+    ) {
+        for (const upload of uploads) {
+            if (!remoteAttachments?.stage)
+                return yield* new BackendError({
+                    operation: "attachment.handoff",
+                    kind: "NotImplemented",
+                    retryable: false,
+                    actionOutcome: "not-committed",
+                    message: "The parent cannot receive staged attachment bytes.",
+                });
+            const staged = yield* remoteAttachments.stage(upload.attachment, upload.blob, {
+                target: upload.target,
+            });
+            if (staged.id !== upload.attachment.id)
+                return yield* new BackendError({
+                    operation: "attachment.handoff",
+                    kind: "Conflict",
+                    retryable: false,
+                    actionOutcome: "not-committed",
+                    message: "A speculative parent must preserve staged attachment IDs.",
+                });
+        }
+    });
     const transfer =
         <A>(submit: (request: ClientSubmission) => Effect.Effect<A, BackendError>) =>
         (request: ClientSubmission) =>
@@ -289,19 +331,7 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                 )
                     return yield* result.failure;
                 if (!remoteAttachments?.stage) return yield* result.failure;
-                for (const upload of prepared.attachmentUploads) {
-                    const staged = yield* remoteAttachments.stage(upload.attachment, upload.blob, {
-                        target: upload.target,
-                    });
-                    if (staged.id !== upload.attachment.id)
-                        return yield* new BackendError({
-                            operation: "attachment.handoff",
-                            kind: "Conflict",
-                            retryable: false,
-                            actionOutcome: "not-committed",
-                            message: "A speculative parent must preserve staged attachment IDs.",
-                        });
-                }
+                yield* handoffAttachments(prepared.attachmentUploads);
                 return yield* submit(submission);
             }).pipe(Effect.scoped);
     const engine = yield* makeReplicaKernel({
@@ -365,6 +395,43 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         live: options.live !== false,
         attachments: remoteAttachments,
     });
+    const pinOwner = yield* Effect.scope;
+    let pinManagerOpened = false;
+    const pinManager = yield* Effect.cached(
+        Scope.provide(
+            makePinManager({
+                ...options,
+                engine,
+                live: options.live !== false,
+                attachments: remoteAttachments,
+            }),
+            pinOwner
+        ).pipe(
+            Effect.tap(() =>
+                Effect.sync(() => {
+                    pinManagerOpened = true;
+                })
+            )
+        )
+    );
+    const pins: ReplicaPins = {
+        backend: Effect.flatMap(pinManager, (pins) => pins.backend),
+        list: Effect.flatMap(pinManager, (pins) => pins.list),
+        changes: Stream.unwrap(Effect.map(pinManager, (pins) => pins.changes)),
+        set: (pin) => Effect.flatMap(pinManager, (pins) => pins.set(pin)),
+        remove: (id) => Effect.flatMap(pinManager, (pins) => pins.remove(id)),
+        update: (change) => Effect.flatMap(pinManager, (pins) => pins.update(change)),
+        clear: (name) => Effect.flatMap(pinManager, (pins) => pins.clear(name)),
+    };
+    // Resume durable acquisition/cancellation even with no tab observing controls.
+    if (
+        (yield* options.tables
+            .keys(Table.make({ name: JSON.stringify(["replica", options.namespace, "query-pin"]) }))
+            .pipe(Effect.mapError((cause) => classifyBackendFailure("replica.pins", cause)))).some(
+            (key) => key !== "head"
+        )
+    )
+        yield* pinManager;
     const status = Effect.gen(function* () {
         const current = yield* engine.status;
         const pinned = yield* pin.pinStatus;
@@ -403,7 +470,7 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                 error: pinned.error,
             },
         };
-    });
+    }).pipe(Effect.withSpan("Replica.status"));
     const compile = (subset: ObjectSubset) => compileObjectSubset(options.ir, subset, options.context);
     const reads = (confirmed: boolean): ReplicaReads => ({
         get: (type, key) => (confirmed ? engine.confirmed : engine).get(type, key),
@@ -482,14 +549,6 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                     ? options.backend.validateAction(name, parameters, settings)
                     : Effect.succeed({ certain: false as const }),
             apply: Effect.fn("Replica.applyAction")(function* (request, settings) {
-                if ((settings?.mode ?? "direct") === "direct" && !(yield* engine.connectivity.online))
-                    return yield* new BackendError({
-                        operation: "applyAction",
-                        kind: "Unavailable",
-                        message: "Direct actions require connectivity. Use outbox mode to queue offline.",
-                        retryable: true,
-                        actionOutcome: "not-committed",
-                    });
                 yield* service.outbox.enqueue(request, { optimistic: settings?.optimistic });
                 const receipt = yield* service.outbox.wait(request.id);
                 if (!receipt)
@@ -503,23 +562,43 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                 return receipt;
             }),
         },
+        queryFunction: (name, parameters) =>
+            options.backend
+                ? options.backend.queryFunction(name, parameters)
+                : Effect.fail(
+                      new BackendError({
+                          operation: "queryFunction",
+                          kind: "NotImplemented",
+                          retryable: false,
+                          message: "This replica has no query-function backend.",
+                      })
+                  ),
         confirmed: reads(true),
         observeSubset: (subset) =>
             Stream.unwrap(
                 Effect.map(compile(subset), (scan) => engine.observeRows(scan.objectType, scan.query))
             ),
         demand: {
+            pins,
             setPin: pin.setPin,
             clearPin: pin.clearPin(),
             pinStatus: pin.pinStatus,
+            // The pin's replaying notification source covers changes between the
+            // initial read and subscription; no polling or additional status store.
+            pinStatusChanges: pin.changes.pipe(
+                Stream.prepend([undefined]),
+                Stream.mapEffect(() => pin.pinStatus)
+            ),
             acquire: Effect.fn("Replica.demand")(function* (
                 subset: ObjectSubset,
-                settings?: { readonly localOnly?: boolean }
+                settings?: { readonly localOnly?: boolean; readonly resultType?: "cached" | "complete" }
             ) {
                 const scan = yield* compile(subset);
                 if (settings?.localOnly) return yield* engine.retainLocal(scan.objectType, scan.query);
                 yield* engine.demand(scan);
-                yield* engine.syncSubset(scan);
+                yield* engine.syncSubset(scan, {
+                    resultType: settings?.resultType ?? (options.live === false ? "complete" : "cached"),
+                });
             }),
         },
         outbox: {
@@ -535,7 +614,8 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                                       "One-shot replicas do not accept new outbox actions. Apply actions directly through the upstream backend.",
                               })
                           )
-                    : engine.enqueue,
+                    : (request, settings) =>
+                          actionInputs(request, (normalized) => engine.enqueue(normalized, settings)),
             entries: engine.pendingActions,
             observe: (ids) =>
                 Stream.unwrap(
@@ -555,7 +635,17 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                 ),
             get: engine.actionStatus,
             wait: engine.awaitAction,
-            edit: (id, request) => control(id).pipe(Effect.flatMap((target) => target.edit(id, request))),
+            edit: (id, request) =>
+                actionInputs(request, (normalized) =>
+                    Effect.scoped(
+                        Effect.gen(function* () {
+                            const target = yield* control(id);
+                            if (target !== engine)
+                                yield* handoffAttachments((yield* prepare(normalized)).attachmentUploads);
+                            yield* target.edit(id, normalized);
+                        })
+                    )
+                ),
             retry: (id, settings) => control(id).pipe(Effect.flatMap((target) => target.retry(id, settings))),
             remove: (id, settings) =>
                 control(id).pipe(
@@ -576,7 +666,14 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                 Stream.mapEffect(() => status)
             ),
         },
-        syncOnce: engine.syncOnce.pipe(Effect.andThen(pin.refresh)),
+        syncOnce: engine.syncOnce.pipe(
+            Effect.andThen(pin.refresh),
+            Effect.andThen(
+                Effect.suspend(() =>
+                    pinManagerOpened ? Effect.flatMap(pinManager, (manager) => manager.refresh) : Effect.void
+                )
+            )
+        ),
         collectGarbage: engine.collectGarbage,
     } satisfies ReplicaService & { readonly [kernel]: KernelService };
     return service;

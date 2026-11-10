@@ -1,34 +1,87 @@
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
-import { Deferred, Effect, Exit, Fiber, Layer, Scope, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Scope, Stream } from "effect";
 import { RpcClient, RpcServer } from "effect/rpc";
+import { Worker, type WorkerRunner } from "effect/workers";
+import { projectOntologyBackend } from "./authorization.js";
 import { replicaServerBackend } from "./composition.js";
+import { withInternalCommands } from "./internalAccess.js";
+import { ontologyServerDispatch, selectOntology } from "./routing.js";
 import {
     makeOntologyProtocolClient,
     ontologyRpcHandlers,
     OntologyRpcs,
     makeOntologyRpcClient,
 } from "./rpc.js";
-import type { OntologyRpcServerOptions, OntologyConnection } from "./rpc.js";
+import type { OntologyServer } from "./routing.js";
+import type { OntologyRpcServerOptions, OntologyServerClient, OntologyClientOptions } from "./rpc.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { TraceStore } from "@party-stack/runtime/tracing";
-import type { Worker, WorkerRunner } from "effect/workers";
 import type { WorkerError } from "effect/workers/WorkerError";
 
 /** Supply a platform runner for the worker global or an individual MessagePort.
  * Multiple port servers can share the same source without sharing request scopes.
  */
 export const serveOntologyWorker = Effect.fn("OntologyServer.serveWorker")(function* <R>(
-    options: OntologyRpcServerOptions<R>
+    options:
+        | OntologyRpcServerOptions<R>
+        | OntologyServer<R>
+        | Effect.Effect<OntologyServer<R>, unknown, R | Scope.Scope>
 ): Effect.fn.Return<
     Fiber.Fiber<never, WorkerError>,
-    never,
+    BackendError,
     R | Scope.Scope | WorkerRunner.WorkerRunnerPlatform
 > {
+    let router: OntologyServer<R> | undefined;
+    if (Effect.isEffect(options)) {
+        // Start the transport while the native owner is opening. Describe waits
+        // for this result, so startup errors arrive as typed RPC failures.
+        const ready = yield* Deferred.make<OntologyServer<R>, BackendError>();
+        const startup = yield* Scope.fork(yield* Effect.scope);
+        yield* options.pipe(
+            Effect.mapError((cause) => classifyBackendFailure("worker.open", cause)),
+            Scope.provide(startup),
+            Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(startup, exit) : Effect.void)),
+            Effect.catchDefect((cause) =>
+                Effect.fail(
+                    new BackendError({
+                        operation: "worker.open",
+                        kind: "Internal",
+                        retryable: false,
+                        message: "Ontology server startup failed.",
+                        cause,
+                    })
+                )
+            ),
+            Effect.tapCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                    ? Effect.void
+                    : Effect.logError("Ontology worker startup failed", cause)
+            ),
+            Effect.matchEffect({
+                onFailure: (error) => Deferred.fail(ready, error),
+                onSuccess: (server) => Deferred.succeed(ready, server),
+            }),
+            Effect.forkScoped
+        );
+        router = {
+            _tag: "OntologyServer",
+            bind: (...args) => Effect.flatMap(Deferred.await(ready), (server) => server.bind(...args)),
+            invalidate: (target) =>
+                Effect.flatMap(Deferred.await(ready), (server) => server.invalidate(target)),
+            forget: (target) => Effect.flatMap(Deferred.await(ready), (server) => server.forget(target)),
+            partitions: Effect.flatMap(Deferred.await(ready), (server) => server.partitions),
+            syncOnce: (target) => Effect.flatMap(Deferred.await(ready), (server) => server.syncOnce(target)),
+        };
+    } else if ("_tag" in options) router = options;
     return yield* RpcServer.make(OntologyRpcs).pipe(
-        Effect.provide(ontologyRpcHandlers(options)),
+        Effect.provide(
+            router
+                ? ontologyServerDispatch(router)
+                : ontologyRpcHandlers(options as OntologyRpcServerOptions<R>)
+        ),
         Effect.provide(RpcServer.layerProtocolWorkerRunner),
         Effect.forkScoped({ startImmediately: true })
     );
@@ -37,9 +90,15 @@ export const serveOntologyWorker = Effect.fn("OntologyServer.serveWorker")(funct
 /** The platform spawner supplies one Worker, SharedWorker or MessagePort.
  * The enclosing scope owns RPC requests, streams and the connection lifetime.
  */
-export const connectOntologyWorker = Effect.fn("OntologyServer.connectWorker")(function* (options?: {
+export const makeOntologyWorkerClient = Effect.fn("OntologyClient.worker")(function* (options?: {
+    /** Worker transport startup deadline; does not limit ontology/backend initialization. */
     readonly connectionTimeoutMs?: number;
-}): Effect.fn.Return<OntologyConnection, BackendError, Scope.Scope | Worker.WorkerPlatform | Worker.Spawner> {
+    readonly ontology?: string;
+}): Effect.fn.Return<
+    OntologyServerClient,
+    BackendError,
+    Scope.Scope | Worker.WorkerPlatform | Worker.Spawner
+> {
     const timeout = options?.connectionTimeoutMs ?? 5_000;
     if (!Number.isFinite(timeout) || timeout < 1)
         return yield* new BackendError({
@@ -51,11 +110,47 @@ export const connectOntologyWorker = Effect.fn("OntologyServer.connectWorker")(f
     const connectionScope = yield* Scope.fork(yield* Effect.scope);
     return yield* Scope.provide(
         Effect.gen(function* () {
+            const ready = yield* Deferred.make<void, BackendError>();
+            const platform = yield* Worker.WorkerPlatform;
+            const handshake = Worker.WorkerPlatform.of({
+                spawn<O, I>(id: number) {
+                    return Effect.map(platform.spawn<O, I>(id), (worker): Worker.Worker<O, I> => ({
+                        ...worker,
+                        run(handler, settings) {
+                            return worker
+                                .run(handler, {
+                                    onSpawn: Effect.andThen(
+                                        settings?.onSpawn ?? Effect.void,
+                                        Deferred.succeed(ready, undefined)
+                                    ),
+                                })
+                                .pipe(
+                                    Effect.tapCause((cause) =>
+                                        Deferred.fail(
+                                            ready,
+                                            new BackendError({
+                                                operation: "worker.connect",
+                                                kind: "Unavailable",
+                                                retryable: true,
+                                                message: "Ontology worker transport failed.",
+                                                cause: Cause.squash(cause),
+                                            })
+                                        )
+                                    )
+                                );
+                        },
+                    }));
+                },
+            });
             // Build in the connection's Scope: providing a scoped transport only to the
             // client constructor would close its worker pool as soon as construction returns.
             const transport = yield* Layer.build(
-                RpcClient.layerProtocolWorker({ size: 1, concurrency: 64 })
+                // Subscriptions last for a view's lifetime. A finite pool permit count
+                // would let them starve commands on this shared port; RPC stream
+                // acknowledgements provide flow control for the actual bytes.
+                RpcClient.layerProtocolWorker({ size: 1, concurrency: Number.POSITIVE_INFINITY })
             ).pipe(
+                Effect.provideService(Worker.WorkerPlatform, handshake),
                 Effect.mapError(
                     (cause) =>
                         new BackendError({
@@ -67,8 +162,9 @@ export const connectOntologyWorker = Effect.fn("OntologyServer.connectWorker")(f
                         })
                 )
             );
-            const client = yield* makeOntologyRpcClient.pipe(Effect.provideContext(transport));
-            return yield* makeOntologyProtocolClient(client).pipe(
+            // The platform's ready message confirms transport startup. Describe
+            // can legitimately wait longer for storage, authentication or a backend.
+            yield* Deferred.await(ready).pipe(
                 Effect.timeoutOrElse({
                     duration: timeout,
                     orElse: () =>
@@ -82,6 +178,17 @@ export const connectOntologyWorker = Effect.fn("OntologyServer.connectWorker")(f
                         ),
                 })
             );
+            const rpc = yield* makeOntologyRpcClient.pipe(Effect.provideContext(transport));
+            return {
+                ontology: Effect.fn("OntologyClient.select")(function* (
+                    selected?: string,
+                    clientOptions?: OntologyClientOptions
+                ) {
+                    const name = selected ?? options?.ontology;
+                    const client = name === undefined ? rpc : selectOntology(rpc, name);
+                    return yield* makeOntologyProtocolClient(client, clientOptions);
+                }),
+            };
         }),
         connectionScope
     ).pipe(
@@ -91,8 +198,9 @@ export const connectOntologyWorker = Effect.fn("OntologyServer.connectWorker")(f
 
 export interface ServeOpenedOntologyWorkerOptions<R = never> extends Omit<
     OntologyRpcServerOptions<R>,
-    "source" | "replica" | "backend" | "traces" | "ready" | "deleteLocalData" | "releaseOwner"
+    "source" | "replica" | "backend" | "traces" | "ready" | "deleteLocalData" | "releaseOwner" | "authorize"
 > {
+    readonly dangerouslyAllowInternalAccess: true;
     /** Resources acquired here belong to the worker's Scope. */
     readonly open: Effect.Effect<
         {
@@ -113,11 +221,19 @@ export interface ServeOpenedOntologyWorkerOptions<R = never> extends Omit<
 export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(function* <R>(
     options: ServeOpenedOntologyWorkerOptions<R>
 ) {
+    if (options.dangerouslyAllowInternalAccess !== true)
+        return yield* new BackendError({
+            operation: "worker.open",
+            kind: "InvalidConfiguration",
+            retryable: false,
+            message: "A private replica worker requires explicit internal access for its app ports.",
+        });
     const ready = yield* Deferred.make<OntologySource, BackendError>();
     const released = yield* Deferred.make<void>();
     let opened: Effect.Success<typeof options.open> | undefined;
     let source: OntologySource | undefined;
     let backend: OntologyBackendService | undefined;
+    let view: Effect.Success<ReturnType<typeof projectOntologyBackend>> | undefined;
     const current = Deferred.await(ready);
     const startupScope = yield* Scope.fork(yield* Effect.scope);
     const proxy: OntologySource = {
@@ -144,6 +260,24 @@ export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(
             opened = yield* options.open;
             source = replicaStateSource(opened.replica);
             if (opened.backend) backend = replicaServerBackend(opened.replica, opened.backend);
+            if (opened.replica.ir.policy) {
+                if (!backend)
+                    return yield* new BackendError({
+                        operation: "worker.open",
+                        kind: "InvalidConfiguration",
+                        retryable: false,
+                        message: "A policy-bound worker requires a backend for projected operations.",
+                    });
+                view = yield* projectOntologyBackend(
+                    {
+                        backend,
+                        ir: opened.replica.ir,
+                        context: opened.context ?? opened.replica.context,
+                    },
+                    "upstream"
+                );
+                backend = view.backend;
+            }
             yield* Deferred.succeed(ready, source);
         }).pipe(
             Scope.provide(startupScope),
@@ -163,7 +297,14 @@ export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(
     );
     const server = yield* serveOntologyWorker({
         ...options,
-        source: proxy,
+        authorize: (request, headers) =>
+            Effect.flatMap(current, () =>
+                view ? withInternalCommands(view.authorize, true)(request, headers) : Effect.void
+            ),
+        get source() {
+            // Private commands do not make raw replica state safe to project.
+            return view ? undefined : proxy;
+        },
         get replica() {
             return opened?.replica;
         },
@@ -171,10 +312,10 @@ export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(
             return backend;
         },
         get ir() {
-            return opened?.replica.ir;
+            return view?.ir ?? opened?.replica.ir;
         },
         get context() {
-            return opened?.context ?? opened?.replica.context;
+            return view?.context ?? opened?.context ?? opened?.replica.context;
         },
         get traces() {
             return opened?.traces;

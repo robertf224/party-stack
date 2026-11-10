@@ -3,7 +3,6 @@ import { Menu } from "@base-ui/react/menu";
 import { Tabs } from "@base-ui/react/tabs";
 import { Tooltip } from "@base-ui/react/tooltip";
 import NumberFlow from "@number-flow/react";
-import { createReactPlugin } from "@tanstack/devtools-utils/react";
 import { DbProvider, useLiveInfiniteQuery, useLiveQuery } from "@tanstack/react-db";
 import {
     createColumnHelper,
@@ -40,6 +39,7 @@ import {
     Map as MapIcon,
     MapPin as MapPinIcon,
     Paperclip as PaperClipIcon,
+    Pin as PinIcon,
     CircleQuestionMark as QuestionMarkCircleIcon,
     Search as SearchIcon,
     Send as SendIcon,
@@ -52,7 +52,6 @@ import {
     memo,
     useDeferredValue,
     useEffect,
-    useId,
     useMemo,
     useState,
     type ComponentType,
@@ -66,10 +65,12 @@ import { SchemaView } from "./SchemaView.js";
 import { typeDisplayName } from "./typeDisplayName.js";
 export { layoutSchema } from "./schemaLayout.js";
 export { typeDisplayName } from "./typeDisplayName.js";
+import { Pinned } from "./Pinned.js";
 import { Queries } from "./Queries.js";
 import { Storage } from "./Storage.js";
 import { Tracing } from "./Tracing.js";
 export { OntologyIcon } from "./OntologyIcons.js";
+import type { OntologyDevtoolsPanelProps } from "./types.js";
 import type {
     AttachmentMetadata,
     LiveOntology,
@@ -81,158 +82,6 @@ import type {
     TypeDef,
 } from "@party-stack/ontology";
 import type * as v from "@party-stack/ontology/values";
-import type { TanStackDevtoolsReactPlugin } from "@tanstack/react-devtools";
-
-export interface OntologyDevtoolsPanelProps<
-    Ontology extends OntologyDefinition = OntologyDefinition,
-    MetaOntology extends OntologyDefinition = OntologyDefinition,
-> {
-    ontology: LiveOntology<Ontology>;
-    metaOntology?: LiveOntology<MetaOntology>;
-    theme?: "light" | "dark";
-}
-
-export interface OntologyDevtoolsPluginOptions<
-    Ontology extends OntologyDefinition = OntologyDefinition,
-    MetaOntology extends OntologyDefinition = OntologyDefinition,
-> {
-    ontology: LiveOntology<Ontology>;
-    id?: string;
-    metaOntology?: LiveOntology<MetaOntology>;
-    name?: TanStackDevtoolsReactPlugin["name"];
-    defaultOpen?: boolean;
-}
-
-export interface OntologyDevtoolsChromeProps {
-    theme: "light" | "dark";
-}
-
-function PartyStackLogo({ theme }: OntologyDevtoolsChromeProps) {
-    const id = useId().replaceAll(":", "");
-    const gradientId = `ps-ball-${id}`;
-    const shadowId = `ps-shadow-${id}`;
-
-    return (
-        <svg
-            aria-hidden="true"
-            style={{
-                display: "block",
-                height: "100%",
-                width: "100%",
-            }}
-            viewBox="0 0 1200 300"
-        >
-            <defs>
-                <radialGradient cx="69%" cy="24%" id={gradientId} r="82%">
-                    <stop offset="0" stopColor="#fff" />
-                    <stop offset=".38" stopColor="#fff" />
-                    <stop offset=".62" stopColor="#f8f7f3" />
-                    <stop offset=".82" stopColor="#e1dfda" />
-                    <stop offset="1" stopColor="#b7b3ad" />
-                </radialGradient>
-                <filter height="170%" id={shadowId} width="160%" x="-30%" y="-30%">
-                    <feDropShadow dx="3" dy="6" floodColor="#681611" floodOpacity=".28" stdDeviation="5" />
-                </filter>
-            </defs>
-            <g transform="translate(22 22) scale(.5)">
-                <path d="M96 64h184c81 0 136 55 136 136s-55 136-136 136h-56v112H96V64Z" fill="#e83b32" />
-                <g filter={`url(#${shadowId})`}>
-                    <circle cx="258" cy="200" fill={`url(#${gradientId})`} r="60" />
-                    <ellipse cx="279" cy="177" fill="#fff" opacity=".92" rx="8.5" ry="10.5" />
-                </g>
-            </g>
-            <text
-                fill={theme === "dark" ? "#f7f5f0" : "#171717"}
-                fontFamily="Avenir Next, Avenir, Helvetica Neue, Arial, sans-serif"
-                fontSize="124"
-                fontWeight="700"
-                letterSpacing="-3"
-                x="310"
-                y="196"
-            >
-                Party Stack
-            </text>
-        </svg>
-    );
-}
-
-function PartyStackLogomark() {
-    const id = useId().replaceAll(":", "");
-    const gradientId = `ps-mark-ball-${id}`;
-    const shadowId = `ps-mark-shadow-${id}`;
-
-    return (
-        <svg
-            aria-hidden="true"
-            style={{
-                display: "block",
-                height: "100%",
-                width: "100%",
-            }}
-            viewBox="0 0 512 512"
-        >
-            <defs>
-                <radialGradient cx="69%" cy="24%" id={gradientId} r="82%">
-                    <stop offset="0" stopColor="#fff" />
-                    <stop offset=".38" stopColor="#fff" />
-                    <stop offset=".62" stopColor="#f8f7f3" />
-                    <stop offset=".82" stopColor="#e1dfda" />
-                    <stop offset="1" stopColor="#b7b3ad" />
-                </radialGradient>
-                <filter height="170%" id={shadowId} width="160%" x="-30%" y="-30%">
-                    <feDropShadow dx="3" dy="6" floodColor="#681611" floodOpacity=".28" stdDeviation="5" />
-                </filter>
-            </defs>
-            <path d="M96 64h184c81 0 136 55 136 136s-55 136-136 136h-56v112H96V64Z" fill="#e83b32" />
-            <g filter={`url(#${shadowId})`}>
-                <circle cx="258" cy="200" fill={`url(#${gradientId})`} r="60" />
-                <ellipse cx="279" cy="177" fill="#fff" opacity=".92" rx="8.5" ry="10.5" />
-            </g>
-        </svg>
-    );
-}
-
-export function OntologyDevtoolsPluginName({ theme }: OntologyDevtoolsChromeProps) {
-    return (
-        <div style={{ height: 30, width: 120 }}>
-            <PartyStackLogo theme={theme} />
-        </div>
-    );
-}
-
-export function OntologyDevtoolsTrigger({ theme }: OntologyDevtoolsChromeProps) {
-    const dark = theme === "dark";
-    return (
-        <div
-            aria-label="Open Ontology devtools"
-            style={{
-                alignItems: "center",
-                background: dark
-                    ? "linear-gradient(145deg, #2d2d31, #171719)"
-                    : "linear-gradient(145deg, #fff, #f5f5f4)",
-                border: dark ? "1px solid rgba(255,255,255,.16)" : "1px solid rgba(23,23,23,.14)",
-                borderRadius: "999px",
-                boxSizing: "border-box",
-                boxShadow: dark
-                    ? "0 10px 30px rgba(0,0,0,.34), 0 0 0 4px rgba(232,59,50,.11)"
-                    : "0 10px 28px rgba(28,25,23,.16), 0 0 0 4px rgba(232,59,50,.09)",
-                cursor: "pointer",
-                display: "flex",
-                height: 48,
-                justifyContent: "center",
-                padding: 8,
-                width: 48,
-            }}
-            title="Open Ontology devtools"
-        >
-            <PartyStackLogomark />
-        </div>
-    );
-}
-
-export function ontologyDevtoolsTrigger(_element: HTMLElement, { theme }: OntologyDevtoolsChromeProps) {
-    return <OntologyDevtoolsTrigger theme={theme} />;
-}
 
 function OutboxPanel({ children, theme }: { children: ReactNode; theme: "light" | "dark" }) {
     return (
@@ -251,9 +100,9 @@ function statusLabel(entry: OntologyOutboxEntry): string {
         case "queued":
             return "Waiting";
         case "sending":
-            return "Sending";
+            return entry.attemptStage === "forwarding" ? "Forwarding" : "Sending";
         case "acknowledged":
-            return "Reconciling";
+            return entry.attemptStage === "forwarding" ? "Accepted by parent" : "Reconciling";
         case "blocked":
             return entry.lastError?.actionOutcome === "unknown" ? "Outcome unknown" : "Blocked";
     }
@@ -348,12 +197,18 @@ export function OutboxEntryCard({
                     className="ps-outbox-attempts"
                     title={
                         entry.attemptStage === "forwarding"
-                            ? `${entry.attempts} forwarding attempts; upstream execution has not been observed yet.`
+                            ? entry.status === "acknowledged"
+                                ? "Accepted by the parent; waiting for its replicated action state."
+                                : `${entry.attempts} forwarding attempts; upstream execution has not been observed yet.`
                             : "Attempts to execute at this replica's upstream."
                     }
                 >
                     {entry.attemptStage === "forwarding" ? (
-                        "Forwarding"
+                        entry.status === "acknowledged" ? (
+                            "Parent accepted"
+                        ) : (
+                            "Forwarding"
+                        )
                     ) : (
                         <>
                             Attempts: <strong>{entry.attempts}</strong>
@@ -482,7 +337,15 @@ function OutboxRows({ outbox, theme }: { outbox: OntologyOutbox; theme: "light" 
     );
 }
 
-type OntologyDevtoolsView = "objects" | "schema" | "outbox" | "meta" | "tracing" | "queries" | "storage";
+type OntologyDevtoolsView =
+    | "objects"
+    | "schema"
+    | "outbox"
+    | "meta"
+    | "tracing"
+    | "queries"
+    | "pinned"
+    | "storage";
 type OutboxActivity = "idle" | "draining" | "paused";
 
 export function getOutboxActivity(entries: OntologyOutboxEntry[]): OutboxActivity {
@@ -526,6 +389,7 @@ const ontologyViews: Array<{
     { id: "objects", label: "Objects", icon: BoxesIcon },
     { id: "outbox", label: "Outbox", icon: SendIcon },
     { id: "queries", label: "Queries", icon: SearchIcon },
+    { id: "pinned", label: "Pinned", icon: PinIcon },
     { id: "tracing", label: "Tracing", icon: GanttIcon },
     { id: "schema", label: "Schema", icon: WaypointsIcon },
     { id: "storage", label: "Storage", icon: HardDriveIcon },
@@ -928,8 +792,7 @@ function ObjectTable({
                 )
                 .select(({ row }) => row as Record<string, unknown>);
         },
-        { pageSize },
-        [collection.id, objectType.primaryKey, pageSize, selectedSort?.id, selectedSort?.desc]
+        { pageSize }
     );
     // Inspection can follow the app's urgent optimistic render. A wide table
     // must not delay a click's visible result while formatting every cell.
@@ -1313,12 +1176,12 @@ const ObjectsView = memo(function ObjectsView({
     const objectTypes = ontology.ir.objectTypes;
     const [selectedName, setSelectedName] = useState(() => objectTypes[0]?.name);
     const selected = objectTypes.find((objectType) => objectType.name === selectedName) ?? objectTypes[0];
-    const collection = selected ? ontology.persistedObjects?.[selected.name] : undefined;
+    const collection = selected ? ontology.cachedObjects[selected.name] : undefined;
 
     if (!selected || !collection) {
         return (
             <div className="ps:grid ps:h-full ps:place-items-center ps:text-sm ps:text-[var(--ps-muted)]">
-                Persisted object inspection is unavailable for this ontology runtime.
+                This ontology has no object types.
             </div>
         );
     }
@@ -1392,7 +1255,7 @@ function OntologyDevtoolsContent<
             >
                 <Tabs.List
                     aria-label="Ontology devtools views"
-                    className="ps:bg-[var(--ps-surface)] ps:flex ps:flex-none ps:items-center ps:gap-1 ps:border-b ps:border-[var(--ps-border)] ps:px-4"
+                    className="ps:bg-[var(--ps-surface)] ps:flex ps:flex-none ps:items-center ps:gap-1 ps:overflow-x-auto ps:border-b ps:border-[var(--ps-border)] ps:px-4"
                     style={{ height: 40 }}
                 >
                     {[
@@ -1410,7 +1273,7 @@ function OntologyDevtoolsContent<
                         const Icon = view.icon;
                         return (
                             <Tabs.Tab
-                                className="ps:group ps:flex ps:h-full ps:items-center ps:gap-1.5 ps:border-x-0 ps:border-t-0 ps:border-b-2 ps:border-transparent ps:bg-transparent ps:px-3 ps:text-xs ps:font-medium ps:text-[var(--ps-muted)] ps:hover:text-current ps:data-[active]:border-[var(--ps-accent)] ps:data-[active]:font-semibold ps:data-[active]:text-[var(--ps-accent)]"
+                                className="ps:group ps:flex ps:h-full ps:shrink-0 ps:items-center ps:gap-1.5 ps:border-x-0 ps:border-t-0 ps:border-b-2 ps:border-transparent ps:bg-transparent ps:px-3 ps:text-xs ps:font-medium ps:text-[var(--ps-muted)] ps:hover:text-current ps:data-[active]:border-[var(--ps-accent)] ps:data-[active]:font-semibold ps:data-[active]:text-[var(--ps-accent)]"
                                 key={view.id}
                                 value={view.id}
                             >
@@ -1457,6 +1320,9 @@ function OntologyDevtoolsContent<
                 <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="queries">
                     <Queries ontology={ontology} />
                 </Tabs.Panel>
+                <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="pinned">
+                    <Pinned ontology={ontology} />
+                </Tabs.Panel>
                 <Tabs.Panel className="ps:min-h-0 ps:min-w-0 ps:flex-1 ps:overflow-hidden" value="storage">
                     <Storage ontology={ontology} />
                 </Tabs.Panel>
@@ -1470,29 +1336,4 @@ function OntologyDevtoolsContent<
             </Tabs.Root>
         </Tooltip.Provider>
     );
-}
-
-export function createOntologyDevtoolsPlugin<
-    Ontology extends OntologyDefinition,
-    MetaOntology extends OntologyDefinition = OntologyDefinition,
->({
-    ontology,
-    id = "party-stack-ontology",
-    metaOntology,
-    name,
-    defaultOpen,
-}: OntologyDevtoolsPluginOptions<Ontology, MetaOntology>): TanStackDevtoolsReactPlugin {
-    const [createPlugin] = createReactPlugin({
-        id,
-        name: "Ontology",
-        defaultOpen,
-        Component: ({ theme }) => (
-            <OntologyDevtoolsPanel metaOntology={metaOntology} ontology={ontology} theme={theme} />
-        ),
-    });
-
-    return {
-        ...createPlugin(),
-        name: name ?? ((_element, { theme }) => <OntologyDevtoolsPluginName theme={theme} />),
-    };
 }

@@ -3,10 +3,11 @@ import { makeOwnedBackend, type OwnedTransaction } from "@party-stack/ontology-b
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, field } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect, Exit, Scope } from "effect";
+import { Effect, Exit, Scope, Stream } from "effect";
 import { expect, test } from "vitest";
 import { makeReplica, replicaStateSource } from "./testing.js";
 import type { Query } from "@party-stack/ontology-storage";
+import type { TablesService } from "@party-stack/ontology-storage/tables";
 
 const ir: OntologyIR = {
     types: [],
@@ -56,7 +57,7 @@ const put = (id: string, rank: number, group = "first") => ({
     id: `put-${id}-${rank}-${group}`,
     parameters: { id, rank, group },
 });
-const setup = Effect.fnUntraced(function* () {
+const setup = Effect.fnUntraced(function* (tables?: TablesService, extraRows = 0) {
     const owned = yield* makeOwnedBackend({
         namespace: "owned",
         ir,
@@ -67,10 +68,22 @@ const setup = Effect.fnUntraced(function* () {
     yield* owned.applyAction(put("b", 2));
     yield* owned.applyAction(put("c", 3));
     yield* owned.applyAction(put("z", 0, "second"));
+    if (extraRows)
+        yield* owned.storage.transaction((tx) =>
+            Effect.forEach(
+                Array.from({ length: extraRows }, (_, index) => ({
+                    id: `extra-${index}`,
+                    group: "first",
+                    rank: index + 10,
+                })),
+                (row) => tx.put("Item", row),
+                { discard: true }
+            )
+        );
     const parent = yield* makeReplica({
         namespace: "parent",
         ir,
-        tables: yield* Memory.make(),
+        tables: tables ?? (yield* Memory.make()),
         backend: owned,
         execute,
         startSync: false,
@@ -93,6 +106,82 @@ const setup = Effect.fnUntraced(function* () {
 const keys = (rows: readonly { key: string | number }[]) =>
     rows.map((row) => row.key).sort((a, b) => String(a).localeCompare(String(b)));
 const window: Query = { where: eq(field("group"), "first"), orderBy: [{ field: field("rank") }], limit: 2 };
+
+test("overlapping delivery selections batch baseline reads and preserve speculative values", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                let baselineGets = 0;
+                const f = yield* setup({
+                    ...tables,
+                    transaction: (body) =>
+                        tables.transaction((tx) =>
+                            body({
+                                ...tx,
+                                get: (table, key, options) => {
+                                    if (table.name.endsWith('"base:Item"]')) baselineGets++;
+                                    return tx.get(table, key, options);
+                                },
+                            })
+                        ),
+                });
+                yield* f.parent.enqueue(put("a", 10));
+                yield* f.parent.enqueue(put("new", 4));
+                yield* f.parent.enqueue({ id: "remove-c", name: "delete", parameters: { id: "c" } });
+                const source = replicaStateSource(f.parent);
+                const session = yield* source.openClient();
+                const subscription = yield* source.subscribe!(session, {
+                    generation: 1,
+                    selection: {
+                        subsets: [
+                            { objectType: "Item" },
+                            { objectType: "Item", query: { where: eq(field("group"), "first") } },
+                            { objectType: "Item", query: { where: eq(field("id"), "a") } },
+                        ],
+                        actionIds: [],
+                    },
+                });
+                baselineGets = 0;
+                const frames = yield* subscription.frames.pipe(
+                    Stream.takeUntil((frame) => frame.end),
+                    Stream.runCollect
+                );
+                const objects = frames.flatMap((frame) =>
+                    frame.changes.flatMap((change) =>
+                        change.kind === "put" &&
+                        (change.record.kind === "base" || change.record.kind === "override")
+                            ? [change.record]
+                            : []
+                    )
+                );
+                expect(
+                    objects
+                        .filter((record) => record.kind === "base")
+                        .map((record) => record.key)
+                        .sort((a, b) => String(a).localeCompare(String(b)))
+                ).toEqual(["a", "b", "z"]);
+                expect(objects.filter((record) => record.kind === "override")).toEqual([
+                    {
+                        kind: "override",
+                        objectType: "Item",
+                        key: "a",
+                        value: { deleted: false, value: { id: "a", rank: 10, group: "first" } },
+                    },
+                    {
+                        kind: "override",
+                        objectType: "Item",
+                        key: "new",
+                        value: { deleted: false, value: { id: "new", rank: 4, group: "first" } },
+                    },
+                ]);
+                // Each selected object is emitted once, with baseline and prediction distinct.
+                expect(objects).toHaveLength(5);
+                expect(baselineGets).toBe(0);
+            })
+        )
+    );
+});
 
 test("forwarding an unchanged query preserves its parent demand and coverage identity", async () => {
     await Effect.runPromise(
@@ -166,11 +255,11 @@ test("membership changes at the same source revision are fenced and old views ca
                     objectCacheGc: false,
                 });
                 const first = yield* Scope.make();
-                yield* Scope.provide(child.retainLocal("Item", window), first);
+                yield* Scope.provide(child.demand({ objectType: "Item", query: window }), first);
                 yield* child.syncOnce;
                 const old = (yield* child.parentState)!;
                 yield* Scope.close(first, Exit.void);
-                yield* child.retainLocal("Item", { where: eq(field("group"), "second") });
+                yield* child.demand({ objectType: "Item", query: { where: eq(field("group"), "second") } });
                 yield* child.syncOnce;
                 const current = (yield* child.parentState)!;
                 expect(current.revision).toBe(old.revision);
@@ -321,7 +410,7 @@ test("protocol GC retains action dependencies after parent inclusion until final
             Effect.gen(function* () {
                 const f = yield* setup();
                 const reader = yield* Scope.make();
-                yield* Scope.provide(f.child.retainLocal("Item"), reader);
+                yield* Scope.provide(f.child.demand({ objectType: "Item" }), reader);
                 yield* f.child.syncOnce;
                 yield* f.child.enqueue(put("a", 10));
                 yield* f.child.syncOnce;
@@ -351,7 +440,7 @@ test("protocol window retention imports the offset prefix and keeps explicit pin
         Effect.scoped(
             Effect.gen(function* () {
                 const f = yield* setup();
-                yield* f.child.retainLocal("Item", { ...window, offset: 1, limit: 1 });
+                yield* f.child.demand({ objectType: "Item", query: { ...window, offset: 1, limit: 1 } });
                 yield* f.child.pin("Item", "z", true);
                 yield* f.child.syncOnce;
                 expect(keys(yield* f.child.loadSubset("Item"))).toEqual(["a", "b", "z"]);
@@ -416,7 +505,7 @@ test("protocol base preserves encrypted caches without mixing confirmed and inhe
                     execute,
                     startSync: false,
                 });
-                yield* child.retainLocal("Item");
+                yield* child.demand({ objectType: "Item" });
                 yield* child.syncOnce;
                 yield* child.encryptedCache.put(value, local);
                 const snapshot = (yield* child.parentState)!;
@@ -474,3 +563,158 @@ test("protocol base preserves encrypted caches without mixing confirmed and inhe
         )
     );
 });
+
+// Storage work is observed only during selected capture, after setup and
+// prediction replay. This detects repeated baseline IO without timing assertions.
+const observedCaptureTables = Effect.gen(function* () {
+    const storage = yield* Memory.make();
+    const work = { active: false, baseGets: 0, baseGetMany: 0, baseQueries: 0, probes: [] as string[] };
+    const tables: TablesService = {
+        ...storage,
+        transaction: (body) =>
+            storage.transaction((tx) =>
+                body({
+                    ...tx,
+                    get: (table, key, options) => {
+                        if (work.active && table.name.endsWith('base:Item"]')) work.baseGets++;
+                        return tx.get(table, key, options);
+                    },
+                    getMany: (table, keys) => {
+                        if (work.active && table.name.endsWith('base:Item"]')) work.baseGetMany++;
+                        return tx.getMany(table, keys);
+                    },
+                    query: new Proxy(tx.query, {
+                        apply(target, thisArg, args) {
+                            const [table, query] = args as Parameters<typeof tx.query>;
+                            if (work.active && "name" in table) {
+                                if (table.name.endsWith('base:Item"]')) work.baseQueries++;
+                                if (table.name.endsWith('overlay:Item"]') && query?.limit === 1)
+                                    work.probes.push(table.name);
+                            }
+                            return Reflect.apply(target, thisArg, args);
+                        },
+                    }),
+                })
+            ),
+    };
+    return { tables, work };
+});
+
+test("empty overlays capture each selected base page once and still publish nonoptimistic pending actions", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const observed = yield* observedCaptureTables;
+                const f = yield* setup(observed.tables, 300);
+                const deferred = put("a", 99);
+                yield* f.parent.enqueue(deferred, { optimistic: false });
+                const source = replicaStateSource(f.parent);
+                const session = yield* source.openClient();
+                const subscription = yield* source.subscribe!(session, {
+                    generation: 1,
+                    selection: {
+                        subsets: [
+                            { objectType: "Item" },
+                            { objectType: "Item", query: { where: eq(field("group"), "first") } },
+                            { objectType: "Item", query: { where: eq(field("id"), "a") } },
+                        ],
+                        actionIds: [deferred.id],
+                    },
+                });
+                observed.work.active = true;
+                const frames = yield* subscription.frames.pipe(
+                    Stream.takeUntil((frame) => frame.end),
+                    Stream.runCollect
+                );
+                observed.work.active = false;
+                const records = frames.flatMap((frame) =>
+                    frame.changes.flatMap((change) => (change.kind === "put" ? [change.record] : []))
+                );
+                const base = records.filter((record) => record.kind === "base");
+                expect(base).toHaveLength(304);
+                expect(new Set(base.map((record) => record.key)).size).toBe(304);
+                expect(base.find((record) => record.key === "a")?.value.rank).toBe(1);
+                expect(records.filter((record) => record.kind === "override")).toEqual([]);
+                expect(records.filter((record) => record.kind === "pending")).toMatchObject([
+                    { id: deferred.id, value: { optimistic: false, state: "queued" } },
+                ]);
+                expect(observed.work.baseQueries).toBe(7); // 3 + 3 + 1 bounded pages.
+                expect(observed.work.probes).toHaveLength(1);
+                expect(observed.work.baseGets).toBe(0);
+                expect(observed.work.baseGetMany).toBe(0);
+            })
+        )
+    );
+});
+
+test.each(["own-put", "own-delete", "inherited-put", "inherited-delete"] as const)(
+    "%s prevents the base-only proof and preserves composed selected delivery",
+    async (variant) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const observed = yield* observedCaptureTables;
+                    const inherited = variant.startsWith("inherited");
+                    const f = yield* setup(inherited ? undefined : observed.tables);
+                    const deleted = variant.endsWith("delete");
+                    yield* f.parent.enqueue(
+                        deleted ? { id: "remove-a", name: "delete", parameters: { id: "a" } } : put("a", 10)
+                    );
+                    const producer = inherited
+                        ? yield* makeReplica({
+                              namespace: "relay",
+                              ir,
+                              tables: observed.tables,
+                              // Hold upstream refresh while inspecting an already installed
+                              // sparse inherited layer; selected refresh can legitimately compact it.
+                              source: { ...replicaStateSource(f.parent), read: () => Effect.never },
+                              execute,
+                              startSync: false,
+                              objectCacheGc: false,
+                          })
+                        : f.parent;
+                    if (inherited) {
+                        // Full native parent state includes the real sparse tombstone,
+                        // unlike a selected snapshot which can omit nonmembers entirely.
+                        yield* producer.receiveParentState(yield* f.parent.snapshotState);
+                    }
+                    const source = replicaStateSource(producer);
+                    const session = yield* source.openClient();
+                    const subscription = yield* source.subscribe!(session, {
+                        generation: 1,
+                        selection: { subsets: [{ objectType: "Item" }], actionIds: [] },
+                    });
+                    observed.work.active = true;
+                    const frames = yield* subscription.frames.pipe(
+                        Stream.takeUntil((frame) => frame.end),
+                        Stream.runCollect
+                    );
+                    observed.work.active = false;
+                    const objects = frames.flatMap((frame) =>
+                        frame.changes.flatMap((change) =>
+                            change.kind === "put" &&
+                            (change.record.kind === "base" || change.record.kind === "override")
+                                ? [change.record]
+                                : []
+                        )
+                    );
+                    const base = objects.filter((record) => record.kind === "base");
+                    expect(keys(base)).toEqual(deleted ? ["b", "c", "z"] : ["a", "b", "c", "z"]);
+                    expect(objects.filter((record) => record.kind === "override")).toEqual(
+                        deleted
+                            ? []
+                            : [
+                                  {
+                                      kind: "override",
+                                      objectType: "Item",
+                                      key: "a",
+                                      value: { deleted: false, value: { id: "a", group: "first", rank: 10 } },
+                                  },
+                              ]
+                    );
+                    expect(observed.work.baseGetMany).toBeGreaterThan(0);
+                })
+            )
+        );
+    }
+);

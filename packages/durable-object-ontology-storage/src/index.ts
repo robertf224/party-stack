@@ -102,7 +102,7 @@ export const makeDurableObjectOntologyStorage = Effect.fn("DurableObjectStorage.
     const storage = yield* SQLite.makeStorage(createDurableObjectSQLiteDatabase(options.storage), {
         namespace,
         bytes: options.bytes,
-        mode: "authoritative",
+        attachmentBytesRetentionMode: "authoritative",
         ownerLiveness: exclusiveOwnerLiveness(options.storage),
     });
     const identity = Table.make<{ ontologyId: string }>({ name: "party-stack:durable-object:ontology" });

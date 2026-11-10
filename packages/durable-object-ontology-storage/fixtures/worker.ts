@@ -39,7 +39,7 @@ export class OntologyFixture extends DurableObject<FixtureEnvironment> {
                         const ontology = yield* Effect.promise(() =>
                             createLiveOntology({
                                 ir: sqliteOntologyConformanceIR,
-                                backend: () => ({ name: backend.name, open: () => Effect.succeed(backend) }),
+                                backend: Effect.succeed(backend),
                             })
                         );
                         return yield* Effect.promise(async () => {

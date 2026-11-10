@@ -14,31 +14,29 @@ test("watch retries honor retry-after and close the previous scope before reopen
                     released = 0;
                 const fiber = yield* Effect.forkChild(
                     superviseWatch({
-                        stream: () =>
-                            Stream.unwrap(
-                                Effect.gen(function* () {
-                                    yield* Effect.acquireRelease(
-                                        Effect.sync(() => ++attempts),
-                                        () =>
-                                            Effect.sync(() => {
-                                                released++;
-                                            })
+                        acquire: () =>
+                            Effect.gen(function* () {
+                                yield* Effect.acquireRelease(
+                                    Effect.sync(() => ++attempts),
+                                    () =>
+                                        Effect.sync(() => {
+                                            released++;
+                                        })
+                                );
+                                if (attempts === 1)
+                                    return Stream.fail(
+                                        new BackendError({
+                                            operation: "watch",
+                                            kind: "RateLimited",
+                                            message: "Wait",
+                                            retryable: true,
+                                            retryAfterMs: 2_500,
+                                        })
                                     );
-                                    if (attempts === 1)
-                                        return Stream.fail(
-                                            new BackendError({
-                                                operation: "watch",
-                                                kind: "RateLimited",
-                                                message: "Wait",
-                                                retryable: true,
-                                                retryAfterMs: 2_500,
-                                            })
-                                        );
-                                    expect(released).toBe(1);
-                                    yield* Deferred.succeed(reopened, undefined);
-                                    return Stream.never;
-                                })
-                            ),
+                                expect(released).toBe(1);
+                                yield* Deferred.succeed(reopened, undefined);
+                                return Stream.never;
+                            }),
                         onValue: () => Effect.void,
                         onError: (error) =>
                             error ? Deferred.succeed(failed, undefined).pipe(Effect.asVoid) : Effect.void,
@@ -66,15 +64,17 @@ test("a terminal watch failure is reported once and never silently retried", asy
                 generation: Effect.succeed(0),
                 awaitActivation: () => Effect.die("Forbidden must not wait for authentication."),
             },
-            stream: () => {
+            acquire: () => {
                 attempts++;
-                return Stream.fail(
-                    new BackendError({
-                        operation: "watch",
-                        kind: "Forbidden",
-                        message: "Denied",
-                        retryable: false,
-                    })
+                return Effect.succeed(
+                    Stream.fail(
+                        new BackendError({
+                            operation: "watch",
+                            kind: "Forbidden",
+                            message: "Denied",
+                            retryable: false,
+                        })
+                    )
                 );
             },
             onValue: () => Effect.void,
@@ -110,29 +110,27 @@ test("an unauthenticated watch waits for a new credential activation before reop
                                 expect(generation).toBeGreaterThan(after);
                             }),
                     },
-                    stream: () =>
-                        Stream.unwrap(
-                            Effect.gen(function* () {
-                                yield* Effect.acquireRelease(
-                                    Effect.sync(() => ++attempts),
-                                    () =>
-                                        Effect.sync(() => {
-                                            released++;
-                                        })
+                    acquire: () =>
+                        Effect.gen(function* () {
+                            yield* Effect.acquireRelease(
+                                Effect.sync(() => ++attempts),
+                                () =>
+                                    Effect.sync(() => {
+                                        released++;
+                                    })
+                            );
+                            if (attempts === 1)
+                                return Stream.fail(
+                                    new BackendError({
+                                        operation: "watch",
+                                        kind: "Unauthenticated",
+                                        retryable: false,
+                                        message: "Sign in again.",
+                                    })
                                 );
-                                if (attempts === 1)
-                                    return Stream.fail(
-                                        new BackendError({
-                                            operation: "watch",
-                                            kind: "Unauthenticated",
-                                            retryable: false,
-                                            message: "Sign in again.",
-                                        })
-                                    );
-                                yield* Deferred.succeed(reopened, undefined);
-                                return Stream.never;
-                            })
-                        ),
+                            yield* Deferred.succeed(reopened, undefined);
+                            return Stream.never;
+                        }),
                     onValue: () => Effect.void,
                     onError: () => Effect.void,
                 }).pipe(Effect.forkScoped);
@@ -157,12 +155,14 @@ test("normal watch EOF reconnects rather than leaving a dead subscription", asyn
                 const reopened = yield* Deferred.make<void>();
                 yield* Effect.forkChild(
                     superviseWatch({
-                        stream: () =>
-                            ++attempts === 1
-                                ? Stream.empty
-                                : Stream.fromEffect(Deferred.succeed(reopened, undefined)).pipe(
-                                      Stream.concat(Stream.never)
-                                  ),
+                        acquire: () =>
+                            Effect.succeed(
+                                ++attempts === 1
+                                    ? Stream.empty
+                                    : Stream.fromEffect(Deferred.succeed(reopened, undefined)).pipe(
+                                          Stream.concat(Stream.never)
+                                      )
+                            ),
                         onValue: () => Effect.void,
                         onError: (error) =>
                             error ? Deferred.succeed(ended, undefined).pipe(Effect.asVoid) : Effect.void,

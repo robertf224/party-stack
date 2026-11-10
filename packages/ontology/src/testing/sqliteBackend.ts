@@ -26,7 +26,7 @@ export const makeSQLiteTestBackend = Effect.fnUntraced(
         const external = options.attachmentStorage?.external;
         const storage = yield* SQLite.makeStorage(options.database, {
             namespace,
-            mode: "authoritative",
+            attachmentBytesRetentionMode: "authoritative",
             bytes: external
                 ? {
                       read: (key) =>
@@ -52,7 +52,3 @@ export const makeSQLiteTestBackend = Effect.fnUntraced(
               })
     )
 );
-export const createSQLiteTestBackend = (options: Options) => ({
-    name: options.name ?? "sqlite",
-    open: (context: Record<string, unknown>) => makeSQLiteTestBackend({ ...options, context }),
-});

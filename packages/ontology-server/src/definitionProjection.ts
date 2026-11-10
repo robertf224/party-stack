@@ -690,6 +690,8 @@ export function projectOntologyDefinition<Ontology extends OntologyDefinition = 
         for (const parameter of actionType.parameters) {
             collectReferencedNamedTypes(parameter.type, opts.ir, referencedNamedTypes);
         }
+        if (actionType.returnType)
+            collectReferencedNamedTypes(actionType.returnType, opts.ir, referencedNamedTypes);
     }
     for (const queryFunction of queryFunctionTypes) {
         for (const parameter of queryFunction.parameters) {

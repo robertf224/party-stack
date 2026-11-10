@@ -1,6 +1,6 @@
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { setAtPath } from "@party-stack/ontology-spec/utils";
-import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
+import { ontologyDefinitionContractSignature } from "@party-stack/ontology-storage";
 import {
     makeOntologyStorage,
     OntologyStorageError,
@@ -13,9 +13,10 @@ import {
 import { digestBytes, byteSource } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, PubSub, Redacted, Schema, Semaphore, Stream } from "effect";
-import { acknowledgeDelivery, makeDelivery, scanSelectedRows, collectDeliveryGarbage } from "./delivery.js";
+import { makeDeliveryManager, scanSelectedRows } from "./delivery.js";
 import { maintenanceInterval, scheduleMaintenance } from "./maintenance.js";
 import { CurrentActionAuthorization, CurrentQueryAuthorization, CurrentExecutionContext } from "./policy.js";
+import { executeQuery } from "./query.js";
 import { actionReferenceIssues } from "./references.js";
 import { compileObjectSubset } from "./subset.js";
 import {
@@ -90,7 +91,7 @@ export interface OwnedBackendOptions {
     readonly ir: OntologyIR;
     readonly tables: TablesService;
     readonly blobs?: import("@party-stack/ontology-storage/blobs").BlobStorageService;
-    /** A trusted principal binding; invocation IDs are deduplicated within this authority scope. */
+    /** Explicit authority scope; otherwise use the authenticated partition, or system for trusted unbound calls. */
     readonly actionScope?: string;
     readonly delivery?: DeliveryPolicy;
     /** Bounded replay history. Cursors behind this floor require a fresh snapshot. */
@@ -181,8 +182,9 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     );
     const storage = makeOntologyStorage(model, options.tables, { blobs: options.blobs });
     const tables = options.tables;
+    const deliveries = yield* makeDeliveryManager({ tables, namespace: options.namespace });
     const definitionSignature = yield* Effect.try({
-        try: () => ontologyDefinitionSignature(options.ir),
+        try: () => ontologyDefinitionContractSignature(options.ir),
         catch: (cause) => fault("definition", "InvalidConfiguration", "Invalid ontology definition.", cause),
     });
     const schemaHash = yield* boundary(
@@ -211,8 +213,12 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             "InvalidConfiguration",
             "Journal retention age must be nonnegative."
         );
-    const receiptKey = (id: string, scope?: string) =>
-        JSON.stringify([options.actionScope ?? "system", ...(scope === undefined ? [] : [scope]), id]);
+    const receiptKey = (id: string, scope?: string, legacy = false) =>
+        JSON.stringify([
+            options.actionScope ?? (legacy ? "system" : (scope ?? "system")),
+            ...(scope === undefined ? [] : [scope]),
+            id,
+        ]);
     const metadata = Table.make<{ revision: number; source: string; journalFloor?: number }>({
         name: JSON.stringify(["backend", options.namespace, "metadata"]),
     });
@@ -265,6 +271,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
     });
     let initialRevision = 0;
     const wakes = yield* PubSub.sliding<void>(1);
+    yield* Effect.addFinalizer(() => PubSub.shutdown(wakes));
     yield* boundary(
         storage.transaction((native) =>
             Effect.gen(function* () {
@@ -498,11 +505,23 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         const identity = JSON.stringify(
             stableValue([invocation.name, encodedParameters, attachmentIdentity, invocation.replay])
         );
-        return { invocation, identity, receiptKey: receiptKey(invocation.id, authorization?.scope) };
+        const key = receiptKey(invocation.id, authorization?.scope);
+        const legacyKey = receiptKey(invocation.id, authorization?.scope, true);
+        return {
+            invocation,
+            identity,
+            receiptKey: key,
+            legacyReceiptKey: key === legacyKey ? undefined : legacyKey,
+        };
     });
     const invokeIn = Effect.fnUntraced(function* (
         native: StorageTransaction,
-        prepared: { invocation: ActionRequest; identity: string; receiptKey: string },
+        prepared: {
+            invocation: ActionRequest;
+            identity: string;
+            receiptKey: string;
+            legacyReceiptKey?: string;
+        },
         commitUploads: Effect.Effect<void, BackendError>
     ) {
         const { invocation } = prepared;
@@ -517,7 +536,11 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         if (!invocation.id)
             return yield* fault("applyAction", "InvalidRequest", "Actions require a stable invocation ID.");
         const fingerprint = prepared.identity;
-        const previous = yield* tables.get(receipts, prepared.receiptKey, { forUpdate: true });
+        const previous =
+            (yield* tables.get(receipts, prepared.receiptKey, { forUpdate: true })) ??
+            (prepared.legacyReceiptKey
+                ? yield* tables.get(receipts, prepared.legacyReceiptKey, { forUpdate: true })
+                : undefined);
         if (previous && previous.completedAt > (yield* Clock.currentTimeMillis) - resultRetentionMs) {
             if (previous.fingerprint !== fingerprint)
                 return yield* fault(
@@ -675,9 +698,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             const subsets = yield* Effect.forEach(selection.subsets, (subset) =>
                 compileObjectSubset(options.ir, subset, context)
             );
-            return yield* makeDelivery({
-                tables,
-                namespace: options.namespace,
+            return yield* deliveries.open({
                 policy: { ...options.delivery, ...policy },
                 resume,
                 binding: JSON.stringify([source, schemaHash]),
@@ -708,10 +729,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             });
         }
     );
-    const maintenance = collectGarbage.pipe(
-        Effect.andThen(collectDeliveryGarbage(tables, options.namespace)),
-        Effect.asVoid
-    );
+    const maintenance = collectGarbage.pipe(Effect.andThen(deliveries.collectGarbage), Effect.asVoid);
     yield* scheduleMaintenance(maintenance, maintenanceIntervalMs);
     return {
         name: "owned",
@@ -720,7 +738,24 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
         maintenance,
         supportsIdempotency: true,
         subscribeSelection,
-        acknowledgeDelivery: (position) => acknowledgeDelivery(tables, options.namespace, position),
+        acknowledgeDelivery: deliveries.acknowledge,
+        query: (document, settings) =>
+            boundary(
+                storage.read((native) =>
+                    Effect.gen(function* () {
+                        const tx = read(native);
+                        return (yield* executeQuery(document, {
+                            reader: {
+                                ir: options.ir,
+                                loadSubset: (type, scan) => tx.loadSubset(type, scan),
+                                loadGroupedSubset: tx.loadGroupedSubset,
+                            },
+                            context: yield* CurrentExecutionContext,
+                            inputs: settings?.inputs,
+                        })).value;
+                    })
+                )
+            ),
         loadSubset: (request) =>
             boundary(
                 Effect.gen(function* () {
@@ -746,7 +781,18 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
             ),
         applyAction: Effect.fn("OwnedBackend.applyAction")(function* (invocation: ActionRequest) {
             const prepared = yield* prepare(invocation);
-            const prior = yield* boundary(tables.get(receipts, prepared.receiptKey));
+            // Keep retrying retained receipts from older shared owners idempotent.
+            // Both addresses include the exact authenticated scope; never probe another principal.
+            const prior = yield* boundary(
+                Effect.gen(function* () {
+                    return (
+                        (yield* tables.get(receipts, prepared.receiptKey)) ??
+                        (prepared.legacyReceiptKey
+                            ? yield* tables.get(receipts, prepared.legacyReceiptKey)
+                            : undefined)
+                    );
+                })
+            );
             if (prior && prior.completedAt > (yield* Clock.currentTimeMillis) - resultRetentionMs) {
                 if (prior.fingerprint !== prepared.identity)
                     return yield* fault(
@@ -903,7 +949,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                         })
                     )
                 ),
-            watch: Stream.fromPubSub(wakes),
+            watch: PubSub.subscribe(wakes).pipe(Effect.map(Stream.fromSubscription)),
         },
         attachments: options.attachments,
         encrypted: options.encrypted,

@@ -1,28 +1,28 @@
-import { Duration, Effect } from "effect";
-import type { ConnectService } from "./Connect.js";
+import { BackendError } from "@party-stack/ontology-backend";
+import { Effect } from "effect";
 
-/** Optional scheduler for long-lived processes. Serverless hosts call collectExpired
- * from their alarm/job instead. Closing the caller's scope stops this fiber.
+/** The credential backend owns one scoped sweep. Serverless hosts opt out and
+ * invoke backend.maintenance from their alarm/job instead.
  */
 export const maintainConnect = Effect.fnUntraced(function* (
-    connect: ConnectService,
-    options: {
-        interval?: Duration.Input;
-        batchSize?: number;
-    } = {}
+    work: Effect.Effect<void, BackendError>,
+    options: false | { readonly intervalMs?: number } | undefined
 ) {
+    const intervalMs = options && options.intervalMs !== undefined ? options.intervalMs : 60_000;
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0)
+        return yield* new BackendError({
+            operation: "connect.maintenance",
+            kind: "InvalidConfiguration",
+            retryable: false,
+            message: "Connect maintenance interval must be positive and finite.",
+        });
+    if (options === false) return;
     return yield* Effect.forkScoped(
         Effect.forever(
-            Effect.gen(function* () {
-                yield* connect
-                    .collectExpired({ limit: options.batchSize ?? 100 })
-                    .pipe(
-                        Effect.catch((error) =>
-                            Effect.logWarning("Connect maintenance failed", { kind: error.kind })
-                        )
-                    );
-                yield* Effect.sleep(options.interval ?? "5 minutes");
-            })
+            Effect.sleep(intervalMs).pipe(
+                Effect.andThen(work),
+                Effect.catch((error) => Effect.logWarning("Connect maintenance failed", { kind: error.kind }))
+            )
         )
     );
 });

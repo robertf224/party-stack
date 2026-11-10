@@ -81,13 +81,16 @@ export interface LiveOntologyAttachments<
         opts?: Options
     ) => Promise<LiveOntologyAttachmentCreateResult<Ontology, Options>>;
     metadata: {
-        <Type extends string>(attachment: v.attachment<Type>): Promise<AttachmentMetadata<Type>>;
+        <Type extends string>(
+            attachment: v.attachment<Type>,
+            options?: { readonly signal?: AbortSignal }
+        ): Promise<AttachmentMetadata<Type>>;
         <Type extends string, const Selection extends AttachmentMetadataSelection<Type>>(
             attachment: v.attachment<Type>,
-            options: { select: Selection }
+            options: { select: Selection; readonly signal?: AbortSignal }
         ): Promise<AttachmentMetadata<Type, Selection[number]>>;
     };
-    blob: (attachment: v.attachment) => Promise<Blob>;
+    blob: (attachment: v.attachment, options?: { readonly signal?: AbortSignal }) => Promise<Blob>;
     /** Consume or cancel the stream, or abort the signal, to release this read before the ontology closes. */
     source: (attachment: v.attachment, options?: { readonly signal?: AbortSignal }) => Promise<ByteSource>;
 }
@@ -162,13 +165,20 @@ export function createLiveOntologyAttachments<
             return { attachment: created.attachment, ...(isMaterialized ? { isMaterialized } : {}) };
         }) as LiveOntologyAttachments<Ontology>["create"],
         source,
-        blob: (value) => options.run(options.attachments.blob(value)),
+        blob: (value, settings) => options.run(options.attachments.blob(value), settings?.signal),
         metadata: ((
             value: v.attachment,
-            settings?: { select: readonly (keyof PartialAttachmentMetadata)[] }
+            settings?: {
+                select?: readonly (keyof PartialAttachmentMetadata)[];
+                readonly signal?: AbortSignal;
+            }
         ) =>
             options.run(
-                options.attachments.metadata(value, settings)
+                options.attachments.metadata(
+                    value,
+                    settings?.select ? { select: settings.select } : undefined
+                ),
+                settings?.signal
             )) as LiveOntologyAttachments<Ontology>["metadata"],
     };
 }

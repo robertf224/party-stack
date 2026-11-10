@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError } from "@party-stack/ontology-backend";
 import { clientRegistry } from "@party-stack/ontology-backend/clients";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
@@ -65,7 +66,8 @@ const fixture = Effect.fnUntraced(function* () {
     const tables = yield* Memory.make();
     let serverCount = 10;
     const submitted: string[] = [];
-    const backend: OntologyBackendService = {
+    const backend: OntologyBackendService = makeOntologyBackend({
+        ir,
         name: "authoritative",
         sourceId: "authoritative",
         supportsIdempotency: false,
@@ -90,7 +92,7 @@ const fixture = Effect.fnUntraced(function* () {
                 };
             }),
         queryFunction: () => Effect.void,
-    };
+    });
     const options: ReplicaOptions = {
         namespace: "parent",
         ir,
@@ -135,7 +137,7 @@ const client = Effect.fnUntraced(function* (
         publish: settings?.publish,
     };
     const replica = yield* makeReplica(options);
-    yield* replica.retainLocal("Counter");
+    yield* replica.demand({ objectType: "Counter" });
     yield* replica.retainActions();
     yield* replica.receiveParentState(snapshot);
     return { replica, options };
@@ -195,7 +197,7 @@ test("a protocol source starts automatically without a backend adapter or mode f
                     execute,
                     objectCacheGc: false,
                 });
-                yield* child.retainLocal("Counter");
+                yield* child.demand({ objectType: "Counter" });
                 yield* child.syncOnce;
                 expect(yield* count(child)).toBe(10);
                 yield* child.enqueue(invocation("B", 1));
@@ -337,6 +339,29 @@ test("lost submit reply protects the local invocation and recovers by importing 
                 yield* child.syncParent(source);
                 expect(f.submitted).toEqual(["B"]);
                 expect((yield* child.actionStatus("B")).receipt?.outcome).toBe("committed");
+            })
+        )
+    );
+});
+
+test("a queue observer retains an observed result after releasing its upstream result interest", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const observer = (yield* client(yield* f.parent.snapshotState)).replica;
+                const source = replicaStateSource(f.parent);
+                yield* f.parent.enqueue(invocation("observed", 1));
+                yield* observer.syncParent(source);
+                expect((yield* observer.parentState)?.pending.map((entry) => entry.invocation.id)).toEqual([
+                    "observed",
+                ]);
+                yield* f.parent.syncOnce;
+                yield* observer.syncParent(source);
+                expect((yield* observer.receipt("observed"))?.outcome).toBe("committed");
+                yield* observer.syncParent(source);
+                expect((yield* observer.parentState)?.completed).toEqual([]);
+                expect((yield* observer.receipt("observed"))?.outcome).toBe("committed");
             })
         )
     );

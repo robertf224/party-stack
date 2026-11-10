@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -32,14 +33,16 @@ const fail = (kind: "Unavailable" | "ValidationFailed" = "Unavailable") =>
 const backend = (
     applyAction: OntologyBackendService["applyAction"],
     idempotent = true
-): OntologyBackendService => ({
-    name: "test",
-    sourceId: "test",
-    supportsIdempotency: idempotent,
-    applyAction,
-    loadSubset: () => Effect.succeed({ rows: [], complete: true }),
-    queryFunction: () => Effect.void,
-});
+): OntologyBackendService =>
+    makeOntologyBackend({
+        ir,
+        name: "test",
+        sourceId: "test",
+        supportsIdempotency: idempotent,
+        applyAction,
+        loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+        queryFunction: () => Effect.void,
+    });
 
 test("retry deadline and budget survive reopening; explicit retry resets budget, not total attempts", async () => {
     await Effect.runPromise(

@@ -59,6 +59,8 @@ export interface ReplicaStateSnapshot {
 export interface StateSelection {
     readonly subsets: readonly CompiledSubset[];
     readonly actionIds: readonly string[];
+    /** Include the pending queue. Outcomes are selected by actionIds, including
+     * pending actions already observed by the child, not the parent's full history. */
     readonly inspectActions?: boolean;
 }
 export interface ClientView {
@@ -67,7 +69,12 @@ export interface ClientView {
 }
 
 export interface ClientState {
-    readonly coverage?: readonly { readonly subset: CompiledSubset; readonly complete: boolean }[];
+    readonly coverage?: readonly {
+        readonly subset: CompiledSubset;
+        readonly complete: boolean;
+        /** Previously confirmed resident coverage; it may need background refresh. */
+        readonly cached?: boolean;
+    }[];
     readonly state: ReplicaStateSnapshot;
     readonly client: ClientLease;
 }
@@ -221,7 +228,13 @@ const ClientStateSchema = Schema.Struct({
     state: ReplicaStateSnapshotSchema,
     client: ClientLeaseSchema,
     coverage: Schema.optional(
-        Schema.Array(Schema.Struct({ subset: CompiledSubsetSchema, complete: Schema.Boolean }))
+        Schema.Array(
+            Schema.Struct({
+                subset: CompiledSubsetSchema,
+                complete: Schema.Boolean,
+                cached: Schema.optional(Schema.Boolean),
+            })
+        )
     ),
 });
 const ClientSubmissionSchema = Schema.Struct({

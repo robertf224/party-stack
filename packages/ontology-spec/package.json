@@ -66,15 +66,16 @@
     },
     "dependencies": {
         "@bobbyfidz/panic": "^0.1.0",
+        "@effect/platform-node": "^4.0.5",
         "@party-stack/icons": "workspace:*",
         "change-case": "^5.4.4",
-        "commander": "^14.0.2",
         "jiti": "^2.6.1",
         "oxfmt": "^0.72.0",
         "temporal-polyfill": "^0.3.0",
         "ts-morph": "^27.0.2"
     },
     "devDependencies": {
+        "@effect/vitest": "^4.0.5",
         "@party-stack/build-config": "workspace:*",
         "effect": "^4.0.5",
         "tsx": "^4.20.6",

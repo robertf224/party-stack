@@ -1,4 +1,4 @@
-import { fc } from "@fast-check/vitest";
+import { it } from "@effect/vitest";
 import { o } from "@party-stack/ontology-spec";
 import {
     contains,
@@ -19,8 +19,8 @@ import {
     lt,
     not,
 } from "@party-stack/ontology-storage";
-import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { Effect, Schema } from "effect";
+import { describe, expect } from "vitest";
 import { policyProperties } from "./policy.js";
 import { policyIndexes } from "./policy/indexes.js";
 import { evaluatePolicyView } from "./policy/view.js";
@@ -90,7 +90,7 @@ describe("authorization planning", () => {
     it("collects grants across repeated types and selections referring to ancestor bindings", async () => {
         const ir = definition();
         ir.policy = {
-            read: {
+            objects: {
                 select: [
                     sub("first", {
                         from: { source: { objectType: "Issue" }, binding: "a" },
@@ -129,7 +129,7 @@ describe("authorization planning", () => {
     it("prepares bounded indexes for policy predicates/correlations rather than selected output fields", () => {
         const ir = definition();
         ir.policy = {
-            read: {
+            objects: {
                 select: [
                     sub("projects", {
                         from: { source: { objectType: "Project" }, binding: "p" },
@@ -164,149 +164,147 @@ describe("authorization planning", () => {
         expect(indexes.some((entry) => entry.index.field.path[0] === "secret")).toBe(false);
         expect(indexes.some((entry) => entry.index.field.path[0] === "title")).toBe(false);
     });
-    it("both strategies agree with a domain oracle over hierarchical grants, windows and cell guards", async () => {
-        await fc.assert(
-            fc.asyncProperty(
-                fc.array(
-                    fc.record({
-                        project: fc.integer({ min: 0, max: 2 }),
-                        rank: fc.integer({ min: -5, max: 5 }),
-                    }),
-                    { maxLength: 24 }
+    it.live.prop(
+        "both strategies agree with a domain oracle over hierarchical grants, windows and cell guards",
+        [
+            Schema.Array(
+                Schema.Struct({
+                    project: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 2 })),
+                    rank: Schema.Int.check(Schema.isBetween({ minimum: -5, maximum: 5 })),
+                })
+            ).check(Schema.isMaxLength(24)),
+            Schema.Struct({
+                admin: Schema.Boolean,
+                policyLimit: Schema.UndefinedOr(
+                    Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 5 }))
                 ),
-                fc.record({
-                    admin: fc.boolean(),
-                    policyLimit: fc.option(fc.integer({ min: 0, max: 5 }), { nil: undefined }),
-                    policyOffset: fc.integer({ min: 0, max: 2 }),
-                    filter: fc.integer({ min: 0, max: 3 }),
-                    selected: fc.integer({ min: 0, max: 24 }),
-                    desc: fc.boolean(),
-                    limit: fc.integer({ min: 0, max: 8 }),
-                    offset: fc.integer({ min: 0, max: 3 }),
-                    extraGrant: fc.boolean(),
-                    after: fc.boolean(),
-                }),
-                async (generated, options) => {
-                    const ir = definition();
-                    const user = options.admin ? "admin" : "user";
-                    const projects = [
-                        { id: "p0", admins: ["user", "admin"] },
-                        { id: "p1", admins: ["admin"] },
-                        { id: "p2", admins: [] },
-                    ];
-                    const issues = generated.map((r, i) => ({
-                        id: `i${String(i).padStart(2, "0")}`,
-                        title: `Issue ${i}`,
-                        projectId: `p${r.project}`,
-                        rank: r.rank,
-                        secret: "private",
-                    }));
-                    ir.policy = {
-                        read: {
-                            select: [
-                                sub("projects", {
-                                    from: { source: { objectType: "Project" }, binding: "p" },
-                                    where: contains(field("p", "admins"), context("user")),
-                                    select: [
-                                        selectField("id", field("p", "id")),
-                                        sub("issues", {
-                                            from: { source: { objectType: "Issue" }, binding: "i" },
-                                            where: eq(field("i", "projectId"), field("p", "id")),
-                                            orderBy: [{ expression: field("i", "rank"), direction: "desc" }],
-                                            page:
-                                                options.policyLimit === undefined &&
-                                                options.policyOffset === 0
-                                                    ? undefined
-                                                    : {
-                                                          limit: options.policyLimit,
-                                                          offset: options.policyOffset,
-                                                      },
-                                            select: fields("i"),
-                                        }),
-                                    ],
-                                }),
-                                ...(options.extraGrant
-                                    ? [
-                                          sub("extra", {
-                                              from: { source: { objectType: "Issue" }, binding: "extra" },
-                                              where: eq(field("extra", "rank"), literal(0)),
-                                              select: fields("extra"),
-                                          }),
-                                      ]
-                                    : []),
-                            ],
-                        },
-                    };
-                    const id = `i${String(options.selected).padStart(2, "0")}`;
-                    const where =
-                        options.filter === 0
-                            ? undefined
-                            : options.filter === 1
-                              ? scanEq(scanField("id"), id)
-                              : options.filter === 2
-                                ? or(scanEq(scanField("id"), id), lt(scanField("rank"), 0))
-                                : and(not(scanEq(scanField("projectId"), "p2")), lt(scanField("rank"), 2));
-                    const matches = (i: (typeof issues)[number]) =>
-                        options.filter === 0 ||
-                        (options.filter === 1
-                            ? i.id === id
-                            : options.filter === 2
-                              ? i.id === id || i.rank < 0
-                              : i.projectId !== "p2" && i.rank < 2);
-                    const query: Scan = {
-                        where,
-                        orderBy: [{ field: scanField("rank"), direction: options.desc ? "desc" : "asc" }],
-                        limit: options.limit,
-                        ...(options.after ? { after: { values: [0], key: id } } : { offset: options.offset }),
-                    };
-                    const grants = new Map<string, (typeof issues)[number]>();
-                    for (const project of projects.filter((p) => p.admins.includes(user))) {
-                        const selected = issues
-                            .filter((i) => i.projectId === project.id)
-                            .sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id))
-                            .slice(
-                                options.policyOffset,
-                                options.policyLimit === undefined
-                                    ? undefined
-                                    : options.policyOffset + options.policyLimit
-                            );
-                        for (const issue of selected) grants.set(issue.id, issue);
-                    }
-                    if (options.extraGrant)
-                        for (const issue of issues.filter((i) => i.rank === 0)) grants.set(issue.id, issue);
-                    const sorted = [...grants.values()]
-                        .filter(matches)
-                        .sort(
-                            (a, b) => (a.rank - b.rank) * (options.desc ? -1 : 1) || a.id.localeCompare(b.id)
+                policyOffset: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 2 })),
+                filter: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 })),
+                selected: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 24 })),
+                desc: Schema.Boolean,
+                limit: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 8 })),
+                offset: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 })),
+                extraGrant: Schema.Boolean,
+                after: Schema.Boolean,
+            }),
+        ],
+        ([generated, options]) =>
+            Effect.gen(function* () {
+                const ir = definition();
+                const user = options.admin ? "admin" : "user";
+                const projects = [
+                    { id: "p0", admins: ["user", "admin"] },
+                    { id: "p1", admins: ["admin"] },
+                    { id: "p2", admins: [] },
+                ];
+                const issues = generated.map((r, i) => ({
+                    id: `i${String(i).padStart(2, "0")}`,
+                    title: `Issue ${i}`,
+                    projectId: `p${r.project}`,
+                    rank: r.rank,
+                    secret: "private",
+                }));
+                ir.policy = {
+                    objects: {
+                        select: [
+                            sub("projects", {
+                                from: { source: { objectType: "Project" }, binding: "p" },
+                                where: contains(field("p", "admins"), context("user")),
+                                select: [
+                                    selectField("id", field("p", "id")),
+                                    sub("issues", {
+                                        from: { source: { objectType: "Issue" }, binding: "i" },
+                                        where: eq(field("i", "projectId"), field("p", "id")),
+                                        orderBy: [{ expression: field("i", "rank"), direction: "desc" }],
+                                        page:
+                                            options.policyLimit === undefined && options.policyOffset === 0
+                                                ? undefined
+                                                : {
+                                                      limit: options.policyLimit,
+                                                      offset: options.policyOffset,
+                                                  },
+                                        select: fields("i"),
+                                    }),
+                                ],
+                            }),
+                            ...(options.extraGrant
+                                ? [
+                                      sub("extra", {
+                                          from: { source: { objectType: "Issue" }, binding: "extra" },
+                                          where: eq(field("extra", "rank"), literal(0)),
+                                          select: fields("extra"),
+                                      }),
+                                  ]
+                                : []),
+                        ],
+                    },
+                };
+                const id = `i${String(options.selected).padStart(2, "0")}`;
+                const where =
+                    options.filter === 0
+                        ? undefined
+                        : options.filter === 1
+                          ? scanEq(scanField("id"), id)
+                          : options.filter === 2
+                            ? or(scanEq(scanField("id"), id), lt(scanField("rank"), 0))
+                            : and(not(scanEq(scanField("projectId"), "p2")), lt(scanField("rank"), 2));
+                const matches = (i: (typeof issues)[number]) =>
+                    options.filter === 0 ||
+                    (options.filter === 1
+                        ? i.id === id
+                        : options.filter === 2
+                          ? i.id === id || i.rank < 0
+                          : i.projectId !== "p2" && i.rank < 2);
+                const query: Scan = {
+                    where,
+                    orderBy: [{ field: scanField("rank"), direction: options.desc ? "desc" : "asc" }],
+                    limit: options.limit,
+                    ...(options.after ? { after: { values: [0], key: id } } : { offset: options.offset }),
+                };
+                const grants = new Map<string, (typeof issues)[number]>();
+                for (const project of projects.filter((p) => p.admins.includes(user))) {
+                    const selected = issues
+                        .filter((i) => i.projectId === project.id)
+                        .sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id))
+                        .slice(
+                            options.policyOffset,
+                            options.policyLimit === undefined
+                                ? undefined
+                                : options.policyOffset + options.policyLimit
                         );
-                    const visible = options.after
-                        ? sorted.filter((r) =>
-                              r.rank === 0 ? r.id > id : options.desc ? r.rank < 0 : r.rank > 0
-                          )
-                        : sorted.slice(options.offset);
-                    const expected = visible
-                        .slice(0, options.limit)
-                        .map(({ secret, ...row }) => (options.admin ? { ...row, secret } : row));
-                    for (const strategy of strategies) {
-                        const { source } = reader(ir, { Project: projects, Issue: issues });
-                        const rows = await Effect.runPromise(
-                            evaluatePolicyView(source, { user }, undefined, strategy).tx.loadSubset(
-                                "Issue",
-                                query
-                            )
-                        );
-                        expect(rows.map((r) => r.value)).toEqual(expected);
-                    }
+                    for (const issue of selected) grants.set(issue.id, issue);
                 }
-            ),
-            { numRuns: 120 }
-        );
-    });
+                if (options.extraGrant)
+                    for (const issue of issues.filter((i) => i.rank === 0)) grants.set(issue.id, issue);
+                const sorted = [...grants.values()]
+                    .filter(matches)
+                    .sort((a, b) => (a.rank - b.rank) * (options.desc ? -1 : 1) || a.id.localeCompare(b.id));
+                const visible = options.after
+                    ? sorted.filter((r) =>
+                          r.rank === 0 ? r.id > id : options.desc ? r.rank < 0 : r.rank > 0
+                      )
+                    : sorted.slice(options.offset);
+                const expected = visible
+                    .slice(0, options.limit)
+                    .map(({ secret, ...row }) => (options.admin ? { ...row, secret } : row));
+                for (const strategy of strategies) {
+                    const { source } = reader(ir, { Project: projects, Issue: issues });
+                    const rows = yield* evaluatePolicyView(
+                        source,
+                        { user },
+                        undefined,
+                        strategy
+                    ).tx.loadSubset("Issue", query);
+                    expect(rows.map((r) => r.value)).toEqual(expected);
+                }
+            }),
+        { arbitrary: { runs: 120 } }
+    );
 
     it("rewrites a keyed request into policy scans instead of acquiring all authorized rows", async () => {
         const ir = definition();
         ir.policy = {
-            read: {
+            objects: {
                 select: [
                     sub("issues", {
                         from: { source: { objectType: "Issue" }, binding: "i" },
@@ -337,7 +335,7 @@ describe("authorization planning", () => {
     it("does not narrow an ancestor away from a same-type descendant grant", async () => {
         const ir = definition();
         ir.policy = {
-            read: {
+            objects: {
                 select: [
                     sub("parents", {
                         from: { source: { objectType: "Issue" }, binding: "parent" },
@@ -376,7 +374,7 @@ describe("authorization planning", () => {
     it("preserves first-match selection branches and refuses hidden-field probes before reading", async () => {
         const ir = definition();
         ir.policy = {
-            read: {
+            objects: {
                 select: [
                     selectCase({
                         branches: [
@@ -447,7 +445,7 @@ it("narrows a token's Post Approval/Bid grant while preserving the final caller 
             },
         ],
         policy: {
-            read: {
+            objects: {
                 select: [
                     sub("approval", {
                         from: { source: { objectType: "PostApproval" }, binding: "a" },

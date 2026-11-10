@@ -27,7 +27,7 @@ export {
 export type { ByteSource, ByteInput } from "@party-stack/ontology-storage/blobs";
 
 export { RuntimePartition } from "./RuntimePartition.js";
-export { Runtimes, type RuntimeLayer } from "./Runtimes.js";
+export { Runtimes, type RuntimeLayer, type RuntimesLayer } from "./Runtimes.js";
 export * as MemoryRuntime from "./MemoryRuntime.js";
 
 export type { BlobBytesService } from "@party-stack/ontology-storage/blobs";

@@ -1,10 +1,11 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { byteChunks, collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import { Deferred, Effect, Fiber, Stream } from "effect";
 import { FetchHttpClient } from "effect/http";
 import { expect, test, vi } from "vite-plus/test";
-import { connectOntologyBackendHttp, makeOntologyHttpHandler } from "./rpcHttp.js";
+import { makeOntologyHttpBackend, makeOntologyHttpHandler } from "./rpcHttp.js";
 
 const ir: OntologyIR = {
     types: [],
@@ -51,7 +52,8 @@ const setup = Effect.fnUntraced(function* (reject?: BackendError) {
                   })
               )
     );
-    const backend: OntologyBackendService = {
+    const backend: OntologyBackendService = makeOntologyBackend({
+        ir,
         name: "provider",
         sourceId: "provider",
         supportsIdempotency: false,
@@ -93,7 +95,7 @@ const setup = Effect.fnUntraced(function* (reject?: BackendError) {
                     attachmentIdMappings: [{ localId: "audio", remoteId: "provider-audio" }],
                 };
             }),
-    };
+    });
     // Every HTTP request constructs a fresh server, as a stateless Worker may do.
     const fetch = (input: RequestInfo | URL, init?: RequestInit) =>
         Effect.runPromise(
@@ -102,6 +104,7 @@ const setup = Effect.fnUntraced(function* (reject?: BackendError) {
                     const request = new Request(input, init);
                     calls.push(request.headers.get("content-type") ?? "");
                     const handler = yield* makeOntologyHttpHandler({
+                        enableRealtime: true,
                         ir,
                         backend,
                         authorize,
@@ -112,7 +115,7 @@ const setup = Effect.fnUntraced(function* (reject?: BackendError) {
                 })
             )
         );
-    const client = yield* connectOntologyBackendHttp({ url: "https://ontology.test/rpc" }).pipe(
+    const client = yield* makeOntologyHttpBackend({ url: "https://ontology.test/rpc" }).pipe(
         Effect.provide(FetchHttpClient.layer),
         Effect.provideService(FetchHttpClient.Fetch, fetch)
     );

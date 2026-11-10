@@ -7,6 +7,24 @@ import { Runtime } from "./Runtime.js";
 import { RuntimePartition } from "./RuntimePartition.js";
 import { Runtimes } from "./Runtimes.js";
 
+test("platform browser capabilities are available without opening partition storage", async () => {
+    let opened = 0;
+    const browserAuthentication = { start: () => Effect.die("unused") };
+    const platform = Layer.effect(
+        Runtime,
+        Effect.sync(() => {
+            opened++;
+            throw new Error("A partition must not open just to get browser presentation.");
+        })
+    );
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            expect((yield* Runtimes).browserAuthentication).toBe(browserAuthentication);
+        }).pipe(Effect.provide(Runtimes.layer(platform, { browserAuthentication })))
+    );
+    expect(opened).toBe(0);
+});
+
 test("partition Layers isolate resources, share active acquisitions, and release the final lease", async () => {
     const opened: string[] = [];
     const closed: string[] = [];

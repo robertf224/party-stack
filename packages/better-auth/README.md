@@ -1,8 +1,33 @@
 # Better Auth integration
 
 The root export supplies the multi-session `partyStack`/`partyStackClient` plugins
-and the scoped connection adapter. `/storage` supplies a Better Auth database
-adapter over an owned ontology backend's trusted storage capability.
+and `makeBetterAuthServiceConnector`. `/storage` supplies an optional Better Auth
+database adapter over an owned ontology backend's trusted storage capability.
+
+Sign-in uses Better Auth's normal tab SDK. After sign-in,
+`authentication.attachExternalSession(instanceId, sessionId)` asks the credential owner's
+Better Auth client to verify the session before saving its ID, identity and expiry.
+The worker uses the browser's cookies; Connect does not copy the cookie token.
+Its public ontology policy hides the session selector from inventory queries.
+
+`attachBetterAuthSession({ client, authentication, serviceInstanceId, session })`
+wraps session selection and attachment. Pass the data returned by Better Auth
+sign-in (containing `token`) or its session object (containing `id`). The helper
+matches the exact token, so concurrent logins and multiple sessions for the same
+user cannot select a different account by accident. Sign-in remains an explicit
+Better Auth SDK call.
+
+Connect revalidates external sessions on demand after their last-verified expiry,
+then saves renewed metadata through its normal journal. Cached-data opening does
+not wait on verification. Temporary network/server failures do not mark an
+account `needs-auth`; confirmed session rejection does.
+
+Acquired egress adds that selector to same-origin HTTP/WebSocket requests. The
+server plugin selects the matching signed cookie for `getSession`; a selector
+without the corresponding cookie is not authentication. This is a browser-session
+integration, not a portable server-side credential. Disconnect revokes the selected
+session. Inventory updates use ordinary Connect replication, with no separate
+client subscription API or generic authentication-method RPC bridge.
 
 ## Application-owned models and lenses
 

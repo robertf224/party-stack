@@ -5,7 +5,7 @@ import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { OntologyDevtoolsPanel } from "@party-stack/ontology-devtools";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { MemoryRuntime } from "@party-stack/runtime";
+import { MemoryRuntime, Runtimes } from "@party-stack/runtime";
 import { createTraceCapture } from "@party-stack/runtime/tracing";
 import { createLiveQueryCollection, eq } from "@tanstack/db";
 import { useLiveQuery } from "@tanstack/react-db";
@@ -53,40 +53,36 @@ const fixtureTraces = createTraceCapture();
 const ontology = await createLiveOntology<Definition>({
     id: "attribution-fixture",
     ir,
-    runtime: MemoryRuntime.layer,
-    backend: () => ({
-        name: "fixture",
-        open: () =>
-            Effect.succeed({
-                ...backend,
-                // This fixture specifically exercises finite-load pushdown diagnostics.
-                subscribeSelection: undefined,
-                acknowledgeDelivery: undefined,
-                loadSubset: (request) =>
-                    Effect.flatMap(compileObjectSubset(ir, request), (query) =>
-                        Effect.suspend(() => {
-                            loads++;
-                            return backend.loadSubset(request).pipe(
-                                Effect.map((snapshot) => ({
-                                    ...snapshot,
-                                    pushdown: {
-                                        source: "Fixture storage",
-                                        predicates: query.query?.where
-                                            ? [{ path: [], execution: "source" as const }]
-                                            : [],
-                                        sorting: "none" as const,
-                                        pagination: "none" as const,
-                                        rechecksFilter: false,
-                                        native: {
-                                            language: "json",
-                                            text: JSON.stringify(query.query ?? {}, null, 2),
-                                        },
-                                    },
-                                }))
-                            );
-                        })
-                    ),
-            }),
+    runtime: Runtimes.layer(MemoryRuntime.layer),
+    backend: Effect.succeed({
+        ...backend,
+        // This fixture specifically exercises finite-load pushdown diagnostics.
+        subscribeSelection: undefined,
+        acknowledgeDelivery: undefined,
+        loadSubset: (request) =>
+            Effect.flatMap(compileObjectSubset(ir, request), (query) =>
+                Effect.suspend(() => {
+                    loads++;
+                    return backend.loadSubset(request).pipe(
+                        Effect.map((snapshot) => ({
+                            ...snapshot,
+                            pushdown: {
+                                source: "Fixture storage",
+                                predicates: query.query?.where
+                                    ? [{ path: [], execution: "source" as const }]
+                                    : [],
+                                sorting: "none" as const,
+                                pagination: "none" as const,
+                                rechecksFilter: false,
+                                native: {
+                                    language: "json",
+                                    text: JSON.stringify(query.query ?? {}, null, 2),
+                                },
+                            },
+                        }))
+                    );
+                })
+            ),
     }),
 });
 
@@ -95,7 +91,7 @@ import.meta.hot?.dispose(async () => {
     await Effect.runPromise(Scope.close(backendScope, Exit.void));
 });
 
-await Effect.runPromise(ontology.storage!.syncOnce);
+await Effect.runPromise(ontology.replica.syncOnce);
 let loadPreview!: () => void;
 const previewReady = new Promise<void>((resolve) => {
     loadPreview = resolve;
@@ -138,13 +134,11 @@ async function recordTraceFixtures() {
 }
 
 function NoteList({ id, instance }: { id: string; instance: string }) {
-    const { data } = useLiveQuery(
-        (q) =>
-            q
-                .from({ note: ontology.objects.Note })
-                .where(({ note }) => eq(note.id, id))
-                .select(({ note }) => ({ id: note.id, title: note.id })),
-        [id]
+    const { data } = useLiveQuery((q) =>
+        q
+            .from({ note: ontology.objects.Note })
+            .where(({ note }) => eq(note.id, id))
+            .select(({ note }) => ({ id: note.id, title: note.id }))
     );
     return (
         <>

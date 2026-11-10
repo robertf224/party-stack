@@ -240,14 +240,17 @@ scope. Similarly, a TTL is not a total space budget. These are separate concerns
   startup now discards abandoned query/read roots after a crash; pins, outbox
   dependencies and stored references survive. There is no longer a Web Lock
   liveness hook or support for independently writing the same namespace from tabs.
-- No general memory/disk byte budget exists for replica rows, blob caches,
-  authorization working sets or TanStack collection materialization. A broad
-  active query can retain a large dataset. Full-query authorization can also
-  materialize large grant results when narrowing is unavailable.
-- The installation's successful-open cache lasts until explicit close or its
-  scope closes; it has no practical automatic capacity/idle eviction. Hosts that
-  dynamically open arbitrary ontologies must close them, rather than treat the
-  installation as an unlimited request cache.
+- Replica object and attachment caches now have max/target byte budgets alongside
+  age/grace GC policies. Required demand, pins and pending actions can exceed a cache
+  target. These do not cap authorization working sets or TanStack collection
+  materialization, or constitute a whole-process memory/disk quota. Broad active
+  queries can retain large datasets; authorization can materialize large grant results
+  when narrowing is unavailable.
+- Native installation acquisitions now use scoped LayerMap sharing with a configurable
+  idle lifetime (60 seconds by default). The SDK separately memoizes opened UI views
+  until their cleanup or installation cleanup. That map owns facades, not another
+  native replica or data cache. Dynamic callers must still release their scopes/views;
+  the installation is not an unlimited request cache.
 - Releasing the final TanStack demand releases replica retention but can leave
   the collection's last materialized rows until refresh/collection cleanup.
   Replica age GC does not itself impose a hard budget on that separate UI copy.
@@ -384,9 +387,15 @@ and opportunities to remove duplicate or unused machinery.
 9. **LiveOntology and TanStack:** thin application facade, collection/query
    lifetimes, abort propagation, action promises, optimistic UI and future
    fragments/SSR boundaries.
+   The [SDK/TanStack review](./sdk-tanstack-review.md) records native finite backend
+   queries, lazy normal/cache-only collections, action/result boundaries, scoped
+   retention, removal of legacy SDK lifecycle APIs, and the deferred React cleanup
+   warning. Fragments/SSR remain a separate future pass.
 10. **Diagnostics and application setup:** span capture/export, authorized
     parent diagnostics, trace buffer bounds, devtools subscriptions, platform
     recipes and issue-tracker/remote-notes acceptance coverage.
+    The [final cross-package pass](./final-cross-package-review.md) records the
+    startup fixes, shared branding and TanStack Start setup/inspection checks.
 
 ### Independent state and outbox lifetimes
 
@@ -454,3 +463,84 @@ Defer installation behavior changes to the installation/ontology review:
   invalidation/lifetime before implementing a narrow deletion-only workaround.
 
 No installation behavior was changed in this backend checkpoint.
+
+### Installation extraction — November 3
+
+Historical checkpoint: the installation-specific worker/React APIs described
+below were superseded by ordinary multi-ontology routing. See the November 5
+checkpoint in migration-status.md for the current implementation.
+
+The installation review resolves the backend checkpoint's deferred findings above.
+Native acquisition and the account-to-partition inventory are in
+`ontology-replica/installation`, worker transport in `ontology-server/installation/worker`,
+and typed views in `ontology/installation`. Configuration resolves the declared partition
+before reuse; no implicit user context is inserted. Shared partitions survive forgetting
+one associated account, and failed deletion retains its inventory for retry. Provider
+connection helpers and CLI pull now acquire native backends directly. No general runtime
+catalogue, additional route model or composition framework was added.
+
+The worker keeps the provider authentication client and forwards serializable async
+method calls from the tab. This compatibility bridge does not support SDK hooks,
+sync getters or callback arguments. Future work is to replace common operations with
+explicit Connect actions/results and narrow the remaining provider-specific bridge;
+there is no second complete tab-side Better Auth implementation in this checkpoint.
+
+The extraction must preserve the server endpoint lifetime as well as the native
+replica lifetime: CreateAttachment's live response stream and WriteAttachmentChunk
+calls share the ordinary endpoint's transfer registry. Endpoint Layer memoization
+provides that sharing; it is not a second native replica cache. Browser acceptance
+covers a multi-chunk upload in one tab and download through another tab's local cache.
+
+### Progress checks — November 3
+
+A parent snapshot could publish its row notification before updating demand readiness.
+A child that captured that intermediate state received incomplete coverage and no
+notification of the final ready state. A regression forces that ordering; the parent
+now publishes readiness changes even when they add no object changes.
+
+Data equivalence is not enough to test this class of bug. At each asynchronous
+commit/bookkeeping/publication boundary, test that observers eventually receive the
+final state or a terminal error. Subscribe before checking readiness, keep waits scoped,
+and vary cancellation, selection replacement and reconnect ordering. Preserve simple
+snapshot oracles for data correctness alongside temporal/progress assertions.
+
+Readiness now uses installed coverage rather than waiting for an unrelated selected
+generation or volatile demand bookkeeping. A delayed replacement-stream regression
+keeps previously covered reads usable; a separate invalidation-during-fetch test
+ensures late IO cannot clear a newer invalidation. Per-object-type transient tokens
+fence overlapping fetches; durable completeness still lives in coverage records.
+Waiting subscribes before checking state and wakes on installation, failure or
+connectivity/authentication changes rather than polling with an arbitrary deadline.
+
+Browser traces also found whole-collection snapshot refreshes clearing and rewriting
+unchanged objects, indexes and attachment references, holding up action confirmation.
+Refresh now diffs the incoming objects in the same transaction, deleting absent keys
+and updating changed values while retaining unchanged roots and refreshing access
+metadata. A regression verifies unchanged refreshes perform no object writes and
+changed/deleted keys still converge. Issue-tracker uses the existing five-second idle
+demand retention option to preserve watches across brief selection replacements.
+
+The three previously failing issue-tracker flows now pass: offline action handoff
+across tab closure, navigation with devtools, and optimistic creation/rejection toast
+with outbox cleanup. Full workspace CI passes all 133 tasks; replica tests pass all
+217 cases. Full issue-tracker browser acceptance passes nine cases with the known,
+deferred TanStack cleanup assertion marked as an expected failure. All five native
+web-runtime browser cases pass, including cross-tab multi-chunk attachment transport.
+This verifies the extracted ownership and delivery paths; remaining public API and
+SDK/diagnostics/setup review work is tracked separately.
+
+### Native property testing — November 3
+
+Repository property tests now use Effect Arbitrary throughout. `@effect/vitest`
+registers native effectful properties against the shared Vite+ runner; nested SQL
+properties use `Arbitrary.checkEffect` within their existing database fixture.
+The old fast-check imports and direct dependencies are removed. Existing reference
+evaluators and domain oracles remain independent of the production implementations.
+
+The delivery scenario generates writes, rejection/rollback, reconnect, duplicate
+frames, post-commit lost replies and yields at publication/frame/ACK boundaries.
+It compares both composed and confirmed rows plus action state with the selected
+snapshot oracle, and separately checks that lost-reply retries commit only once.
+Readiness regressions use TestClock and Deferred to force slow completion, terminal
+failure and cancellation. This is controlled fault injection at service boundaries;
+it does not virtualize every native/browser operation or exhaust all schedules.

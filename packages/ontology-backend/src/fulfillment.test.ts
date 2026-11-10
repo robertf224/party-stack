@@ -1,7 +1,7 @@
-import { fc } from "@fast-check/vitest";
+import { it } from "@effect/vitest";
 import { o } from "@party-stack/ontology-spec";
 import { and, eq, field, inArray, evaluateQuery } from "@party-stack/ontology-storage";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { expect, test } from "vitest";
 import { resolveSubsetSnapshot, coversSubset } from "./fulfillment.js";
 import { objectSubset } from "./subset.js";
@@ -95,40 +95,40 @@ test("field IN coverage contains a narrower key equality/conjunction", () => {
     ).toBe(true);
 });
 
-test("generated projections of broader snapshots agree with a full-scan oracle", async () => {
-    await fc.assert(
-        fc.asyncProperty(
-            fc.array(
-                fc.record({ status: fc.constantFrom("Open", "Done"), rank: fc.integer({ min: -5, max: 5 }) }),
-                { maxLength: 60 }
-            ),
-            fc.nat({ max: 15 }),
-            fc.nat({ max: 15 }),
-            async (values, offset, limit) => {
-                const input = values.map((value, index) => ({
-                    key: `i${index}`,
-                    value: { id: `i${index}`, ...value },
-                }));
-                const orderBy = [{ field: field("rank"), direction: "desc" as const }];
-                const query = { where: eq(field("status"), "Open"), orderBy, offset, limit };
-                const sorted = input
-                    .filter((row) => row.value.status === "Open")
-                    .sort(
-                        (a, b) => b.value.rank - a.value.rank || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
-                    );
-                const expected = sorted.slice(offset, offset + limit);
-                for (const actual of [{}, { where: eq(field("status"), "Open") }])
-                    expect(
-                        (
-                            await resolve(query, {
-                                rows: evaluateQuery(input, actual),
-                                complete: true,
-                                fulfilledSubset: objectSubset("Issue", actual),
-                            })
-                        ).snapshot.rows
-                    ).toEqual(expected);
-            }
-        ),
-        { numRuns: 100 }
-    );
-});
+it.live.prop(
+    "generated projections of broader snapshots agree with a full-scan oracle",
+    [
+        Schema.Array(
+            Schema.Struct({
+                status: Schema.Literals(["Open", "Done"]),
+                rank: Schema.Int.check(Schema.isBetween({ minimum: -5, maximum: 5 })),
+            })
+        ).check(Schema.isMaxLength(60)),
+        Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 15 })),
+        Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 15 })),
+    ],
+    ([values, offset, limit]) =>
+        Effect.gen(function* () {
+            const input = values.map((value, index) => ({
+                key: `i${index}`,
+                value: { id: `i${index}`, ...value },
+            }));
+            const orderBy = [{ field: field("rank"), direction: "desc" as const }];
+            const query = { where: eq(field("status"), "Open"), orderBy, offset, limit };
+            const sorted = input
+                .filter((row) => row.value.status === "Open")
+                .sort((a, b) => b.value.rank - a.value.rank || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+            const expected = sorted.slice(offset, offset + limit);
+            for (const actual of [{}, { where: eq(field("status"), "Open") }])
+                expect(
+                    (yield* Effect.promise(() =>
+                        resolve(query, {
+                            rows: evaluateQuery(input, actual),
+                            complete: true,
+                            fulfilledSubset: objectSubset("Issue", actual),
+                        })
+                    )).snapshot.rows
+                ).toEqual(expected);
+        }),
+    { arbitrary: { runs: 100 } }
+);

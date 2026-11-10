@@ -160,3 +160,38 @@ Those counts describe the first saved checkpoint. Completion regressions now pas
 checkpoint: 133/133 successful, including real PostgreSQL and Worker-safe DO bundles.
 The subsystem checklist is complete;
 the explicit capability/resource and broader feature follow-ups above remain.
+
+## HTTP authentication and internal access
+
+`makeOntologyServer` now acquires role/cache composition once. `authenticate(Request)`
+resolves a portable, schema-checked context inside each HTTP request scope. A fixed
+`context` remains available for already authenticated native bindings. Public
+endpoints require an IR policy; binding wraps the final read path and never shares a
+caller-specific view between requests. Owned execution receives the authenticated
+context, while adapted upstream credentials/context remain independent.
+
+Normal construction no longer accepts `authorize`. `dangerouslyAllowInternalAccess`
+adds endpoint-wide diagnostics and administrative commands; it never bypasses an IR
+policy or context binding. A synchronous predicate selects callers from validated
+context; async/nonboolean predicates fail closed. Worker helpers enable it for private
+app ports. Trace recording remains independent. With a policy, raw journals and selected/
+speculative state stay unavailable pending safe projection. Without a policy, explicit
+internal access exposes the raw private backend/replica protocol. Native opened-worker
+bindings apply the same policy boundary instead of unconditionally exposing replica state.
+The lower-level transport guard remains the enforcement primitive for RPC operations
+and upload boundaries, rather than another application policy mechanism.
+
+Request scopes remain alive until streamed response EOF or cancellation. They are
+children of the HTTP owner and are removed on completion, so closing the owner also
+interrupts authentication/requests without retaining a finalizer for every completed
+request. No principal-view cache was added. Regressions cover concurrent principals,
+receipt identity isolation, schema projection, private method denial, auth failure
+status/serialization, internal-access flags/predicates, active streams, abort and owner
+shutdown. Internal-access regressions retain row/property filtering, action checks and
+bindings while admitting internal commands over HTTP and MessagePorts.
+Issue-tracker uses this constructor directly with Better Auth.
+
+SDK parent diagnostics can be attached explicitly with `parent` for committed-only
+clients too. Trace/status/recovery RPCs do not require raw state delivery. Private
+worker replicas without an additional local policy retain their speculative path;
+a worker with a local policy serves the projected finite backend instead.

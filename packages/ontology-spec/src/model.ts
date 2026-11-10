@@ -7,6 +7,8 @@ export interface OntologyDefinition {
         string,
         {
             parameters: Record<string, unknown>;
+            /** SDK input convenience; persisted/protocol parameters remain handle-only. */
+            inputParameters?: Record<string, unknown>;
             returnType?: unknown;
         }
     >;

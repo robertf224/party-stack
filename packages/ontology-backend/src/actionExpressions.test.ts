@@ -1,9 +1,9 @@
-import { fc } from "@fast-check/vitest";
+import { it } from "@effect/vitest";
 import { o, validate } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Effect } from "effect";
+import { Arbitrary, Effect, Schema } from "effect";
 import { expect, test } from "vite-plus/test";
 import { actionExpressions, executeAction } from "./actions.js";
 import { makeOwnedBackend } from "./owned.js";
@@ -11,7 +11,6 @@ import { executeQuery } from "./query.js";
 import { objectSubset } from "./subset.js";
 import type { OwnedTransaction } from "./owned.js";
 import type { Expression, OntologyIR, TypeDef } from "@party-stack/ontology-spec";
-import type { Arbitrary } from "fast-check";
 
 const p = (name: string, type: TypeDef) => ({ name, displayName: name, type });
 const inputs = [p("n", o.double({})), p("text", o.string({})), p("flag", o.boolean({}))];
@@ -47,6 +46,10 @@ test.each([
     [q.lte(q.input("n"), q.literal(3)), true],
     [q.gt(q.input("n"), q.literal(2)), true],
     [q.gte(q.input("n"), q.literal(4)), false],
+    [q.lt(q.literal(false), q.input("flag")), true],
+    [q.lte(q.input("flag"), q.literal(false)), false],
+    [q.gt(q.input("flag"), q.literal(false)), true],
+    [q.gte(q.input("flag"), q.literal(true)), true],
     [q.inArray(q.input("n"), q.literal([2, 3])), true],
     [q.contains(q.literal(["Alpha", "Beta"]), q.input("text")), true],
     [q.like(q.input("text"), q.literal("A_ph%")), true],
@@ -123,76 +126,84 @@ test("partial defaults stay unresolved until required inputs are known, while se
 
 type Env = { n: number; flag: boolean; text: string };
 type Numeric = { expression: Expression; run: (env: Env) => number };
-const numeric: (depth: number) => Arbitrary<Numeric> = fc.memo<Numeric>((depth): Arbitrary<Numeric> => {
-    const leaves = fc.oneof(
-        fc.integer({ min: -9, max: 9 }).map((n) => ({ expression: q.literal(n), run: () => n })),
-        fc.constant({ expression: q.input("n"), run: (env: Env) => env.n })
-    );
-    if (depth <= 0) return leaves;
-    return fc.oneof(
-        leaves,
-        fc
-            .tuple(numeric(depth - 1), numeric(depth - 1), fc.constantFrom("add", "subtract", "multiply"))
-            .map(([a, b, kind]) => ({
-                expression: q[kind](a.expression, b.expression),
-                run: (env: Env) =>
-                    kind === "add"
-                        ? a.run(env) + b.run(env)
-                        : kind === "subtract"
-                          ? a.run(env) - b.run(env)
-                          : a.run(env) * b.run(env),
-            })),
-        fc.tuple(numeric(depth - 1), numeric(depth - 1)).map(([a, b]) => ({
-            expression: q.caseExpression({
-                branches: [{ condition: q.input("flag"), result: a.expression }],
-                else: b.expression,
-            }),
-            run: (env: Env) => (env.flag ? a.run(env) : b.run(env)),
-        }))
-    );
-});
-
-test("generated action defaults and finite queries agree with an independent expression oracle", async () => {
-    await fc.assert(
-        fc.asyncProperty(
-            numeric(3),
-            fc.record({
-                n: fc.integer({ min: -10, max: 10 }),
-                flag: fc.boolean(),
-                text: fc.string({ maxLength: 8 }),
-            }),
-            async (tree, env) => {
-                const ir = definition();
-                ir.actionTypes[0]!.parameters.push({
-                    ...p("result", o.double({})),
-                    defaultValue: tree.expression,
-                });
-                expect(validate(ir).kind).toBe("ok");
-                const expected = tree.run(env);
-                const action = actionExpressions({
-                    ir,
-                    tx: noIO,
-                    request: { id: "oracle", name: "test", parameters: env },
-                });
-                expect((await Effect.runPromise(action.resolve)).result).toBe(expected);
-                for (const strategy of ["planned", "reference"] as const) {
-                    const result = await Effect.runPromise(
-                        executeQuery(
-                            { inputs, select: [q.selectField("result", tree.expression)] },
-                            {
-                                reader: { ir, loadSubset: (type, scan) => noIO.loadSubset(type, scan) },
-                                inputs: env,
-                                strategy,
-                            }
-                        )
-                    );
-                    expect(result.value.result).toBe(expected);
-                }
-            }
+const numeric = (depth: number): Arbitrary.Arbitrary<Numeric> =>
+    Arbitrary.flatMap(
+        Arbitrary.schema(
+            depth <= 0
+                ? Schema.Literals(["literal", "input"])
+                : Schema.Literals(["literal", "input", "add", "subtract", "multiply", "case"])
         ),
-        { numRuns: 150 }
+        (kind): Arbitrary.Arbitrary<Numeric> => {
+            if (kind === "literal")
+                return Arbitrary.map(
+                    Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: -9, maximum: 9 }))),
+                    (n): Numeric => ({ expression: q.literal(n), run: () => n })
+                );
+            if (kind === "input")
+                return Arbitrary.Constant<Numeric>({ expression: q.input("n"), run: (env) => env.n });
+            return Arbitrary.map(
+                Arbitrary.all([numeric(depth - 1), numeric(depth - 1)]),
+                ([a, b]): Numeric =>
+                    kind === "case"
+                        ? {
+                              expression: q.caseExpression({
+                                  branches: [{ condition: q.input("flag"), result: a.expression }],
+                                  else: b.expression,
+                              }),
+                              run: (env) => (env.flag ? a.run(env) : b.run(env)),
+                          }
+                        : {
+                              expression: q[kind](a.expression, b.expression),
+                              run: (env) =>
+                                  kind === "add"
+                                      ? a.run(env) + b.run(env)
+                                      : kind === "subtract"
+                                        ? a.run(env) - b.run(env)
+                                        : a.run(env) * b.run(env),
+                          }
+            );
+        }
     );
-});
+
+it.live.prop(
+    "generated action defaults and finite queries agree with an independent expression oracle",
+    [
+        numeric(3),
+        Schema.Struct({
+            n: Schema.Int.check(Schema.isBetween({ minimum: -10, maximum: 10 })),
+            flag: Schema.Boolean,
+            text: Schema.String.check(Schema.isMaxLength(8)),
+        }),
+    ],
+    ([tree, env]) =>
+        Effect.gen(function* () {
+            const ir = definition();
+            ir.actionTypes[0]!.parameters.push({
+                ...p("result", o.double({})),
+                defaultValue: tree.expression,
+            });
+            expect(validate(ir).kind).toBe("ok");
+            const expected = tree.run(env);
+            const action = actionExpressions({
+                ir,
+                tx: noIO,
+                request: { id: "oracle", name: "test", parameters: env },
+            });
+            expect((yield* action.resolve).result).toBe(expected);
+            for (const strategy of ["planned", "reference"] as const) {
+                const result = yield* executeQuery(
+                    { inputs, select: [q.selectField("result", tree.expression)] },
+                    {
+                        reader: { ir, loadSubset: (type, scan) => noIO.loadSubset(type, scan) },
+                        inputs: env,
+                        strategy,
+                    }
+                );
+                expect(result.value.result).toBe(expected);
+            }
+        }),
+    { arbitrary: { runs: 150 } }
+);
 
 test("computed defaults, map bindings and replay UUIDs compose in portable action writes", async () => {
     const ir = definition();

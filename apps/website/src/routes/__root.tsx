@@ -1,5 +1,6 @@
 import { createRootRoute, HeadContent, Link, Outlet, Scripts } from "@tanstack/react-router";
 import { RootProvider } from "fumadocs-ui/provider/tanstack";
+import { SiteHeader } from "../components/site-layout";
 import styles from "../styles.css?url";
 
 export const Route = createRootRoute({
@@ -7,14 +8,17 @@ export const Route = createRootRoute({
         meta: [
             { charSet: "utf-8" },
             { name: "viewport", content: "width=device-width, initial-scale=1" },
-            { title: "Party Stack — Connected data. Local interaction." },
+            { title: "Party Stack — Enjoy the party." },
             {
                 name: "description",
                 content:
-                    "An ontology-aware TypeScript stack for local data, optimistic actions, and connected backends. Built with Effect.",
+                    "Live queries, offline sync, optimistic actions, files, authentication, and authorization. A TypeScript framework built with Effect.",
             },
         ],
-        links: [{ rel: "stylesheet", href: styles }],
+        links: [
+            { rel: "icon", href: "/favicon.svg?v=mirror-dot-e", type: "image/svg+xml" },
+            { rel: "stylesheet", href: styles },
+        ],
     }),
     component: Root,
     notFoundComponent: () => (
@@ -35,8 +39,20 @@ function Root() {
                 <HeadContent />
             </head>
             <body>
-                <RootProvider>
-                    <Outlet />
+                <RootProvider
+                    theme={{
+                        defaultTheme: "system",
+                        enableSystem: true,
+                        storageKey: "party-stack-theme",
+                        hotKey: false,
+                    }}
+                >
+                    <div className="site-shell">
+                        <SiteHeader />
+                        <div className="site-content">
+                            <Outlet />
+                        </div>
+                    </div>
                 </RootProvider>
                 <Scripts />
             </body>

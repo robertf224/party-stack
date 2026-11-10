@@ -40,13 +40,21 @@
             "types": "./lib/query.d.ts",
             "default": "./lib/query.js"
         },
-        "./client": {
-            "types": "./lib/server/client.d.ts",
-            "default": "./lib/server/client.js"
+        "./http": {
+            "types": "./lib/http.d.ts",
+            "default": "./lib/http.js"
         },
-        "./installation/worker": {
-            "types": "./lib/installation/worker.d.ts",
-            "default": "./lib/installation/worker.js"
+        "./local": {
+            "types": "./lib/local.d.ts",
+            "default": "./lib/local.js"
+        },
+        "./worker": {
+            "types": "./lib/worker.d.ts",
+            "default": "./lib/worker.js"
+        },
+        "./authentication": {
+            "types": "./lib/authentication.d.ts",
+            "default": "./lib/authentication.js"
         }
     },
     "scripts": {
@@ -57,6 +65,8 @@
     },
     "dependencies": {
         "@bobbyfidz/panic": "^0.1.0",
+        "@effect/platform-browser": "^4.0.5",
+        "@effect/platform-node": "^4.0.5",
         "@next/env": "^16.1.6",
         "@party-stack/connect": "workspace:*",
         "@party-stack/node-runtime": "workspace:*",
@@ -68,16 +78,14 @@
         "@party-stack/runtime": "workspace:*",
         "@party-stack/sql-ontology-storage": "workspace:*",
         "change-case": "^5.4.4",
-        "commander": "^14.0.2",
         "effect": "^4.0.5",
         "jiti": "^2.6.1",
         "temporal-polyfill": "^0.3.0",
         "zod": "^4.4.3"
     },
     "devDependencies": {
-        "@effect/platform-browser": "^4.0.5",
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.14.0",
+        "@tanstack/db": "1.0.0-rc.1.4",
         "@types/node": "^24.10.1",
         "better-sqlite3": "^12.9.0",
         "tsx": "^4.20.6",
@@ -86,6 +94,6 @@
         "vite-plus": "catalog:"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.14.0"
+        "@tanstack/db": "1.0.0-rc.1.4"
     }
 }

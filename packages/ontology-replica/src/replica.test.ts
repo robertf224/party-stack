@@ -1,3 +1,4 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
@@ -10,6 +11,7 @@ import { expect, test } from "vitest";
 import { makeReplica, type ReplicaService } from "./testing.js";
 import type { ActionRequest, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OwnedTransaction } from "@party-stack/ontology-backend/owned";
+import type { Transaction } from "@party-stack/ontology-storage/tables";
 
 const ir: OntologyIR = {
     types: [],
@@ -415,20 +417,18 @@ test("scoped watcher hints replace idle snapshot polling and repair invalidation
                     ...server,
                     changes: undefined,
                     watchSubset: () =>
-                        Stream.unwrap(
-                            Effect.gen(function* () {
-                                yield* Effect.acquireRelease(
+                        Effect.gen(function* () {
+                            yield* Effect.acquireRelease(
+                                Effect.sync(() => {
+                                    listeners++;
+                                }),
+                                () =>
                                     Effect.sync(() => {
-                                        listeners++;
-                                    }),
-                                    () =>
-                                        Effect.sync(() => {
-                                            listeners--;
-                                        })
-                                );
-                                return Stream.fromQueue(hints);
-                            })
-                        ),
+                                        listeners--;
+                                    })
+                            );
+                            return Stream.fromQueue(hints);
+                        }),
                     loadSubset: (subset) =>
                         Effect.gen(function* () {
                             reads++;
@@ -609,7 +609,7 @@ test("watch-only filtered snapshots repair rows that leave a filter without trea
                     backend: {
                         ...server,
                         changes: undefined,
-                        watchSubset: () => Stream.fromPubSub(hints),
+                        watchSubset: () => PubSub.subscribe(hints).pipe(Effect.map(Stream.fromSubscription)),
                         loadSubset: (request) =>
                             Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
                                 Effect.suspend(() => {
@@ -871,7 +871,8 @@ test("background demand IO survives one consumer's cancellation and stops after 
                     tables: yield* Memory.make(),
                     objectCacheGc: false,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: false,
@@ -888,7 +889,7 @@ test("background demand IO survives one consumer's cancellation and stops after 
                                     }).pipe(Effect.andThen(Deferred.succeed(stopped, undefined)))
                                 )
                             ),
-                    },
+                    }),
                 });
                 const first = yield* Scope.fork(yield* Effect.scope);
                 const second = yield* Scope.fork(yield* Effect.scope);
@@ -927,7 +928,8 @@ test("one nonretryable subset cannot starve another subset or the outbox", async
                     startSync: false,
                     objectCacheGc: false,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "fixture",
                         sourceId: "fixture",
                         supportsIdempotency: true,
@@ -960,7 +962,7 @@ test("one nonretryable subset cannot starve another subset or the outbox", async
                         applyAction: (request) =>
                             Effect.succeed({ operationId: request.id, outcome: "committed", affected: [] }),
                         queryFunction: () => Effect.void,
-                    },
+                    }),
                 });
                 yield* replica.demand(bad);
                 yield* replica.demand(good);
@@ -1013,7 +1015,8 @@ test("a fatal journal error stops background source IO until explicitly recovere
                     startSync: false,
                     objectCacheGc: false,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "source",
                         sourceId: "source",
                         supportsIdempotency: true,
@@ -1036,7 +1039,7 @@ test("a fatal journal error stops background source IO until explicitly recovere
                                         : Effect.succeed({ commits: [], cursor: "empty", hasMore: false });
                                 }),
                         },
-                    },
+                    }),
                 });
                 expect(yield* Effect.result(replica.syncOnce)).toMatchObject({
                     _tag: "Failure",
@@ -1074,7 +1077,8 @@ test("journal retry deadlines are not extended by intervening callers", async ()
                     startSync: false,
                     objectCacheGc: false,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "source",
                         sourceId: "source",
                         supportsIdempotency: true,
@@ -1097,7 +1101,7 @@ test("journal retry deadlines are not extended by intervening callers", async ()
                                         : Effect.succeed({ commits: [], cursor: "empty", hasMore: false })
                                 ),
                         },
-                    },
+                    }),
                 });
                 expect((yield* Effect.result(replica.syncOnce))._tag).toBe("Failure");
                 yield* TestClock.adjust(3_000);
@@ -1126,7 +1130,8 @@ test("canceling a query wait cannot interrupt an already submitting outbox actio
                     startSync: true,
                     objectCacheGc: false,
                     execute: () => Effect.void,
-                    backend: {
+                    backend: makeOntologyBackend({
+                        ir,
                         name: "source",
                         sourceId: "source",
                         supportsIdempotency: false,
@@ -1143,7 +1148,7 @@ test("canceling a query wait cannot interrupt an already submitting outbox actio
                                     affected: [],
                                 };
                             }),
-                    },
+                    }),
                 });
                 yield* replica.enqueue({ id: "write", name: "increment", parameters: {} });
                 const queryScope = yield* Scope.fork(yield* Effect.scope);
@@ -1167,6 +1172,87 @@ test("canceling a query wait cannot interrupt an already submitting outbox actio
                 });
                 expect(submissions).toBe(1);
                 expect(yield* replica.pending).toEqual([]);
+            })
+        )
+    );
+});
+
+test("whole snapshot refreshes preserve unchanged objects and only write changed or missing keys", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const local = yield* Memory.make();
+                let rows = [
+                    { key: "a", value: { id: "a", count: 1 } },
+                    { key: "b", value: { id: "b", count: 2 } },
+                ];
+                const writes: string[] = [];
+                let maxRetentionBatch = 0;
+                const replica = yield* makeReplica({
+                    namespace: "snapshot-diff",
+                    ir,
+                    execute,
+                    startSync: false,
+                    tables: {
+                        ...local,
+                        transaction: (body) =>
+                            local.transaction((tx) => {
+                                const isBase = (name: string) => name.endsWith('"base:Counter"]');
+                                const instrumented: Transaction = {
+                                    ...tx,
+                                    put: (table, key, value) =>
+                                        Effect.suspend(() => {
+                                            if (isBase(table.name)) writes.push(`put:${key}`);
+                                            return tx.put(table, key, value);
+                                        }),
+                                    putMany: (table, rows) =>
+                                        Effect.suspend(() => {
+                                            if (isBase(table.name))
+                                                writes.push(...rows.map((row) => `put:${row.key}`));
+                                            if (table.name.endsWith('"retention"]'))
+                                                maxRetentionBatch = Math.max(maxRetentionBatch, rows.length);
+                                            return tx.putMany(table, rows);
+                                        }),
+                                    delete: (table, key) =>
+                                        Effect.suspend(() => {
+                                            if (isBase(table.name)) writes.push(`delete:${key}`);
+                                            return tx.delete(table, key);
+                                        }),
+                                    clear: (table) =>
+                                        Effect.suspend(() => {
+                                            if (isBase(table.name)) writes.push("clear");
+                                            return tx.clear(table);
+                                        }),
+                                };
+                                return body(instrumented);
+                            }),
+                    },
+                    backend: makeOntologyBackend({
+                        ir,
+                        name: "snapshots",
+                        sourceId: "snapshots",
+                        supportsIdempotency: false,
+                        loadSubset: () => Effect.succeed({ rows, complete: true }),
+                        applyAction: () => Effect.die("unused"),
+                        queryFunction: () => Effect.die("unused"),
+                    }),
+                });
+                yield* replica.demand({ objectType: "Counter" });
+                yield* replica.syncOnce;
+                expect(maxRetentionBatch).toBeGreaterThan(1);
+                expect(maxRetentionBatch).toBeLessThanOrEqual(128);
+                writes.length = 0;
+                yield* replica.invalidate();
+                yield* replica.syncOnce;
+                expect(writes).toEqual([]);
+                rows = [
+                    { key: "b", value: { id: "b", count: 3 } },
+                    { key: "c", value: { id: "c", count: 4 } },
+                ];
+                yield* replica.invalidate();
+                yield* replica.syncOnce;
+                expect(writes).toEqual(["delete:a", "put:b", "put:c"]);
+                expect(yield* replica.loadSubset("Counter")).toEqual(rows);
             })
         )
     );

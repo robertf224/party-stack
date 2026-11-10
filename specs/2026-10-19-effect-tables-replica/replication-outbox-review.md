@@ -374,9 +374,9 @@ Review direction, not yet implemented:
   shared action execution below that dependency boundary. Renaming the callback or
   wrapping it in a service alone does not remove the architectural split. Apps
   should configure their custom mutators, not supply the replay algorithm.
-- Preserve application write admission/visibility defaults: direct versus outbox,
-  and confirmed versus optimistic. Both action call modes await confirmation by
-  default. Use outbox.retryPolicy for grouped retry bounds/delay; keep terminal
+- Preserve confirmed versus optimistic visibility defaults. Replica actions always
+  queue in the outbox and await confirmation; the former direct/outbox admission
+  flag is removed. Use outbox.retryPolicy for grouped retry bounds/delay; keep terminal
   failureStrategy and completed result retention distinct from retry scheduling.
 - Group completed action result retention under outbox/action configuration.
   Pending/blocked intent does not expire under that retention window.
@@ -519,9 +519,9 @@ Cached proxy writes remain request-only forwarding: the caller owns recovery.
 Invalidation stales coverage and ordinary sync repairs the read cache; it is not a
 second durable receipt reconciler. A nonoptimistic intermediate replica can own
 writes durably while hiding predictions, and should reuse the normal outbox and
-receipt engine. Direct admission, prediction visibility and durable write ownership
-are separate choices. Do not duplicate outbox state inside the cached proxy to
-approximate that mode. This checkpoint does not change cached-proxy semantics.
+receipt engine. Prediction visibility and durable write ownership are separate
+choices. Do not duplicate outbox state inside the cached proxy to approximate
+replica ownership. This checkpoint does not change cached-proxy semantics.
 
 DO follow-up: the owned Alchemy resource already schedules backend maintenance
 and blob GC. An intermediate replica DO needs platform SQL/R2 composition,

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { storageError } from "@party-stack/ontology-storage/driver";
 import { Runtime, RuntimeError, makeKeyMaterialStoreKeyring, RuntimePartition } from "@party-stack/runtime";
+import { Runtimes } from "@party-stack/runtime";
 import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
 import * as SqlTables from "@party-stack/sql-ontology-storage/tables";
 import Database from "better-sqlite3";
@@ -99,3 +100,5 @@ export const make = Effect.fn("NodeRuntime.make")(function* (options: CreateNode
 });
 
 export const layer = (options: CreateNodeRuntimeOptions = {}) => Layer.effect(Runtime, make(options));
+export const nodeRuntime = (options: CreateNodeRuntimeOptions = {}) =>
+    Runtimes.layer(layer(options), { browserAuthentication: createNodeBrowserAuthentication() });

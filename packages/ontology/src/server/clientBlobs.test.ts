@@ -12,14 +12,14 @@ import {
     OntologyRpcs,
 } from "@party-stack/ontology-server/rpc";
 import { byteSource, collectByteBlob, makeBlobStorage } from "@party-stack/ontology-storage/blobs";
-import { MemoryBlobBytesStore, Runtime } from "@party-stack/runtime";
+import { MemoryBlobBytesStore, Runtime, Runtimes } from "@party-stack/runtime";
 import { makeTestRuntime } from "@party-stack/runtime/testing";
 import { Deferred, Effect, Fiber, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
 import { expect, test, vi } from "vite-plus/test";
 import { replicaController } from "../../../ontology-replica/lib/internal.js";
+import { makeLiveOntology } from "../live/LiveOntology.js";
 import { makeReplicaLiveOntology } from "../runtime/live.js";
-import { connectLiveOntology } from "./client.js";
 
 const ir: OntologyIR = {
     types: [],
@@ -73,20 +73,32 @@ test("an owned RPC parent accepts locally staged child attachments through its c
                     mutators,
                 });
                 const rpc = yield* RpcTest.makeClient(OntologyRpcs).pipe(
-                    Effect.provide(ontologyRpcHandlers({ backend, ir, authorize: () => Effect.void }))
+                    Effect.provide(
+                        ontologyRpcHandlers({
+                            enableRealtime: true,
+                            backend,
+                            ir,
+                            authorize: () => Effect.void,
+                        })
+                    )
                 );
-                const connection = yield* makeOntologyProtocolClient(rpc);
-                expect(connection.replication.kind).toBe("committed");
+                const client = yield* makeOntologyProtocolClient(rpc);
+                expect(client.replication.kind).toBe("committed");
                 const childRuntime = yield* makeTestRuntime({
                     owner: "user",
                     namespace: "committed-child",
                     blobBytes: new MemoryBlobBytesStore(),
                 });
-                const child = yield* connectLiveOntology({
+                const child = yield* makeLiveOntology({
                     ir,
-                    connection: Effect.succeed(connection),
-                    writes: { defaultMode: "outbox", defaultVisibility: "optimistic", mutators },
-                }).pipe(Effect.provideService(Runtime, childRuntime));
+                    client: Effect.succeed(client),
+                    writes: { defaultVisibility: "optimistic", mutators },
+                }).pipe(
+                    Effect.provideService(
+                        Runtimes,
+                        Runtimes.of({ acquire: () => Effect.succeed(childRuntime) })
+                    )
+                );
                 const { attachment } = yield* Effect.promise(() =>
                     child.attachments.create(new Blob(["committed bytes"]))
                 );
@@ -178,33 +190,37 @@ test("a speculative client stages locally, transfers before acceptance, and stre
                     ir,
 
                     context: {},
-                    backendAdapter: { name: "authority", open: () => Effect.succeed(backend) },
-                    writes: { defaultMode: "outbox", defaultVisibility: "optimistic", mutators },
+                    backend,
+                    writes: { defaultVisibility: "optimistic", mutators },
                 }).pipe(Effect.provideService(Runtime, parentRuntime));
                 const rpc = yield* RpcTest.makeClient(OntologyRpcs).pipe(
                     Effect.provide(
                         ontologyServerHandlers({
                             kind: "replica",
                             ir,
-                            replica: parent.storage!,
+                            replica: parent.replica,
                             backend,
-                            authorize: () => Effect.void,
-                            errors: "forward",
+                            dangerouslyAllowInternalAccess: true,
                         })
                     )
                 );
-                const connection = yield* makeOntologyProtocolClient(rpc);
+                const client = yield* makeOntologyProtocolClient(rpc);
                 const childBytes = new MemoryBlobBytesStore();
                 const childRuntime = yield* makeTestRuntime({
                     owner: "user",
                     namespace: "child",
                     blobBytes: childBytes,
                 });
-                const child = yield* connectLiveOntology({
+                const child = yield* makeLiveOntology({
                     ir,
-                    connection: Effect.succeed(connection),
-                    writes: { defaultMode: "outbox", defaultVisibility: "optimistic", mutators },
-                }).pipe(Effect.provideService(Runtime, childRuntime));
+                    client: Effect.succeed(client),
+                    writes: { defaultVisibility: "optimistic", mutators },
+                }).pipe(
+                    Effect.provideService(
+                        Runtimes,
+                        Runtimes.of({ acquire: () => Effect.succeed(childRuntime) })
+                    )
+                );
                 expect(
                     yield* Effect.promise(() =>
                         child.attachments.metadata({ id: "metadata-only" }, { select: ["size"] })
@@ -222,7 +238,7 @@ test("a speculative client stages locally, transfers before acceptance, and stre
                     child.attachments.metadata({ id: "metadata-only" }, { select: ["size"] })
                 );
                 expect(metadata).toHaveBeenCalledOnce();
-                yield* replicaController(child.storage!).retainLocal("Item");
+                yield* replicaController(child.replica).retainLocal("Item");
                 const created = yield* Effect.promise(() =>
                     child.attachments.create(new Blob(["headtail"], { type: "text/plain" }))
                 );

@@ -18,6 +18,10 @@
             "types": "./lib/protocol.d.ts",
             "default": "./lib/protocol.js"
         },
+        "./description": {
+            "types": "./lib/description.d.ts",
+            "default": "./lib/description.js"
+        },
         "./delivery": {
             "types": "./lib/delivery.d.ts",
             "default": "./lib/delivery.js"
@@ -57,10 +61,9 @@
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
-        "@fast-check/vitest": "^0.5.0",
+        "@effect/vitest": "^4.0.5",
         "@party-stack/build-config": "workspace:*",
         "effect": "^4.0.5",
-        "fast-check": "^4.10.2",
         "typescript": "~7.0.2",
         "vite": "catalog:",
         "vite-plus": "catalog:",

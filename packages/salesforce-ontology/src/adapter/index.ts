@@ -1,2 +1,2 @@
-export * from "./createSalesforceOntologyBackendAdapter.js";
+export * from "./makeSalesforceOntologyBackend.js";
 export * from "./salesforceCodec.js";
