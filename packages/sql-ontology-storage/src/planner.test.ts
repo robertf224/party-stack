@@ -1,4 +1,4 @@
-import * as PgliteClient from "@effect/sql-pglite/PgLiteClient";
+import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { type StoredIndex } from "@party-stack/ontology-storage/driver";
 import {
