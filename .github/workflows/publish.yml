@@ -30,6 +30,9 @@ jobs:
                   key: vite-task-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
                   restore-keys: |
                       vite-task-${{ runner.os }}-${{ runner.arch }}-
+            - name: Install test browser
+              working-directory: packages/ontology-react
+              run: vp exec playwright install --with-deps chromium
             - name: Check, build, and test
               run: vp run ci
             - name: Save Vite Task cache
