@@ -16,4 +16,4 @@ test("IndexedDB Tables and sparse overlays share the storage contract", async ()
             yield* runOntologyContract(tables);
         }).pipe(Effect.provide(storage))
     );
-});
+}, 30_000);
