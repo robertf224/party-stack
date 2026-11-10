@@ -1,5 +1,25 @@
 # @party-stack/issue-tracker
 
+## 0.2.26
+
+### Patch Changes
+
+- Updated dependencies [501b4a5]
+    - @party-stack/ontology-spec@0.3.0
+    - @party-stack/ontology@0.22.0
+    - @party-stack/better-auth@0.4.1
+    - @party-stack/connect@0.2.1
+    - @party-stack/foundry-ontology@0.20.1
+    - @party-stack/ontology-backend@0.2.1
+    - @party-stack/ontology-replica@0.2.1
+    - @party-stack/ontology-server@0.11.1
+    - @party-stack/ontology-storage@0.2.1
+    - @party-stack/sql-ontology-storage@0.2.1
+    - @party-stack/web-runtime@0.5.1
+    - @party-stack/ontology-devtools@0.7.1
+    - @party-stack/ontology-react@0.2.1
+    - @party-stack/runtime@0.5.1
+
 ## 0.2.25
 
 ### Patch Changes

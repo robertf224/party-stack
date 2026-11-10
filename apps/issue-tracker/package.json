@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/issue-tracker",
-    "version": "0.2.25",
+    "version": "0.2.26",
     "private": true,
     "type": "module",
     "scripts": {
