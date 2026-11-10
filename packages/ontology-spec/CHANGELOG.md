@@ -1,5 +1,17 @@
 # @party-stack/ontology-spec
 
+## 0.3.0
+
+### Minor Changes
+
+- 501b4a5: Rename the expression helper from `row(name)` to `local(name)`, matching the
+  underlying `localReference` expression. The helper can reference any locally
+  bound value, including query rows and scalar map items.
+
+    Update related query sources to `related(local("project"), "issues")`.
+    `related` still accepts an expression; query sources currently require an ancestor
+    local binding. The generated IR is unchanged, including persisted pin definitions.
+
 ## 0.2.0
 
 ### Minor Changes
