@@ -20,8 +20,9 @@ worker acquisition, authentication, IndexedDB or the SDK's backend construction.
 The synthetic sources contain five Note rows normally, or 101 rows for the 50-row
 pagination case. This is a lifecycle test, not a Notes load benchmark.
 
-Seven internal allocator cases passed, including staggered boot held beyond native
-GC, StrictMode replay, live updates, ordinary query GC after unmount, failed
+Eight internal allocator cases cover staggered boot held beyond native
+GC, StrictMode replay, live updates, ordinary query GC after unmount, idle cleanup
+deferred until its deadline in a busy browser, failed
 preparation cleanup and late abandoned acquisition. Successful consumers committed
 zero provider/data fallbacks. The 50-row case renders exactly 50 rows from its
 51-row initial window, then 100 after pagination, through `useListFragment` over

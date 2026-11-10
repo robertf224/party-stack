@@ -56,6 +56,17 @@ async function withFixture(mode: string, run: (page: Page) => Promise<void>) {
     try {
         await server.listen();
         const page = await browser.newPage();
+        if (mode.includes("deferred-gc")) {
+            // Exercise a busy browser: idle cleanup only runs at its deadline.
+            await page.addInitScript(() => {
+                window.requestIdleCallback = (callback, options) =>
+                    window.setTimeout(
+                        () => callback({ didTimeout: true, timeRemaining: () => 0 }),
+                        options?.timeout ?? 1000
+                    );
+                window.cancelIdleCallback = (id) => window.clearTimeout(id);
+            });
+        }
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
         await page.goto(`${server.resolvedUrls!.local[0]}e2e/leased-boot.html?${mode}`);
@@ -77,7 +88,7 @@ async function withFixture(mode: string, run: (page: Page) => Promise<void>) {
     }
 }
 
-test.each(["root", "nested", "root&stagger", "root&page50"])(
+test.each(["root", "nested", "root&stagger", "root&page50", "root&deferred-gc"])(
     "an explicit query lease preserves %s fragment refs through the same-Collection handoff",
     async (mode) => {
         await withFixture(mode, async (page) => {
@@ -149,9 +160,12 @@ test.each(["root", "nested", "root&stagger", "root&page50"])(
             await expect.poll(() => page.getByTestId("ids").textContent()).toBe(ids(size * 2));
             expect((await state(page)).fallbacks).toBe(0);
             await page.evaluate(() => (Reflect.get(window, "leasedBootFixture") as Fixture).unmount());
+            // DB waits for browser idle time (up to one second) after gcTime.
+            // The default one-second poll races that legitimate cleanup deadline.
             await expect
-                .poll(async () =>
-                    (await state(page)).queryStatuses.every((status) => status === "cleaned-up")
+                .poll(
+                    async () => (await state(page)).queryStatuses.every((status) => status === "cleaned-up"),
+                    { timeout: 5000 }
                 )
                 .toBe(true);
             expect((await state(page)).closed).toBe(0); // Provider never owns the view.
