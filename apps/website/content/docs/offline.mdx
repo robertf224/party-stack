@@ -14,7 +14,7 @@ constructed at runtime from a dynamic ontology.
 
 ```ts
 import { definePin, o } from "@party-stack/ontology";
-import { eq, field, input, related, row, sub } from "@party-stack/ontology/query";
+import { eq, field, input, related, local, sub } from "@party-stack/ontology/query";
 
 export const downloadProject = definePin<{ projectId: string }>("downloadProject", {
     attachments: "all",
@@ -26,7 +26,7 @@ export const downloadProject = definePin<{ projectId: string }>("downloadProject
                 where: eq(field("project", "id"), input("projectId")),
                 select: [
                     sub("issues", {
-                        from: { source: related(row("project"), "issues"), binding: "issue" },
+                        from: { source: related(local("project"), "issues"), binding: "issue" },
                         select: [],
                     }),
                 ],
@@ -36,8 +36,9 @@ export const downloadProject = definePin<{ projectId: string }>("downloadProject
 });
 ```
 
-`related(row("project"), "issues")` follows the ontology’s declared `issues` link;
-the source supplies the target object type and correlation.
+`local("project")` references the parent query's `project` binding.
+`related(local("project"), "issues")` follows its declared `issues` link, which
+supplies the target object type and correlation.
 
 Each query node retains whole objects; `select: []` is enough at a leaf. Nested
 queries describe related objects to retain, and their predicates can refer to

@@ -2,7 +2,7 @@ import { it } from "@effect/vitest";
 import { o } from "@party-stack/ontology-spec";
 import {
     related,
-    row,
+    local,
     context,
     contains,
     eq,
@@ -68,7 +68,7 @@ const ir: OntologyIR = {
     ],
 };
 const issueQuery = () => ({
-    from: { source: related(row("p"), "issues"), binding: "i" },
+    from: { source: related(local("p"), "issues"), binding: "i" },
     orderBy: [{ expression: field("i", "rank"), direction: "desc" as const }],
     page: { limit: 2 },
     select: [selectField("id", field("i", "id")), selectField("title", field("i", "title"))],
@@ -324,7 +324,7 @@ describe("finite hierarchical queries", () => {
                         sub(
                             "project",
                             {
-                                from: { source: related(row("i"), "project"), binding: "p" },
+                                from: { source: related(local("i"), "project"), binding: "p" },
                                 select: [selectField("title", field("p", "title"))],
                             },
                             "one"

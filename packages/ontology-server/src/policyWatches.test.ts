@@ -266,7 +266,7 @@ test("related expression dependencies include both ends of the referenced link",
                                     where: q.eq(
                                         o.Expression.getAt({
                                             source: o.Expression.related({
-                                                source: q.row("f"),
+                                                source: q.local("f"),
                                                 link: "project",
                                             }),
                                             path: ["owner"],

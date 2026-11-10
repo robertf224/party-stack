@@ -45,9 +45,10 @@ export const context = (name: string, ...path: string[]): Expression => {
 };
 /** Follow a declared link from an ancestor query row. */
 export const related = (source: Expression, link: string): QuerySource => ({ related: { source, link } });
-export const row = (binding: string): Expression => o.Expression.localReference({ name: binding });
-export const field = (binding: string, ...path: string[]): Expression =>
-    o.Expression.getAt({ source: row(binding), path });
+/** Reference the value of a local binding in an expression. */
+export const local = (name: string): Expression => o.Expression.localReference({ name });
+export const field = (name: string, ...path: string[]): Expression =>
+    o.Expression.getAt({ source: local(name), path });
 
 const binary =
     (

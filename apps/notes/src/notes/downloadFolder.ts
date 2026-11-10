@@ -1,5 +1,5 @@
 import { definePin, o } from "@party-stack/ontology";
-import { eq, field, input, literal, related, row, sub } from "@party-stack/ontology/query";
+import { eq, field, input, literal, related, local, sub } from "@party-stack/ontology/query";
 
 export const downloadFolder = definePin<{ folderId: string }>("downloadFolder", {
     attachments: "all",
@@ -11,11 +11,14 @@ export const downloadFolder = definePin<{ folderId: string }>("downloadFolder", 
                 where: eq(field("folder", "id"), input("folderId")),
                 select: [
                     sub("notes", {
-                        from: { source: related(row("folder"), "notes"), binding: "note" },
+                        from: { source: related(local("folder"), "notes"), binding: "note" },
                         where: eq(field("note", "trashed"), literal(false)),
                         select: [
                             sub("attachments", {
-                                from: { source: related(row("note"), "attachments"), binding: "attachment" },
+                                from: {
+                                    source: related(local("note"), "attachments"),
+                                    binding: "attachment",
+                                },
                                 select: [],
                             }),
                         ],

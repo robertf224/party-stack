@@ -242,7 +242,7 @@ test("computed defaults, map bindings and replay UUIDs compose in portable actio
                     value: o.Expression.map({
                         source: q.literal([1, 2, 3]),
                         binding: "item",
-                        body: q.add(q.row("item"), q.input("n")),
+                        body: q.add(q.local("item"), q.input("n")),
                     }),
                 },
             ],

@@ -11,7 +11,7 @@ import {
     literal,
     related,
     resolveQuerySources,
-    row,
+    local,
     selectField,
     sub,
     validateQueryDocument,
@@ -39,7 +39,7 @@ const ir: OntologyIR = {
         },
     ],
 };
-const document = (source: QuerySource = related(row("p"), "issues")): QueryDocument => ({
+const document = (source: QuerySource = related(local("p"), "issues")): QueryDocument => ({
     select: [
         sub("projects", {
             from: { source: { objectType: "Project" }, binding: "p" },
@@ -84,11 +84,11 @@ test("related sources round-trip on the wire and lower to the explicit join", ()
 
 test.each([
     [{}, "requires"],
-    [related(row("missing"), "issues"), "ancestor"],
-    [related(row("p"), "missing"), "link"],
+    [related(local("missing"), "issues"), "ancestor"],
+    [related(local("p"), "missing"), "link"],
     [related(literal("p"), "issues"), "ancestor"],
-    [{ ...related(row("p"), "issues"), objectType: "Issue" }, "inherits"],
-    [{ ...related(row("p"), "issues"), ontology: "other" }, "inherits"],
+    [{ ...related(local("p"), "issues"), objectType: "Issue" }, "inherits"],
+    [{ ...related(local("p"), "issues"), ontology: "other" }, "inherits"],
 ] satisfies [QuerySource, string][])("rejects invalid sources before execution: %j", (source, message) => {
     expect(validateQueryDocument(ir, document(source)).some((issue) => issue.message.includes(message))).toBe(
         true
@@ -96,7 +96,7 @@ test.each([
 });
 
 test("link sources inherit a named ontology and work inside EXISTS", () => {
-    const child = { from: { source: related(row("i"), "project"), binding: "p" }, select: [] };
+    const child = { from: { source: related(local("i"), "project"), binding: "p" }, select: [] };
     const query: QueryDocument = {
         select: [
             sub("issues", {
@@ -138,7 +138,7 @@ test("self links resolve direction by endpoint name and ambiguous links fail", (
         ],
     };
     for (const name of ["children", "parent"])
-        expect(validateQueryDocument(self, document(related(row("p"), name)))).toEqual([]);
+        expect(validateQueryDocument(self, document(related(local("p"), name)))).toEqual([]);
     const ambiguous = { ...ir, linkTypes: [...ir.linkTypes, { ...ir.linkTypes[0]!, id: "duplicate" }] };
     expect(validateQueryDocument(ambiguous, document())[0]?.message).toContain("ambiguous");
 });

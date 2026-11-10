@@ -57,11 +57,11 @@ const projectObjects = {
             select: [
                 ...fields("p", "id", "name"),
                 q.sub("forms", {
-                    from: { source: q.related(q.row("p"), "forms"), binding: "f" },
+                    from: { source: q.related(q.local("p"), "forms"), binding: "f" },
                     select: [
                         ...fields("f", "id", "name", "projectId"),
                         q.sub("revisions", {
-                            from: { source: q.related(q.row("f"), "revisions"), binding: "r" },
+                            from: { source: q.related(q.local("f"), "revisions"), binding: "r" },
                             select: fields("r", "id", "formId", "createdAt"),
                         }),
                     ],
@@ -230,13 +230,13 @@ const tokenIR = {
                         q.sub(
                             "person",
                             {
-                                from: { source: q.related(q.row("a"), "person"), binding: "p" },
+                                from: { source: q.related(q.local("a"), "person"), binding: "p" },
                                 select: fields("p", "id", "name"),
                             },
                             "one"
                         ),
                         q.sub("bids", {
-                            from: { source: q.related(q.row("a"), "bids"), binding: "b" },
+                            from: { source: q.related(q.local("a"), "bids"), binding: "b" },
                             select: fields("b", "id", "postId", "status"),
                         }),
                     ],
