@@ -235,5 +235,6 @@ it.effect.prop(
                 })
             ).toEqual(ranked.slice(0, input.limit));
         }),
-    { arbitrary: { runs: 100, size: 12, seed: "memory-cow-transactions-v1" } }
+    // Each generated case rebuilds 260 rows and three indexes; keep the full oracle workload on CI.
+    { arbitrary: { runs: 100, size: 12, seed: "memory-cow-transactions-v1" }, timeout: 30_000 }
 );

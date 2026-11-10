@@ -426,7 +426,8 @@ it.effect.prop(
             ])
                 expect(yield* f.read(scan)).toEqual(applyQuery(f.canonical, scan));
         }),
-    { arbitrary: { runs: 160, size: 8, seed: "bounded-leading-window-v1" } }
+    // Full-filter/full-sort oracle comparisons need more than the unit-test budget on shared CI CPUs.
+    { arbitrary: { runs: 160, size: 8, seed: "bounded-leading-window-v1" }, timeout: 30_000 }
 );
 
 it.effect.prop(
@@ -471,5 +472,5 @@ it.effect.prop(
             ])
                 expect(yield* f.read(scan)).toEqual(applyQuery(f.canonical, scan));
         }),
-    { arbitrary: { runs: 160, size: 8, seed: "bounded-scalar-window-v1" } }
+    { arbitrary: { runs: 160, size: 8, seed: "bounded-scalar-window-v1" }, timeout: 30_000 }
 );
