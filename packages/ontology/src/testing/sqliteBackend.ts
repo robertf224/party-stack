@@ -1,0 +1,54 @@
+import { BackendError } from "@party-stack/ontology-backend";
+import { byteIO, byteSource, type ByteInput } from "@party-stack/ontology-storage/blobs";
+import * as SQLite from "@party-stack/sql-ontology-storage/sqlite";
+import { Effect } from "effect";
+import { makeStorageOntologyBackend, type StorageOntologyBackendOptions } from "../live/storageBackend.js";
+export interface SQLiteDatabase extends SQLite.SQLiteDatabase {
+    prepare(sql: string): SQLite.SQLiteStatement & { get(...parameters: unknown[]): unknown };
+    transaction(body: () => void): () => void;
+}
+export interface SQLiteAttachmentBytesStore {
+    write(id: string, blob: ByteInput, signal?: AbortSignal): Promise<void>;
+    read(id: string): Promise<ByteInput | undefined>;
+    delete(id: string): Promise<void>;
+}
+export interface SQLiteAttachmentStorageOptions {
+    external?: { bytes: SQLiteAttachmentBytesStore };
+}
+type Options = Omit<StorageOntologyBackendOptions, "namespace" | "tables" | "blobs"> & {
+    database: SQLiteDatabase;
+    name?: string;
+    attachmentStorage?: SQLiteAttachmentStorageOptions;
+};
+export const makeSQLiteTestBackend = Effect.fnUntraced(
+    function* (options: Options) {
+        const namespace = options.name ?? "sqlite";
+        const external = options.attachmentStorage?.external;
+        const storage = yield* SQLite.makeStorage(options.database, {
+            namespace,
+            attachmentBytesRetentionMode: "authoritative",
+            bytes: external
+                ? {
+                      read: (key) =>
+                          Effect.tryPromise(() => external.bytes.read(key)).pipe(
+                              Effect.map((value) => (value === undefined ? undefined : byteSource(value)))
+                          ),
+                      write: (key, blob) => byteIO((signal) => external.bytes.write(key, blob, signal)),
+                      delete: (key) => Effect.tryPromise(() => external.bytes.delete(key)),
+                  }
+                : undefined,
+        });
+        return yield* makeStorageOntologyBackend({ ...options, ...storage, namespace });
+    },
+    Effect.mapError((cause) =>
+        cause instanceof BackendError
+            ? cause
+            : new BackendError({
+                  operation: "sqlite.open",
+                  kind: "Unavailable",
+                  message: "SQLite storage failed.",
+                  retryable: false,
+                  cause,
+              })
+    )
+);

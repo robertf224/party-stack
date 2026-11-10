@@ -27,7 +27,7 @@ export function worktreeDev(options: WorktreeDevOptions = {}): Plugin {
         enforce: "pre",
         apply: (_config, env) => env.command === "serve" && !env.isPreview,
         async config(config, env) {
-            if (process.env.VP_RESOLVING_CONFIG_METADATA) return;
+            if (process.env.VP_RESOLVING_CONFIG_METADATA || env.mode === "test") return;
             const root = config.root ?? process.cwd();
             if (
                 options.env !== false &&

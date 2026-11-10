@@ -1,0 +1,136 @@
+diff --git a/dist/cjs/useLiveQuery.cjs b/dist/cjs/useLiveQuery.cjs
+index 434dae15bc180415a97852602f4c66b754b5cdfd..cdbc59c50a36cf38291f06d55ae8335f03fcd7c4 100644
+--- a/dist/cjs/useLiveQuery.cjs
++++ b/dist/cjs/useLiveQuery.cjs
+@@ -175,7 +175,7 @@ Or switch to syncMode "eager" if you want all data to sync automatically.`
+               commitWindow = move;
+             },
+             // Without a DbClient, Suspense starts it through a preload below.
+-            startSync: !forSuspense || dbClient !== void 0
++            startSync: !forSuspense
+           });
+           if (collection && !db.isCollection(preparedQueryValue)) {
+             instance.cancelReclaimRelease?.();
+@@ -221,7 +221,7 @@ Or switch to syncMode "eager" if you want all data to sync automatically.`
+       }
+       claim?.();
+     });
+-    if (forSuspense && !dbClient && (instance.collection?.status === `idle` || instance.collection?.status === `cleaned-up`)) {
++    if (forSuspense && (!dbClient || typeof window !== `undefined`) && (instance.collection?.status === `idle` || instance.collection?.status === `cleaned-up`)) {
+       observer.preload().catch(() => {
+       });
+     }
+@@ -269,4 +269,3 @@ exports.getIdentityScope = getIdentityScope;
+ exports.prepareDerivedQuery = prepareDerivedQuery;
+ exports.useLiveQuery = useLiveQuery;
+ exports.useLiveQueryImpl = useLiveQueryImpl;
+-//# sourceMappingURL=useLiveQuery.cjs.map
+diff --git a/dist/cjs/useLiveSuspenseQuery.cjs b/dist/cjs/useLiveSuspenseQuery.cjs
+index 7e1a52875fad00474a6e8aa0c34638ad37b0f1cc..d1cd2d20196853f723200ba4f4245cc361ba87b3 100644
+--- a/dist/cjs/useLiveSuspenseQuery.cjs
++++ b/dist/cjs/useLiveSuspenseQuery.cjs
+@@ -62,8 +62,7 @@ class SuspenseBinding {
+         `status:change`,
+         ({ status }) => {
+           if (status === `cleaned-up`) release();
+-          else if (status === `error` || status === `crashed`)
+-            setTimeout(release, 0);
++
+         }
+       );
+     }
+@@ -204,4 +203,3 @@ function useLiveSuspenseQuery(configOrQueryOrCollection) {
+ }
+ exports.SuspenseBinding = SuspenseBinding;
+ exports.useLiveSuspenseQuery = useLiveSuspenseQuery;
+-//# sourceMappingURL=useLiveSuspenseQuery.cjs.map
+diff --git a/dist/esm/useLiveQuery.js b/dist/esm/useLiveQuery.js
+index 490bd344156bce378728ebafd05bee1a5fbd7388..3efc7eab263bacbba3cd0d184c44c91255bfa09b 100644
+--- a/dist/esm/useLiveQuery.js
++++ b/dist/esm/useLiveQuery.js
+@@ -174,7 +174,7 @@ Or switch to syncMode "eager" if you want all data to sync automatically.`
+               commitWindow = move;
+             },
+             // Without a DbClient, Suspense starts it through a preload below.
+-            startSync: !forSuspense || dbClient !== void 0
++            startSync: !forSuspense
+           });
+           if (collection && !isCollection(preparedQueryValue)) {
+             instance.cancelReclaimRelease?.();
+@@ -220,7 +220,7 @@ Or switch to syncMode "eager" if you want all data to sync automatically.`
+       }
+       claim?.();
+     });
+-    if (forSuspense && !dbClient && (instance.collection?.status === `idle` || instance.collection?.status === `cleaned-up`)) {
++    if (forSuspense && (!dbClient || typeof window !== `undefined`) && (instance.collection?.status === `idle` || instance.collection?.status === `cleaned-up`)) {
+       observer.preload().catch(() => {
+       });
+     }
+@@ -267,4 +267,3 @@ export {
+   useLiveQuery,
+   useLiveQueryImpl
+ };
+-//# sourceMappingURL=useLiveQuery.js.map
+diff --git a/dist/esm/useLiveSuspenseQuery.js b/dist/esm/useLiveSuspenseQuery.js
+index 1eca59efe5bebf515c28ebf204227bc24475d949..3ff47e6635f4468a25d8167080cb02d33128944e 100644
+--- a/dist/esm/useLiveSuspenseQuery.js
++++ b/dist/esm/useLiveSuspenseQuery.js
+@@ -60,8 +60,7 @@ class SuspenseBinding {
+         `status:change`,
+         ({ status }) => {
+           if (status === `cleaned-up`) release();
+-          else if (status === `error` || status === `crashed`)
+-            setTimeout(release, 0);
++
+         }
+       );
+     }
+@@ -204,4 +203,3 @@ export {
+   SuspenseBinding,
+   useLiveSuspenseQuery
+ };
+-//# sourceMappingURL=useLiveSuspenseQuery.js.map
+diff --git a/src/useLiveQuery.ts b/src/useLiveQuery.ts
+index 22a01f4eb5ebfb3f3ca3803e34a90f5d94748621..d3e3a5046e831551500e5a8069aa5de46aa0e335 100644
+--- a/src/useLiveQuery.ts
++++ b/src/useLiveQuery.ts
+@@ -691,8 +691,8 @@ export function useLiveQueryImpl(
+             onWindowChange: (move) => {
+               commitWindow = move
+             },
+-            // Without a DbClient, Suspense starts it through a preload below.
+-            startSync: !forSuspense || dbClient !== undefined,
++            // Suspense starts through explicit preload before its first browser snapshot.
++            startSync: !forSuspense,
+           })
+           // A render that never commits releases its deferred sync starts
+           // when garbage collection reclaims the live query it built. A
+@@ -766,10 +766,10 @@ export function useLiveQueryImpl(
+     // A Suspense render asks for its data. Preloading starts the sync run, so a
+     // source that already holds the rows makes it ready before the snapshot is
+     // read instead of suspending once. useLiveSuspenseQuery surfaces failures.
+-    // A DbClient defers source starts past render and owns its streamed query.
++    // Server clients retain streamed admission; browser clients preload here too.
+     if (
+       forSuspense &&
+-      !dbClient &&
++      (!dbClient || typeof window !== `undefined`) &&
+       (instance.collection?.status === `idle` ||
+         instance.collection?.status === `cleaned-up`)
+     ) {
+diff --git a/src/useLiveSuspenseQuery.ts b/src/useLiveSuspenseQuery.ts
+index 8aaef24f0b19a64bd233c8ff5cdc4188c14d95af..dee2e865e60b00f581e614bd0ae728c72a59e0bb 100644
+--- a/src/useLiveSuspenseQuery.ts
++++ b/src/useLiveSuspenseQuery.ts
+@@ -123,9 +123,8 @@ export class SuspenseBinding {
+         `status:change`,
+         ({ status }) => {
+           if (status === `cleaned-up`) release()
+-          // Preserve failures through React's immediate retry.
+-          else if (status === `error` || status === `crashed`)
+-            setTimeout(release, 0)
++          // Failed initial renders must remain adoptable until collection
++          // cleanup too; a zero-delay release can outrun React's retry.
+         },
+       )
+     }

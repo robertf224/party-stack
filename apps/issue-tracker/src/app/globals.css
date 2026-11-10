@@ -9,6 +9,9 @@
     --surface-raised: #ffffff;
     --surface-overlay: #ffffff;
     --surface-border: #e2e8f0;
+    --error-background: #fff1f2;
+    --error-border: #fecdd3;
+    --error-text: #9f1239;
 }
 
 body {
@@ -52,6 +55,71 @@ select {
 
 .surface-base {
     background-color: var(--surface-base);
+}
+
+.app-toast-viewport {
+    position: fixed;
+    top: 80px;
+    right: 24px;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: min(380px, calc(100vw - 32px));
+    outline: none;
+    pointer-events: none;
+}
+
+.app-toast {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    border-width: 1px;
+    border-radius: 12px;
+    padding: 16px;
+    pointer-events: auto;
+    transition:
+        opacity 150ms,
+        transform 150ms;
+}
+
+.app-toast[data-starting-style],
+.app-toast[data-ending-style] {
+    opacity: 0;
+    transform: translateX(16px);
+}
+
+.app-toast[data-limited] {
+    display: none;
+}
+
+.app-toast-icon {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--error-border);
+    border-radius: 50%;
+    background-color: var(--error-background);
+    color: var(--error-text);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.app-toast-close {
+    flex-shrink: 0;
+    border: 0;
+    border-radius: 4px;
+    padding: 0 4px;
+    background: transparent;
+    color: inherit;
+    opacity: 0.6;
+}
+
+.app-toast-close:hover,
+.app-toast-close:focus-visible {
+    opacity: 1;
 }
 
 .surface-sunken {
@@ -149,6 +217,9 @@ select {
         --surface-raised: #1a1e27;
         --surface-overlay: #222833;
         --surface-border: #334155;
+        --error-background: #2b151c;
+        --error-border: #6b2638;
+        --error-text: #fda4af;
     }
 
     ::selection {

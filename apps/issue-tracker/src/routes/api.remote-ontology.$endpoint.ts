@@ -1,105 +1,32 @@
-import { mkdirSync } from "node:fs";
-import { createRemoteOntologyServer } from "@party-stack/remote-ontology/server";
-import {
-    createSQLiteOntologyBackendAdapter,
-    type CreateSQLiteOntologyBackendAdapterOptions,
-} from "@party-stack/sqlite-ontology";
+import { classifyBackendFailure, unauthenticated } from "@party-stack/ontology-backend";
+import { makeOntologyServer, OntologyHttpServer, toWebHandler } from "@party-stack/ontology-server/http";
 import { createFileRoute } from "@tanstack/react-router";
-import Database from "better-sqlite3";
-import ontology from "../ontology/ontology";
-import { auth, issueTrackerUsers } from "../server/auth";
-import type { IssueTrackerOntology } from "../ontology/generated/types";
+import { Effect } from "effect";
+import { auth } from "../server/auth";
+import { serverStorage } from "../server/storage";
 
-mkdirSync("temp", { recursive: true });
+const serverLayer = OntologyHttpServer.layer(
+    makeOntologyServer({
+        enableRealtime: true,
+        kind: "owned",
+        backend: serverStorage.backend,
+        authenticate: Effect.fn("IssueTracker.authenticate")(function* (request: Request) {
+            const session = yield* Effect.tryPromise({
+                try: () => auth.api.getSession({ headers: request.headers }),
+                catch: (cause) => classifyBackendFailure("authentication", cause),
+            });
+            if (!session) return yield* unauthenticated();
+            return { userId: session.user.id };
+        }),
+    })
+);
+const { handler, dispose } = toWebHandler(serverLayer);
+if (import.meta.hot) import.meta.hot.dispose(dispose);
 
-const database = new Database("temp/issue-tracker.sqlite");
-const backendAdapter = createSQLiteOntologyBackendAdapter({
-    ir: ontology,
-    database: database as unknown as CreateSQLiteOntologyBackendAdapterOptions["database"],
-    name: "issue-tracker-sqlite-users",
-});
-
-const seedUser = database.prepare(`
-    INSERT INTO "party_stack_issue_x2d_tracker_x2d_sqlite_x2d_users_User" ("id", "data")
-    VALUES (?, ?)
-    ON CONFLICT("id") DO UPDATE SET "data" = excluded."data"
-`);
-const contexts = new WeakMap<Request, { user: string }>();
-
-const remoteServer = createRemoteOntologyServer<{ user: string }, IssueTrackerOntology>({
-    ir: ontology,
-    backendAdapter,
-    getContext: (request) => {
-        const context = contexts.get(request);
-        if (!context) {
-            throw new Error("Authenticated request context is unavailable.");
-        }
-        return context;
-    },
-    policy: {
-        baseObjectTypeQueries: {
-            Issue: ({ q, collection }) => q.from({ object: collection }),
-            Project: ({ q, collection }) => q.from({ object: collection }),
-            User: ({ q, collection }) => q.from({ object: collection }),
-        },
-        allowedObjectTypeProperties: {
-            Issue: [
-                "issueCompletedAt",
-                "issueStatus",
-                "issueUpdatedAt",
-                "issueId",
-                "issueLabels",
-                "createdBy",
-                "issueTitle",
-                "assignee",
-                "issueAttachments",
-                "projectId",
-                "issueCreatedAt",
-                "issueDescription",
-            ],
-            Project: [
-                "projectUpdatedAt",
-                "projectDescription",
-                "projectColor",
-                "projectId",
-                "projectCreatedAt",
-                "projectTitle",
-            ],
-            User: ["id", "givenName", "familyName", "email", "avatar"],
-        },
-        clientContext: "forward",
-        canApplyAction: () => true,
-    },
-});
-
-async function handleRequest(request: Request): Promise<Response> {
-    const selected = await auth.api.getSession({
-        headers: request.headers,
-    });
-    if (!selected) {
-        return new Response("Authentication required.", {
-            status: 401,
-            headers: {
-                "www-authenticate": 'Session realm="Party Stack Issue Tracker"',
-            },
-        });
-    }
-    const seeded = issueTrackerUsers.find((user) => user.email === selected.user.email);
-    const [givenName, ...familyName] = selected.user.name.split(" ");
-    seedUser.run(
-        selected.user.id,
-        JSON.stringify({
-            id: selected.user.id,
-            givenName: seeded?.givenName ?? givenName ?? selected.user.name,
-            familyName: seeded?.familyName ?? familyName.join(" "),
-            email: selected.user.email,
-        })
-    );
-    contexts.set(request, {
-        user: selected.user.id,
-    });
-    return remoteServer.handleRequest(request);
-}
+const handleRequest = (request: Request) =>
+    new URL(request.url).pathname.replace(/\/+$/, "").endsWith("/rpc")
+        ? handler(request)
+        : new Response("Not found.", { status: 404 });
 
 export const Route = createFileRoute("/api/remote-ontology/$endpoint")({
     server: {

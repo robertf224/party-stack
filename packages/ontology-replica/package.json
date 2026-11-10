@@ -1,0 +1,46 @@
+{
+    "name": "@party-stack/ontology-replica",
+    "version": "0.1.0",
+    "files": [
+        "lib"
+    ],
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./attachments": {
+            "types": "./lib/attachments/index.d.ts",
+            "default": "./lib/attachments/index.js"
+        },
+        "./infrastructure": {
+            "types": "./lib/infrastructure.d.ts",
+            "default": "./lib/infrastructure.js"
+        },
+        "./registry": {
+            "types": "./lib/registry.d.ts",
+            "default": "./lib/registry.js"
+        }
+    },
+    "dependencies": {
+        "@party-stack/connect": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/ontology-spec": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
+        "@party-stack/runtime": "workspace:*",
+        "image-dimensions": "^2.5.1"
+    },
+    "devDependencies": {
+        "@effect/vitest": "^4.0.5",
+        "@party-stack/build-config": "workspace:*",
+        "effect": "^4.0.5",
+        "typescript": "~7.0.2",
+        "vite": "catalog:",
+        "vite-plus": "catalog:",
+        "vitest": "catalog:"
+    },
+    "peerDependencies": {
+        "effect": "^4.0.5"
+    }
+}

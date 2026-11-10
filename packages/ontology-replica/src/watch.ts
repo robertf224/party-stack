@@ -1,0 +1,74 @@
+import { BackendError } from "@party-stack/ontology-backend";
+import { Effect, Redacted, Scope, Stream } from "effect";
+
+/** Each attempt has its own scope. Terminal failures stay observable; only
+ * retryable failures reopen subscriptions. Normal EOF also needs a repair.
+ */
+export const superviseWatch = Effect.fnUntraced(function* <A>(options: {
+    readonly acquire: () => Effect.Effect<Stream.Stream<A, BackendError>, BackendError, Scope.Scope>;
+    readonly canRun?: Effect.Effect<boolean>;
+    readonly authentication?: {
+        readonly generation: Effect.Effect<number>;
+        readonly awaitActivation: (after: number) => Effect.Effect<void>;
+    };
+    readonly onValue: (value: A) => Effect.Effect<void, BackendError>;
+    readonly onError: (error: BackendError | undefined) => Effect.Effect<void>;
+    readonly retryDelayMs?: number;
+}) {
+    const initialDelay = options.retryDelayMs ?? 1_000;
+    let delay = initialDelay;
+    for (;;) {
+        if (!(yield* options.canRun ?? Effect.succeed(true))) {
+            yield* Effect.sleep(initialDelay);
+            continue;
+        }
+        const generation = yield* options.authentication?.generation ?? Effect.succeed(0);
+        const result = yield* Effect.result(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const stream = yield* options.acquire();
+                    yield* options.onError(undefined);
+                    yield* Stream.runForEach(stream, (value) =>
+                        options.onValue(value).pipe(
+                            Effect.tap(() =>
+                                Effect.sync(() => {
+                                    delay = initialDelay;
+                                })
+                            )
+                        )
+                    );
+                }).pipe(Effect.withSpan("Replica.watchAttempt", { attributes: { activity: "subscription" } }))
+            ).pipe(
+                Effect.catchDefect((cause) =>
+                    Effect.fail(
+                        new BackendError({
+                            operation: "replica.watch",
+                            kind: "Internal",
+                            retryable: false,
+                            message: "The change subscription failed internally.",
+                            cause: Redacted.make(cause),
+                        })
+                    )
+                )
+            )
+        );
+        const error =
+            result._tag === "Failure"
+                ? result.failure
+                : new BackendError({
+                      operation: "replica.watch",
+                      kind: "Unavailable",
+                      retryable: true,
+                      message: "The change subscription ended; reconnecting.",
+                  });
+        yield* options.onError(error);
+        if (error.kind === "Unauthenticated" && options.authentication) {
+            yield* options.authentication.awaitActivation(generation);
+            delay = initialDelay;
+            continue;
+        }
+        if (!error.retryable) return;
+        yield* Effect.sleep(Math.max(delay, error.retryAfterMs ?? 0));
+        delay = Math.min(delay * 2, 30_000);
+    }
+});

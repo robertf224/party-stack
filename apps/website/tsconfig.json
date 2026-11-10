@@ -1,0 +1,7 @@
+{
+    "extends": "@party-stack/tanstack-start-build-config/tsconfig.json",
+    "compilerOptions": {
+        "types": ["vite/client", "node", "vgpu/client"]
+    },
+    "include": ["src", "vite.config.ts"]
+}

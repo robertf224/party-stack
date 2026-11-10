@@ -38,7 +38,7 @@ Current seams:
   ([`client.ts`](../../packages/foundry-client/src/client.ts)).
 - Remote ontology already either forwards server context or projects it for the
   client through `RemoteOntologyClientContextPolicy`
-  ([`server.ts`](../../packages/remote-ontology/src/server.ts#L112-L114)).
+  ([`server.ts`](../../packages/ontology-server/src/server.ts#L112-L114)).
 
 Zero separately accepts `userID` for client storage partitioning and a
 permission context that commonly repeats the same ID

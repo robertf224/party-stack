@@ -1,0 +1,311 @@
+import { Context, Schema } from "effect";
+import { ObjectSubsetSchema } from "./subsetSchema.js";
+import type { AttachmentTypeDef, QueryDocument } from "@party-stack/ontology-spec";
+import type { ObjectSubset } from "@party-stack/ontology-spec/query";
+import type { attachment, Encrypted } from "@party-stack/ontology-spec/values";
+import type { Key, Row } from "@party-stack/ontology-storage";
+import type { ByteInput } from "@party-stack/ontology-storage/blobs";
+import type { Scope, Effect, Stream } from "effect";
+
+export {
+    schemaValidationIssues,
+    BackendError,
+    BackendErrorKindSchema,
+    backendErrorStatus,
+    ValidationIssueSchema,
+    ValidationReportSchema,
+    unauthenticated,
+    isUnauthenticatedError,
+    classifyBackendFailure,
+    projectBackendError,
+    projectValidationIssue,
+    isUnknownActionOutcome,
+} from "./errors.js";
+export type {
+    BackendErrorKind,
+    ReplicationErrorKind,
+    ReplicationError,
+    ErrorProjection,
+    ErrorProjectionContext,
+    ValidationReport,
+    ValidationIssue,
+    UnauthenticatedError,
+    ApplyActionError,
+    ValidateActionError,
+    LoadSubsetError,
+} from "./errors.js";
+import { BackendError } from "./errors.js";
+export { makeOntologyBackend } from "./query.js";
+
+export interface ObjectSelection {
+    readonly subsets: readonly ObjectSubset[];
+}
+export interface BackendSnapshot {
+    /** Region represented by these rows, including any window already applied.
+     * Omitted means the requested subset. A broader unwindowed region lets the
+     * engine finish filtering/ordering/windowing and optionally cache extra objects.
+     * Rows may include residual candidates outside this region; consumers discard
+     * them before installing its objects or recording complete coverage.
+     */
+    readonly fulfilledSubset?: ObjectSubset;
+    readonly rows: readonly Row<Record<string, unknown>>[];
+    /** Complete for fulfilledSubset (or the request when omitted), including its window. */
+    readonly complete: boolean;
+    /** Rows fetched from the provider, before adapter-side filtering/windowing.
+     * Diagnostic only; omitted when the adapter cannot report it. Not a DB scan count.
+     */
+    readonly fetchedRows?: number;
+    /** Diagnostic provider filter, not a query-capability or coverage contract. */
+    readonly pushdown?: SourceQueryPlan;
+    /** Position coordinated with this snapshot, when the backend exposes a durable change stream. */
+    readonly cursor?: string;
+}
+export const SourceQueryPlanSchema = Schema.Struct({
+    source: Schema.String,
+    /** Paths into the request's portable where tree: AND/OR child indices, NOT child 0, [] for the root. */
+    predicates: Schema.Array(
+        Schema.Struct({
+            path: Schema.Array(Schema.Int),
+            execution: Schema.Literals(["source", "candidate", "adapter", "engine"]),
+        })
+    ),
+    sorting: Schema.Literals(["source", "adapter", "engine", "none"]),
+    pagination: Schema.Literals(["source", "adapter", "engine", "none"]),
+    rechecksFilter: Schema.Boolean,
+    /** Optional native syntax for raw inspection. Consumers must not parse it to infer execution. */
+    native: Schema.optional(Schema.Struct({ language: Schema.String, text: Schema.String })),
+});
+export type SourceQueryPlan = Schema.Schema.Type<typeof SourceQueryPlanSchema>;
+export type ObjectChange =
+    | {
+          readonly kind: "put";
+          readonly objectType: string;
+          readonly key: Key;
+          readonly value: Record<string, unknown>;
+      }
+    | { readonly kind: "delete"; readonly objectType: string; readonly key: Key };
+export interface BackendCommit {
+    readonly cursor: string;
+    readonly changes: readonly ObjectChange[];
+    readonly operationId?: string;
+}
+export interface BackendChangePage {
+    readonly commits: readonly BackendCommit[];
+    readonly cursor: string;
+    readonly hasMore: boolean;
+}
+export interface AttachmentUpload {
+    readonly attachment: attachment;
+    readonly blob: ByteInput;
+    readonly target?: AttachmentTypeDef;
+}
+export interface ActionRequest {
+    /** Stable across retries. The source must separately guarantee keyed idempotency. */
+    readonly id: string;
+    readonly name: string;
+    readonly parameters: Record<string, unknown>;
+    readonly attachmentUploads?: readonly AttachmentUpload[];
+    /** Portable replay inputs, preserved across rebases, forwarding and authoritative execution. */
+    readonly replay?: { readonly now: string; readonly seed: string };
+}
+export interface ActionReceipt {
+    /** The submitted ActionRequest.id, also supplied as the application's idempotencyKey. */
+    readonly operationId: string;
+    /** Provider commitment is recorded before local read-back/reconciliation. Parent acceptance is separate. */
+    readonly outcome: "committed";
+    /** Encoded authoritative return value, interpreted using the action returnType. Never a journal payload. */
+    readonly result?: unknown;
+    readonly cursor?: string;
+    /** Optional upstream execution ID. Never substitutes for our stable retry identity. */
+    readonly providerOperationId?: string;
+    /** Read-back targets for a committed non-journal action. Missing keys
+     * means the whole type; an empty list means no modeled object changes.
+     * Omission conservatively refreshes every modeled type.
+     * Targets are complete unless affectedComplete is explicitly false.
+     */
+    readonly affected?: readonly {
+        readonly objectType: string;
+        readonly keys?: readonly Key[];
+    }[];
+    /** False when these are known targets but automation may have changed other
+     * modeled records. Confirmation must not use them as an exhaustive edit list.
+     */
+    readonly affectedComplete?: boolean;
+    readonly attachmentIdMappings?: readonly { readonly localId: string; readonly remoteId: string }[];
+}
+const KeySchema = Schema.Union([Schema.String, Schema.Finite]);
+export const ObjectChangeSchema = Schema.Union([
+    Schema.Struct({
+        kind: Schema.Literal("put"),
+        objectType: Schema.String,
+        key: KeySchema,
+        value: Schema.Record(Schema.String, Schema.Unknown),
+    }),
+    Schema.Struct({ kind: Schema.Literal("delete"), objectType: Schema.String, key: KeySchema }),
+]);
+export const ActionReceiptSchema = Schema.Struct({
+    operationId: Schema.String,
+    outcome: Schema.Literal("committed"),
+    result: Schema.optional(Schema.Unknown),
+    cursor: Schema.optional(Schema.String),
+    providerOperationId: Schema.optional(Schema.String),
+    affected: Schema.optional(
+        Schema.Array(
+            Schema.Struct({ objectType: Schema.String, keys: Schema.optional(Schema.Array(KeySchema)) })
+        )
+    ),
+    affectedComplete: Schema.optional(Schema.Boolean),
+    attachmentIdMappings: Schema.optional(
+        Schema.Array(Schema.Struct({ localId: Schema.String, remoteId: Schema.String }))
+    ),
+});
+export const BackendCommitSchema = Schema.Struct({
+    cursor: Schema.String,
+    changes: Schema.Array(ObjectChangeSchema),
+    operationId: Schema.optional(Schema.String),
+});
+export const BackendSnapshotSchema = Schema.Struct({
+    fulfilledSubset: Schema.optional(ObjectSubsetSchema),
+    fetchedRows: Schema.optional(Schema.Number),
+    pushdown: Schema.optional(SourceQueryPlanSchema),
+    rows: Schema.Array(
+        Schema.Struct({ key: KeySchema, value: Schema.Record(Schema.String, Schema.Unknown) })
+    ),
+    complete: Schema.Boolean,
+    cursor: Schema.optional(Schema.String),
+});
+export const BackendChangePageSchema = Schema.Struct({
+    commits: Schema.Array(BackendCommitSchema),
+    cursor: Schema.String,
+    hasMore: Schema.Boolean,
+});
+
+export interface BackendAttachments {
+    /** Optional authoritative staging before a subsequent action references the handle. */
+    readonly stage?: (
+        value: attachment,
+        bytes: ByteInput,
+        options?: { readonly target?: AttachmentTypeDef }
+    ) => Effect.Effect<attachment, BackendError>;
+    /** Keep the caller Scope open through consumption; closing it cancels an unconsumed download too. */
+    readonly read: (
+        value: attachment,
+        options?: { readonly offset?: number; readonly length?: number }
+    ) => Effect.Effect<ByteInput, BackendError, Scope.Scope>;
+    readonly metadata: (
+        value: attachment,
+        options?: { readonly select?: readonly ("size" | "type" | "name" | "dimensions")[] }
+    ) => Effect.Effect<
+        {
+            readonly size?: number;
+            readonly type?: string;
+            readonly name?: string;
+            readonly dimensions?: { readonly width: number; readonly height: number };
+        },
+        BackendError
+    >;
+}
+export {
+    EncryptedValueSchema,
+    DecryptedValueSchema,
+    encryptedPropertyCodec,
+    makePropertyDecryption,
+} from "./encrypted.js";
+export type { DecryptedValue } from "./encrypted.js";
+
+export interface BackendEncryptedValues {
+    /** Explicit operation. Ordinary record loads return handles and never decrypt them. */
+    readonly decrypt: (
+        value: Encrypted<unknown>
+    ) => Effect.Effect<import("./encrypted.js").DecryptedValue, BackendError>;
+}
+/** A reset requests repair after starting/restarting a watch; it does not
+ * assert that data changed. Ordinary void hints always invalidate coverage.
+ */
+export type SubsetWatchEvent = void | "reset";
+
+export interface OntologyBackendService {
+    readonly name: string;
+    /** Stable identity for the source whose cursors and receipts this binding returns. */
+    readonly sourceId: string;
+    /** Durable keyed idempotency within the configured receipt-retention window:
+     * repeated IDs return the recorded result, with
+     * conflicting payloads rejected. The guarantee must survive source restart.
+     * Merely receiving an ID, or an action being naturally idempotent, is insufficient.
+     */
+    readonly supportsIdempotency: boolean;
+    /** Indexed bounded local maintenance; the backend owner schedules it. */
+    readonly maintenance?: Effect.Effect<void, BackendError>;
+    /** Return the request or explicitly describe the region actually fulfilled.
+     * Consumers use the shared subset normalizer before applying requested windows.
+     */
+    readonly loadSubset: (subset: ObjectSubset) => Effect.Effect<BackendSnapshot, BackendError>;
+    /** Finite Query IR execution using this binding's trusted context and read path.
+     * Provider adapters may evaluate through subset loads; owned storage uses one
+     * read transaction. Callers supply query inputs, never authentication context.
+     */
+    readonly query: (
+        document: QueryDocument,
+        options?: { readonly inputs?: Record<string, unknown> }
+    ) => Effect.Effect<Record<string, unknown>, BackendError>;
+    /** Optional selected committed rows. Closing the Scope releases demand; delivery state expires by policy. */
+    readonly subscribeSelection?: (
+        selection: ObjectSelection,
+        policy?: import("./delivery.js").DeliveryPolicy,
+        resume?: import("./delivery.js").DeliveryPosition
+    ) => Effect.Effect<import("./delivery.js").DeliverySubscription, BackendError, Scope.Scope>;
+    readonly acknowledgeDelivery?: (
+        position: import("./delivery.js").DeliveryPosition
+    ) => Effect.Effect<void, BackendError>;
+    /** Read-only defaults and edit prefills; never invokes the action. */
+    readonly resolveActionParameters?: (
+        name: string,
+        parameters: Record<string, unknown>
+    ) => Effect.Effect<Record<string, unknown>, BackendError>;
+    /** Acquire a demand-scoped watch before reading its snapshot. Completion proves
+     * registration and buffering are active, even before the returned stream is pulled.
+     * The acquiring Scope owns registration and release. Undefined means polling.
+     * Reconnect within the same stream must fail or emit reset/invalidation;
+     * reacquisition establishes a new readiness boundary for a fresh read.
+     * Must cover every change relevant to the requested subset; broader watches
+     * may emit extra hints. It does not maintain broader fulfilledSubset coverage.
+     */
+    readonly watchSubset?: (
+        subset: ObjectSubset
+    ) => Effect.Effect<Stream.Stream<SubsetWatchEvent, BackendError>, BackendError, Scope.Scope> | undefined;
+    /** Recommended demand refresh defaults. Caller configuration wins; healthy
+     * watches/journals keep coverage current independently of snapshot age. */
+    readonly refresh?: (subset: ObjectSubset) =>
+        | {
+              readonly pollIntervalMs?: number | false;
+              readonly maxCoverageAgeMs?: number;
+          }
+        | undefined;
+    readonly validateAction?: (
+        name: string,
+        parameters: Record<string, unknown>,
+        options?: { readonly knownParameters?: readonly string[] }
+    ) => Effect.Effect<import("./errors.js").ValidationReport, BackendError>;
+    readonly applyAction: (invocation: ActionRequest) => Effect.Effect<ActionReceipt, BackendError>;
+    readonly queryFunction: (
+        name: string,
+        parameters: Record<string, unknown>
+    ) => Effect.Effect<unknown, BackendError>;
+    readonly changes?: {
+        readonly pull: (options: {
+            readonly cursor?: string;
+            readonly limit?: number;
+        }) => Effect.Effect<BackendChangePage, BackendError>;
+        /** Acquire registered, buffered wake-up hints in the caller's Scope before
+         * pulling durable changes. Stream consumption does not initiate registration.
+         * Call pull to recover changes after reconnect or restart. */
+        readonly watch?: Effect.Effect<Stream.Stream<void, BackendError>, BackendError, Scope.Scope>;
+    };
+    readonly attachments?: BackendAttachments;
+    readonly encrypted?: BackendEncryptedValues;
+}
+
+/** Backend protocol independent of TanStack collections and client lifecycle management. */
+export class OntologyBackend extends Context.Service<OntologyBackend, OntologyBackendService>()(
+    "@party-stack/ontology-backend/OntologyBackend"
+) {}

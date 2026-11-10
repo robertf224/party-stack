@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
-import { pascalCase } from "change-case";
-import { Command } from "commander";
-import { generateFiles } from "./generate.js";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { NodeRuntime, NodeServices } from "@effect/platform-node";
+import { makeGenerateCommand } from "@party-stack/ontology-spec/generate";
+import { Console, Effect } from "effect";
+import { CliError, Command } from "effect/cli";
 import {
     ONTOLOGY_PULL_CONFIG_PATH,
     ONTOLOGY_IR_PATH,
@@ -12,80 +13,32 @@ import {
     writePulledOntology,
 } from "./pull.js";
 
-const GENERATED_DIR_PATH = "src/ontology/generated";
+const { version } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
+    version: string;
+};
 
-function readPackageNamespace(cwd: string): string {
-    const packageJsonPath = resolve(cwd, "package.json");
-    if (!existsSync(packageJsonPath)) {
-        return pascalCase(basename(cwd));
-    }
+const configPath = discoverOntologyPullConfigPath(process.cwd());
+const pull = Command.make("pull", {}, () =>
+    Effect.tryPromise({
+        try: async () => {
+            if (!configPath) throw new Error(`Create ${ONTOLOGY_PULL_CONFIG_PATH} before pulling metadata.`);
+            const config = await loadOntologyPullConfig(configPath);
+            const { nodeRuntime } = await import("@party-stack/node-runtime");
+            const path = resolve(process.cwd(), ONTOLOGY_IR_PATH);
+            await writePulledOntology(config, path, { runtime: nodeRuntime() });
+            return path;
+        },
+        catch: (cause) => new CliError.UserError({ cause }),
+    }).pipe(Effect.flatMap((path) => Console.log(`Generated ontology written to: ${path}`)))
+).pipe(Command.withDescription(`Pull ontology metadata using ${ONTOLOGY_PULL_CONFIG_PATH}`));
 
-    try {
-        const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { name?: unknown };
-        const packageName =
-            typeof packageJson.name === "string"
-                ? (packageJson.name.split("/").pop() ?? packageJson.name)
-                : basename(cwd);
-        return pascalCase(packageName);
-    } catch {
-        return pascalCase(basename(cwd));
-    }
-}
-
-async function main(): Promise<void> {
-    const cwd = process.cwd();
-    const ontologyPath = resolve(cwd, ONTOLOGY_IR_PATH);
-    const generatedDir = resolve(cwd, GENERATED_DIR_PATH);
-    const program = new Command();
-
-    program.name("ontology").description("Generate and pull ontology files");
-
-    program
-        .command("generate")
-        .description("Generate ontology types, builders, and live helpers")
-        .option("--ontology <path>", "Path to the ontology module", ontologyPath)
-        .option("--outDir <path>", "Directory to write generated files", generatedDir)
-        .option("--namespace <name>", "Namespace for generated ontology types/factories")
-        .option("--no-js-extensions", "Omit .js extensions from generated relative imports")
-        .action(
-            async (options: {
-                ontology: string;
-                outDir: string;
-                namespace?: string;
-                jsExtensions?: boolean;
-            }) => {
-                await generateFiles({
-                    ontology: resolve(cwd, options.ontology),
-                    outDir: resolve(cwd, options.outDir),
-                    namespace: options.namespace ?? readPackageNamespace(cwd),
-                    jsExtensions: options.jsExtensions,
-                });
-            }
-        );
-
-    const configPath = discoverOntologyPullConfigPath(cwd);
-    if (configPath) {
-        program
-            .command("pull")
-            .description(`Pull ontology metadata using ${ONTOLOGY_PULL_CONFIG_PATH}`)
-            .action(async () => {
-                const config = await loadOntologyPullConfig(configPath);
-                const { createNodeRuntime } = await import("@party-stack/node-runtime");
-                await writePulledOntology(config, ontologyPath, {
-                    runtime: createNodeRuntime,
-                });
-                console.log(`Generated ontology written to: ${ontologyPath}`);
-            });
-    }
-
-    await program.parseAsync();
-}
-
-main()
-    .then(() => {
-        process.exit(0);
-    })
-    .catch((error) => {
-        console.error(error instanceof Error ? error.message : String(error));
-        process.exit(1);
-    });
+Command.make("ontology").pipe(
+    Command.withDescription("Generate and pull ontology files"),
+    Command.withSubcommands([
+        makeGenerateCommand({ valuesImportPath: "@party-stack/ontology/values" }),
+        ...(configPath ? [pull] : []),
+    ]),
+    Command.run({ version }),
+    Effect.provide(NodeServices.layer),
+    NodeRuntime.runMain
+);

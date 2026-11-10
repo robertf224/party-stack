@@ -1,0 +1,796 @@
+// Auto-generated file - do not edit manually
+
+import * as v from "../../utils/values.js";
+
+/** Two operands for a top-level binary expression variant. */
+export type BinaryExpression = {
+    left: Expression;
+    right: Expression;
+};
+
+/** An ordered list of operands for a variadic expression variant. */
+export type VariadicExpression = {
+    expressions: Array<Expression>;
+};
+
+/** Negates a boolean expression, preserving evaluation uncertainty. */
+export type NotExpression = {
+    expression: Expression;
+};
+
+/** A condition and its scalar result; branches are tested in order. */
+export type CaseBranch = {
+    condition: Expression;
+    result: Expression;
+};
+
+/** Computes the first matching branch result, or the explicit else result. */
+export type CaseExpression = {
+    branches: Array<CaseBranch>;
+    else: Expression;
+};
+
+/** Whether a correlated query produces at least one result. */
+export type ExistsExpression = {
+    query: Query;
+};
+
+/** A logical object source, resolved by an execution binding rather than raw SQL. */
+export type QuerySource = {
+    ontology?: string;
+    objectType?: string;
+    related?: RelatedExpression;
+};
+
+/** Introduces a source with an explicit lexical row binding. */
+export type QueryFrom = {
+    source: QuerySource;
+    binding: string;
+};
+
+/** Orders by an expression with explicit nullish placement when requested. */
+export type QueryOrder = {
+    expression: Expression;
+    direction?: "asc" | "desc";
+    nulls?: "first" | "last";
+};
+
+/** An exclusive boundary in the complete order, with source primary-key tie-breaking. */
+export type QueryCursor = {
+    values: Array<unknown>;
+    key: unknown;
+};
+
+/** A result window; correlated child windows apply independently per parent. */
+export type QueryPage = {
+    limit?: v.integer;
+    offset?: v.integer;
+    after?: QueryCursor;
+};
+
+/** Filter, order and window over a supplied source; no arbitrary result projection. */
+export type Subset = {
+    where?: Expression;
+    orderBy?: Array<QueryOrder>;
+    page?: QueryPage;
+};
+
+/** Selects a named value; entity uses require source-preserving identity. */
+export type QueryFieldSelection = {
+    name: string;
+    expression: Expression;
+};
+
+/** Selects a nested correlated query with explicit result cardinality. */
+export type QuerySubSelection = {
+    name: string;
+    query: Query;
+    cardinality: "one" | "many";
+};
+
+/** A condition and its selection group; branches are tested in order. */
+export type SelectCaseBranch = {
+    condition: Expression;
+    select: Array<QuerySelection>;
+};
+
+/** Includes the first matching selection group, or else; groups can nest. */
+export type SelectCaseSelection = {
+    branches: Array<SelectCaseBranch>;
+    else?: Array<QuerySelection>;
+};
+
+/** Named values, hierarchical queries and conditional inline selection groups. */
+export type QuerySelection = v.Union<{
+    field: QueryFieldSelection;
+    sub: QuerySubSelection;
+    selectCase: SelectCaseSelection;
+}>;
+
+/** A finite query; nested reads may capture ancestor row bindings. */
+export type Query = {
+    from: QueryFrom;
+    where?: Expression;
+    orderBy?: Array<QueryOrder>;
+    page?: QueryPage;
+    select: Array<QuerySelection>;
+};
+
+/** A multi-root selection without a mandatory starting object type. */
+export type QueryDocument = {
+    inputs?: Array<FieldDef>;
+    select: Array<QuerySelection>;
+};
+
+/** Typed trusted execution context and optional stable data-partition paths. */
+export type ContextDef = {
+    type?: TypeDef;
+    partition?: Array<Array<string>>;
+};
+
+/** A server-bound action parameter, hidden from the public parameter contract. */
+export type ActionParameterBinding = {
+    parameter: string;
+    expression: Expression;
+};
+
+/** Authorizes one action through a check, with optional bindings and additional mutator reads. */
+export type ActionPolicy = {
+    actionType: string;
+    check: Expression;
+    bind?: Array<ActionParameterBinding>;
+    additionalObjects?: QueryDocument;
+};
+
+/** Authorizes one query function and optional additional trusted implementation reads. */
+export type QueryFunctionPolicy = {
+    queryFunctionType: string;
+    check: Expression;
+    additionalObjects?: QueryDocument;
+};
+
+/** One effective policy for an ontology view; grants are evaluated under its trusted context. */
+export type PolicyDef = {
+    objects: QueryDocument;
+    actions?: Array<ActionPolicy>;
+    queryFunctions?: Array<QueryFunctionPolicy>;
+};
+
+/** Singleton descriptive and execution-contract metadata for one ontology view. */
+export type OntologyDescriptor = {
+    id: string;
+    displayName?: string;
+    description?: string;
+    context?: ContextDef;
+    policy?: PolicyDef;
+};
+
+/** A renderer-independent icon name from @party-stack/icons. */
+export type IconName =
+    | "activity"
+    | "add"
+    | "airplane"
+    | "alarm"
+    | "alert"
+    | "archive"
+    | "arrow-down"
+    | "arrow-left"
+    | "arrow-right"
+    | "arrow-up"
+    | "attachment"
+    | "award"
+    | "bank"
+    | "barcode"
+    | "bell"
+    | "book"
+    | "bookmark"
+    | "briefcase"
+    | "bug"
+    | "building"
+    | "calculator"
+    | "calendar"
+    | "camera"
+    | "chart-bar"
+    | "chart-line"
+    | "chart-pie"
+    | "chat"
+    | "check"
+    | "check-circle"
+    | "chevron-down"
+    | "chevron-left"
+    | "chevron-right"
+    | "chevron-up"
+    | "circle"
+    | "clipboard"
+    | "clock"
+    | "cloud"
+    | "code"
+    | "compass"
+    | "copy"
+    | "credit-card"
+    | "cube"
+    | "database"
+    | "delete"
+    | "document"
+    | "download"
+    | "edit"
+    | "email"
+    | "error"
+    | "eye"
+    | "eye-off"
+    | "filter"
+    | "flag"
+    | "folder"
+    | "globe"
+    | "grid"
+    | "heart"
+    | "help"
+    | "history"
+    | "home"
+    | "image"
+    | "info"
+    | "key"
+    | "layers"
+    | "lightbulb"
+    | "link"
+    | "list"
+    | "location"
+    | "lock"
+    | "lock-open"
+    | "map"
+    | "menu"
+    | "microphone"
+    | "minus"
+    | "minus-circle"
+    | "moon"
+    | "more-horizontal"
+    | "more-vertical"
+    | "notification"
+    | "package"
+    | "pause"
+    | "people"
+    | "person"
+    | "phone"
+    | "pin"
+    | "play"
+    | "play-circle"
+    | "plus-circle"
+    | "printer"
+    | "project"
+    | "refresh"
+    | "rocket"
+    | "save"
+    | "search"
+    | "send"
+    | "settings"
+    | "share"
+    | "shield"
+    | "shopping-bag"
+    | "shopping-cart"
+    | "star"
+    | "stop"
+    | "sun"
+    | "tag"
+    | "ticket"
+    | "tools"
+    | "upload"
+    | "video"
+    | "warning"
+    | "window"
+    | "wrench"
+    | "x"
+    | "x-circle";
+
+/** A portable icon descriptor with optional provider meta for lossless round trips. */
+export type IconDescriptor = {
+    /** Renderer-independent icon name. */
+    name: IconName;
+    /** Namespaced source-provider meta. */
+    meta?: Record<string, unknown>;
+};
+
+export type Deprecation = {
+    message: string;
+};
+
+/** A suggested value for a string. */
+export type StringSuggestion = {
+    value: string;
+    label?: string;
+};
+
+/** Constrains a string to a set of allowed values. */
+export type StringEnumConstraint = {
+    options: Array<StringSuggestion>;
+};
+
+/** Constrains a string to a regex. */
+export type StringRegexConstraint = {
+    regex: string;
+};
+
+/** A constraint that can be applied to a string type. */
+export type StringConstraint = v.Union<{
+    enum: StringEnumConstraint;
+    regex: StringRegexConstraint;
+}>;
+
+/** A string type with optional constraints. */
+export type StringTypeDef = {
+    constraint?: StringConstraint;
+    suggestions?: Array<StringSuggestion>;
+};
+
+/** A boolean type. */
+export type BooleanTypeDef = Record<never, never>;
+
+/** A 32-bit integer type. */
+export type IntegerTypeDef = Record<never, never>;
+
+/** A 32-bit floating point type. */
+export type FloatTypeDef = Record<never, never>;
+
+/** A 64-bit floating point type. */
+export type DoubleTypeDef = Record<never, never>;
+
+/** A date type (no time component). */
+export type DateTypeDef = Record<never, never>;
+
+/** A timestamp type (instant in time). */
+export type TimestampTypeDef = Record<never, never>;
+
+/** A geographic point (lat/lon). */
+export type GeopointTypeDef = Record<never, never>;
+
+/** An opaque type whose shape is not known at schema time. */
+export type UnknownTypeDef = Record<never, never>;
+
+/** A list/array type. */
+export type ListTypeDef = {
+    /** The type of elements in the list. */
+    elementType: TypeDef;
+};
+
+/** A map/record type. */
+export type MapTypeDef = {
+    /** The type of keys (must be string right now). */
+    keyType: TypeDef;
+    /** The type of values. */
+    valueType: TypeDef;
+};
+
+/** Definition of a field in a struct. */
+export type FieldDef = {
+    /** The field name in code. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** The field's type. */
+    type: TypeDef;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
+/** A struct type with named fields. */
+export type StructTypeDef = {
+    fields: Array<FieldDef>;
+};
+
+/** Definition of a variant in a discriminated union. */
+export type VariantDef = {
+    /** The variant's discriminator value. */
+    name: string;
+    /** The variant's payload type. */
+    type: TypeDef;
+};
+
+/** A discriminated union type. */
+export type UnionTypeDef = {
+    variants: Array<VariantDef>;
+};
+
+/** Wraps a type to make it optional. */
+export type OptionalTypeDef = {
+    /** The wrapped type. */
+    type: TypeDef;
+};
+
+/** A result type (ok or error). */
+export type ResultTypeDef = {
+    /** The type of the success value. */
+    okType: TypeDef;
+    /** The type of the error value. */
+    errType: TypeDef;
+};
+
+/** An opaque encrypted-value handle whose plaintext is available only through explicit decryption. */
+export type EncryptedTypeDef = {
+    /** The type returned by an authorized decrypt operation. */
+    type: TypeDef;
+};
+
+/** A reference to a named type. */
+export type TypeRef = {
+    /** The name of the referenced type. */
+    name: string;
+};
+
+/** A type definition. Can be a primitive, collection, struct, union, optional, result, or reference. */
+export type TypeDef = v.Union<{
+    string: StringTypeDef;
+    boolean: BooleanTypeDef;
+    integer: IntegerTypeDef;
+    float: FloatTypeDef;
+    double: DoubleTypeDef;
+    date: DateTypeDef;
+    timestamp: TimestampTypeDef;
+    geopoint: GeopointTypeDef;
+    list: ListTypeDef;
+    map: MapTypeDef;
+    struct: StructTypeDef;
+    union: UnionTypeDef;
+    optional: OptionalTypeDef;
+    result: ResultTypeDef;
+    encrypted: EncryptedTypeDef;
+    ref: TypeRef;
+    attachment: AttachmentTypeDef;
+    objectReference: ObjectReferenceTypeDef;
+    unknown: UnknownTypeDef;
+}>;
+
+/** A named type definition that can be referenced by other types. */
+export type NamedTypeDef = {
+    /** The type's name for use in code. */
+    name: string;
+    /** Optional documentation for the type. */
+    description?: string;
+    deprecated?: Deprecation;
+    /** The type definition. */
+    type: TypeDef;
+};
+
+/** A supported image media type. */
+export type ImageMediaType =
+    | "image/bmp"
+    | "image/tiff"
+    | "image/nitf"
+    | "image/jp2"
+    | "image/jpeg"
+    | "image/png"
+    | "image/gif"
+    | "image/svg+xml"
+    | "image/webp";
+
+/** Constrains intrinsic pixel dimensions. */
+export type DimensionsConstraint = {
+    width?: {
+        min?: v.integer;
+        max?: v.integer;
+    };
+    height?: {
+        min?: v.integer;
+        max?: v.integer;
+    };
+};
+
+/** Constraints specific to image attachments. */
+export type ImageAttachmentConstraint = {
+    mediaTypes?: Array<ImageMediaType>;
+    dimensions?: DimensionsConstraint;
+};
+
+/** Content-specific attachment constraints. */
+export type AttachmentContentConstraint = v.Union<{
+    image: ImageAttachmentConstraint;
+}>;
+
+/** Constraints applied to an attachment. */
+export type AttachmentConstraint = {
+    size?: {
+        min?: v.double;
+        max?: v.double;
+    };
+    content?: AttachmentContentConstraint;
+};
+
+/** A file handle with optional constraints. */
+export type AttachmentTypeDef = {
+    constraint?: AttachmentConstraint;
+    meta?: Record<string, unknown>;
+};
+
+/** A reference to an ontology object type. */
+export type ObjectReferenceTypeDef = {
+    /** The referenced object type name. */
+    objectType: string;
+};
+
+/** A property on an Object type. */
+export type PropertyDef = {
+    /** The property's name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** The property's type. */
+    type: TypeDef;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
+/** An object type in the ontology. */
+export type ObjectTypeDef = {
+    /** The object type's programmatic name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    pluralDisplayName: string;
+    /** The name of the property that serves as primary key. */
+    primaryKey: string;
+    /** The optional property name used as the human-readable title for an object. */
+    title?: string;
+    /** Optional portable icon descriptor. */
+    icon?: IconDescriptor;
+    /** Optional display color independent of the icon. */
+    color?: string;
+    /** The object type's propertieo. */
+    properties: Array<PropertyDef>;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
+export type LinkTypeSideDef = {
+    objectType: string;
+    name: string;
+    displayName: string;
+};
+
+/** The cardinality of a link from the source's perspective. */
+export type LinkCardinality = "one" | "many";
+
+/** A relationship between two object types. */
+export type LinkTypeDef = {
+    id: string;
+    source: LinkTypeSideDef;
+    target: LinkTypeSideDef;
+    /** The foreign key on the source. */
+    foreignKey: string;
+    /** How many sources are linked to the target. */
+    cardinality: "one" | "many";
+};
+
+/** A parameter of an Action type. */
+export type ActionParameterDef = {
+    /** The parameter's name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** The parameter's type. */
+    type: TypeDef;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+    /** The expression used when the caller does not provide a value. */
+    defaultValue?: Expression;
+};
+
+/** Reads a named input from the root expression scope. */
+export type InputReferenceExpression = {
+    name: string;
+};
+
+/** Reads a named lexically scoped expression binding. */
+export type LocalReferenceExpression = {
+    name: string;
+};
+
+/** Reads a named value from the expression context. */
+export type ContextReferenceExpression = {
+    name: string;
+};
+
+/** Reads a structural path from a source expression. */
+export type GetAtExpression = {
+    source: Expression;
+    path: Array<string>;
+};
+
+/** Resolves an object reference to its ontology object. */
+export type LookupExpression = {
+    reference: Expression;
+};
+
+/** Reads a named ontology relationship from a source object. A to-one direction returns an optional object; a to-many direction returns a list of objects. Execution support depends on the expression context. */
+export type RelatedExpression = {
+    source: Expression;
+    link: string;
+};
+
+/** A named field constructed by a struct expression. */
+export type StructExpressionField = {
+    name: string;
+    value: Expression;
+};
+
+/** Constructs a struct value from field expressions. */
+export type StructExpression = {
+    fields: Array<StructExpressionField>;
+};
+
+/** Maps each element of a list to a new value. */
+export type MapExpression = {
+    source: Expression;
+    binding: string;
+    body: Expression;
+};
+
+/** Generates a UUID value. */
+export type UuidExpression = Record<never, never>;
+
+/** Returns the current timestamp. */
+export type NowExpression = Record<never, never>;
+
+/** A static literal value. */
+export type LiteralExpression = {
+    /** The literal value. */
+    value: unknown;
+};
+
+/** An expression that resolves to a value. */
+export type Expression = v.Union<{
+    inputReference: InputReferenceExpression;
+    contextReference: ContextReferenceExpression;
+    localReference: LocalReferenceExpression;
+    getAt: GetAtExpression;
+    lookup: LookupExpression;
+    related: RelatedExpression;
+    struct: StructExpression;
+    map: MapExpression;
+    uuid: UuidExpression;
+    now: NowExpression;
+    literal: LiteralExpression;
+    eq: BinaryExpression;
+    ne: BinaryExpression;
+    lt: BinaryExpression;
+    lte: BinaryExpression;
+    gt: BinaryExpression;
+    gte: BinaryExpression;
+    in: BinaryExpression;
+    contains: BinaryExpression;
+    like: BinaryExpression;
+    ilike: BinaryExpression;
+    add: BinaryExpression;
+    subtract: BinaryExpression;
+    multiply: BinaryExpression;
+    divide: BinaryExpression;
+    and: VariadicExpression;
+    or: VariadicExpression;
+    concat: VariadicExpression;
+    coalesce: VariadicExpression;
+    not: NotExpression;
+    case: CaseExpression;
+    exists: ExistsExpression;
+}>;
+
+/** Assigns an expression to a property path on an object written by an action. */
+export type PropertyAssignment = {
+    property: Array<string>;
+    value: Expression;
+};
+
+/** Creates an object and assigns property values. */
+export type CreateObjectActionLogicStep = {
+    objectType: string;
+    values: Array<PropertyAssignment>;
+};
+
+/** Updates a referenced object and assigns property values. */
+export type UpdateObjectActionLogicStep = {
+    object: InputReferenceExpression;
+    values: Array<PropertyAssignment>;
+};
+
+/** Deletes a referenced object. */
+export type DeleteObjectActionLogicStep = {
+    object: InputReferenceExpression;
+};
+
+/** A logic step performed by an action. */
+export type ActionLogicStep = v.Union<{
+    createObject: CreateObjectActionLogicStep;
+    updateObject: UpdateObjectActionLogicStep;
+    deleteObject: DeleteObjectActionLogicStep;
+}>;
+
+/** An action type in the ontology. */
+export type ActionTypeDef = {
+    /** Provider-specific metadata used to execute this action. */
+    meta?: Record<string, unknown>;
+    /** The object type's programmatic name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** Optional portable icon descriptor. */
+    icon?: IconDescriptor;
+    /** Optional display color independent of the icon. */
+    color?: string;
+    /** The action type's parametero. */
+    parameters: Array<ActionParameterDef>;
+    /** Authoritative action result. Omission means void; optimistic execution has no result. */
+    returnType?: TypeDef;
+    /** The action type's local logic stepo. */
+    logic: Array<ActionLogicStep>;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
+/** A parameter accepted by a query function type. */
+export type QueryFunctionParameterDef = {
+    /** The query function parameter's programmatic name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    type: TypeDef;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
+/** A runnable query function type in the ontology. */
+export type QueryFunctionTypeDef = {
+    /** The query function type's programmatic name. */
+    name: string;
+    /** Human-readable name. */
+    displayName: string;
+    /** The query function type's parameters. */
+    parameters: Array<QueryFunctionParameterDef>;
+    /** The query function type's return type. */
+    returnType: TypeDef;
+    /** Optional description. */
+    description?: string;
+    deprecated?: Deprecation;
+};
+
+/** Moves a property from one path to another. */
+export type MoveLensOp = {
+    from: Array<string>;
+    to: Array<string>;
+};
+
+/** Retains only the selected top-level properties. */
+export type SelectLensOp = {
+    properties: Array<string>;
+};
+
+/** One schema and value transformation operation. */
+export type LensOp = v.Union<{
+    move: MoveLensOp;
+    select: SelectLensOp;
+}>;
+
+/** An ordered sequence of source-to-target transformation operations. */
+export type Lens = {
+    operations: Array<LensOp>;
+};
+
+/** The root ontology definition containing all type definitions. */
+export type OntologyIR = {
+    /** Named, reusable value types. */
+    types: Array<NamedTypeDef>;
+    /** Object type definitions. */
+    objectTypes: Array<ObjectTypeDef>;
+    /** Relationship definitions between object types. */
+    linkTypes: Array<LinkTypeDef>;
+    /** Action type definitions. */
+    actionTypes: Array<ActionTypeDef>;
+    /** Query function type definitions. */
+    queryFunctionTypes: Array<QueryFunctionTypeDef>;
+    displayName?: string;
+    description?: string;
+    policy?: PolicyDef;
+    /** Trusted context definition and data partitioning. */
+    context?: ContextDef;
+};

@@ -1,43 +1,56 @@
+import { byteSource, type ByteInput, byteIO, type BlobBytesService } from "@party-stack/runtime";
+import { Effect, Stream } from "effect";
 import { Directory, File, Paths } from "expo-file-system";
 import { hashStorageName } from "./hashStorageName.js";
-import type { BlobBytesStore } from "@party-stack/runtime";
 
 export interface ExpoFileSystemBlobBytesStoreOptions {
     directoryName: string;
 }
 
-export class ExpoFileSystemBlobBytesStore implements BlobBytesStore {
+export class ExpoFileSystemBlobBytesStore implements BlobBytesService {
     #directoryName: string;
+
+    readonly write = (id: string, value: ByteInput) => byteIO((signal) => this.#write(id, value, signal));
+    readonly read = (id: string) =>
+        Effect.tryPromise(() => this.#read(id)).pipe(
+            Effect.map((value) => (value === undefined ? undefined : byteSource(value)))
+        );
+    readonly delete = (id: string) => Effect.tryPromise(() => this.#delete(id));
+    readonly clear = () => Effect.tryPromise(() => this.#clear());
 
     constructor(options: ExpoFileSystemBlobBytesStoreOptions) {
         this.#directoryName = options.directoryName;
     }
 
-    async write(id: string, blob: Blob): Promise<void> {
+    async #write(id: string, input: ByteInput, signal?: AbortSignal): Promise<void> {
         const file = await this.#file(id);
-        const bytes = new Uint8Array(await blob.arrayBuffer());
         file.create({ intermediates: true, overwrite: true });
-        file.write(bytes);
+        try {
+            await Stream.toReadableStream(byteSource(input).stream).pipeTo(file.writableStream(), { signal });
+        } catch (error) {
+            if (file.exists) file.delete();
+            throw error;
+        }
     }
 
-    read(id: string): Promise<Blob> {
+    #read(id: string): Promise<Blob | undefined> {
         return Promise.resolve().then(async () => {
             const file = await this.#file(id);
             if (!file.exists) {
-                throw new Error(`Blob bytes not found for "${id}".`);
+                return undefined;
             }
             return file;
         });
     }
 
-    delete(id: string): Promise<void> {
+    #delete(id: string): Promise<void> {
         return Promise.resolve().then(async () => {
             const file = await this.#file(id);
             if (file.exists) file.delete();
         });
     }
 
-    clear(): Promise<void> {
+    #clear(): Promise<void> {
         return Promise.resolve().then(() => {
             const directory = new Directory(Paths.document, this.#directoryName);
             if (directory.exists) directory.delete();

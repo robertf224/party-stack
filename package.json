@@ -4,11 +4,13 @@
     "scripts": {
         "fix-versions": "syncpack fix",
         "upgrade-versions": "syncpack update && syncpack fix",
-        "prepare": "vp config --hooks --no-agent"
+        "prepare": "vp config --hooks --no-agent && effect-tsgo patch --oxlint"
     },
     "devDependencies": {
         "@changesets/cli": "^2.29.7",
+        "@effect/tsgo": "^0.53.4",
         "@types/node": "^24.10.1",
+        "effect": "^4.0.5",
         "postcss-import": "^17.0.0",
         "syncpack": "^15.3.3",
         "typescript": "~7.0.2",

@@ -1,0 +1,549 @@
+---
+title: Expo
+description: Sign in to Foundry, switch saved accounts and ontologies, and sync downloaded data in background jobs.
+---
+
+This example uses normal Connect sign-in and saved accounts. A device server owns
+credentials and persistent replicas; React Native opens memory views through a
+local client:
+
+```text
+React Native → memory replica → localClient → device server
+                                                ├─ Connect accounts + credentials
+                                                └─ persistent Foundry replicas
+                                                   SQLite + files + SecureStore
+```
+
+Selecting an account lists its available Foundry ontologies. Selecting an ontology
+opens a small generic object browser. Background work uses the same server owner,
+without mounting a second UI replica.
+
+## Install and configure
+
+Use an Expo SDK 57 project and install the packages:
+
+```sh
+pnpm add @party-stack/ontology @party-stack/ontology-react @party-stack/ontology-server @party-stack/ontology-backend @party-stack/ontology-spec @party-stack/runtime @party-stack/connect @party-stack/foundry-ontology @party-stack/expo-runtime effect @tanstack/db@1.0.0-rc.1.4 @tanstack/react-db@1.0.0-rc.1.4
+npx expo install expo-sqlite expo-file-system @react-native-community/netinfo expo-background-task expo-task-manager
+```
+
+Both TanStack packages are pinned to the supported release. The optional
+[installation instructions](/docs/installation#tanstack-db-fixes) are applied during installation at
+the application root; they add no native module or runtime initialization.
+
+Configure the app's native URL scheme and plugins:
+
+```json title="app.json"
+{
+    "expo": {
+        "scheme": "com.example.ontology",
+        "plugins": ["expo-router", "@party-stack/expo-runtime/plugin", "expo-background-task"]
+    }
+}
+```
+
+Register a public OAuth application in Foundry with the exact redirect URL
+`com.example.ontology://`. Add that URL to its permitted redirects;
+no client secret belongs in the native app. Configure the same values below:
+
+```ts title="src/foundry-config.ts"
+export const foundry = {
+    baseUrl: "https://your-stack.palantirfoundry.com",
+    clientId: "YOUR_PUBLIC_CLIENT_ID",
+    redirectUrl: "com.example.ontology://",
+};
+```
+
+Apply the scheme and plugin changes in a new native build. The runtime plugin
+composes SecureStore's Android backup exclusions and SQLite defaults. The
+background-task plugin adds iOS's processing mode and permitted scheduler ID.
+Projects maintaining native files manually need the
+[equivalent background configuration](https://docs.expo.dev/versions/v57.0.0/sdk/background-task/#configuration-in-app-config).
+See Expo's [URL scheme](https://docs.expo.dev/linking/into-your-app/) and
+[plugin](https://docs.expo.dev/config-plugins/plugins/) guides.
+
+Use a custom entry point, keeping Router last:
+
+```js title="index.js"
+import "@party-stack/expo-runtime/polyfill";
+import "./src/background-sync";
+import "expo-router/entry";
+```
+
+```json title="package.json"
+{
+    "main": "index.js"
+}
+```
+
+The polyfill supplies compatible `Blob`/`File` and missing secure randomness. It
+leaves Expo's fetch unchanged; do not enable `EXPO_PUBLIC_USE_RN_FETCH`. The
+runtime's browser authentication uses Expo's native auth session and returns its
+callback to Connect directly. This native flow needs no web callback-relay page.
+
+## Open one device owner
+
+Keep the server outside React so the app and scheduled callbacks share its native
+replicas. `ManagedRuntime` lazily acquires the application Layer and owns its
+resources. This module uses real Connect connection records for both sign-in and
+later credential restoration:
+
+```ts title="src/device.ts"
+import { connectDeviceRoute, makeConnectManager } from "@party-stack/connect";
+import { expoRuntime } from "@party-stack/expo-runtime";
+import {
+    foundryPlatformOntology,
+    makeFoundryBackend,
+    makeFoundryMetadataBackend,
+    makeFoundryPlatformBackend,
+    makeFoundryServiceConnector,
+} from "@party-stack/foundry-ontology";
+import { localClient } from "@party-stack/ontology/local";
+import { classifyBackendFailure } from "@party-stack/ontology-backend";
+import { loadDefinition } from "@party-stack/ontology-backend/meta";
+import { makeOntologyServer } from "@party-stack/ontology-server";
+import { Runtime, Runtimes } from "@party-stack/runtime";
+import { Context, Effect, Layer, ManagedRuntime } from "effect";
+import { foundry } from "./foundry-config";
+
+const openDevice = Effect.gen(function* () {
+    const platform = yield* Layer.build(expoRuntime());
+    return yield* Effect.gen(function* () {
+        const credentialRuntime = yield* (yield* Runtimes).acquire({
+            owner: "device",
+            namespace: "connect",
+        });
+        const connect = yield* makeConnectManager({
+            services: [
+                {
+                    connector: makeFoundryServiceConnector(),
+                    instances: [
+                        {
+                            instanceUrl: foundry.baseUrl,
+                            OAuthApplications: [
+                                {
+                                    id: "app",
+                                    clientId: foundry.clientId,
+                                    redirectUrl: foundry.redirectUrl,
+                                    scopes: [
+                                        "api:ontologies-read",
+                                        "api:use-ontologies-read",
+                                        "ontology:view-object-type",
+                                        "ontology:view-unredacted-action-type",
+                                        "offline_access",
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }).pipe(Effect.provideService(Runtime, credentialRuntime));
+        const server = yield* makeOntologyServer({
+            enableRealtime: true,
+            routes: {
+                connect: connectDeviceRoute(connect),
+                "accounts/:connectionId/platform": ({ connectionId }) =>
+                    Effect.gen(function* () {
+                        const access = yield* connect.connections.acquire({
+                            objectType: "OAuthConnection",
+                            id: connectionId,
+                        });
+                        return {
+                            kind: "replica" as const,
+                            ir: foundryPlatformOntology,
+                            context: { userId: access.userId },
+                            authentication: access.authentication,
+                            backend: yield* makeFoundryPlatformBackend({
+                                baseUrl: access.serviceInstance.instanceUrl,
+                                egress: access.egress,
+                            }),
+                            dangerouslyAllowInternalAccess: true as const,
+                        };
+                    }),
+                "accounts/:connectionId/ontologies/:ontologyId": (params, route) =>
+                    Effect.gen(function* () {
+                        const access = yield* connect.connections.acquire({
+                            objectType: "OAuthConnection",
+                            id: params.connectionId,
+                        });
+                        const context = { userId: access.userId };
+                        const options = {
+                            baseUrl: access.serviceInstance.instanceUrl,
+                            ontologyId: params.ontologyId,
+                            egress: access.egress,
+                        };
+                        const metadata = yield* makeFoundryMetadataBackend(options);
+                        const ir = yield* route.definition({ context, load: loadDefinition(metadata) });
+                        return {
+                            kind: "replica" as const,
+                            ir,
+                            context,
+                            authentication: access.authentication,
+                            backend: yield* makeFoundryBackend({ ...options, ir, context }),
+                            dangerouslyAllowInternalAccess: true as const,
+                        };
+                    }),
+            },
+        });
+        return { connect, server };
+    }).pipe(Effect.provideContext(platform));
+});
+
+export class Device extends Context.Service<Device, Effect.Success<typeof openDevice>>()("app/Device") {}
+export const deviceRuntime = ManagedRuntime.make(Layer.effect(Device, openDevice));
+
+export const client = Effect.gen(function* () {
+    const context = yield* deviceRuntime.contextEffect;
+    return yield* localClient(Context.get(context, Device).server);
+}).pipe(Effect.mapError((cause) => classifyBackendFailure("device.open", cause)));
+export const uiRuntime = expoRuntime({ storage: "memory" });
+```
+
+Connect encrypts saved credentials in the native credential partition. Acquiring
+a saved connection restores authenticated egress and coordinates refresh; it does
+not start interactive sign-in. `api:ontologies-read` permits account-level
+ontology discovery. Existing accounts need to reconnect after adding scopes.
+
+The picker below automatically pins its small discovery list. That keeps both
+the list and its availability proof for offline navigation; it does not download
+the selected ontologies' object data.
+
+`route.definition` uses retained IR for this account and target, loading metadata
+only when no usable definition is saved. It adds no startup refresh barrier.
+The first open of a new ontology requires its definition from Foundry; later
+starts can use its retained definition and downloaded rows offline. A schema
+incompatibility is surfaced rather than silently discarding pending actions.
+
+The persistent runtime belongs to the device server. `uiRuntime` keeps React
+views in memory while preserving Expo's native browser-authentication capability.
+`dangerouslyAllowInternalAccess` trusts this private in-process client; do not
+publish the device server as a network endpoint.
+
+## Pick an account and ontology
+
+Mount the app from your Expo Router screen. The account picker queries Connect's
+ordinary collections; authentication runs only when a button calls `signIn`.
+
+```tsx title="src/App.tsx"
+import { foundryPlatformObjects } from "@party-stack/foundry-ontology/platform/collections";
+import { authenticationObjects } from "@party-stack/ontology/authentication";
+import { sub } from "@party-stack/ontology-spec/query";
+import { OntologyEnvironmentProvider, OntologyProvider, useOfflinePin } from "@party-stack/ontology-react";
+import { AuthenticationProvider, useAuthentication } from "@party-stack/ontology-react/authentication";
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { Suspense, useEffect, useState } from "react";
+import { ActivityIndicator, Button, Text, View } from "react-native";
+import { client, uiRuntime } from "./device";
+import { foundry } from "./foundry-config";
+import { ObjectBrowser } from "./ObjectBrowser";
+
+const discoveryDownload = {
+    select: [
+        sub("ontologies", {
+            from: { source: { objectType: "Ontology" }, binding: "row" },
+            select: [],
+        }),
+    ],
+};
+
+export function App() {
+    const [account, setAccount] = useState<string>();
+    const [ontology, setOntology] = useState<string>();
+    return (
+        <OntologyEnvironmentProvider client={client} runtime={uiRuntime}>
+            <Suspense fallback={<ActivityIndicator accessibilityLabel="Loading accounts" />}>
+                <AuthenticationProvider>
+                    <Accounts
+                        selected={account}
+                        onSelect={(id) => {
+                            setAccount(id);
+                            setOntology(undefined);
+                        }}
+                    />
+                </AuthenticationProvider>
+            </Suspense>
+            {account && (
+                <Suspense fallback={<ActivityIndicator accessibilityLabel="Loading ontologies" />}>
+                    <OntologyProvider ontology={`accounts/${encodeURIComponent(account)}/platform`}>
+                        <Ontologies onSelect={setOntology} />
+                    </OntologyProvider>
+                </Suspense>
+            )}
+            {account && ontology && (
+                <Suspense fallback={<ActivityIndicator accessibilityLabel="Opening ontology" />}>
+                    <OntologyProvider
+                        ontology={`accounts/${encodeURIComponent(account)}/ontologies/${encodeURIComponent(ontology)}`}
+                    >
+                        <ObjectBrowser />
+                    </OntologyProvider>
+                </Suspense>
+            )}
+        </OntologyEnvironmentProvider>
+    );
+}
+
+function Accounts({ selected, onSelect }: { selected?: string; onSelect: (id: string) => void }) {
+    const authentication = useAuthentication();
+    const { data } = useLiveSuspenseQuery((q) => q.from({ account: authenticationObjects.OAuthConnection }));
+    const [error, setError] = useState<string>();
+    async function signIn(connectionId?: string) {
+        try {
+            setError(undefined);
+            const account = await authentication
+                .oauth({ applicationId: "app", redirectUrl: foundry.redirectUrl })
+                .signIn({ connectionId });
+            onSelect(account.id);
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Sign-in failed.");
+        }
+    }
+    return (
+        <View>
+            {data
+                .filter((account) => account.status !== "inactive")
+                .map((account) => (
+                    <View key={account.id}>
+                        <Button
+                            title={`${selected === account.id ? "✓ " : ""}${account.title}`}
+                            onPress={() => onSelect(account.id)}
+                        />
+                        {account.status === "needs-auth" && (
+                            <Button title="Reconnect" onPress={() => void signIn(account.id)} />
+                        )}
+                    </View>
+                ))}
+            <Button title="Sign in to Foundry" onPress={() => void signIn()} />
+            {error && <Text accessibilityRole="alert">{error}</Text>}
+        </View>
+    );
+}
+
+function Ontologies({ onSelect }: { onSelect: (id: string) => void }) {
+    const { data } = useLiveSuspenseQuery((q) =>
+        q.from({ ontology: foundryPlatformObjects.Ontology }).orderBy(({ ontology }) => ontology.displayName)
+    );
+    const pin = useOfflinePin();
+    const [error, setError] = useState<string>();
+    useEffect(() => {
+        if (pin.isLoading || pin.status) return;
+        let active = true;
+        void pin.set(discoveryDownload).catch((cause) => {
+            if (active) setError(String(cause));
+        });
+        return () => {
+            active = false;
+        };
+    }, [pin.isLoading, pin.status, pin.set]);
+    return (
+        <View>
+            {error && <Text accessibilityRole="alert">{error}</Text>}
+            {pin.status?.error && <Text accessibilityRole="alert">{pin.status.error.message}</Text>}
+            {data.map((ontology) => (
+                <Button
+                    key={ontology.id}
+                    title={ontology.displayName}
+                    onPress={() => onSelect(ontology.id)}
+                />
+            ))}
+        </View>
+    );
+}
+```
+
+The scheme must match the redirect configured in Foundry. Expo's auth-session
+API returns the callback to Connect, which completes PKCE and saves the account.
+The root redirect keeps this single-screen Router example on its index screen;
+an app using a separate callback path should map that native link to its screen.
+Cancelled sign-in remains in the picker; a rejected saved credential becomes
+`needs-auth` and offers reconnect. Selecting it still opens local downloaded data;
+reconnecting is a separate online action. See [Expo's auth session reference](https://docs.expo.dev/versions/v57.0.0/sdk/webbrowser/#webbrowseropenauthsessionasyncurl-redirecturl-options).
+
+Switching providers closes the old memory view. The device server independently
+owns persistent partitions keyed by the selected route and IR-declared `userId`.
+There is no separate token store or account list in React state.
+
+```tsx title="app/index.tsx"
+export { App as default } from "../src/App";
+```
+
+## Browse objects and download data
+
+A generic browser uses the selected view's runtime collections because its object
+types are not known at code-generation time. Fixed-schema apps can use generated
+collection descriptors instead.
+
+```tsx title="src/ObjectBrowser.tsx"
+import { sub } from "@party-stack/ontology-spec/query";
+import { useOfflinePin, useOntology } from "@party-stack/ontology-react";
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { Suspense, useMemo, useState } from "react";
+import { ActivityIndicator, Button, Text, View } from "react-native";
+
+export function ObjectBrowser() {
+    const view = useOntology();
+    const [selected, setSelected] = useState<string>();
+    const [error, setError] = useState<string>();
+    const pin = useOfflinePin();
+    const type = view.ir.objectTypes.find((type) => type.name === selected) ?? view.ir.objectTypes[0];
+    const download = useMemo(
+        () => ({
+            select: view.ir.objectTypes.map((type) =>
+                sub(type.name, {
+                    from: { source: { objectType: type.name }, binding: "row" },
+                    select: [],
+                })
+            ),
+        }),
+        [view.ir]
+    );
+    return (
+        <View>
+            {view.ir.objectTypes.map((type) => (
+                <Button key={type.name} title={type.displayName} onPress={() => setSelected(type.name)} />
+            ))}
+            <Button
+                title={pin.status?.ready ? "Downloaded" : "Download ontology"}
+                onPress={() =>
+                    void pin.set(download, { attachments: "all" }).catch((cause) => setError(String(cause)))
+                }
+            />
+            {pin.status && (
+                <Button
+                    title="Remove download"
+                    onPress={() => void pin.clear().catch((cause) => setError(String(cause)))}
+                />
+            )}
+            {pin.status?.error && <Text>{pin.status.error.message}</Text>}
+            {error && <Text accessibilityRole="alert">{error}</Text>}
+            {type && (
+                <Suspense fallback={<ActivityIndicator accessibilityLabel="Loading objects" />}>
+                    <Rows key={type.name} objectType={type.name} />
+                </Suspense>
+            )}
+        </View>
+    );
+}
+
+function Rows({ objectType }: { objectType: string }) {
+    const view = useOntology();
+    const type = view.ir.objectTypes.find((type) => type.name === objectType)!;
+    const { data } = useLiveSuspenseQuery((q) =>
+        q
+            .from({ row: view.objects[objectType]! })
+            .orderBy(({ row }) => row[type.primaryKey])
+            .limit(25)
+    );
+    return (
+        <View>
+            {data.map((row) => (
+                <Text key={String(row[type.primaryKey])}>
+                    {String(row[type.title ?? type.primaryKey] ?? row[type.primaryKey])}
+                </Text>
+            ))}
+        </View>
+    );
+}
+```
+
+The page reads 25 rows. The explicit download pin retains the chosen graph's full
+rows and attachment bytes; ordinary persistence alone does not download the entire
+ontology. Pins in the memory view reach its persistent parent. See [offline pins](/docs/offline)
+for narrower graphs and status details.
+
+## Refresh downloads in a background task
+
+Define tasks at module scope; Expo can start JavaScript without mounting React.
+The module below restores saved Connect accounts through the same device owner.
+It never starts an interactive sign-in flow.
+
+```ts title="src/background-sync.ts"
+import { makeAuthenticationClient } from "@party-stack/connect";
+import * as BackgroundTask from "expo-background-task";
+import * as TaskManager from "expo-task-manager";
+import { Effect } from "effect";
+import { Platform } from "react-native";
+import { Device, deviceRuntime } from "./device";
+
+const TASK = "app.refresh-ontologies";
+export const refreshOntologies = Effect.fn("App.refreshOntologies")(function* (targets: readonly string[]) {
+    const { server } = yield* Device;
+    return yield* Effect.forEach(
+        [...new Set(targets)],
+        (target) =>
+            server.syncOnce(target).pipe(
+                Effect.map(({ pin }) => ({ target, ok: !pin || pin.ready, error: pin?.error })),
+                Effect.catch((error) =>
+                    Effect.succeed({ target, ok: false, error: { kind: error.kind, message: error.message } })
+                )
+            ),
+        { concurrency: 2 }
+    );
+});
+
+const refreshSavedOntologies = Effect.gen(function* () {
+    const { connect, server } = yield* Device;
+    const accounts = yield* makeAuthenticationClient({ backend: connect.backend }).connections;
+    const prefixes = accounts
+        .filter((account) => account.kind === "oauth" && account.status === "active")
+        .map((account) => `accounts/${encodeURIComponent(account.id)}/ontologies/`);
+    const saved = yield* server.partitions;
+    return yield* refreshOntologies(
+        saved
+            .filter((entry) => prefixes.some((prefix) => entry.ontology.startsWith(prefix)))
+            .map((entry) => entry.ontology)
+    );
+});
+
+TaskManager.defineTask(TASK, async ({ error }) => {
+    if (error) return BackgroundTask.BackgroundTaskResult.Failed;
+    const controller = new AbortController();
+    const expiration =
+        Platform.OS === "ios" ? BackgroundTask.addExpirationListener(() => controller.abort()) : undefined;
+    try {
+        const results = await deviceRuntime.runPromise(refreshSavedOntologies, { signal: controller.signal });
+        return results.every((result) => result.ok)
+            ? BackgroundTask.BackgroundTaskResult.Success
+            : BackgroundTask.BackgroundTaskResult.Failed;
+    } catch {
+        return BackgroundTask.BackgroundTaskResult.Failed;
+    } finally {
+        expiration?.remove();
+    }
+});
+
+export async function enableBackgroundSync() {
+    if (!(await TaskManager.isAvailableAsync())) return false;
+    if ((await BackgroundTask.getStatusAsync()) === BackgroundTask.BackgroundTaskStatus.Restricted)
+        return false;
+    await BackgroundTask.registerTaskAsync(TASK, { minimumInterval: 15 });
+    return true;
+}
+export const disableBackgroundSync = () => BackgroundTask.unregisterTaskAsync(TASK);
+```
+
+Call `enableBackgroundSync()` from a download setting. Registration persists
+between launches. A target's failure does not cancel other targets. Each native
+checkpoint holds a scoped lease on the existing replica owner, processes current
+demand and pending outbox work, and refreshes its pin graph. Inspect pin status:
+download failures can be saved there even when the checkpoint Effect completes.
+
+The catalog contains previously opened targets. Alternatively, query an
+application workspace/favorites ontology and pass its desired canonical targets
+to `refreshOntologies`. That list may include ontologies not opened locally; its
+pin/query graph must still specify which data should be downloaded. No special
+Workspace object type or `syncAll` command is required by the SDK.
+
+Expo schedules background work opportunistically. `minimumInterval: 15` requests
+a minimum delay in minutes, not a fifteen-minute timer. Use a development build;
+iOS background execution requires a physical device. See SDK 57's
+[BackgroundTask](https://docs.expo.dev/versions/v57.0.0/sdk/background-task/) and
+[TaskManager](https://docs.expo.dev/versions/v57.0.0/sdk/task-manager/) references.
+
+A backgrounded app can retain its React tree and device server, and the user can
+return while work finishes. Share this owner rather than opening a competing
+registry against the same partitions. Tasks close their temporary leases, not
+the shared application host. On application shutdown, close views and call
+`deviceRuntime.dispose()`. Account switching uses Connect records and separate
+partitions; it does not recreate the host. Separate JavaScript runtimes would
+need an explicit native ownership handoff; this example runs in one process.

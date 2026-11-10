@@ -1,21 +1,12 @@
-import { createBetterAuthConnectionAdapter } from "@party-stack/better-auth";
-import { type ConnectionState } from "@party-stack/connections";
-import { createFoundryBackendInstallation, createFoundryOntologyRoute } from "@party-stack/foundry-ontology";
-import { createFoundryUsersIntegration } from "@party-stack/foundry-ontology/users";
-import {
-    createOntologyBackendInstallation,
-    type LiveOntology,
-    type OntologyBackendInstallation,
-} from "@party-stack/ontology";
-import { createRemoteOntologyBackend } from "@party-stack/remote-ontology/client";
-import { createHttpRemoteOntologyTransport } from "@party-stack/remote-ontology/http";
-import { createWebRuntime } from "@party-stack/web-runtime";
-import { eq } from "@tanstack/db";
-import ontology from "../ontology/ontology";
-import { foundryUserToUser } from "../ontology/user";
+import { attachBetterAuthSession } from "@party-stack/better-auth";
+import { isUnauthenticatedError } from "@party-stack/ontology-backend";
 import { authClient } from "./auth";
+import { authentication, openIssueOntology } from "./sharedOntology";
+import { FOUNDRY_CLIENT_ID, FOUNDRY_REDIRECT_URL } from "./trackerConfig";
 import type { IssueTrackerOntology } from "../ontology/generated/types";
-
+import type { ConnectionState } from "@party-stack/connect";
+import type { LiveOntology } from "@party-stack/ontology";
+import type { AccountRef } from "@party-stack/ontology/authentication";
 export type ProfileKind = "foundry" | "sqlite";
 export type TrackerOntology = LiveOntology<IssueTrackerOntology>;
 
@@ -24,250 +15,129 @@ export interface ConnectedProfile {
     kind: ProfileKind;
     label: string;
     ontology: TrackerOntology;
+    connection: AccountRef;
 }
-
-interface ProfileHandle {
-    installation: OntologyBackendInstallation;
-    userId: string;
-    ontologyId: string;
-}
-
-const writes = {
-    defaultMode: "outbox" as const,
-    defaultVisibility: "optimistic" as const,
-};
-
-function requiredEnv(name: string, value: string | undefined): string {
-    if (!value) {
-        throw new Error(`Missing required environment variable ${name}.`);
-    }
-    return value;
-}
-
-const FOUNDRY_URL = requiredEnv("VITE_FOUNDRY_URL", import.meta.env.VITE_FOUNDRY_URL);
-const FOUNDRY_ONTOLOGY_RID = requiredEnv(
-    "VITE_FOUNDRY_ONTOLOGY_RID",
-    import.meta.env.VITE_FOUNDRY_ONTOLOGY_RID
-);
-const FOUNDRY_CLIENT_ID = requiredEnv("VITE_FOUNDRY_CLIENT_ID", import.meta.env.VITE_FOUNDRY_CLIENT_ID);
-const FOUNDRY_REDIRECT_URL =
-    import.meta.env.VITE_FOUNDRY_REDIRECT_URL ??
-    (typeof window === "undefined"
-        ? "http://localhost:3000/auth/callback"
-        : `${window.location.origin}/auth/callback`);
-
-const handles = new Map<string, ProfileHandle>();
-let foundryOAuthCompletion: Promise<ConnectedProfile | undefined> | undefined;
-
-const foundryUsers = createFoundryUsersIntegration({
-    objectType: "User",
-    lens: foundryUserToUser,
+const foundryOAuth = authentication.oauth({
+    applicationId: FOUNDRY_CLIENT_ID,
+    redirectUrl: FOUNDRY_REDIRECT_URL,
 });
+const foundryOAuthCompletions = new Map<string, Promise<ConnectedProfile | undefined>>();
 
-const foundryInstallation = await createFoundryBackendInstallation({
-    baseUrl: FOUNDRY_URL,
-    runtime: createWebRuntime,
-    connections: {
-        oauth: {
-            clientId: FOUNDRY_CLIENT_ID,
-            redirectUrl: FOUNDRY_REDIRECT_URL,
-            // The web runtime does not yet provide a secure
-            // SecretStore. This is acceptable only for the demo.
-            dangerouslyPersistSecrets: true,
-            scopes: [
-                "api:admin-read",
-                "api:use-ontologies-read",
-                "api:use-ontologies-write",
-                "api:use-mediasets-read",
-                "api:use-mediasets-write",
-                "offline_access",
-            ],
-        },
-    },
-    routes: [
-        createFoundryOntologyRoute({
-            ontologyId: FOUNDRY_ONTOLOGY_RID,
-            ir: ontology,
-            users: foundryUsers,
-            persistObjects: true,
-            writes,
-        }),
-    ],
-});
-
-const sqliteInstallation = await createOntologyBackendInstallation<typeof authClient>({
-    installationId: "issue-tracker-sqlite",
-    connections: createBetterAuthConnectionAdapter({
-        client: authClient,
-    }),
-    runtime: createWebRuntime,
-    routes: [
-        {
-            matches: (ontologyId) => ontologyId === "issue-tracker",
-            configure: ({ egress }) => ({
-                ir: ontology,
-                backend: createRemoteOntologyBackend({
-                    transport: createHttpRemoteOntologyTransport({
-                        url: "/api/remote-ontology/",
-                        fetch: egress.fetch,
-                        ir: ontology,
-                    }),
-                }),
-                persistObjects: true,
-                writes,
-            }),
-        },
-    ],
-});
-
-async function openProfile(options: {
-    installation: OntologyBackendInstallation;
-    userId: string;
-    ontologyId: string;
-    kind: ProfileKind;
-    label: string;
-    id?: string;
-}): Promise<ConnectedProfile> {
-    const ontology = await options.installation.openOntology<IssueTrackerOntology>({
-        userId: options.userId,
-        ontologyId: options.ontologyId,
-    });
-    const id = options.id ?? `${options.installation.installationId}:${options.userId}:${options.ontologyId}`;
-    handles.set(id, {
-        installation: options.installation,
-        userId: options.userId,
-        ontologyId: options.ontologyId,
-    });
+async function openProfile(connection: AccountRef): Promise<ConnectedProfile> {
+    const kind = connection.kind === "external-session" ? "sqlite" : "foundry";
+    const ontology = await openIssueOntology(connection);
     return {
-        id,
-        kind: options.kind,
-        label: options.label,
+        id: `${connection.kind}:${connection.id}`,
+        kind,
+        label: kind === "foundry" ? "Foundry" : "SQLite",
         ontology,
+        connection,
     };
 }
-
-const foundryProfile = (userId: string) =>
-    openProfile({
-        installation: foundryInstallation,
-        userId,
-        ontologyId: FOUNDRY_ONTOLOGY_RID,
-        kind: "foundry",
-        label: "Foundry",
-    });
-
-const sqliteProfile = (userId: string) =>
-    openProfile({
-        installation: sqliteInstallation,
-        userId,
-        ontologyId: "issue-tracker",
-        kind: "sqlite",
-        label: "SQLite",
-        id: `sqlite:${userId}`,
-    });
-
 export async function connectSqliteProfile(credentials: {
     username: string;
     password: string;
 }): Promise<ConnectedProfile> {
-    const result = await sqliteInstallation.authentication.signIn.email({
+    const result = await authClient.signIn.email({
         email: credentials.username,
         password: credentials.password,
     });
-    if (result.error || !result.data) {
-        throw new Error(result.error?.message ?? "Better Auth sign-in failed.");
-    }
-    return sqliteProfile(result.data.user.id);
+    if (result.error || !result.data) throw new Error(result.error?.message ?? "Better Auth sign-in failed.");
+    return openProfile(
+        await attachBetterAuthSession({
+            client: authClient,
+            authentication,
+            serviceInstanceId: "sqlite",
+            session: result.data,
+        })
+    );
 }
-
 export async function connectGoogleProfile(): Promise<ConnectedProfile> {
-    const result = await sqliteInstallation.authentication.signIn.popup({
-        provider: "google",
-    });
-    if (result.error) {
-        throw new Error(result.error.message ?? "Google sign-in failed.");
-    }
-    const listed = await sqliteInstallation.authentication.multiSession.listDeviceSessions();
-    if (listed.error || !listed.data) {
-        throw new Error(listed.error?.message ?? "Could not load the Google session.");
-    }
+    const result = await authClient.signIn.popup({ provider: "google" });
+    if (result.error) throw new Error(result.error.message ?? "Google sign-in failed.");
+    // Better Auth's popup result currently contains no session identity. This
+    // existing demo heuristic needs explicit selection or an upstream result API.
+    const listed = await authClient.multiSession.listDeviceSessions();
+    if (listed.error || !listed.data) throw new Error("Could not load the Google session.");
     const selected = [...listed.data].sort(
         (left, right) =>
             new Date(right.session.updatedAt).getTime() - new Date(left.session.updatedAt).getTime()
     )[0];
-    if (!selected) {
-        throw new Error("Google sign-in did not create a session.");
-    }
-    return sqliteProfile(selected.user.id);
+    if (!selected) throw new Error("Google sign-in did not create a session.");
+    return openProfile(
+        await attachBetterAuthSession({
+            client: authClient,
+            authentication,
+            serviceInstanceId: "sqlite",
+            session: selected.session,
+        })
+    );
 }
-
 export async function connectFoundryProfile(): Promise<ConnectedProfile> {
-    const connection = await foundryInstallation.authentication.signIn.oauth({
-        browserPresentation: "popup",
-    });
-    return foundryProfile(connection.userId);
+    const connection = await foundryOAuth.signIn({ browserPresentation: "popup" });
+    return openProfile(connection);
 }
-
 async function completeFoundryOAuthRedirectInternal(url: string): Promise<ConnectedProfile | undefined> {
-    const connection = await foundryInstallation.authentication.completeOAuthRedirect(url);
+    const connection = await foundryOAuth.complete(url);
     if (!connection) return;
-    const id = `${foundryInstallation.installationId}:${connection.userId}:${FOUNDRY_ONTOLOGY_RID}`;
-    const existing = initialProfiles.find((profile) => profile.id === id);
+    const ref = connection;
+    const existing = initialProfiles.find(
+        (profile) => profile.connection.kind === ref.kind && profile.connection.id === ref.id
+    );
     if (existing) return existing;
-    const profile = await foundryProfile(connection.userId);
+    const profile = await openProfile(ref);
     initialProfiles.push(profile);
     return profile;
 }
-
 export function completeFoundryOAuthRedirect(url: string): Promise<ConnectedProfile | undefined> {
-    foundryOAuthCompletion ??= completeFoundryOAuthRedirectInternal(url).catch((error: unknown) => {
-        foundryOAuthCompletion = undefined;
-        throw error;
-    });
-    return foundryOAuthCompletion;
+    const state = new URL(url).searchParams.get("state") ?? "";
+    let completion = foundryOAuthCompletions.get(state);
+    if (!completion) {
+        completion = completeFoundryOAuthRedirectInternal(url).catch((error: unknown) => {
+            foundryOAuthCompletions.delete(state);
+            throw error;
+        });
+        foundryOAuthCompletions.set(state, completion);
+        if (foundryOAuthCompletions.size > 4)
+            foundryOAuthCompletions.delete(foundryOAuthCompletions.keys().next().value!);
+    }
+    return completion;
 }
-
 export async function disconnectProfile(profile: ConnectedProfile): Promise<void> {
-    const handle = handles.get(profile.id);
-    if (!handle) return;
-    handles.delete(profile.id);
-    await handle.installation.disconnect(handle.userId);
+    await authentication.signOut(profile.connection);
+    await profile.ontology.cleanup();
 }
-
 export function subscribeProfileConnection(
     profile: ConnectedProfile,
     listener: (state: ConnectionState) => void
 ): () => void {
-    const handle = handles.get(profile.id);
-    if (!handle) return () => undefined;
-    const connections = handle.installation.connections;
-    const subscription = connections.subscribeChanges(
-        () => {
-            listener(
-                connections.get(handle.userId)?.state ?? {
-                    status: "inactive",
-                }
-            );
-        },
-        {
-            where: (connection) => eq(connection.userId, handle.userId),
-        }
-    );
-    return () => subscription.unsubscribe();
+    const monitor = profile.ontology.diagnostics?.parent?.replica;
+    if (!monitor) return () => undefined;
+    const read = () => {
+        const state = monitor.getSnapshot().status?.authentication;
+        if (state) listener(state);
+    };
+    const unsubscribe = monitor.subscribe(read);
+    read();
+    return unsubscribe;
 }
-
-const initialProfiles = [
-    ...(await Promise.all(
-        [...foundryInstallation.connections.values()]
-            .filter((connection) => connection.state.status === "active")
-            .map((connection) => foundryProfile(connection.userId))
-    )),
-    ...(await Promise.all(
-        [...sqliteInstallation.connections.values()]
-            .filter((connection) => connection.state.status === "active")
-            .map((connection) => sqliteProfile(connection.userId))
-    )),
-];
-
+const restored = await authentication.connections();
+const initialProfiles = (
+    await Promise.all(
+        restored
+            .filter((connection) => connection.status === "active")
+            .map(async (connection) => {
+                try {
+                    return await openProfile(connection);
+                } catch (cause) {
+                    // Saved external sessions may have expired or belonged to a reset demo backend.
+                    // Leave sign-in available while preserving other usable profiles.
+                    if (isUnauthenticatedError(cause)) return undefined;
+                    throw cause;
+                }
+            })
+    )
+).filter((profile): profile is ConnectedProfile => profile !== undefined);
 export function getIssueTrackerProfiles(): ConnectedProfile[] {
     return [...initialProfiles];
 }

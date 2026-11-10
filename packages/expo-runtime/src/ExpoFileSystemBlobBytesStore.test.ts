@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { Effect, Stream } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { ExpoFileSystemBlobBytesStore } from "./ExpoFileSystemBlobBytesStore.js";
 
@@ -27,9 +28,21 @@ vi.mock("expo-file-system", () => ({
         }
         create() {
             state.created(this.name);
+            state.files.set(this.name, new Uint8Array(0));
         }
-        write(bytes: Uint8Array) {
-            state.files.set(this.name, bytes);
+        stream() {
+            return new Blob([new Uint8Array(state.files.get(this.name)!).buffer]).stream();
+        }
+        writableStream() {
+            return new WritableStream<Uint8Array>({
+                write: (bytes) => {
+                    const previous = state.files.get(this.name) ?? new Uint8Array(0);
+                    const next = new Uint8Array(previous.length + bytes.length);
+                    next.set(previous);
+                    next.set(bytes, previous.length);
+                    state.files.set(this.name, next);
+                },
+            });
         }
         delete() {
             state.files.delete(this.name);
@@ -47,22 +60,25 @@ describe("ExpoFileSystemBlobBytesStore", () => {
     it("writes standard Blob bytes under bounded hashed IDs", async () => {
         const store = new ExpoFileSystemBlobBytesStore({ directoryName: "attachments" });
         const id = "../user/".repeat(500);
-        await store.write(id, new Blob(["hello"]));
+        await Effect.runPromise(store.write(id, new Blob(["hello"])));
         expect(state.created).toHaveBeenCalledWith(createHash("sha256").update(id).digest("hex"));
         expect([...state.files.values()][0]).toEqual(new TextEncoder().encode("hello"));
-        await expect(store.read(id)).resolves.toBeDefined();
-        await store.delete(id);
-        await store.delete(id);
-        await expect(store.read(id)).rejects.toThrow("Blob bytes not found");
+        expect(await Effect.runPromise(store.read(id))).toBeDefined();
+        await Effect.runPromise(store.delete(id));
+        await Effect.runPromise(store.delete(id));
+        expect(await Effect.runPromise(store.read(id))).toBeUndefined();
     });
 
-    it("propagates byte read failures before overwriting cached bytes", async () => {
+    it("removes an incomplete immutable generation when its source fails", async () => {
         const store = new ExpoFileSystemBlobBytesStore({ directoryName: "attachments" });
-        await store.write("existing", new Blob(["original"]));
-        state.created.mockClear();
-        const blob = { arrayBuffer: () => Promise.reject(new Error("byte read failed")) } as Blob;
-        await expect(store.write("existing", blob)).rejects.toThrow("byte read failed");
-        expect(state.created).not.toHaveBeenCalled();
-        expect([...state.files.values()][0]).toEqual(new TextEncoder().encode("original"));
+        await Effect.runPromise(store.write("existing", new Blob(["original"])));
+        const stream = Stream.concat(
+            Stream.succeed(new Uint8Array([1])),
+            Stream.fail(new Error("byte read failed"))
+        );
+        await expect(Effect.runPromise(store.write("new-generation", { stream, type: "" }))).rejects.toThrow(
+            "byte read failed"
+        );
+        expect([...state.files.values()]).toEqual([new TextEncoder().encode("original")]);
     });
 });

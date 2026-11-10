@@ -1,63 +1,48 @@
-import { createBlobManager, type BlobManager } from "@party-stack/blobs";
-import { createDefaultRuntime, type RuntimeAdapterProvider } from "@party-stack/runtime";
-import { type Collection } from "@tanstack/db";
-import { provide } from "../utils/provide.js";
-import { createLiveOntologyActions } from "./actions/createLiveOntologyActions.js";
-import {
-    createLiveOntologyAttachments,
-    type LiveOntologyAttachments,
-} from "./attachments/createLiveOntologyAttachments.js";
-import { unsupportedOntologyAttachmentsAdapter } from "./attachments/unsupportedOntologyAttachmentsAdapter.js";
-import { createLiveOntologyObjectCollection } from "./objects/createLiveOntologyObjectCollection.js";
-import { waitForCollectionsReady } from "./waitForCollectionReady.js";
-import type { OntologyIR } from "../ir/index.js";
-import type { attachment } from "../utils/values.js";
+import type { ReplicaService } from "@party-stack/ontology-replica";
+import type {
+    ReplicaConfiguration,
+    ReplicaOptions,
+    DemandPolicy,
+    ReplicaMonitor,
+    PinOptions,
+    PinStatus,
+} from "@party-stack/ontology-replica";
+import type { OntologyDefinition } from "@party-stack/ontology-spec";
+import type { Encrypted } from "@party-stack/ontology-spec/values";
+import type { TraceStore, TraceRecordingMode } from "@party-stack/runtime/tracing";
+import type { DbClient } from "@tanstack/db";
+export type { OntologyDefinition } from "@party-stack/ontology-spec";
+export type { PinOptions, PinStatus, PinGraph } from "@party-stack/ontology-replica";
+import { MemoryRuntime, Runtimes, type RuntimesLayer } from "@party-stack/runtime";
+import { Effect, Exit, Scope, Layer } from "effect";
+import { makeOntologyResource } from "../runtime/resource.js";
 import type { LiveOntologyAction } from "./actions/createLiveOntologyAction.js";
+import type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
 import type { OntologyMutatorRegistry } from "./mutators/types.js";
-import type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
-import type { OntologyObject } from "./objects/OntologyObject.js";
-import type { OntologyBackendAdapter, OntologyBackendAdapterProvider } from "./OntologyBackendAdapter.js";
+import type { OntologyCollection } from "./objects/types.js";
 import type { OntologyOutbox } from "./outbox/types.js";
-import type { ConnectionMonitor } from "@party-stack/connections";
+import type { OntologyPins } from "./pins.js";
+import type { ConnectionMonitor } from "@party-stack/connect";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
+import type { BackendError } from "@party-stack/ontology-backend";
+import type { OntologyClient, OntologyServerClient } from "@party-stack/ontology-server/rpc";
+import type { OntologyIR, QueryDocument } from "@party-stack/ontology-spec";
+import type { Runtime } from "@party-stack/runtime";
 
 export type { LiveOntologyAction, LiveOntologyActionOptions } from "./actions/createLiveOntologyAction.js";
 export type { LiveOntologyAttachments } from "./attachments/createLiveOntologyAttachments.js";
-export type { OntologyCollection } from "./objects/createLiveOntologyObjectCollection.js";
-
-export type LiveOntologyWriteMode = "direct" | "outbox";
+export type { OntologyCollection } from "./objects/types.js";
 
 export type LiveOntologyWriteVisibility = "confirmed" | "optimistic";
 
 export type LiveOntologyOutboxFailureStrategy = "pause" | "discard-all";
 
-export interface LiveOntologyOutboxOptions {
-    failureStrategy?: LiveOntologyOutboxFailureStrategy;
-    maxRetries?: number;
-}
+export type LiveOntologyOutboxOptions = NonNullable<ReplicaConfiguration["outbox"]>;
 
 export interface LiveOntologyWrites {
-    defaultMode?: LiveOntologyWriteMode;
     defaultVisibility?: LiveOntologyWriteVisibility;
     mutators?: OntologyMutatorRegistry;
     outbox?: LiveOntologyOutboxOptions;
-}
-
-export interface OntologyDefinition {
-    context?: Record<string, unknown>;
-    objectTypes: Record<string, OntologyObject>;
-    actionTypes: Record<
-        string,
-        {
-            parameters: Record<string, unknown>;
-        }
-    >;
-    queryFunctionTypes: Record<
-        string,
-        {
-            parameters: Record<string, unknown>;
-            returnType: unknown;
-        }
-    >;
 }
 
 type OntologyContext<Ontology extends OntologyDefinition> = Ontology extends {
@@ -74,11 +59,17 @@ export type LiveOntologyQueryFunction<
 export type LiveOntologyObjects<
     ObjectTypes extends OntologyDefinition["objectTypes"] = OntologyDefinition["objectTypes"],
 > = {
-    [ObjectTypeName in keyof ObjectTypes]: OntologyCollection<ObjectTypes[ObjectTypeName]>;
+    readonly [ObjectTypeName in keyof ObjectTypes]: OntologyCollection<ObjectTypes[ObjectTypeName]>;
 };
 
 export type LiveOntologyActions<ActionTypes extends OntologyDefinition["actionTypes"]> = {
-    [ActionTypeName in keyof ActionTypes]: LiveOntologyAction<ActionTypes[ActionTypeName]["parameters"]>;
+    [ActionTypeName in keyof ActionTypes]: LiveOntologyAction<
+        ActionTypes[ActionTypeName]["parameters"],
+        ActionTypes[ActionTypeName] extends { returnType: infer Return } ? Return : unknown,
+        ActionTypes[ActionTypeName] extends { inputParameters: infer Input extends Record<string, unknown> }
+            ? Input
+            : ActionTypes[ActionTypeName]["parameters"]
+    >;
 };
 
 export type LiveOntologyQueryFunctions<QueryFunctionTypes extends OntologyDefinition["queryFunctionTypes"]> =
@@ -89,168 +80,156 @@ export type LiveOntologyQueryFunctions<QueryFunctionTypes extends OntologyDefini
         >;
     };
 
+export interface OntologyDiagnostics {
+    readonly label?: string;
+    readonly role?: "host" | "replica";
+    readonly location?: string;
+    readonly replica: ReplicaMonitor;
+    readonly traces?: TraceStore;
+    readonly parent?: OntologyDiagnostics;
+}
+
+export interface DecryptOptions {
+    /** Default false: bypass the persistent decrypted-value cache. True permits a device-encrypted
+     * copy when the response is bound to this ciphertext (see the documented Foundry assumption).
+     * Cached device copies are removed with their replica rows.
+     */
+    readonly cache?: boolean;
+    readonly signal?: AbortSignal;
+}
+export type LiveOntologyDecrypt = <A>(value: Encrypted<A>, options?: DecryptOptions) => Promise<A>;
+
+export interface LiveOntologyPins extends OntologyPins {
+    /** The application's current offline graph, including its readiness. */
+    get(): Promise<PinStatus | undefined>;
+    /** Replace the offline graph, retaining the previous graph until the replacement is ready.
+     * Server-backed clients target the parent's persistent replica, including from a memory tab.
+     * Standalone clients target their own replica. Attachments default to "none".
+     */
+    set(query: QueryDocument, options?: PinOptions): Promise<void>;
+    clear(name?: string): Promise<void>;
+    /** Receives the current pin and subsequent updates. Unsubscribe releases its stream.
+     * Native pin failures appear on status.error; transport failures call onError.
+     */
+    subscribe(
+        listener: (status: PinStatus | undefined) => void,
+        onError?: (cause: unknown) => void
+    ): () => void;
+}
+
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
+    /** Scoped source-collection and query-identity owner. Supply to React's DbProvider or query options.
+     * The current TanStack release does not register browser hook queries for client cleanup.
+     */
+    readonly dbClient: DbClient;
     readonly ir: OntologyIR;
     readonly context: OntologyContext<Ontology>;
-    /**
-     * Resolves once outbox and blob metadata subsystems have finished starting.
-     * Object collections remain on-demand unless explicitly preloaded.
-     */
-    readonly ready: Promise<void>;
-    objects: LiveOntologyObjects<Ontology["objectTypes"]>;
+    /** Lazy typed collections. Consuming queries acquire upstream subset demand. */
+    readonly objects: LiveOntologyObjects<Ontology["objectTypes"]>;
+    /** Lazy cache inspection. These collections retain/observe local visible rows without upstream demand. */
+    readonly cachedObjects: LiveOntologyObjects<Ontology["objectTypes"]>;
+    traces?: TraceStore;
+    diagnostics?: OntologyDiagnostics;
+    readonly replica: ReplicaService;
     actions: LiveOntologyActions<Ontology["actionTypes"]>;
     queryFunctions: LiveOntologyQueryFunctions<Ontology["queryFunctionTypes"]>;
     attachments: LiveOntologyAttachments<Ontology>;
+    /** Explicit decryption of a top-level encrypted property handle. Ordinary queries never decrypt.
+     * A provider that only decrypts the property's current value may return a newer value than this
+     * handle; without identity evidence that response is never cached, even with cache:true.
+     */
+    decrypt: LiveOntologyDecrypt;
     outbox: OntologyOutbox;
+    readonly pins: LiveOntologyPins;
     cleanup: () => Promise<void>;
-    destroy: () => Promise<void>;
 }
 
-export interface CreateLiveOntologyOpts<Context extends Record<string, unknown> = Record<string, unknown>> {
+interface LiveOntologySettings<Context extends Record<string, unknown>> {
     id?: string;
-    ir: OntologyIR;
-    backend: OntologyBackendAdapterProvider<NoInfer<Context>>;
-    runtime?: RuntimeAdapterProvider;
-    persistObjects?: boolean;
+    live?: boolean;
+    /** Opt-in devtools trace history or a live-only diagnostic feed. */
+    traceRecording?: TraceRecordingMode;
+    demand?: DemandPolicy;
+    cache?: ReplicaOptions["cache"];
     writes?: LiveOntologyWrites;
     context?: Context;
-    connection?: ConnectionMonitor;
+    authentication?: ConnectionMonitor;
+    label?: string;
+    /** Attach parent diagnostics, including for committed-only clients.
+     * The endpoint must permit internal diagnostics for this caller.
+     */
+    parent?: { readonly label?: string; readonly location?: string };
 }
 
-function getContextUserId(context: Record<string, unknown>): string | undefined {
-    return typeof context.user === "string" ? context.user : undefined;
+interface BackendOntologyOptions<
+    Context extends Record<string, unknown>,
+> extends LiveOntologySettings<Context> {
+    ir: OntologyIR;
+    /** Borrow an acquired backend, or acquire one in the view's Scope with its Runtime. */
+    backend:
+        | OntologyBackendService
+        | Effect.Effect<OntologyBackendService, BackendError, Scope.Scope | Runtime | Runtimes>;
+    client?: never;
+    ontology?: never;
 }
-
-/**
- * Waits for LiveOntology subsystems required before safe use.
- * Starts on-demand object collection sync without loading subsets.
- */
-export async function waitForLiveOntologyReady(ontology: LiveOntology): Promise<void> {
-    await ontology.ready;
-    await waitForCollectionsReady(
-        Object.values(ontology.objects) as Collection<Record<string, unknown>, string | number>[]
-    );
+interface ClientOntologyOptions<
+    Context extends Record<string, unknown>,
+> extends LiveOntologySettings<Context> {
+    /** Defaults to the authenticated server definition. Supply IR to verify it matches this client. */
+    ir?: OntologyIR;
+    client:
+        | OntologyServerClient
+        | Effect.Effect<OntologyClient | OntologyServerClient, BackendError, Scope.Scope>;
+    /** Select a target on a shared server client; omission selects a single-ontology endpoint. */
+    ontology?: string;
+    backend?: never;
 }
+export type LiveOntologyOptions<Context extends Record<string, unknown> = Record<string, unknown>> =
+    | BackendOntologyOptions<Context>
+    | ClientOntologyOptions<Context>;
 
+export type CreateLiveOntologyOpts<Context extends Record<string, unknown> = Record<string, unknown>> =
+    LiveOntologyOptions<Context> & { runtime?: RuntimesLayer };
+
+/** Generated factories supply their IR while preserving the backend/client choice. */
+export type LiveOntologyFactoryOptions<Context extends Record<string, unknown> = Record<string, unknown>> = (
+    | Omit<BackendOntologyOptions<Context>, "ir">
+    | Omit<ClientOntologyOptions<Context>, "ir">
+) & { runtime?: RuntimesLayer };
+
+/** SDK acquisition materializes collections only for callers requesting a view. */
+export const makeLiveOntology = Effect.fn("Ontology.make")(function* <
+    Ontology extends OntologyDefinition = OntologyDefinition,
+    Context extends Record<string, unknown> = Record<string, unknown>,
+>(opts: LiveOntologyOptions<Context>) {
+    const resource = yield* makeOntologyResource<Ontology, Context>(opts);
+    return yield* resource.view;
+});
+
+/** UI/SDK boundary; the native service above owns all implementation and cleanup. */
 export async function createLiveOntology<
     Ontology extends OntologyDefinition = OntologyDefinition,
     Context extends Record<string, unknown> = Record<string, unknown>,
 >(opts: CreateLiveOntologyOpts<Context>): Promise<LiveOntology<Ontology>> {
-    const ontologyId = opts.id ?? "default";
-    const context = (opts.context ?? {}) as Context;
-    const owner = getContextUserId(context) ?? "anonymous";
-    // TODO(errors): Decorate backend operations and collection options so
-    // normalized errors (especially UnauthenticatedError) are reported through
-    // the ConnectionMonitor. Promise-based calls can be wrapped directly;
-    // long-running sync handlers need a lifecycle-aware supervisor that pauses
-    // on needs-auth and restarts from a checkpoint after reconnection.
-    const backendAdapter: OntologyBackendAdapter = await provide(opts.backend, opts.ir, context);
-    const runtime = await provide(opts.runtime ?? createDefaultRuntime, owner, ontologyId);
-    const attachmentsAdapter = backendAdapter.attachments ?? unsupportedOntologyAttachmentsAdapter;
-    const blobManager: BlobManager = createBlobManager({
-        runtime,
-        remote: {
-            read: (id, readOptions) => {
-                const attachmentValue = readOptions?.meta?.attachment as attachment | undefined;
-                return attachmentsAdapter.getAttachmentContent(attachmentValue ?? { id });
-            },
-            metadata: attachmentsAdapter.getAttachmentMetadata
-                ? (id, readOptions) =>
-                      attachmentsAdapter.getAttachmentMetadata!(
-                          (readOptions?.meta?.attachment as attachment | undefined) ?? { id },
-                          readOptions?.select ?? ["size", "type", "name"]
-                      )
-                : undefined,
-        },
-    });
-    const attachments = createLiveOntologyAttachments<Ontology>({
-        ir: opts.ir,
-        attachmentsAdapter,
-        blobManager,
-    });
-    const objects = Object.fromEntries(
-        opts.ir.objectTypes.map((objectType) => [
-            objectType.name,
-            createLiveOntologyObjectCollection({
-                ir: opts.ir,
-                objectType,
-                backendAdapter,
-                runtime,
-                persistObjects: opts.persistObjects ?? false,
-            }),
-        ])
-    ) as Record<string, OntologyCollection<OntologyObject>>;
-    const actionsSubsystem = createLiveOntologyActions({
-        ir: opts.ir,
-        backendAdapter,
-        runtime,
-        context,
-        objects,
-        blobManager,
-        writes: opts.writes,
-        connection: opts.connection,
-    });
-    const queryFunctions = Object.fromEntries(
-        opts.ir.queryFunctionTypes.map((queryFunctionType) => [
-            queryFunctionType.name,
-            (parameters: Record<string, unknown>) =>
-                backendAdapter.runQueryFunction(queryFunctionType.name, parameters, {
-                    objects: objects,
-                    context,
-                }),
-        ])
-    );
-    const ready = Promise.all([actionsSubsystem.outbox.ready, blobManager.ready]).then(() => undefined);
-    void ready.catch(() => undefined);
-
-    let cleanupPromise: Promise<void> | undefined;
-    const cleanup = (): Promise<void> => {
-        cleanupPromise ??= (async () => {
-            // Settle subsystem startups before tearing down persistence.
-            await Promise.allSettled([ready]);
-            await actionsSubsystem.outbox.cleanup();
-            await Promise.all(
-                Object.values(objects).map(async (collection) => {
-                    const status = collection.status;
-                    if (status === "cleaned-up") {
-                        return;
-                    }
-                    // Settle in-flight startup only; ready/idle need no preload.
-                    if (status === "loading") {
-                        await Promise.allSettled([collection.preload()]);
-                    }
-                    try {
-                        await collection.cleanup();
-                    } catch {
-                        // Idempotent: already cleaned up during preload race.
-                    }
-                })
-            );
-            await Promise.all([blobManager.cleanup(), backendAdapter.cleanup?.()]);
-            await runtime.cleanup?.();
-        })();
-        return cleanupPromise;
-    };
-    let destroyPromise: Promise<void> | undefined;
-    const destroy = (): Promise<void> => {
-        destroyPromise ??= cleanup()
-            .then(() => runtime.destroy?.())
-            .then(() => undefined);
-        return destroyPromise;
-    };
-
-    return {
-        ir: opts.ir,
-        context: context as unknown as OntologyContext<Ontology>,
-        ready,
-        objects: objects as unknown as LiveOntologyObjects<Ontology["objectTypes"]>,
-        actions: actionsSubsystem.actions as unknown as LiveOntologyActions<Ontology["actionTypes"]>,
-        queryFunctions: queryFunctions as unknown as LiveOntologyQueryFunctions<
-            Ontology["queryFunctionTypes"]
-        >,
-        attachments,
-        outbox: actionsSubsystem.outbox,
-        destroy,
-        cleanup,
-    };
+    const scope = Effect.runSync(Scope.make());
+    try {
+        const context = await Effect.runPromise(
+            Layer.buildWithScope(opts.runtime ?? Runtimes.layer(MemoryRuntime.layer), scope)
+        );
+        const live = await Effect.runPromise(
+            Scope.provide(
+                makeLiveOntology<Ontology, Context>(opts).pipe(Effect.provideContext(context)),
+                scope
+            )
+        );
+        let closing: Promise<void> | undefined;
+        const cleanup = () => (closing ??= Effect.runPromise(Scope.close(scope, Exit.void)));
+        return {
+            ...live,
+            cleanup,
+        };
+    } catch (cause) {
+        await Effect.runPromise(Scope.close(scope, Exit.fail(cause)));
+        throw cause;
+    }
 }

@@ -1,0 +1,1310 @@
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
+import { BackendError } from "@party-stack/ontology-backend";
+import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
+import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import { eq, field } from "@party-stack/ontology-storage";
+import * as Memory from "@party-stack/ontology-storage/memory/tables";
+import { Effect, Deferred, Scope, Exit, Result, Stream } from "effect";
+import { expect, test } from "vitest";
+import { makeReplica, type ReplicaService } from "./testing.js";
+import type { ActionRequest, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { OwnedTransaction } from "@party-stack/ontology-backend/owned";
+import type { Transaction } from "@party-stack/ontology-storage/tables";
+
+const ir: OntologyIR = {
+    types: [],
+    linkTypes: [],
+    queryFunctionTypes: [],
+    objectTypes: [
+        {
+            name: "Counter",
+            displayName: "Counter",
+            pluralDisplayName: "Counters",
+            primaryKey: "id",
+            properties: [
+                { name: "id", displayName: "Id", type: o.string({}) },
+                { name: "count", displayName: "Count", type: o.integer({}) },
+            ],
+        },
+    ],
+    actionTypes: ["increment", "reject"].map((name) => ({
+        name,
+        displayName: name,
+        parameters: [],
+        logic: [],
+    })),
+};
+const execute = (tx: OwnedTransaction, action: ActionRequest) =>
+    Effect.gen(function* () {
+        const previous = yield* tx.get("Counter", "shared");
+        yield* tx.put("Counter", { id: "shared", count: Number(previous?.count ?? 0) + 1 });
+        expect((yield* tx.get("Counter", "shared"))?.count).toBe(Number(previous?.count ?? 0) + 1);
+        if (action.name === "reject")
+            return yield* new BackendError({
+                operation: "test",
+                kind: "ValidationFailed",
+                message: "Expected",
+                retryable: false,
+            });
+    });
+
+test("offline enqueue, restart, ordered rebase and reconnect never require network replay reads", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const server = yield* Memory.make();
+                const local = yield* Memory.make();
+                const backend = yield* makeOwnedBackend({
+                    namespace: "server",
+                    ir,
+                    tables: server,
+                    mutators: { increment: execute },
+                });
+                let online = true;
+                let requests = 0;
+                const remote: OntologyBackendService = {
+                    ...backend,
+                    loadSubset: (subset) =>
+                        Effect.suspend(() => {
+                            requests++;
+                            if (!online) throw new Error("Replay attempted a network load");
+                            return backend.loadSubset(subset);
+                        }),
+                    applyAction: (action) =>
+                        Effect.suspend(() => {
+                            requests++;
+                            if (!online) throw new Error("Replay attempted dispatch offline");
+                            return backend.applyAction(action);
+                        }),
+                    changes: {
+                        pull: (query) =>
+                            Effect.suspend(() => {
+                                requests++;
+                                if (!online) throw new Error("Replay attempted a network pull");
+                                return backend.changes!.pull(query);
+                            }),
+                    },
+                };
+                const settings = {
+                    namespace: "local",
+                    ir,
+                    tables: local,
+                    backend: remote,
+                    execute,
+                    startSync: false,
+                    connectivity: { online: Effect.sync(() => online), changes: Stream.never },
+                };
+                yield* backend.applyAction({ id: "seed", name: "increment", parameters: {} });
+                const firstScope = yield* Scope.make();
+                const first = yield* Scope.provide(makeReplica(settings), firstScope);
+                yield* first.syncOnce;
+                expect((yield* first.get("Counter", "shared"))?.count).toBe(1);
+                online = false;
+                const before = requests;
+                yield* first.enqueue({ id: "offline-1", name: "increment", parameters: {} });
+                yield* first.enqueue({ id: "offline-2", name: "increment", parameters: {} });
+                expect((yield* first.get("Counter", "shared"))?.count).toBe(3);
+                expect((yield* first.confirmed.get("Counter", "shared"))?.count).toBe(1);
+                yield* Scope.close(firstScope, Exit.void);
+                expect(Result.isFailure(yield* Effect.result(first.pending))).toBe(true);
+                expect(Result.isFailure(yield* Effect.result(first.remove("offline-1")))).toBe(true);
+                const reopened = yield* makeReplica(settings);
+                expect((yield* reopened.pending).length).toBe(2);
+                expect((yield* reopened.get("Counter", "shared"))?.count).toBe(3);
+                yield* reopened.syncOnce;
+                expect(requests).toBe(before);
+                online = true;
+                yield* backend.applyAction({ id: "another-client", name: "increment", parameters: {} });
+                yield* reopened.syncOnce;
+                expect(yield* reopened.pending).toEqual([]);
+                expect((yield* reopened.confirmed.get("Counter", "shared"))?.count).toBe(4);
+                expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(4);
+            })
+        )
+    );
+});
+
+test("rejected replay is atomic and leaves earlier pending projections intact", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const backend = yield* makeOwnedBackend({
+                    namespace: "server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: { increment: execute },
+                });
+                const replica = yield* makeReplica({
+                    namespace: "local",
+                    ir,
+                    tables,
+                    backend,
+                    execute,
+                    startSync: false,
+                });
+                yield* replica.enqueue({ id: "valid", name: "increment", parameters: {} });
+                const result = yield* Effect.result(
+                    replica.enqueue({ id: "invalid", name: "reject", parameters: {} })
+                );
+                expect(Result.isFailure(result)).toBe(true);
+                expect(yield* replica.pending).toHaveLength(1);
+                expect((yield* replica.get("Counter", "shared"))?.count).toBe(1);
+            })
+        )
+    );
+});
+
+test("ambiguous non-deduplicated actions survive restart without automatic duplicate dispatch", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const owned = yield* makeOwnedBackend({
+                    namespace: "server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: { increment: execute },
+                });
+                let dispatches = 0;
+                const backend: OntologyBackendService = {
+                    ...owned,
+                    supportsIdempotency: false,
+                    changes: undefined,
+                    applyAction: () =>
+                        Effect.gen(function* () {
+                            dispatches++;
+                            return yield* new BackendError({
+                                operation: "applyAction",
+                                kind: "Unavailable",
+                                message: "Response lost",
+                                retryable: true,
+                            });
+                        }),
+                };
+                const options = { namespace: "local", ir, tables, backend, execute, startSync: false };
+                const first = yield* makeReplica(options);
+                yield* first.enqueue({ id: "ambiguous", name: "increment", parameters: {} });
+                expect(Result.isFailure(yield* Effect.result(first.syncOnce))).toBe(true);
+                expect((yield* first.pending)[0]?.state).toBe("blocked");
+                const reopened = yield* makeReplica(options);
+                yield* reopened.syncOnce;
+                expect(dispatches).toBe(1);
+                expect(Result.isFailure(yield* Effect.result(reopened.retry("ambiguous")))).toBe(true);
+                expect(Result.isFailure(yield* Effect.result(reopened.remove("ambiguous")))).toBe(true);
+            })
+        )
+    );
+});
+
+test("bounded GC advances past pinned candidates and honors persisted reader leases from another context", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const backend = yield* makeOwnedBackend({
+                    namespace: "gc-server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: {
+                        increment: (tx, invocation) => tx.put("Counter", { id: invocation.id, count: 1 }),
+                    },
+                });
+                yield* backend.applyAction({ id: "first", name: "increment", parameters: {} });
+                yield* backend.applyAction({ id: "second", name: "increment", parameters: {} });
+                const options = { namespace: "gc-local", ir, tables, backend, execute, startSync: false };
+                const first = yield* makeReplica(options);
+                yield* first.syncOnce;
+                yield* first.pin("Counter", "first", true);
+                expect(yield* first.collectGarbage({ maxCandidates: 1, minUnusedAgeMs: 0 })).toBe(0);
+                expect(yield* first.collectGarbage({ maxCandidates: 1, minUnusedAgeMs: 0 })).toBe(1);
+                expect(yield* first.get("Counter", "second")).toBeUndefined();
+                expect(yield* first.get("Counter", "first")).toBeDefined();
+                const second = yield* makeReplica(options);
+                const readerScope = yield* Scope.make();
+                yield* Scope.provide(second.retainLocal("Counter"), readerScope);
+                yield* first.pin("Counter", "first", false);
+                expect(yield* first.collectGarbage({ maxCandidates: 10, minUnusedAgeMs: 0 })).toBe(0);
+                expect(yield* first.collectGarbage({ maxCandidates: 10, minUnusedAgeMs: 0 })).toBe(0);
+                yield* Scope.close(readerScope, Exit.void);
+                expect(yield* first.collectGarbage({ maxCandidates: 10, minUnusedAgeMs: 0 })).toBe(1);
+                expect(yield* first.get("Counter", "first")).toBeUndefined();
+            })
+        )
+    );
+});
+
+test("historical journal pages cannot regress a newer coordinated subset snapshot", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const server = yield* makeOwnedBackend({
+                    namespace: "snapshot-server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                let catchingUp = false;
+                const observed: unknown[] = [];
+                let replica: ReplicaService;
+                const backend: OntologyBackendService = {
+                    ...server,
+                    loadSubset: () =>
+                        Effect.succeed({
+                            rows: [{ key: "shared", value: { id: "shared", count: 100 } }],
+                            complete: true,
+                            cursor: "100",
+                        }),
+                    changes: {
+                        pull: (request) =>
+                            Effect.gen(function* () {
+                                if (!catchingUp) return { commits: [], cursor: "0", hasMore: false };
+                                if (request.cursor === "0")
+                                    return {
+                                        commits: [
+                                            {
+                                                cursor: "1",
+                                                changes: [
+                                                    {
+                                                        kind: "put" as const,
+                                                        objectType: "Counter",
+                                                        key: "shared",
+                                                        value: { id: "shared", count: 1 },
+                                                    },
+                                                ],
+                                            },
+                                        ],
+                                        cursor: "1",
+                                        hasMore: true,
+                                    };
+                                observed.push((yield* replica.get("Counter", "shared"))?.count);
+                                return {
+                                    commits: [
+                                        {
+                                            cursor: "100",
+                                            changes: [
+                                                {
+                                                    kind: "put" as const,
+                                                    objectType: "Counter",
+                                                    key: "shared",
+                                                    value: { id: "shared", count: 100 },
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                    cursor: "100",
+                                    hasMore: false,
+                                };
+                            }),
+                    },
+                };
+                replica = yield* makeReplica({
+                    namespace: "snapshot-local",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend,
+                    execute,
+                    startSync: false,
+                });
+                yield* replica.demand({ objectType: "Counter" });
+                yield* replica.syncOnce;
+                expect((yield* replica.get("Counter", "shared"))?.count).toBe(100);
+                catchingUp = true;
+                yield* replica.syncOnce;
+                expect(observed).toEqual([100]);
+                expect((yield* replica.get("Counter", "shared"))?.count).toBe(100);
+            })
+        )
+    );
+});
+
+test("a deduplicated receipt already behind the local journal head settles without replaying twice", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeOwnedBackend({
+                    namespace: "old-receipt-server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: { increment: execute },
+                });
+                const invocation = {
+                    id: "already-committed",
+                    name: "increment",
+                    parameters: {},
+                    replay: { now: "2026-10-21T00:00:00Z", seed: "already-committed" },
+                };
+                yield* backend.applyAction(invocation);
+                yield* backend.applyAction({ ...invocation, id: "later" });
+                const replica = yield* makeReplica({
+                    namespace: "old-receipt-local",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend,
+                    execute,
+                    startSync: false,
+                });
+                yield* replica.syncOnce;
+                expect((yield* replica.confirmed.get("Counter", "shared"))?.count).toBe(2);
+                yield* replica.enqueue(invocation);
+                expect((yield* replica.get("Counter", "shared"))?.count).toBe(3);
+                yield* replica.syncOnce;
+                expect(yield* replica.pending).toEqual([]);
+                expect((yield* replica.receipt(invocation.id))?.outcome).toBe("committed");
+                expect((yield* replica.get("Counter", "shared"))?.count).toBe(2);
+                expect((yield* backend.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(2);
+            })
+        )
+    );
+});
+
+test("reordered nested invocation fields retain the same durable identity", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const replica = yield* makeReplica({
+                    namespace: "canonical-local",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend: yield* makeOwnedBackend({
+                        namespace: "canonical-server",
+                        ir,
+                        tables: yield* Memory.make(),
+                        mutators: {},
+                    }),
+                    execute,
+                    startSync: false,
+                });
+                yield* replica.enqueue({
+                    id: "same",
+                    name: "increment",
+                    parameters: { a: 0, nested: { x: 1, y: 2 } },
+                });
+                yield* replica.enqueue({
+                    parameters: { nested: { y: 2, x: 1 }, a: 0 },
+                    name: "increment",
+                    id: "same",
+                });
+                expect(yield* replica.pending).toHaveLength(1);
+                expect((yield* replica.get("Counter", "shared"))?.count).toBe(1);
+                const conflict = yield* Effect.result(
+                    replica.enqueue({ id: "same", name: "increment", parameters: { a: 1 } })
+                );
+                expect(Result.isFailure(conflict) && conflict.failure.kind).toBe("Conflict");
+            })
+        )
+    );
+});
+
+test("scoped watcher hints replace idle snapshot polling and repair invalidations that arrive during a load", async () => {
+    const { Queue, Stream } = await import("effect");
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const server = yield* makeOwnedBackend({
+                    namespace: "watcher-server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: { increment: execute },
+                });
+                const hints = yield* Queue.unbounded<void>();
+                let reads = 0;
+                let listeners = 0;
+                let invalidateDuringLoad = false;
+                const backend: OntologyBackendService = {
+                    ...server,
+                    changes: undefined,
+                    watchSubset: () =>
+                        Effect.gen(function* () {
+                            yield* Effect.acquireRelease(
+                                Effect.sync(() => {
+                                    listeners++;
+                                }),
+                                () =>
+                                    Effect.sync(() => {
+                                        listeners--;
+                                    })
+                            );
+                            return Stream.fromQueue(hints);
+                        }),
+                    loadSubset: (subset) =>
+                        Effect.gen(function* () {
+                            reads++;
+                            const snapshot = yield* server.loadSubset(subset);
+                            if (invalidateDuringLoad) {
+                                invalidateDuringLoad = false;
+                                yield* Queue.offer(hints, undefined);
+                                yield* Effect.sleep(1);
+                            }
+                            return snapshot;
+                        }),
+                };
+                const replica = yield* makeReplica({
+                    namespace: "watcher-local",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend,
+                    execute,
+                    startSync: false,
+                });
+                const demand = yield* Scope.make();
+                yield* Scope.provide(replica.demand({ objectType: "Counter" }), demand);
+                expect(listeners).toBe(1);
+                yield* replica.syncOnce;
+                yield* replica.syncOnce;
+                expect(reads).toBe(1);
+                yield* server.applyAction({ id: "other-client", name: "increment", parameters: {} });
+                yield* Queue.offer(hints, undefined);
+                yield* Effect.sleep(1);
+                invalidateDuringLoad = true;
+                // Drive sync until both asynchronous hints have been consumed;
+                // one millisecond does not guarantee scheduling under CI load.
+                for (let attempt = 0; attempt < 100 && reads < 3; attempt++) {
+                    yield* replica.syncOnce;
+                    yield* Effect.sleep(1);
+                }
+                expect(reads).toBe(3);
+                expect((yield* replica.get("Counter", "shared"))?.count).toBe(1);
+                yield* Scope.close(demand, Exit.void);
+                expect(listeners).toBe(0);
+                yield* replica.syncOnce;
+                expect(reads).toBe(3);
+            })
+        )
+    );
+});
+
+test("another principal's colliding journal invocation ID cannot acknowledge our pending action", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const serverTables = yield* Memory.make();
+                const options = {
+                    namespace: "shared-authority",
+                    ir,
+                    tables: serverTables,
+                    mutators: { increment: execute },
+                };
+                const alice = yield* makeOwnedBackend({ ...options, actionScope: "alice" });
+                const bob = yield* makeOwnedBackend({ ...options, actionScope: "bob" });
+                const invocation = { id: "principal-local-id", name: "increment", parameters: {} };
+                yield* alice.applyAction(invocation);
+                let dispatches = 0;
+                const replica = yield* makeReplica({
+                    namespace: "bob-local",
+                    ir,
+                    tables: yield* Memory.make(),
+                    execute,
+                    startSync: false,
+                    backend: {
+                        ...bob,
+                        applyAction: (request) =>
+                            Effect.gen(function* () {
+                                dispatches++;
+                                return yield* bob.applyAction(request);
+                            }),
+                    },
+                });
+                yield* replica.enqueue(invocation);
+                yield* replica.syncOnce;
+                expect(dispatches).toBe(1);
+                expect(yield* replica.pending).toEqual([]);
+                expect((yield* replica.get("Counter", "shared"))?.count).toBe(2);
+                expect((yield* bob.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(2);
+            })
+        )
+    );
+});
+
+test("journal-maintained whole-collection coverage satisfies new primary-key and window demands without snapshot polling", async () => {
+    const { eq, field } = await import("@party-stack/ontology-storage");
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeOwnedBackend({
+                    namespace: "coverage-server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: {
+                        increment: (tx, invocation) =>
+                            tx.put("Counter", {
+                                id: invocation.id,
+                                count: Number(invocation.parameters.count ?? 1),
+                            }),
+                    },
+                });
+                yield* backend.applyAction({ id: "first", name: "increment", parameters: {} });
+                let snapshots = 0;
+                const replica = yield* makeReplica({
+                    namespace: "coverage-local",
+                    ir,
+                    tables: yield* Memory.make(),
+                    execute,
+                    startSync: false,
+                    backend: {
+                        ...backend,
+                        loadSubset: (subset) =>
+                            Effect.suspend(() => {
+                                snapshots++;
+                                return backend.loadSubset(subset);
+                            }),
+                    },
+                });
+                const all = yield* Scope.make();
+                yield* Scope.provide(replica.demand({ objectType: "Counter", query: {} }), all);
+                yield* replica.syncOnce;
+                yield* replica.syncOnce;
+                expect(snapshots).toBe(1);
+                yield* Scope.close(all, Exit.void);
+                yield* replica.demand({ objectType: "Counter", query: { where: eq(field("id"), "first") } });
+                yield* replica.demand({
+                    objectType: "Counter",
+                    query: { orderBy: [{ field: field("count"), direction: "desc" }], limit: 1 },
+                });
+                yield* backend.applyAction({ id: "second", name: "increment", parameters: { count: 2 } });
+                yield* replica.syncOnce;
+                expect(snapshots).toBe(1);
+                expect((yield* replica.get("Counter", "second"))?.count).toBe(2);
+                expect(
+                    (yield* replica.status).demands.every(
+                        (demand) =>
+                            demand.coveredBy?.objectType === "Counter" &&
+                            Object.keys(demand.coveredBy.query ?? {}).length === 0
+                    )
+                ).toBe(true);
+            })
+        )
+    );
+});
+
+test("watch-only filtered snapshots repair rows that leave a filter without treating them as deleted", async () => {
+    const { PubSub, Stream } = await import("effect");
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const server = yield* makeOwnedBackend({
+                    namespace: "filtered-watcher-server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: {
+                        increment: (tx, action) =>
+                            action.parameters.deleted
+                                ? tx.delete("Counter", String(action.parameters.id))
+                                : tx.put("Counter", {
+                                      id: action.parameters.id,
+                                      count: action.parameters.count,
+                                  }),
+                    },
+                });
+                const hints = yield* PubSub.unbounded<void>();
+                const requests: import("@party-stack/ontology-backend/subset").CompiledSubset[] = [];
+                const replica = yield* makeReplica({
+                    namespace: "filtered-watcher-local",
+                    ir,
+                    tables: yield* Memory.make(),
+                    execute,
+                    startSync: false,
+                    backend: {
+                        ...server,
+                        changes: undefined,
+                        watchSubset: () => PubSub.subscribe(hints).pipe(Effect.map(Stream.fromSubscription)),
+                        loadSubset: (request) =>
+                            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                                Effect.suspend(() => {
+                                    requests.push(subset);
+                                    return server.loadSubset(request);
+                                })
+                            ),
+                    },
+                });
+                yield* server.applyAction({
+                    id: "seed-a",
+                    name: "increment",
+                    parameters: { id: "a", count: 1 },
+                });
+                yield* server.applyAction({
+                    id: "seed-b",
+                    name: "increment",
+                    parameters: { id: "b", count: 1 },
+                });
+                const subset = { objectType: "Counter", query: { where: eq(field("count"), 1) } };
+                yield* replica.demand(subset);
+                yield* Effect.yieldNow;
+                yield* replica.syncOnce;
+                expect((yield* replica.loadSubset("Counter", subset.query)).map((row) => row.key)).toEqual([
+                    "a",
+                    "b",
+                ]);
+                yield* server.applyAction({
+                    id: "move-a",
+                    name: "increment",
+                    parameters: { id: "a", count: 2 },
+                });
+                yield* server.applyAction({
+                    id: "delete-b",
+                    name: "increment",
+                    parameters: { id: "b", deleted: true },
+                });
+                yield* PubSub.publish(hints, undefined);
+                yield* Effect.sleep(1);
+                yield* replica.syncOnce;
+                expect(yield* replica.loadSubset("Counter", subset.query)).toEqual([]);
+                expect((yield* replica.get("Counter", "a"))?.count).toBe(2);
+                expect(yield* replica.get("Counter", "b")).toBeUndefined();
+                expect(requests.map((request) => request.query?.where?.op)).toEqual(["eq", "eq", "in"]);
+                yield* replica.syncOnce;
+                expect(requests).toHaveLength(3);
+            })
+        )
+    );
+});
+
+test("primary-key coverage includes known absence and stays current through journal catch-up", async () => {
+    const { eq, field } = await import("@party-stack/ontology-storage");
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeOwnedBackend({
+                    namespace: "pk-server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: {
+                        increment: (tx, invocation) =>
+                            tx.put("Counter", { id: invocation.parameters.id, count: 1 }),
+                    },
+                });
+                let snapshots = 0;
+                const replica = yield* makeReplica({
+                    namespace: "pk-local",
+                    ir,
+                    tables: yield* Memory.make(),
+                    execute,
+                    startSync: false,
+                    backend: {
+                        ...backend,
+                        loadSubset: (subset) =>
+                            Effect.suspend(() => {
+                                snapshots++;
+                                return backend.loadSubset(subset);
+                            }),
+                    },
+                });
+                const first = yield* Scope.make();
+                yield* Scope.provide(
+                    replica.demand({ objectType: "Counter", query: { where: eq(field("id"), "new") } }),
+                    first
+                );
+                yield* replica.syncOnce;
+                expect(yield* replica.get("Counter", "new")).toBeUndefined();
+                yield* Scope.close(first, Exit.void);
+                yield* replica.demand({
+                    objectType: "Counter",
+                    query: { where: eq("new", field("id")), limit: 1 },
+                });
+                yield* backend.applyAction({ id: "create", name: "increment", parameters: { id: "new" } });
+                yield* replica.syncOnce;
+                yield* replica.syncOnce;
+                expect(snapshots).toBe(1);
+                expect((yield* replica.get("Counter", "new"))?.count).toBe(1);
+            })
+        )
+    );
+});
+
+test("a confirmed key reuses subset coverage until garbage collection invalidates its proof", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeOwnedBackend({
+                    namespace: "key-coverage-server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: { increment: execute },
+                });
+                yield* backend.applyAction({ id: "seed", name: "increment", parameters: {} });
+                let snapshots = 0;
+                const replica = yield* makeReplica({
+                    namespace: "key-coverage-local",
+                    ir,
+                    tables: yield* Memory.make(),
+                    execute,
+                    startSync: false,
+                    backend: {
+                        ...backend,
+                        loadSubset: (subset) =>
+                            Effect.suspend(() => {
+                                snapshots++;
+                                return backend.loadSubset(subset);
+                            }),
+                    },
+                });
+                const initial = yield* Scope.make();
+                yield* Scope.provide(
+                    replica.demand({ objectType: "Counter", query: { where: eq(field("count"), 1) } }),
+                    initial
+                );
+                yield* replica.syncOnce;
+                yield* Scope.close(initial, Exit.void);
+                const point = { objectType: "Counter", query: { where: eq(field("id"), "shared") } };
+                const reader = yield* Scope.make();
+                yield* Scope.provide(replica.demand(point), reader);
+                yield* replica.syncOnce;
+                expect(snapshots).toBe(1);
+                yield* Scope.close(reader, Exit.void);
+                yield* backend.applyAction({ id: "move-out-of-filter", name: "increment", parameters: {} });
+                yield* replica.syncOnce;
+                expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(1);
+                expect(yield* replica.get("Counter", "shared")).toBeUndefined();
+                yield* replica.demand(point);
+                yield* replica.syncOnce;
+                expect(snapshots).toBe(2);
+                expect((yield* replica.get("Counter", "shared"))?.count).toBe(2);
+            })
+        )
+    );
+});
+
+test("bounded coverage is not whole-collection coverage and idle journal windows do not resnapshot", async () => {
+    const { field } = await import("@party-stack/ontology-storage");
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeOwnedBackend({
+                    namespace: "window-server",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: { increment: execute },
+                });
+                let snapshots = 0;
+                const replica = yield* makeReplica({
+                    namespace: "window-local",
+                    ir,
+                    tables: yield* Memory.make(),
+                    execute,
+                    startSync: false,
+                    backend: {
+                        ...backend,
+                        loadSubset: (subset) =>
+                            Effect.suspend(() => {
+                                snapshots++;
+                                return backend.loadSubset(subset);
+                            }),
+                    },
+                });
+                const scope = yield* Scope.make();
+                yield* Scope.provide(
+                    replica.demand({
+                        objectType: "Counter",
+                        query: { orderBy: [{ field: field("count") }], limit: 1 },
+                    }),
+                    scope
+                );
+                yield* replica.syncOnce;
+                yield* replica.syncOnce;
+                expect(snapshots).toBe(1);
+                yield* backend.applyAction({ id: "new", name: "increment", parameters: {} });
+                yield* replica.syncOnce;
+                expect(snapshots).toBe(2);
+                yield* replica.syncOnce;
+                expect(snapshots).toBe(2);
+                yield* Scope.close(scope, Exit.void);
+                yield* replica.demand({ objectType: "Counter" });
+                yield* replica.syncOnce;
+                expect(snapshots).toBe(3);
+            })
+        )
+    );
+});
+
+test("expired journal history rebuilds selected base while preserving and executing local intent once", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const owned = yield* makeOwnedBackend({
+                    namespace: "history-reset",
+                    ir,
+                    tables: yield* Memory.make(),
+                    history: { maxCommits: 1 },
+                    mutators: { increment: execute },
+                });
+                let submissions = 0;
+                const backend = {
+                    ...owned,
+                    applyAction: (invocation: ActionRequest) =>
+                        Effect.sync(() => submissions++).pipe(Effect.andThen(owned.applyAction(invocation))),
+                };
+                const replica = yield* makeReplica({
+                    namespace: "history-client",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend,
+                    execute,
+                    startSync: false,
+                });
+                yield* replica.demand({ objectType: "Counter" });
+                yield* replica.syncOnce;
+                for (let index = 0; index < 3; index++)
+                    yield* owned.applyAction({ id: `remote-${index}`, name: "increment", parameters: {} });
+                yield* replica.enqueue({ id: "local", name: "increment", parameters: {} });
+                yield* replica.syncOnce;
+                expect(submissions).toBe(1);
+                expect(yield* replica.pending).toEqual([]);
+                expect((yield* replica.get("Counter", "shared"))?.count).toBe(4);
+                expect((yield* owned.loadSubset(objectSubset("Counter"))).rows[0]?.value.count).toBe(4);
+            })
+        )
+    );
+});
+
+test("background demand IO survives one consumer's cancellation and stops after the last lease closes", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const entered = yield* Deferred.make<void>();
+                const stopped = yield* Deferred.make<void>();
+                let canceled = false;
+                const replica = yield* makeReplica({
+                    namespace: "cancel-shared-demand",
+                    ir,
+                    tables: yield* Memory.make(),
+                    objectCacheGc: false,
+                    execute: () => Effect.void,
+                    backend: makeOntologyBackend({
+                        ir,
+                        name: "fixture",
+                        sourceId: "fixture",
+                        supportsIdempotency: false,
+                        applyAction: () => Effect.die("No writes expected"),
+                        queryFunction: () => Effect.void,
+                        loadSubset: () =>
+                            Effect.gen(function* () {
+                                yield* Deferred.succeed(entered, undefined);
+                                return yield* Effect.never;
+                            }).pipe(
+                                Effect.ensuring(
+                                    Effect.sync(() => {
+                                        canceled = true;
+                                    }).pipe(Effect.andThen(Deferred.succeed(stopped, undefined)))
+                                )
+                            ),
+                    }),
+                });
+                const first = yield* Scope.fork(yield* Effect.scope);
+                const second = yield* Scope.fork(yield* Effect.scope);
+                yield* Scope.provide(replica.demand({ objectType: "Counter" }), first);
+                yield* Scope.provide(replica.demand({ objectType: "Counter" }), second);
+                yield* Deferred.await(entered).pipe(Effect.timeout("2 seconds"));
+                yield* Scope.close(first, Exit.void);
+                yield* Effect.yieldNow;
+                expect(canceled).toBe(false);
+                expect((yield* replica.status).demands[0]?.references).toBe(1);
+                yield* Scope.close(second, Exit.void);
+                yield* Deferred.await(stopped).pipe(Effect.timeout("2 seconds"));
+                expect(canceled).toBe(true);
+                expect((yield* replica.status).demands).toEqual([]);
+                expect(yield* replica.loadSubset("Counter")).toEqual([]);
+            })
+        )
+    );
+});
+
+test("one nonretryable subset cannot starve another subset or the outbox", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { evaluateQuery } = yield* Effect.promise(
+                    () => import("@party-stack/ontology-storage")
+                );
+                const requests: string[] = [];
+                let forbidden = true;
+                const bad = { objectType: "Counter", query: { where: eq(field("id"), "bad") } };
+                const good = { objectType: "Counter", query: { where: eq(field("id"), "good") } };
+                const replica = yield* makeReplica({
+                    namespace: "isolated-errors",
+                    ir,
+                    tables: yield* Memory.make(),
+                    startSync: false,
+                    objectCacheGc: false,
+                    execute: () => Effect.void,
+                    backend: makeOntologyBackend({
+                        ir,
+                        name: "fixture",
+                        sourceId: "fixture",
+                        supportsIdempotency: true,
+                        refresh: () => ({ pollIntervalMs: false }),
+                        loadSubset: (request) =>
+                            Effect.flatMap(compileObjectSubset(ir, request), (subset) =>
+                                Effect.suspend(() => {
+                                    const key = JSON.stringify(subset.query).includes('"bad"')
+                                        ? "bad"
+                                        : "good";
+                                    requests.push(key);
+                                    if (key === "bad" && forbidden)
+                                        return Effect.fail(
+                                            new BackendError({
+                                                operation: "loadSubset",
+                                                kind: "Forbidden",
+                                                message: "Denied",
+                                                retryable: false,
+                                            })
+                                        );
+                                    return Effect.succeed({
+                                        rows: evaluateQuery(
+                                            [{ key, value: { id: key, count: 1 } }],
+                                            subset.query
+                                        ),
+                                        complete: true,
+                                    });
+                                })
+                            ),
+                        applyAction: (request) =>
+                            Effect.succeed({ operationId: request.id, outcome: "committed", affected: [] }),
+                        queryFunction: () => Effect.void,
+                    }),
+                });
+                yield* replica.demand(bad);
+                yield* replica.demand(good);
+                yield* replica.enqueue({ id: "write", name: "increment", parameters: {} });
+                yield* replica.syncSubset(good);
+                expect(yield* replica.receipt("write")).toBeUndefined();
+                expect((yield* replica.pending)[0]).toMatchObject({ state: "queued", attempts: 0 });
+                expect(yield* Effect.result(replica.syncOnce)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "Forbidden" },
+                });
+                expect(yield* replica.receipt("write")).toMatchObject({
+                    operationId: "write",
+                    outcome: "committed",
+                });
+                expect(yield* replica.get("Counter", "good")).toEqual({ id: "good", count: 1 });
+                expect(requests.filter((key) => key === "bad")).toHaveLength(1);
+                expect(yield* Effect.result(replica.syncSubset(bad))).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "Forbidden" },
+                });
+                expect(requests.filter((key) => key === "bad")).toHaveLength(1);
+                expect(
+                    (yield* replica.status).demands.find(
+                        (demand) => demand.query?.where?.op === "eq" && demand.loadError
+                    )?.loadError
+                ).toMatchObject({ kind: "Forbidden", retryable: false });
+                forbidden = false;
+                yield* replica.invalidate(["Counter"]);
+                yield* replica.syncSubset(bad);
+                expect(requests.filter((key) => key === "bad")).toHaveLength(2);
+                expect(
+                    (yield* replica.status).demands.every((demand) => demand.loadError === undefined)
+                ).toBe(true);
+            })
+        )
+    );
+});
+
+test("a fatal journal error stops background source IO until explicitly recovered", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                let pulls = 0,
+                    broken = true;
+                const replica = yield* makeReplica({
+                    namespace: "fatal-journal",
+                    ir,
+                    tables: yield* Memory.make(),
+                    startSync: false,
+                    objectCacheGc: false,
+                    execute: () => Effect.void,
+                    backend: makeOntologyBackend({
+                        ir,
+                        name: "source",
+                        sourceId: "source",
+                        supportsIdempotency: true,
+                        loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                        queryFunction: () => Effect.void,
+                        applyAction: () => Effect.die("Unexpected write"),
+                        changes: {
+                            pull: () =>
+                                Effect.suspend(() => {
+                                    pulls++;
+                                    return broken
+                                        ? Effect.fail(
+                                              new BackendError({
+                                                  operation: "pull",
+                                                  kind: "InvalidResponse",
+                                                  message: "Malformed page",
+                                                  retryable: false,
+                                              })
+                                          )
+                                        : Effect.succeed({ commits: [], cursor: "empty", hasMore: false });
+                                }),
+                        },
+                    }),
+                });
+                expect(yield* Effect.result(replica.syncOnce)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "InvalidResponse" },
+                });
+                expect(yield* Effect.result(replica.syncOnce)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "InvalidResponse" },
+                });
+                expect(pulls).toBe(1);
+                expect((yield* replica.status).replicationError).toMatchObject({
+                    kind: "InvalidResponse",
+                    recovery: "stop",
+                });
+                broken = false;
+                yield* replica.reportReplicationFailure(undefined);
+                yield* replica.syncOnce;
+                expect(pulls).toBe(2);
+                expect((yield* replica.status).replicationError).toBeUndefined();
+            })
+        )
+    );
+});
+
+test("journal retry deadlines are not extended by intervening callers", async () => {
+    const { TestClock } = await import("effect/testing");
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                let pulls = 0;
+                const replica = yield* makeReplica({
+                    namespace: "journal-backoff",
+                    ir,
+                    tables: yield* Memory.make(),
+                    startSync: false,
+                    objectCacheGc: false,
+                    execute: () => Effect.void,
+                    backend: makeOntologyBackend({
+                        ir,
+                        name: "source",
+                        sourceId: "source",
+                        supportsIdempotency: true,
+                        loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                        queryFunction: () => Effect.void,
+                        applyAction: () => Effect.die("Unexpected write"),
+                        changes: {
+                            pull: () =>
+                                Effect.suspend(() =>
+                                    ++pulls === 1
+                                        ? Effect.fail(
+                                              new BackendError({
+                                                  operation: "pull",
+                                                  kind: "RateLimited",
+                                                  message: "Wait",
+                                                  retryable: true,
+                                                  retryAfterMs: 5_000,
+                                              })
+                                          )
+                                        : Effect.succeed({ commits: [], cursor: "empty", hasMore: false })
+                                ),
+                        },
+                    }),
+                });
+                expect((yield* Effect.result(replica.syncOnce))._tag).toBe("Failure");
+                yield* TestClock.adjust(3_000);
+                expect((yield* Effect.result(replica.syncOnce))._tag).toBe("Failure");
+                expect(pulls).toBe(1);
+                yield* TestClock.adjust(2_000);
+                yield* replica.syncOnce;
+                expect(pulls).toBe(2);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
+});
+
+test("canceling a query wait cannot interrupt an already submitting outbox action", async () => {
+    const { Fiber } = await import("effect");
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const entered = yield* Deferred.make<void>();
+                const release = yield* Deferred.make<void>();
+                let submissions = 0;
+                const replica = yield* makeReplica({
+                    namespace: "query-write-isolation",
+                    ir,
+                    tables: yield* Memory.make(),
+                    startSync: true,
+                    objectCacheGc: false,
+                    execute: () => Effect.void,
+                    backend: makeOntologyBackend({
+                        ir,
+                        name: "source",
+                        sourceId: "source",
+                        supportsIdempotency: false,
+                        loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                        queryFunction: () => Effect.void,
+                        applyAction: (request) =>
+                            Effect.gen(function* () {
+                                submissions++;
+                                yield* Deferred.succeed(entered, undefined);
+                                yield* Deferred.await(release);
+                                return {
+                                    operationId: request.id,
+                                    outcome: "committed" as const,
+                                    affected: [],
+                                };
+                            }),
+                    }),
+                });
+                yield* replica.enqueue({ id: "write", name: "increment", parameters: {} });
+                const queryScope = yield* Scope.fork(yield* Effect.scope);
+                const query = yield* Effect.forkChild(
+                    Scope.provide(
+                        Effect.gen(function* () {
+                            const subset = { objectType: "Counter" };
+                            yield* replica.demand(subset);
+                            yield* replica.syncSubset(subset);
+                        }),
+                        queryScope
+                    )
+                );
+                yield* Deferred.await(entered).pipe(Effect.timeout("2 seconds"));
+                yield* Scope.close(queryScope, Exit.void);
+                yield* Fiber.interrupt(query);
+                expect((yield* replica.pending)[0]).toMatchObject({ state: "sending", attempts: 1 });
+                yield* Deferred.succeed(release, undefined);
+                expect(yield* replica.awaitAction("write").pipe(Effect.timeout("2 seconds"))).toMatchObject({
+                    outcome: "committed",
+                });
+                expect(submissions).toBe(1);
+                expect(yield* replica.pending).toEqual([]);
+            })
+        )
+    );
+});
+
+test("whole snapshot refreshes preserve unchanged objects and only write changed or missing keys", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const local = yield* Memory.make();
+                let rows = [
+                    { key: "a", value: { id: "a", count: 1 } },
+                    { key: "b", value: { id: "b", count: 2 } },
+                ];
+                const writes: string[] = [];
+                let maxRetentionBatch = 0;
+                const replica = yield* makeReplica({
+                    namespace: "snapshot-diff",
+                    ir,
+                    execute,
+                    startSync: false,
+                    tables: {
+                        ...local,
+                        transaction: (body) =>
+                            local.transaction((tx) => {
+                                const isBase = (name: string) => name.endsWith('"base:Counter"]');
+                                const instrumented: Transaction = {
+                                    ...tx,
+                                    put: (table, key, value) =>
+                                        Effect.suspend(() => {
+                                            if (isBase(table.name)) writes.push(`put:${key}`);
+                                            return tx.put(table, key, value);
+                                        }),
+                                    putMany: (table, rows) =>
+                                        Effect.suspend(() => {
+                                            if (isBase(table.name))
+                                                writes.push(...rows.map((row) => `put:${row.key}`));
+                                            if (table.name.endsWith('"retention"]'))
+                                                maxRetentionBatch = Math.max(maxRetentionBatch, rows.length);
+                                            return tx.putMany(table, rows);
+                                        }),
+                                    delete: (table, key) =>
+                                        Effect.suspend(() => {
+                                            if (isBase(table.name)) writes.push(`delete:${key}`);
+                                            return tx.delete(table, key);
+                                        }),
+                                    clear: (table) =>
+                                        Effect.suspend(() => {
+                                            if (isBase(table.name)) writes.push("clear");
+                                            return tx.clear(table);
+                                        }),
+                                };
+                                return body(instrumented);
+                            }),
+                    },
+                    backend: makeOntologyBackend({
+                        ir,
+                        name: "snapshots",
+                        sourceId: "snapshots",
+                        supportsIdempotency: false,
+                        loadSubset: () => Effect.succeed({ rows, complete: true }),
+                        applyAction: () => Effect.die("unused"),
+                        queryFunction: () => Effect.die("unused"),
+                    }),
+                });
+                yield* replica.demand({ objectType: "Counter" });
+                yield* replica.syncOnce;
+                expect(maxRetentionBatch).toBeGreaterThan(1);
+                expect(maxRetentionBatch).toBeLessThanOrEqual(128);
+                writes.length = 0;
+                yield* replica.invalidate();
+                yield* replica.syncOnce;
+                expect(writes).toEqual([]);
+                rows = [
+                    { key: "b", value: { id: "b", count: 3 } },
+                    { key: "c", value: { id: "c", count: 4 } },
+                ];
+                yield* replica.invalidate();
+                yield* replica.syncOnce;
+                expect(writes).toEqual(["delete:a", "put:b", "put:c"]);
+                expect(yield* replica.loadSubset("Counter")).toEqual(rows);
+            })
+        )
+    );
+});
+
+test("warm demand coverage checks share one read snapshot before yielding the publication gate", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const local = yield* Memory.make();
+                const owned = yield* makeOwnedBackend({
+                    namespace: "coverage-read-batching",
+                    ir,
+                    tables: yield* Memory.make(),
+                    mutators: { increment: execute },
+                });
+                yield* owned.applyAction({ id: "seed", name: "increment", parameters: {} });
+                let reads = 0;
+                const proofReads: number[] = [];
+                const replica = yield* makeReplica({
+                    namespace: "batched",
+                    ir,
+                    execute,
+                    startSync: false,
+                    tables: {
+                        ...local,
+                        read: (body) =>
+                            local.read((tx) => {
+                                const id = ++reads;
+                                return body({
+                                    ...tx,
+                                    query: ((table: any, query: any) => {
+                                        if (table.name?.endsWith('"coverage"]')) proofReads.push(id);
+                                        return tx.query(table, query);
+                                    }) as typeof tx.query,
+                                });
+                            }),
+                    },
+                    backend: owned,
+                });
+                yield* replica.demand({ objectType: "Counter", query: {} });
+                yield* replica.syncOnce;
+                for (let n = 0; n < 4; n++)
+                    yield* replica.demand({ objectType: "Counter", query: { where: eq(field("count"), n) } });
+                proofReads.length = 0;
+                yield* replica.syncSubset({ objectType: "Counter", query: {} });
+                expect(proofReads.length).toBe(1);
+                expect(new Set(proofReads).size).toBe(1);
+                expect(
+                    (yield* replica.status).demands.every((demand) => demand.installed === demand.revision)
+                ).toBe(true);
+            })
+        )
+    );
+});

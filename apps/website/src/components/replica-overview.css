@@ -1,0 +1,197 @@
+.replica-tree {
+    margin: 2rem 0;
+    container-type: inline-size;
+}
+.replica-tree-root,
+.replica-tree-owner {
+    display: flex;
+    justify-content: center;
+}
+.replica-tree-root > section,
+.replica-tree-owner > section {
+    width: min(100%, 330px);
+}
+.replica-tree-actor {
+    min-width: 0;
+    border: 1px solid var(--color-fd-border);
+    border-radius: 0.8rem;
+    padding: 0.8rem;
+    background: var(--color-fd-background);
+    line-height: 1.4;
+}
+.replica-tree-actor header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.3rem;
+    margin-bottom: 0.7rem;
+}
+.replica-tree-actor strong {
+    font-size: 0.85rem;
+}
+.replica-tree-actor small {
+    color: var(--color-fd-muted-foreground);
+    font-size: 0.68rem;
+}
+.replica-tree-store {
+    border: 1px solid var(--color-fd-border);
+    border-radius: 0.45rem;
+    overflow: hidden;
+}
+.replica-tree-store > div,
+.replica-tree-authority {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.5rem 0.6rem;
+    font-size: 0.73rem;
+    background: var(--color-fd-muted);
+}
+.replica-tree-store > div + div {
+    border-top: 1px solid var(--color-fd-border);
+}
+.replica-tree-store small {
+    display: block;
+    font-size: 0.69rem;
+    margin-top: 0.15rem;
+}
+.replica-tree-objects {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 22px;
+}
+.replica-tree-objects i {
+    display: block;
+    width: 14px;
+    height: 19px;
+    border: 1px solid #9c9aa7;
+    border-radius: 2px;
+    background: linear-gradient(#bfc1cd 0 18%, transparent 18%);
+}
+.replica-tree-objects i:nth-child(2) {
+    height: 15px;
+}
+.replica-tree-objects i:nth-child(3) {
+    height: 17px;
+}
+.replica-tree-objects .replica-tree-picture {
+    width: 21px;
+    height: 17px;
+    background:
+        linear-gradient(145deg, transparent 45%, #8099a5 46%),
+        radial-gradient(circle at 75% 25%, #ffe4a1 0 12%, transparent 13%), #b8d9e9;
+    border-color: #9babb1;
+}
+.replica-tree-overlay i {
+    background: #cdbfe966;
+    border: 1px dashed #ab8ed6;
+}
+.replica-tree-actions {
+    width: 73px;
+    display: grid;
+    gap: 3px;
+}
+.replica-tree-actions i {
+    display: block;
+    width: 100%;
+    height: 7px;
+    border-radius: 2px;
+    background: #d9bb8f;
+    opacity: 0.65;
+}
+.replica-tree-actions i:last-child {
+    width: 70%;
+}
+.replica-tree-actor footer {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.3rem;
+    border-top: 1px dashed var(--color-fd-border);
+    margin-top: 0.7rem;
+    padding-top: 0.55rem;
+    color: var(--color-fd-muted-foreground);
+    font-size: 0.68rem;
+}
+.replica-tree-authority {
+    border-radius: 0.4rem;
+}
+.replica-tree-bookkeeping {
+    margin-top: 0.5rem;
+    font-size: 0.7rem;
+    color: var(--color-fd-muted-foreground);
+}
+.replica-tree-trunk {
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    font-size: 0.65rem;
+    color: var(--color-fd-muted-foreground);
+}
+.replica-tree-trunk i {
+    width: 1px;
+    height: 100%;
+    background: var(--color-fd-muted-foreground);
+    opacity: 0.5;
+}
+.replica-tree-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+}
+.replica-tree-branches {
+    height: 54px;
+    position: relative;
+}
+.replica-tree-branches i {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    height: 26px;
+    border-left: 1px solid var(--color-fd-muted-foreground);
+    opacity: 0.5;
+}
+.replica-tree-branches span {
+    position: absolute;
+    top: 26px;
+    width: 25%;
+    height: 28px;
+    border-top: 1px solid var(--color-fd-muted-foreground);
+    opacity: 0.5;
+}
+.replica-tree-branches span:nth-child(2) {
+    left: 25%;
+    border-left: 1px solid var(--color-fd-muted-foreground);
+}
+.replica-tree-branches span:last-child {
+    right: 25%;
+    border-right: 1px solid var(--color-fd-muted-foreground);
+}
+.replica-tree figcaption {
+    margin-top: 1.3rem;
+    font-size: 0.82rem;
+    line-height: 1.65;
+    color: var(--color-fd-muted-foreground);
+}
+@container (max-width: 430px) {
+    .replica-tree-tabs {
+        gap: 0.6rem;
+    }
+    .replica-tree-tabs .replica-tree-store > div {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .replica-tree-tabs .replica-tree-actor {
+        padding: 0.6rem;
+    }
+    .replica-tree-trunk {
+        font-size: 0.6rem;
+        gap: 0.35rem;
+    }
+}

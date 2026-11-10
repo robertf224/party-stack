@@ -18,13 +18,14 @@
     "dependencies": {
         "@lucide/icons": "^1.31.0",
         "@party-stack/icons": "workspace:*",
-        "lucide-react": "^1.31.0"
+        "lucide-react": "^1.69.0"
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
         "@types/react": "^19.3.0",
         "react": "^19.3.0",
         "typescript": "~7.0.2",
+        "vite": "catalog:",
         "vite-plus": "catalog:"
     },
     "peerDependencies": {

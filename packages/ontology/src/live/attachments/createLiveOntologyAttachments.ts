@@ -1,12 +1,10 @@
-import { invariant } from "@bobbyfidz/panic";
-import { ImageMediaTypeOptions } from "../../ir/generated/constants.js";
-import { getTargetValueType } from "../../utils/types.js";
-import * as v from "../../utils/values.js";
-import type { OntologyIR } from "../../ir/index.js";
-import type { OntologyAttachmentCreateTarget } from "../../utils/targets.js";
-import type { OntologyAttachmentsAdapter } from "../OntologyBackendAdapter.js";
+import { Effect, Exit, Scope, Stream } from "effect";
 import type { AttachmentMetadata, AttachmentMetadataSelection, PartialAttachmentMetadata } from "./types.js";
-import type { BlobManager } from "@party-stack/blobs";
+import type { BackendError } from "@party-stack/ontology-backend";
+import type { ReplicaAttachments } from "@party-stack/ontology-replica";
+import type { OntologyAttachmentCreateTarget } from "@party-stack/ontology-spec/utils";
+import type * as v from "@party-stack/ontology-spec/values";
+import type { ByteInput, ReadableByteInput, ByteSource } from "@party-stack/ontology-storage/blobs";
 
 export interface LiveOntologyEagerAttachmentCreation {
     attachment: v.attachment;
@@ -75,140 +73,112 @@ type LiveOntologyAttachmentCreateResult<
         : v.attachment;
 } & (Options extends { eager: true } ? { isMaterialized?: Promise<void> } : { isMaterialized?: never });
 
-function satisfiesRange(value: number, range: { min?: number; max?: number }): boolean {
-    return (range.min === undefined || value >= range.min) && (range.max === undefined || value <= range.max);
-}
-
 export interface LiveOntologyAttachments<
     Ontology extends AttachmentOntologyDefinition = AttachmentOntologyDefinition,
 > {
     create: <const Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined>(
-        blob: Blob | File,
+        input: ByteInput | ReadableByteInput,
         opts?: Options
     ) => Promise<LiveOntologyAttachmentCreateResult<Ontology, Options>>;
     metadata: {
-        <Type extends string>(attachment: v.attachment<Type>): Promise<AttachmentMetadata<Type>>;
+        <Type extends string>(
+            attachment: v.attachment<Type>,
+            options?: { readonly signal?: AbortSignal }
+        ): Promise<AttachmentMetadata<Type>>;
         <Type extends string, const Selection extends AttachmentMetadataSelection<Type>>(
             attachment: v.attachment<Type>,
-            options: { select: Selection }
+            options: { select: Selection; readonly signal?: AbortSignal }
         ): Promise<AttachmentMetadata<Type, Selection[number]>>;
     };
-    blob: (attachment: v.attachment) => Promise<Blob>;
+    blob: (attachment: v.attachment, options?: { readonly signal?: AbortSignal }) => Promise<Blob>;
+    /** Consume or cancel the stream, or abort the signal, to release this read before the ontology closes. */
+    source: (attachment: v.attachment, options?: { readonly signal?: AbortSignal }) => Promise<ByteSource>;
 }
 
+/** Typed Promise boundary. Validation, staging, upload and aliases are native Replica behavior. */
 export function createLiveOntologyAttachments<
     Ontology extends AttachmentOntologyDefinition = AttachmentOntologyDefinition,
->(opts: {
-    ir: OntologyIR;
-    attachmentsAdapter: OntologyAttachmentsAdapter;
-    blobManager: BlobManager;
+>(options: {
+    readonly attachments: ReplicaAttachments;
+    readonly scope: Scope.Scope;
+    readonly run: <A>(work: Effect.Effect<A, BackendError>, signal?: AbortSignal) => Promise<A>;
 }): LiveOntologyAttachments<Ontology> {
-    const { attachmentsAdapter, blobManager } = opts;
-
-    const create = async <const Options extends LiveOntologyAttachmentCreateOptions | undefined = undefined>(
-        blob: Blob | File,
-        createOpts?: Options
-    ): Promise<LiveOntologyAttachmentCreateResult<Ontology, Options>> => {
-        const normalizedOpts: LiveOntologyAttachmentCreateOptions = createOpts ?? {};
-        const targetType = normalizedOpts.target
-            ? getTargetValueType(opts.ir, normalizedOpts.target)
-            : undefined;
-        invariant(
-            targetType === undefined || targetType.kind === "attachment",
-            "Target is not an attachment."
-        );
-        const constraint = targetType?.kind === "attachment" ? targetType.value.constraint : undefined;
-        invariant(
-            !constraint?.size || satisfiesRange(blob.size, constraint.size),
-            `Attachment size ${blob.size} is outside the allowed range.`
-        );
-        const content = constraint?.content;
-        if (content?.kind === "image") {
-            invariant(
-                content.value.mediaTypes
-                    ? content.value.mediaTypes.some((mediaType) => mediaType === blob.type)
-                    : ImageMediaTypeOptions.some((option) => option.value === blob.type),
-                `Attachment media type "${blob.type || "(empty)"}" is not allowed by the target.`
-            );
-            // TODO: Validate image dimensions once runtimes expose a portable media-inspection capability.
-        }
-        const id =
-            normalizedOpts.id ??
-            (targetType?.kind === "attachment" && attachmentsAdapter.generateAttachmentId
-                ? await attachmentsAdapter.generateAttachmentId(blob, {
-                      target: targetType.value,
-                  })
-                : crypto.randomUUID());
-        await blobManager.stage(id, blob);
-        const attachment: v.attachment = {
-            id,
-            type: blob.type,
-        };
-        const materializeAttachment = attachmentsAdapter.materializeAttachment;
-        const materializeOptions = {
-            target: targetType?.kind === "attachment" ? targetType.value : undefined,
-        };
-        const canMaterialize =
-            materializeAttachment &&
-            (attachmentsAdapter.canMaterializeAttachment?.(attachment, materializeOptions) ?? true);
-        if (normalizedOpts.eager && canMaterialize) {
-            const promise = blobManager
-                .read(id)
-                .then((storedBlob) => materializeAttachment(attachment, storedBlob, materializeOptions))
-                .then(async (materialized) => {
-                    if (materialized) {
-                        if (materialized.id !== id) {
-                            await blobManager.bindRemoteId(id, materialized.id);
+    const source: LiveOntologyAttachments<Ontology>["source"] = (value, settings) =>
+        options.run(
+            Effect.gen(function* () {
+                const readScope = yield* Scope.fork(options.scope);
+                return yield* Scope.provide(
+                    Effect.gen(function* () {
+                        const signal = settings?.signal;
+                        if (signal) {
+                            yield* Effect.acquireRelease(
+                                Effect.sync(() => {
+                                    const abort = () => {
+                                        Effect.runFork(Scope.close(readScope, Exit.void));
+                                    };
+                                    signal.addEventListener("abort", abort, { once: true });
+                                    if (signal.aborted) abort();
+                                    return () => signal.removeEventListener("abort", abort);
+                                }),
+                                (remove) => Effect.sync(remove)
+                            );
+                            if (signal.aborted) return yield* Effect.interrupt;
                         }
-                        Object.assign(attachment, materialized);
-                    }
-                });
-            void promise.catch(() => undefined);
-            return {
-                attachment,
-                isMaterialized: promise,
-            } as unknown as LiveOntologyAttachmentCreateResult<Ontology, Options>;
-        }
-        return {
-            attachment,
-        } as LiveOntologyAttachmentCreateResult<Ontology, Options>;
-    };
-
-    const blob = (attachment: v.attachment) =>
-        blobManager.read(attachment.id, {
-            meta: { attachment },
-        });
-
-    async function metadata<Type extends string>(
-        attachment: v.attachment<Type>
-    ): Promise<AttachmentMetadata<Type>>;
-    async function metadata<Type extends string, const Selection extends AttachmentMetadataSelection<Type>>(
-        attachment: v.attachment<Type>,
-        options: { select: Selection }
-    ): Promise<AttachmentMetadata<Type, Selection[number]>>;
-    async function metadata<Type extends string>(
-        attachment: v.attachment<Type>,
-        options?: { select: readonly (keyof PartialAttachmentMetadata)[] }
-    ): Promise<v.attachment<Type> & PartialAttachmentMetadata<Type>> {
-        const selection = options?.select ?? ["size", "type", "name"];
-        const resolved = await blobManager.metadata(attachment.id, {
-            meta: { attachment },
-            select: selection,
-        });
-        if (selection.includes("dimensions") && resolved.dimensions === null) {
-            throw new Error(`Dimensions are unavailable for attachment "${attachment.id}".`);
-        }
-        const { name, ...metadata } = resolved;
-        return {
-            ...attachment,
-            ...metadata,
-            ...(typeof name === "string" ? { name } : {}),
-        } as v.attachment<Type> & PartialAttachmentMetadata<Type>;
-    }
-
+                        const acquired = yield* options.attachments.source(value, settings);
+                        let consumed = false;
+                        return {
+                            ...acquired,
+                            stream: Stream.suspend(() => {
+                                if (consumed)
+                                    return Stream.unwrap(
+                                        Effect.tryPromise({
+                                            try: (signal) =>
+                                                source(value, {
+                                                    signal: settings?.signal
+                                                        ? AbortSignal.any([signal, settings.signal])
+                                                        : signal,
+                                                }),
+                                            catch: (cause) => cause,
+                                        }).pipe(Effect.map((fresh) => fresh.stream))
+                                    );
+                                consumed = true;
+                                return acquired.stream.pipe(
+                                    Stream.ensuring(Scope.close(readScope, Exit.void))
+                                );
+                            }),
+                        };
+                    }),
+                    readScope
+                ).pipe(
+                    Effect.onExit((exit) =>
+                        Exit.isFailure(exit) ? Scope.close(readScope, exit) : Effect.void
+                    )
+                );
+            }),
+            settings?.signal
+        );
     return {
-        create,
-        metadata,
-        blob,
+        create: (async (input, settings) => {
+            const created = await options.run(options.attachments.create(input, settings));
+            const isMaterialized = created.isMaterialized ? options.run(created.isMaterialized) : undefined;
+            void isMaterialized?.catch(() => undefined);
+            return { attachment: created.attachment, ...(isMaterialized ? { isMaterialized } : {}) };
+        }) as LiveOntologyAttachments<Ontology>["create"],
+        source,
+        blob: (value, settings) => options.run(options.attachments.blob(value), settings?.signal),
+        metadata: ((
+            value: v.attachment,
+            settings?: {
+                select?: readonly (keyof PartialAttachmentMetadata)[];
+                readonly signal?: AbortSignal;
+            }
+        ) =>
+            options.run(
+                options.attachments.metadata(
+                    value,
+                    settings?.select ? { select: settings.select } : undefined
+                ),
+                settings?.signal
+            )) as LiveOntologyAttachments<Ontology>["metadata"],
     };
 }

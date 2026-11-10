@@ -1,0 +1,75 @@
+{
+    "name": "@party-stack/ontology-backend",
+    "version": "0.1.0",
+    "files": [
+        "lib"
+    ],
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./lib/index.d.ts",
+            "default": "./lib/index.js"
+        },
+        "./clients": {
+            "types": "./lib/clients.d.ts",
+            "default": "./lib/clients.js"
+        },
+        "./protocol": {
+            "types": "./lib/protocol.d.ts",
+            "default": "./lib/protocol.js"
+        },
+        "./description": {
+            "types": "./lib/description.d.ts",
+            "default": "./lib/description.js"
+        },
+        "./delivery": {
+            "types": "./lib/delivery.d.ts",
+            "default": "./lib/delivery.js"
+        },
+        "./owned": {
+            "types": "./lib/owned.d.ts",
+            "default": "./lib/owned.js"
+        },
+        "./query": {
+            "types": "./lib/query.d.ts",
+            "default": "./lib/query.js"
+        },
+        "./policy": {
+            "types": "./lib/policy.d.ts",
+            "default": "./lib/policy.js"
+        },
+        "./actions": {
+            "types": "./lib/actions.d.ts",
+            "default": "./lib/actions.js"
+        },
+        "./subset": {
+            "types": "./lib/subset.d.ts",
+            "default": "./lib/subset.js"
+        },
+        "./storage": {
+            "types": "./lib/storage.d.ts",
+            "default": "./lib/storage.js"
+        },
+        "./meta": {
+            "types": "./lib/meta.d.ts",
+            "default": "./lib/meta.js"
+        }
+    },
+    "dependencies": {
+        "@party-stack/ontology-spec": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
+        "temporal-polyfill": "^0.3.0"
+    },
+    "devDependencies": {
+        "@effect/vitest": "^4.0.5",
+        "@party-stack/build-config": "workspace:*",
+        "effect": "^4.0.5",
+        "typescript": "~7.0.2",
+        "vite": "catalog:",
+        "vite-plus": "catalog:",
+        "vitest": "catalog:"
+    },
+    "peerDependencies": {
+        "effect": "^4.0.5"
+    }
+}

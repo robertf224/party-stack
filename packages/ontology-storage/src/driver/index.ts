@@ -1,0 +1,127 @@
+import type { Field, Index, Query, ReadTable, Row, OntologyStorageError } from "../model.js";
+/** Backend implementor API. Versioned with the core package, not an application API. */
+import type { Effect, Stream } from "effect";
+export const INDEX_BACKFILL_BATCH_SIZE = 128;
+export { makeTables } from "../tables.js";
+// Encoding and native projection naming are part of the driver storage contract.
+export { scalarKey, keyCode, caseInsensitiveIndex } from "../query/evaluate.js";
+export interface StoredRow {
+    readonly table: string;
+    readonly key: string;
+    readonly data: string;
+    readonly indexValues?: Readonly<Record<string, string | readonly string[]>>;
+}
+export interface StoredIndex extends Index {
+    readonly table: string;
+    readonly version: number;
+}
+export interface Entry {
+    readonly table: string;
+    readonly index: string;
+    readonly value: string;
+    readonly key: string;
+    readonly multiEntry?: boolean;
+}
+export interface Range {
+    readonly direction?: "asc" | "desc";
+    readonly lower?: string;
+    readonly upper?: string;
+    readonly lowerOpen?: boolean;
+    readonly upperOpen?: boolean;
+    readonly after?: { readonly value: string; readonly key: string };
+    readonly limit?: number;
+}
+export interface DriverQueryResult<A> {
+    readonly rows: readonly StoredRow[];
+    readonly complete: boolean;
+    /** The same selected rows, in the same order, already decoded by the exact
+     * ReadTable passed to this query. Query-local values, never retained by the driver.
+     * Raw/native results omit this and decode at the public table boundary.
+     */
+    readonly decodedRows?: readonly Row<A>[];
+}
+export interface DriverTransaction {
+    /** Exact per-partition windows only. Undefined declines the optimization;
+     * callers must keep the ordinary per-parent execution path. */
+    readonly queryGrouped?: <A>(
+        table: ReadTable<A>,
+        indexes: readonly StoredIndex[],
+        partition: Field,
+        query: Query
+    ) => Effect.Effect<readonly StoredRow[] | undefined, OntologyStorageError>;
+    /** Native atomic insert-if-absent, avoiding a missing-key predicate read. */
+    readonly insert?: (row: StoredRow) => Effect.Effect<boolean, OntologyStorageError>;
+    /** Allocate under coordination held through commit. Gaps after rollback are allowed. */
+    readonly allocateRevision?: (
+        stream: string,
+        minimum: number
+    ) => Effect.Effect<number, OntologyStorageError>;
+    /** Native indexes are maintained from StoredRow.indexValues rather than entry writes. */
+    readonly nativeIndexes?: boolean;
+    readonly clear: (table: string) => Effect.Effect<void, OntologyStorageError>;
+    readonly get: (
+        table: string,
+        key: string,
+        forUpdate?: boolean
+    ) => Effect.Effect<StoredRow | undefined, OntologyStorageError>;
+    /** Exact encoded primary keys in ascending order. Optional for custom drivers;
+     * the shared boundary falls back to the ordinary unfiltered query path. */
+    readonly keys?: (
+        table: string,
+        options: { readonly after?: string; readonly limit?: number }
+    ) => Effect.Effect<readonly string[], OntologyStorageError>;
+    readonly rows: (table: string) => Effect.Effect<readonly StoredRow[], OntologyStorageError>;
+    /** Bounded batches/iteration within the active transaction; do not buffer the whole table. */
+    readonly scanRows: (table: string) => Stream.Stream<StoredRow, OntologyStorageError>;
+    readonly put: (row: StoredRow) => Effect.Effect<void, OntologyStorageError>;
+    /** Portable index mutation after shared validation. All requests belong to
+     * the current transaction; resolve only after row and index writes finish.
+     */
+    readonly writeRow?: (
+        row: StoredRow,
+        remove: readonly Entry[],
+        put: readonly Entry[]
+    ) => Effect.Effect<void, OntologyStorageError>;
+    readonly delete: (table: string, key: string) => Effect.Effect<void, OntologyStorageError>;
+    readonly indexes: (table: string) => Effect.Effect<readonly unknown[], OntologyStorageError>;
+    /** Publish only after backfill. Native drivers validate uniqueness before DDL so
+     * expected conflicts can be caught without aborting the native transaction. */
+    readonly putIndex: (index: StoredIndex) => Effect.Effect<void, OntologyStorageError>;
+    /** Return exact rows or a candidate superset requiring the shared residual evaluator. */
+    readonly query: <A>(
+        table: ReadTable<A>,
+        indexes: readonly StoredIndex[],
+        query: Query
+    ) => Effect.Effect<DriverQueryResult<A>, OntologyStorageError>;
+    readonly countEntries: (
+        table: string,
+        index: string,
+        range?: Range
+    ) => Effect.Effect<number, OntologyStorageError>;
+    readonly entries: (
+        table: string,
+        index: string,
+        range?: Range
+    ) => Effect.Effect<readonly Entry[], OntologyStorageError>;
+    readonly putEntry: (entry: Entry) => Effect.Effect<void, OntologyStorageError>;
+    readonly deleteEntries: (
+        table: string,
+        index: string,
+        key?: string
+    ) => Effect.Effect<void, OntologyStorageError>;
+}
+export interface Driver {
+    readonly transaction: <A, E, R>(
+        mode: "readonly" | "readwrite",
+        body: (tx: DriverTransaction) => Effect.Effect<A, E, R>
+    ) => Effect.Effect<A, E | OntologyStorageError, R>;
+}
+
+export {
+    queryError,
+    codecError,
+    indexError,
+    transactionError,
+    storageError,
+    configurationError,
+} from "../errors.js";

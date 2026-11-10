@@ -1,0 +1,1 @@
+{ "extends": "@party-stack/build-config/effect/tsconfig.json" }

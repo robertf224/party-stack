@@ -1,64 +1,53 @@
-import { ObjectSet } from "@osdk/foundry.ontologies";
-import { each, run, suspend, Task, useScope } from "effection";
-import { ObjectSetSubscriptionMessage } from "./types.js";
-import {
-    ObjectSetWatcherManager as EffectionObjectSetWatcherManager,
-    useObjectSetWatcherManager,
-} from "./useObjectSetWatcherManager.js";
+import { Effect, Exit, Fiber, Scope, Stream } from "effect";
+import { makeObjectSetWatcher, type ObjectSetWatcherService } from "./ObjectSetWatcher.js";
+import type { ObjectSetSubscriptionMessage } from "./types.js";
+import type { ObjectSet } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
-import type { Scope } from "effection";
 
+/** Callback facade over the scoped Effect service. */
 export class ObjectSetWatcherManager {
-    #task: Task<void> | undefined;
-    #scope: Scope | undefined;
-    #manager: EffectionObjectSetWatcherManager | undefined;
+    readonly #scope = Effect.runSync(Scope.make());
+    readonly #manager: ObjectSetWatcherService;
+    #stopped = false;
+    #closing: Promise<void> | undefined;
 
     constructor(client: OntologyClient) {
-        // oxlint-disable-next-line typescript/no-this-alias
-        const manager = this;
-        this.#task = run(function* () {
-            manager.#scope = yield* useScope();
-            manager.#manager = yield* useObjectSetWatcherManager(client);
-            yield* suspend();
-        });
+        this.#manager = Effect.runSync(Scope.provide(makeObjectSetWatcher(client), this.#scope));
+    }
+
+    get stopped(): boolean {
+        return this.#stopped;
     }
 
     subscribe(objectSet: ObjectSet, callback: (data: ObjectSetSubscriptionMessage) => void): () => void {
-        const scope = this.#scope;
-        const manager = this.#manager;
-        if (!scope || !manager) {
-            throw new Error("ObjectSetWatcherManager has not been initialized");
-        }
-
-        const task = scope.run(function* () {
-            for (const message of yield* each(manager.subscribe(objectSet))) {
-                try {
-                    callback(message);
-                } catch (error) {
-                    console.error("Error during subscription callback", error);
-                }
-                yield* each.next();
-            }
-        });
-
+        if (this.#stopped) throw new Error("ObjectSetWatcherManager is stopped.");
+        const fiber = Effect.runSync(
+            Effect.forkIn(
+                Stream.runForEach(this.#manager.subscribe(objectSet), (message) =>
+                    Effect.try({ try: () => callback(message), catch: () => undefined }).pipe(
+                        Effect.catch(() => Effect.logError("Object set subscriber callback failed."))
+                    )
+                ),
+                this.#scope
+            )
+        );
+        let cancelled = false;
         return () => {
-            void task.halt();
+            if (cancelled) return;
+            cancelled = true;
+            Effect.runFork(Fiber.interrupt(fiber));
         };
     }
 
-    async stop(): Promise<void> {
-        if (this.#task) {
-            const task = this.#task;
-            this.#task = undefined;
-            await task.halt();
-        }
+    stop(): Promise<void> {
+        this.#stopped = true;
+        return (this.#closing ??= Effect.runPromise(Scope.close(this.#scope, Exit.void)));
     }
 }
-
 const cache = new WeakMap<OntologyClient, ObjectSetWatcherManager>();
 export function getObjectSetWatcherManager(client: OntologyClient): ObjectSetWatcherManager {
     let manager = cache.get(client);
-    if (!manager) {
+    if (!manager || manager.stopped) {
         manager = new ObjectSetWatcherManager(client);
         cache.set(client, manager);
     }

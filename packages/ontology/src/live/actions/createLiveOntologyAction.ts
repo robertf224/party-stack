@@ -1,18 +1,16 @@
-import { resolveActionParameters } from "../expression.js";
-import { createReadTx } from "../mutators/createMutatorTx.js";
-import type { OntologyIR } from "../../ir/index.js";
-import type { Uncertain } from "../../utils/uncertain.js";
-import type { ValidationIssue } from "../../utils/validation.js";
-import type { Result } from "../../utils/values.js";
-import type { LiveOntologyWriteMode, LiveOntologyWriteVisibility } from "../LiveOntology.js";
-import type { OntologyCollection } from "../objects/createLiveOntologyObjectCollection.js";
-import type { OntologyObject } from "../objects/OntologyObject.js";
-import type { OntologyApplyActionResult } from "../OntologyBackendAdapter.js";
+import type { LiveOntologyWriteVisibility } from "../LiveOntology.js";
 import type { OntologyActionRequest } from "../outbox/types.js";
+import type { OntologyApplyActionResult } from "./types.js";
+import type { ActionRequest } from "@party-stack/ontology-backend";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { Uncertain } from "@party-stack/ontology-spec/utils";
+import type { ValidationIssue } from "@party-stack/ontology-spec/utils";
+import type { Result } from "@party-stack/ontology-spec/values";
 
 export interface LiveOntologyActionOptions {
     idempotencyKey?: string;
-    mode?: LiveOntologyWriteMode;
+    /** Portable inputs supplied by a forwarding ontology. */
+    replay?: NonNullable<ActionRequest["replay"]>;
     visibility?: LiveOntologyWriteVisibility;
 }
 
@@ -20,8 +18,15 @@ export interface LiveOntologyActionDraftValidationOptions<Parameters extends Rec
     knownParameters?: readonly (keyof Parameters)[];
 }
 
-export type LiveOntologyAction<Parameters extends Record<string, unknown> = Record<string, unknown>> = {
-    (parameters: Parameters, options?: LiveOntologyActionOptions): Promise<OntologyApplyActionResult | void>;
+export type LiveOntologyAction<
+    Parameters extends Record<string, unknown> = Record<string, unknown>,
+    Return = unknown,
+    Input extends Record<string, unknown> = Parameters,
+> = {
+    /** Queue in the replica's outbox, including offline. Visibility controls prediction;
+     * the Promise resolves after authoritative confirmation and local reconciliation.
+     */
+    (parameters: Input, options?: LiveOntologyActionOptions): Promise<OntologyApplyActionResult<Return>>;
     resolveParameters(parameters: Partial<Parameters>): Promise<Partial<Parameters>>;
     validate(parameters: Parameters): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>>;
     validateDraft(
@@ -31,14 +36,15 @@ export type LiveOntologyAction<Parameters extends Record<string, unknown> = Reco
 };
 
 export function createLiveOntologyAction(options: {
-    ir: OntologyIR;
     action: OntologyIR["actionTypes"][number];
-    context?: Record<string, unknown>;
-    objects: Record<string, OntologyCollection<OntologyObject>>;
+    resolveParameters: (
+        name: string,
+        parameters: Record<string, unknown>
+    ) => Promise<Record<string, unknown>>;
     submit(
         request: OntologyActionRequest,
         options?: LiveOntologyActionOptions
-    ): Promise<OntologyApplyActionResult | void>;
+    ): Promise<OntologyApplyActionResult>;
     validate(
         actionTypeName: string,
         parameters: Record<string, unknown>
@@ -49,14 +55,6 @@ export function createLiveOntologyAction(options: {
         validationOptions?: LiveOntologyActionDraftValidationOptions<Record<string, unknown>>
     ): Promise<Uncertain<Result<void, readonly ValidationIssue[]>>>;
 }): LiveOntologyAction {
-    const resolveParameters = (providedParameters: Record<string, unknown>) =>
-        resolveActionParameters({
-            ir: options.ir,
-            actionTypeName: options.action.name,
-            initialParameters: providedParameters,
-            context: options.context ?? {},
-            tx: createReadTx(options.objects),
-        });
     const apply: LiveOntologyAction = async (providedParameters, executionOptions) => {
         const idempotencyKey = executionOptions?.idempotencyKey ?? crypto.randomUUID();
         return options.submit(
@@ -64,12 +62,13 @@ export function createLiveOntologyAction(options: {
                 actionTypeName: options.action.name,
                 parameters: providedParameters,
                 idempotencyKey,
+                replay: executionOptions?.replay,
             },
             executionOptions
         );
     };
     apply.validate = async (providedParameters) => options.validate(options.action.name, providedParameters);
-    apply.resolveParameters = resolveParameters;
+    apply.resolveParameters = (parameters) => options.resolveParameters(options.action.name, parameters);
     apply.validateDraft = async (parameters, validationOptions) =>
         options.validateDraft(options.action.name, parameters, validationOptions);
     return apply;

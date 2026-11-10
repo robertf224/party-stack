@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { NativeBlob } = vi.hoisted(() => ({ NativeBlob: globalThis.Blob }));
+vi.mock("expo-crypto", () => ({
+    getRandomValues: (bytes: Uint8Array) => bytes.fill(7),
+    randomUUID: () => "native-uuid",
+}));
 vi.mock("expo-blob", () => ({ Blob: class ExpoBlob extends NativeBlob {} }));
 
 const originalBlob = globalThis.Blob;
@@ -10,6 +14,7 @@ afterEach(() => {
     globalThis.Blob = originalBlob;
     globalThis.File = originalFile;
     globalThis.fetch = originalFetch;
+    vi.unstubAllGlobals();
     vi.resetModules();
     vi.restoreAllMocks();
 });
@@ -66,4 +71,12 @@ describe("Expo polyfill", () => {
         expect(file.name).toBe("attachment.txt");
         await expect(file.text()).resolves.toBe("attachment");
     });
+});
+
+it("installs native secure randomness when the host has no Web Crypto global", async () => {
+    vi.stubGlobal("crypto", undefined);
+    await import("./polyfill.js");
+    expect(crypto.randomUUID()).toBe("native-uuid");
+    expect(crypto.getRandomValues(new Uint8Array(2))).toEqual(new Uint8Array([7, 7]));
+    expect(crypto.subtle).toBeUndefined();
 });

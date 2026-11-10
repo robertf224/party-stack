@@ -2,7 +2,8 @@
     "name": "@party-stack/expo-runtime",
     "version": "0.4.2",
     "files": [
-        "lib"
+        "lib",
+        "plugin"
     ],
     "type": "module",
     "sideEffects": [
@@ -16,12 +17,17 @@
         "./polyfill": {
             "types": "./lib/polyfill.d.ts",
             "default": "./lib/polyfill.js"
+        },
+        "./plugin": {
+            "types": "./plugin/index.d.cts",
+            "default": "./plugin/index.cjs"
         }
     },
     "dependencies": {
-        "@party-stack/coordination": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "@tanstack/expo-db-sqlite-persistence": "0.2.34",
+        "@party-stack/sql-ontology-storage": "workspace:*",
+        "effect": "^4.0.5",
         "expo-blob": "^57.0.2",
         "expo-crypto": "^57.0.4",
         "expo-secure-store": "^57.0.4",
@@ -35,6 +41,7 @@
         "expo-file-system": "^57.0.7",
         "expo-sqlite": "^57.0.4",
         "typescript": "~7.0.2",
+        "vite": "catalog:",
         "vite-plus": "catalog:"
     },
     "peerDependencies": {

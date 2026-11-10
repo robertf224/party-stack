@@ -1,11 +1,15 @@
-import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
-import { describe, expect, it, vi } from "vite-plus/test";
-import { o } from "../../ir/index.js";
+import { makeOntologyBackend } from "@party-stack/ontology-backend";
+import { o } from "@party-stack/ontology-spec";
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
+import { MemoryBlobBytesStore } from "@party-stack/runtime";
+import { asRuntimeLayer } from "@party-stack/runtime/testing";
+import { Effect, Exit, Scope, Stream } from "effect";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { makeReplicaAttachments } from "../../../../ontology-replica/lib/attachments/service.js";
 import { createLiveOntology } from "../LiveOntology.js";
 import { createLiveOntologyAttachments } from "./createLiveOntologyAttachments.js";
-import type { OntologyIR } from "../../ir/index.js";
-import type { OntologyAttachmentsAdapter, OntologyBackendAdapter } from "../index.js";
-import type { BlobManager } from "@party-stack/blobs";
+import type { BlobManagerService } from "../../../../ontology-replica/lib/attachments/manager.js";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
     types: [],
@@ -44,13 +48,28 @@ const actionIr: OntologyIR = {
     ],
 };
 
+const scopes: Scope.Closeable[] = [];
+afterEach(async () => {
+    for (const scope of scopes.splice(0)) await Effect.runPromise(Scope.close(scope, Exit.void));
+});
+const testAttachments = async (options: { ir: OntologyIR; blobManager: BlobManagerService }) => {
+    const scope = Effect.runSync(Scope.make());
+    scopes.push(scope);
+    const attachments = await Effect.runPromise(
+        Scope.provide(makeReplicaAttachments({ ir: options.ir, manager: options.blobManager }), scope)
+    );
+    return createLiveOntologyAttachments({ attachments, scope, run: (work) => Effect.runPromise(work) });
+};
+
 describe("createLiveOntologyAttachments", () => {
     it("creates attachments with an existing opaque id", async () => {
-        const stage = vi.fn(() => Promise.resolve());
-        const attachments = createLiveOntologyAttachments({
+        const stage = vi.fn(() => Effect.void);
+        const attachments = await testAttachments({
             ir,
-            attachmentsAdapter: {} as OntologyAttachmentsAdapter,
-            blobManager: { stage } as unknown as BlobManager,
+            blobManager: {
+                stage,
+                storage: { readScoped: () => Effect.succeed(undefined) },
+            } as unknown as BlobManagerService,
         });
         const file = new File(["hello"], "evidence.txt", {
             type: "text/plain",
@@ -67,7 +86,10 @@ describe("createLiveOntologyAttachments", () => {
             },
         });
 
-        expect(stage).toHaveBeenCalledWith("opaque-local-id", file);
+        expect(stage).toHaveBeenCalledWith(
+            "opaque-local-id",
+            expect.objectContaining({ size: 5, type: "text/plain", name: "evidence.txt" })
+        );
     });
 
     it("rejects blobs outside a target's allowed media types", async () => {
@@ -94,10 +116,9 @@ describe("createLiveOntologyAttachments", () => {
             ],
         };
         const stage = vi.fn();
-        const attachments = createLiveOntologyAttachments({
+        const attachments = await testAttachments({
             ir: constrainedIr,
-            attachmentsAdapter: {} as OntologyAttachmentsAdapter,
-            blobManager: { stage } as unknown as BlobManager,
+            blobManager: { stage } as unknown as BlobManagerService,
         });
 
         await expect(
@@ -138,14 +159,10 @@ describe("createLiveOntologyAttachments", () => {
                 },
             ],
         };
-        const stage = vi.fn(() => Promise.resolve());
-        const attachments = createLiveOntologyAttachments({
+        const stage = vi.fn(() => Effect.void);
+        const attachments = await testAttachments({
             ir: constrainedIr,
-            attachmentsAdapter: {
-                generateAttachmentId: () => "image-1",
-                getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
-            },
-            blobManager: { stage } as unknown as BlobManager,
+            blobManager: { stage } as unknown as BlobManagerService,
         });
 
         await expect(
@@ -175,7 +192,7 @@ describe("createLiveOntologyAttachments", () => {
                 },
             })
         ).resolves.toMatchObject({
-            attachment: { id: "image-1" },
+            attachment: { id: expect.any(String) },
         });
         expect(stage).toHaveBeenCalledOnce();
     });
@@ -185,9 +202,6 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "eager-attachment",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({
-                scope: "eager-attachment",
-            }),
         };
         const materialized: string[] = [];
         let finishMaterialization: (() => void) | undefined;
@@ -198,36 +212,38 @@ describe("createLiveOntologyAttachments", () => {
         const materializationStartedSignal = new Promise<void>((resolve) => {
             resolveMaterializationStarted = resolve;
         });
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            getCollectionOptions: () => ({
-                syncMode: "eager",
-                sync: {
-                    sync: ({ markReady }) => {
-                        markReady();
-                    },
+        const backendAdapter = Effect.succeed(
+            makeOntologyBackend({
+                ir,
+                name: "test",
+                sourceId: "test",
+                supportsIdempotency: false,
+                loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                applyAction: () => Effect.die("Unexpected action"),
+                queryFunction: () => Effect.die("Unexpected query"),
+                attachments: {
+                    stage: (attachment, blob) =>
+                        Effect.promise(async () => {
+                            resolveMaterializationStarted?.();
+                            await materializationStarted;
+                            materialized.push(
+                                `${attachment.id}:${await (await Effect.runPromise(collectByteBlob(blob))).text()}`
+                            );
+                            return attachment;
+                        }),
+                    read: () => Effect.die("unexpected content read"),
+                    metadata: () => Effect.die("unexpected metadata read"),
                 },
-            }),
-            applyAction: () => Promise.resolve(),
-            runQueryFunction: () => Promise.reject(new Error("unexpected query run")),
-            attachments: {
-                generateAttachmentId: () => "attachment-1",
-                materializeAttachment: async (attachment, blob) => {
-                    resolveMaterializationStarted?.();
-                    await materializationStarted;
-                    materialized.push(`${attachment.id}:${await blob.text()}`);
-                },
-                getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
-                getAttachmentMetadata: () => Promise.reject(new Error("unexpected metadata read")),
-            },
-        };
+            })
+        );
         const ontology = await createLiveOntology({
             ir,
-            backend: () => backendAdapter,
-            runtime: () => runtime,
+            backend: backendAdapter,
+            runtime: asRuntimeLayer(() => runtime),
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]), {
+            id: "attachment-1",
             target: {
                 kind: "objectProperty",
                 objectType: "Document",
@@ -239,9 +255,9 @@ describe("createLiveOntologyAttachments", () => {
         expect(creation.attachment.id).toBe("attachment-1");
         expect(creation.isMaterialized).toBeDefined();
         await materializationStartedSignal;
-        await expect(runtime.blobBytes.read("attachment-1").then((blob) => blob.text())).resolves.toBe(
-            "hello"
-        );
+        await expect(
+            ontology.attachments.blob(creation.attachment).then((blob) => blob.text())
+        ).resolves.toBe("hello");
         expect(materialized).toEqual([]);
         finishMaterialization?.();
         await creation.isMaterialized;
@@ -256,32 +272,22 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "targetless-attachment",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({
-                scope: "targetless-attachment",
-            }),
         };
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            getCollectionOptions: () => ({
-                syncMode: "eager",
-                sync: {
-                    sync: ({ markReady }) => {
-                        markReady();
-                    },
-                },
-            }),
-            applyAction: () => Promise.resolve(),
-            runQueryFunction: () => Promise.reject(new Error("unexpected query run")),
-            attachments: {
-                generateAttachmentId: () => "local-id",
-                getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
-                getAttachmentMetadata: () => Promise.reject(new Error("unexpected metadata read")),
-            },
-        };
+        const backendAdapter = Effect.succeed(
+            makeOntologyBackend({
+                ir,
+                name: "test",
+                sourceId: "test",
+                supportsIdempotency: false,
+                loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                applyAction: () => Effect.die("Unexpected action"),
+                queryFunction: () => Effect.die("Unexpected query"),
+            })
+        );
         const ontology = await createLiveOntology({
             ir,
-            backend: () => backendAdapter,
-            runtime: () => runtime,
+            backend: backendAdapter,
+            runtime: asRuntimeLayer(() => runtime),
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]));
@@ -289,7 +295,7 @@ describe("createLiveOntologyAttachments", () => {
         expect(creation.attachment.id).toHaveLength(36);
         expect(creation.isMaterialized).toBeUndefined();
         await expect(
-            runtime.blobBytes.read(creation.attachment.id).then((blob) => blob.text())
+            ontology.attachments.blob(creation.attachment).then((blob) => blob.text())
         ).resolves.toBe("hello");
     });
 
@@ -298,32 +304,22 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "unsupported-attachment",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({
-                scope: "unsupported-attachment",
-            }),
         };
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            getCollectionOptions: () => ({
-                syncMode: "eager",
-                sync: {
-                    sync: ({ markReady }) => {
-                        markReady();
-                    },
-                },
-            }),
-            applyAction: () => Promise.resolve(),
-            runQueryFunction: () => Promise.reject(new Error("unexpected query run")),
-            attachments: {
-                generateAttachmentId: () => "attachment-1",
-                getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
-                getAttachmentMetadata: () => Promise.reject(new Error("unexpected metadata read")),
-            },
-        };
+        const backendAdapter = Effect.succeed(
+            makeOntologyBackend({
+                ir,
+                name: "test",
+                sourceId: "test",
+                supportsIdempotency: false,
+                loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                applyAction: () => Effect.die("Unexpected action"),
+                queryFunction: () => Effect.die("Unexpected query"),
+            })
+        );
         const ontology = await createLiveOntology({
             ir,
-            backend: () => backendAdapter,
-            runtime: () => runtime,
+            backend: backendAdapter,
+            runtime: asRuntimeLayer(() => runtime),
         });
 
         const creation = await ontology.attachments.create(new Blob(["hello"]), {
@@ -337,7 +333,7 @@ describe("createLiveOntologyAttachments", () => {
 
         expect(creation.isMaterialized).toBeUndefined();
         await expect(
-            runtime.blobBytes.read(creation.attachment.id).then((blob) => blob.text())
+            ontology.attachments.blob(creation.attachment).then((blob) => blob.text())
         ).resolves.toBe("hello");
     });
 
@@ -346,42 +342,31 @@ describe("createLiveOntologyAttachments", () => {
             owner: "test-user",
             namespace: "attachment-mapping",
             blobBytes: new MemoryBlobBytesStore(),
-            coordination: new SingleProcessCoordination({
-                scope: "attachment-mapping",
-            }),
         };
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            getCollectionOptions: () => ({
-                syncMode: "eager",
-                sync: {
-                    sync: ({ markReady }) => {
-                        markReady();
-                    },
-                },
-            }),
-            applyAction: () =>
-                Promise.resolve({
-                    attachmentIdMappings: [
-                        {
-                            localId: "local-id",
-                            remoteId: "remote-id",
-                        },
-                    ],
-                }),
-            runQueryFunction: () => Promise.reject(new Error("unexpected query run")),
-            attachments: {
-                generateAttachmentId: () => "local-id",
-                getAttachmentContent: () => Promise.reject(new Error("unexpected content read")),
-                getAttachmentMetadata: () => Promise.reject(new Error("unexpected metadata read")),
-            },
-        };
+        const backendAdapter = Effect.succeed(
+            makeOntologyBackend({
+                ir,
+                name: "test",
+                sourceId: "test",
+                supportsIdempotency: false,
+                loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+                applyAction: (action) =>
+                    Effect.succeed({
+                        operationId: action.id,
+                        outcome: "committed",
+                        affected: [],
+                        attachmentIdMappings: [{ localId: "local-id", remoteId: "remote-id" }],
+                    }),
+                queryFunction: () => Effect.die("Unexpected query"),
+            })
+        );
         const ontology = await createLiveOntology({
             ir: actionIr,
-            backend: () => backendAdapter,
-            runtime: () => runtime,
+            backend: backendAdapter,
+            runtime: asRuntimeLayer(() => runtime),
         });
         const { attachment } = await ontology.attachments.create(new Blob(["hello"]), {
+            id: "local-id",
             target: {
                 kind: "objectProperty",
                 objectType: "Document",
@@ -405,4 +390,40 @@ describe("createLiveOntologyAttachments", () => {
                 .then((blob) => blob.text())
         ).resolves.toBe("hello");
     });
+});
+
+it("SDK source cancellation releases an acquired but unconsumed native read", async () => {
+    let active = 0;
+    const attachments = await testAttachments({
+        ir,
+        blobManager: {
+            source: () =>
+                Effect.acquireRelease(
+                    Effect.sync(() => {
+                        active++;
+                        return { type: "text/plain", stream: Stream.make(new Uint8Array([1])) };
+                    }),
+                    () =>
+                        Effect.sync(() => {
+                            active--;
+                        })
+                ),
+        } as unknown as BlobManagerService,
+    });
+    const abort = new AbortController();
+    await attachments.source({ id: "file" }, { signal: abort.signal });
+    expect(active).toBe(1);
+    abort.abort();
+    await vi.waitFor(() => expect(active).toBe(0));
+    const next = await attachments.source({ id: "file" });
+    expect(active).toBe(1);
+    expect((await Effect.runPromise(collectByteBlob(next))).size).toBe(1);
+    expect(active).toBe(0);
+    // Reopening a durable SDK source acquires a fresh scope after the first EOF.
+    expect((await Effect.runPromise(collectByteBlob(next))).size).toBe(1);
+    expect(active).toBe(0);
+    await attachments.source({ id: "file" });
+    expect(active).toBe(1);
+    await Effect.runPromise(Scope.close(scopes[0]!, Exit.void));
+    expect(active).toBe(0);
 });

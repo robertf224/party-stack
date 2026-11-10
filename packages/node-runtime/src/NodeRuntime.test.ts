@@ -1,0 +1,56 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Runtime, RuntimePartition } from "@party-stack/runtime";
+import { Deferred, Effect, Fiber, Layer } from "effect";
+import { expect, test, vi } from "vite-plus/test";
+import { layer } from "./createNodeRuntime.js";
+
+const native = vi.hoisted(() => ({ opened: vi.fn(), closed: vi.fn() }));
+vi.mock("better-sqlite3", () => ({
+    default: class {
+        constructor() {
+            native.opened();
+        }
+        close() {
+            native.closed();
+        }
+        exec() {}
+        prepare() {
+            return { all: () => [], run: () => undefined };
+        }
+    },
+}));
+
+test("Node layers acquire lazily and interruption closes SQLite without a runtime cleanup call", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "party-stack-scoped-"));
+    try {
+        const runtimeLayer = layer({ dataDirectory: directory }).pipe(
+            Layer.provide(Layer.succeed(RuntimePartition)({ owner: "user", namespace: "node" }))
+        );
+        expect(native.opened).not.toHaveBeenCalled();
+        await Effect.runPromise(
+            Effect.gen(function* () {
+                const ready = yield* Deferred.make<void>();
+                const fiber = yield* Effect.forkChild(
+                    Effect.gen(function* () {
+                        const runtime = yield* Runtime;
+                        const memory = yield* runtime.capacity!.memory;
+                        const storage = yield* runtime.capacity!.storage;
+                        expect(memory?.scope).toBe("process");
+                        expect(storage?.scope).toBe("filesystem");
+                        expect(storage?.availableBytes).toBeGreaterThanOrEqual(0);
+                        yield* Deferred.succeed(ready, undefined);
+                        yield* Effect.never;
+                    }).pipe(Effect.provide(runtimeLayer))
+                );
+                yield* Deferred.await(ready);
+                yield* Fiber.interrupt(fiber);
+            })
+        );
+        expect(native.opened).toHaveBeenCalledOnce();
+        expect(native.closed).toHaveBeenCalledOnce();
+    } finally {
+        await rm(directory, { recursive: true, force: true });
+    }
+});

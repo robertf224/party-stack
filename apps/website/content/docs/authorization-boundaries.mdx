@@ -1,0 +1,123 @@
+---
+title: Authorization boundaries
+description: What leaves a server through queries, actions, watches, and diagnostics.
+---
+
+Start with [defining a policy](/docs/authorization). This page describes how that
+policy applies across transports and what trusted implementations must handle.
+
+## Where authorization runs
+
+The request crosses several boundaries. Authentication establishes the caller;
+the IR policy governs domain access; response projection controls what leaves the server.
+Client predictions and client-side validation are conveniences, not permission checks.
+
+| Boundary                     | What the server does                                                                                                                                                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Request and route            | Runs `authenticate` for the HTTP request, selects the ontology route, and validates its bound context. Worker bindings supply an already authenticated/trusted context. Clients supply query/action inputs, not a replacement execution context.                         |
+| Definition (`Describe`)      | Projects object properties, actions, functions, parameter signatures and context. Removes policy predicates, checks and binding expressions. Public labels and other metadata still need your review.                                                                    |
+| Objects and queries          | Applies `policy.objects` to rows and properties before client filtering, sorting, windows and aggregates. Hidden properties cannot be used to probe private values. Relations and nested queries use the same grants.                                                    |
+| Cache hits                   | Applies the caller's policy on the final read path of a cached proxy. Sharing upstream data does not share callers' grants. Local replica partitions separately isolate cached data by the declared context fields.                                                      |
+| Actions                      | Resolves bound parameters, validates parameters/references, and evaluates the action's rule. Native owned execution checks and mutates in the same transaction; a proxy checks before invoking its upstream backend.                                                     |
+| Query functions              | Requires the function's own successful `check`. Owned handlers receive base object grants plus that invocation's `additionalObjects`. Provider execution still uses the provider's own permissions.                                                                      |
+| Defaults and validation      | Resolves defaults/prefills through authorized reads, omits bound parameters, and projects validation issues onto the public input contract. Final submission checks again.                                                                                               |
+| Attachments and decryption   | Re-reads the authorized source row/property and verifies the requested handle still belongs there. Knowing an attachment ID or ciphertext is not enough. Action uploads still pass through action authorization; standalone staging is not granted by object visibility. |
+| Receipts and returned values | Projects affected-object identifiers as described below. Action/function results follow their declared return contract; arbitrary returned structs are not automatically filtered by `policy.objects`.                                                                   |
+| Watches and streams          | Exposes invalidation hints and sanitizes stream failures. Subsequent object reads apply the current object grants again. Raw journals and replica-state delivery are unavailable on policy-bound endpoints.                                                              |
+| Diagnostics and controls     | Require `dangerouslyAllowInternalAccess`. This does not disable normal IR checks, but diagnostics and queue/pin/cleanup commands are privileged capabilities outside the object policy.                                                                                  |
+
+`policy.objects` does not grant arbitrary CRUD writes. Actions are the write contract:
+their trusted implementation determines what changes after the action is authorized.
+An action can deliberately write an audit row the caller cannot read.
+
+### Proxy watches
+
+Watches require `enableRealtime: true`; finite queries and actions never open or
+wait for them. This option cannot expose a feed that the policy projection omits.
+
+A projected backend can reuse an upstream subset watch, or its broader change
+watch, as a wake-up signal. It forwards no object rows, IDs or journal entries through
+that stream. The replica then fetches data through the policy-filtered read path.
+Reconnect invalidates the selection so a missed notification cannot establish freshness.
+
+Broader watches can wake for changes outside the caller's visible graph. Change
+timing is therefore not isolated by the object policy. Filtering those notifications
+would require tracking changes in each authorized view; this is not currently promised.
+The projection watches policy dependencies too: changing a project's administrator
+list can revoke access to its forms without changing a form row. It uses a global
+change watch when available, otherwise whole-type watches for those dependencies.
+Lookups conservatively watch every local type. If a complete watch is unavailable,
+the projection uses the adapter's polling recommendations. Providers offering
+neither need explicit refresh.
+
+Authentication is evaluated when the request/stream opens. An existing stream
+keeps that binding; a data refresh re-evaluates row-dependent policy against current
+data. Expiring or replacing a session/context must also close or replace its active
+bindings if immediate revocation is required. Already delivered data cannot be recalled.
+
+### Errors and receipts
+
+On policy-bound routes, error projection automatically applies to failed calls,
+streamed failures, and validation reports. It:
+
+- removes raw causes and provider messages;
+- keeps standard input issues only for public parameters;
+- turns policy denials into a generic unavailable-resource response;
+- presents an upstream credential failure as service unavailability, rather than
+  asking the downstream caller to sign into your service account;
+- preserves retry deadlines and whether an action may already have committed.
+
+Server defects become a generic `Internal` error; their details stay in server logs.
+Private routes without an IR policy forward the original typed error, including its
+message, issues, and cause. Normal server configuration needs no separate error-disclosure mode.
+Failures before a route can be authenticated/bound are projected too.
+
+An action receipt is a separate disclosure boundary from the changed objects. The
+server first tries to prove identity visibility directly from the base object policy.
+Unconditional root grants and primary-key/context predicates need no object read,
+even for a deleted object. For example, `project.id === context.projectId` can authorize
+that project ID directly. A rule on `bid.approvalId`, or a linked project's permissions,
+still needs the stored row: a receipt supplies the bid ID, not its approval ID.
+
+Other grants use a policy-filtered read. Hidden or unproven keys fall back to a
+coarse type-wide invalidation. Windows, singular selections, and ancestor-dependent
+grants never use the identity-only shortcut. It omits private journal cursors. A failed visibility proof does not
+turn an already committed action into a failed submission. Write permission and
+`additionalObjects` alone do not grant permission to disclose those identifiers.
+
+Passing the action or query function's `check` authorizes its declared return value.
+`policy.objects` does not filter that value again: a trusted handler may deliberately
+compute a public total from private rows. Define the return schema and construct the
+public value deliberately. There is no separate return-value selection policy yet.
+
+With no IR policy, a server requires explicit internal access. With a policy, that
+flag can add diagnostics/commands, but still cannot expose an unprojected journal
+or speculative replica stream. See [server setup](/docs/server).
+
+## Planned watch and change-feed projection
+
+Finer-grained policy-aware watches and resumable projected change feeds are future
+work. They should avoid unrelated wakeups and deliver authorized changes directly,
+while preserving these rules:
+
+- Re-evaluate linked policy dependencies, not just the changed row.
+- Represent rows entering or leaving the visible set, including deletes and changes
+  that remove access; dropping a newly hidden row's event would leave stale data.
+- Project properties and identifiers before delivery, without exposing raw journals
+  or global change cursors.
+- Define safe view-specific resume positions and reset behavior when history or a
+  policy binding changes.
+
+A direct, row-local predicate can be evaluated on a complete changed row. That is
+an optimization opportunity, not a general replacement for evaluating linked grants.
+The current implementation uses the broad invalidation behavior described above.
+
+## When a provider schema changes
+
+Validate the projection against current provider metadata. Invalid policy references
+or bindings stop construction. If a client-only default or prediction cannot use
+the replacement context, projection omits it and logs a warning; authoritative
+execution can remain available.
+
+Projected public endpoints expose guarded reads, actions, and attachment access.
+Raw replication state requires a trusted deployment.

@@ -401,7 +401,7 @@ describe("convertFoundryMetaActionType parameter validation", () => {
         });
     });
 
-    it("maps Foundry current user arguments to the canonical user context", () => {
+    it("maps Foundry current user arguments to the canonical userId context", () => {
         const metadata = actionType({});
         metadata.fullLogicRules = [
             {
@@ -427,7 +427,7 @@ describe("convertFoundryMetaActionType parameter validation", () => {
                             value: {
                                 kind: "contextReference",
                                 value: {
-                                    name: "user",
+                                    name: "userId",
                                 },
                             },
                         },
@@ -1164,7 +1164,7 @@ describe("convertFoundryMetaActionType OMS string constraints", () => {
             kind: "getAt",
             value: {
                 source: {
-                    kind: "objectLookup",
+                    kind: "lookup",
                     value: {
                         reference: {
                             kind: "inputReference",
@@ -1540,7 +1540,7 @@ describe("convertFoundryMetaActionType OMS defaults", () => {
                     kind: "getAt",
                     value: {
                         source: {
-                            kind: "objectLookup",
+                            kind: "lookup",
                             value: {
                                 reference: {
                                     kind: "inputReference",

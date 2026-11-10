@@ -1,28 +1,50 @@
 # foundry-ontology
 
-Foundry adapter and metadata conversion for Party Stack LiveOntology.
+Native Foundry data, metadata, and account-connection capabilities.
 
-## Metadata polling
+## Metadata queries
 
-Set `metaRefetchInterval` on a metadata-only route included in your Foundry installation:
+Open a native metadata backend with selected Connect egress:
 
 ```ts
-createFoundryOntologyRoute({
-    ontologyId: "ri.ontology.main.ontology.example",
-    metaRefetchInterval: 30_000,
-});
+import { makeFoundryMetadataBackend } from "@party-stack/foundry-ontology";
+
+const backend =
+    yield *
+    makeFoundryMetadataBackend({
+        baseUrl,
+        ontologyId: "ri.ontology.main.ontology.example",
+        egress,
+        refetchInterval: 30_000,
+    });
 ```
 
-Calling `installation.openMetaOntology({ userId, ontologyId })` uses that route's
-interval for the shared object/value/link metadata collection, action types, and
-query function types. The interval is in milliseconds; `false` disables polling,
-and omitting it preserves the default of no polling. Repeated opens return the
-cached meta ontology with the same route configuration. Routes with supplied `ir`
-project local metadata and do not poll Foundry.
+Object-type name and RID filters use Foundry's batch lookup endpoints. Value-type
+name filters use direct lookups. Link queries constrained by an object type load
+that type's outgoing links and the inverse definitions needed to reconstruct each
+link. Unbounded queries use the corresponding listing endpoints.
 
-You can also set `refetchInterval` directly on
-`createFoundryMetaOntologyBackendAdapter` when creating a meta ontology without an
-installation.
+The backend narrows provider requests where it can prove they include every
+matching row. The shared query engine then applies residual predicates, ordering,
+and limits. A bounded fetch never certifies that the whole object type is loaded.
+
+`refetchInterval` supplies a recommended polling interval, in milliseconds. The
+replica schedules polling; the adapter does not run a separate timer. `false`
+disables the recommendation, and omission defaults to no polling. An explicit
+replica demand refresh policy takes precedence.
+
+Metadata is an ordinary backend, usable directly for native pull or
+with the shared meta ontology IR in a replica. `makeFoundryBackend` opens a data
+backend; `makeFoundryAdminBackend` from the `users` export opens the explicit users
+ontology. These helpers do not create SDK views or installations.
+
+For saved connections, register `makeFoundryServiceConnector` with Connect and
+acquire authenticated egress through `connect.connections.acquire(connectionRef)`.
+Pass that egress to the normal backend constructor. `makeOntologyServer` routes
+Connect and managed replicas through the same ontology protocol;
+`serveOntologyWorker(server)` binds it to a worker transport. In tabs, `createAuthenticationClient`
+handles authentication and `OntologyEnvironmentProvider` opens named views. See the
+[Foundry guide](../../apps/website/content/docs/foundry.mdx) for the complete setup.
 
 ## Link metadata
 
@@ -45,21 +67,20 @@ are preserved as suggestions. Object-query and struct-field prefills are omitted
 until the expression model supports them, and failures from the private endpoint
 do not prevent public action metadata from loading.
 
-## Refreshing objects
+## Native backend integration
 
-Foundry object collections expose an awaitable full-source refresh:
+Object, metadata, and Admin Users reads use the native backend's Effect-valued
+`loadSubset` interface. Replica owns demand, persistent rows, action receipts,
+confirmation reads, and optimistic state; TanStack collections materialize that
+state for applications. Provider collection-option helpers are no longer exported.
 
-```ts
-await ontology.objects.Employee.utils.refresh?.();
-```
+The Foundry backend uses the scoped Effect object-set watcher. Watch messages are
+invalidation hints; Replica refreshes the affected demand. They do not establish a
+durable edits-history cursor. Actions save receipts before confirmation reads, so
+a failed read does not cause the action to be submitted again.
 
-`refresh` is an optional adapter utility on the generic ontology collection API.
-Foundry fetches a fresh snapshot and replaces cached rows in one sync transaction,
-while keeping live subscriptions active and applying updates received during the
-fetch. The promise waits for the commit and rejects on failure. Ontology
-collections start their sync before refreshing; when using
-`objectCollectionOptions` directly, preload the collection first.
-
-When edit history is unavailable, reconnection and action acknowledgement also
-request a fresh snapshot. Acknowledgement waits for that snapshot's commit; it
-cannot confirm a specific edit-history operation ID in this mode.
+`makeFoundryServiceConnector(options)` registers native OAuth exchange, refresh,
+identity verification, and authenticated HTTP/WebSocket egress. Credentials remain
+beside the backend. Interactive OAuth uses the ordinary Connect actions and the
+tab runtime's browser presentation capability. Opening a saved connection does
+not start interactive authentication.

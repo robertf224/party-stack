@@ -3,6 +3,7 @@ import { ContextMenu } from "@base-ui/react/context-menu";
 import { Dialog } from "@base-ui/react/dialog";
 import { Menu } from "@base-ui/react/menu";
 import { Select } from "@base-ui/react/select";
+import { Toast } from "@base-ui/react/toast";
 import { Toggle } from "@base-ui/react/toggle";
 import { ToggleGroup } from "@base-ui/react/toggle-group";
 import { Tooltip } from "@base-ui/react/tooltip";
@@ -18,9 +19,9 @@ import {
     type DragEndEvent,
     type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
-import { createOntologyDevtoolsPlugin, ontologyDevtoolsTrigger } from "@party-stack/ontology-devtools";
+import { BackendError } from "@party-stack/ontology-backend";
+import { OntologyProvider, useOntology } from "@party-stack/ontology-react";
 import { eq, ilike, inArray, or, useLiveQuery } from "@tanstack/react-db";
-import { TanStackDevtools } from "@tanstack/react-devtools";
 import { useNavigate } from "@tanstack/react-router";
 import {
     useEffect,
@@ -31,9 +32,12 @@ import {
     type FormEvent,
     type KeyboardEvent as ReactKeyboardEvent,
     type ReactNode,
+    type Dispatch,
+    type SetStateAction,
 } from "react";
 import { Temporal } from "temporal-polyfill";
 import { FormInput, FormSelect, FormTextarea } from "../components/FormControls";
+import { objects as trackerObjects } from "../ontology/generated/collections";
 import {
     connectFoundryProfile,
     connectGoogleProfile,
@@ -44,12 +48,14 @@ import {
     type ConnectedProfile,
     type TrackerOntology,
 } from "./profiles";
+import { TrackerDevtools } from "./TrackerDevtools";
 import type {
     CreateIssueParameters,
     Issue,
     Project,
     UpdateIssueParameters,
     User,
+    IssueTrackerOntology,
 } from "../ontology/generated/types";
 import type { AttachmentMetadata } from "@party-stack/ontology";
 
@@ -422,16 +428,24 @@ function UserAvatar({
     );
 }
 
-function useProfileUser(profile: ConnectedProfile): User | undefined {
-    const ontology = profile.ontology;
-    const { data: users } = useLiveQuery({ query: (q) => q.from({ User: ontology.objects.User }) });
-    return users.find((user) => user.id === ontology.context.user);
-}
-
 function ProfileIdentity({ profile }: { profile: ConnectedProfile }) {
-    const user = useProfileUser(profile);
     return (
-        <>
+        <OntologyProvider ontology={profile.ontology}>
+            <ProfileIdentityView profile={profile} />
+        </OntologyProvider>
+    );
+}
+function ProfileIdentityView({ profile }: { profile: ConnectedProfile }) {
+    const ontology = profile.ontology;
+    const { data: user } = useLiveQuery({
+        query: (q) =>
+            q
+                .from({ User: trackerObjects.User })
+                .where(({ User }) => eq(User.id, ontology.context.userId))
+                .findOne(),
+    });
+    return (
+        <span className="flex min-w-0 flex-1 items-center gap-2">
             <UserAvatar className="size-6" ontology={profile.ontology} user={user} />
             <span className="min-w-0 flex-1">
                 <span className="block truncate">{user ? userName(user) : profile.label}</span>
@@ -439,7 +453,7 @@ function ProfileIdentity({ profile }: { profile: ConnectedProfile }) {
                     {user?.email ?? profile.label}
                 </span>
             </span>
-        </>
+        </span>
     );
 }
 
@@ -782,7 +796,7 @@ function IssueForm({
         assignee?: string;
         issueLabels: string[];
         attachments: IssueAttachment[];
-    }) => void;
+    }) => void | Promise<void>;
 }) {
     const formId = useId();
     const labelsInputId = useId();
@@ -800,18 +814,24 @@ function IssueForm({
             name: `Attachment ${index + 1}`,
         }))
     );
-    function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    const [submitting, setSubmitting] = useState(false);
+    async function handleSubmit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (!title.trim()) return;
-        onSave({
-            title: title.trim(),
-            description: description.trim(),
-            status,
-            projectId: projectId || undefined,
-            assignee: assignee || undefined,
-            issueLabels: labels,
-            attachments: attachments.map((item) => item.attachment),
-        });
+        if (!title.trim() || submitting) return;
+        setSubmitting(true);
+        try {
+            await onSave({
+                title: title.trim(),
+                description: description.trim(),
+                status,
+                projectId: projectId || undefined,
+                assignee: assignee || undefined,
+                issueLabels: labels,
+                attachments: attachments.map((item) => item.attachment),
+            });
+        } finally {
+            setSubmitting(false);
+        }
     }
 
     return (
@@ -854,10 +874,14 @@ function IssueForm({
                         <span className="mb-1.5 block text-xs font-medium text-slate-600">Project</span>
                         <FormSelect
                             id={`${formId}-field-4`}
+                            aria-label="Project"
                             onChange={(event) => setProjectId(event.target.value)}
                             value={projectId}
                         >
                             <option value="">No project</option>
+                            {projectId && !projects.some((project) => project.projectId === projectId) ? (
+                                <option value={projectId}>Project no longer available</option>
+                            ) : null}
                             {projects.map((project) => (
                                 <option key={project.projectId} value={project.projectId}>
                                     {project.projectTitle}
@@ -902,8 +926,8 @@ function IssueForm({
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
                 <Dialog.Close className={buttonClass}>Cancel</Dialog.Close>
-                <Button className={primaryButtonClass} disabled={!title.trim()} type="submit">
-                    {issue ? "Save issue" : "Create issue"}
+                <Button className={primaryButtonClass} disabled={!title.trim() || submitting} type="submit">
+                    {submitting ? (issue ? "Saving…" : "Creating…") : issue ? "Save issue" : "Create issue"}
                 </Button>
             </div>
         </form>
@@ -1024,7 +1048,7 @@ function IssueDetails({
     const { data: issue } = useLiveQuery({
         query: (q) =>
             q
-                .from({ Issue: ontology.objects.Issue })
+                .from({ Issue: trackerObjects.Issue })
                 .where(({ Issue }) => eq(Issue.issueId, issueId))
                 .findOne(),
     });
@@ -1767,21 +1791,50 @@ function ConnectedIssueTracker({
     initialProfiles: ConnectedProfile[];
 }) {
     const [profiles, setProfiles] = useState<ConnectedProfile[]>(initialProfiles);
-    const navigate = useNavigate();
     const [activeProfileId, setActiveProfileId] = useState(() => {
         if (typeof window === "undefined") return profiles[0]!.id;
         const stored = window.localStorage.getItem("issue-tracker-active-profile");
         return profiles.some((profile) => profile.id === stored) ? stored! : profiles[0]!.id;
     });
+    const activeProfile =
+        profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0] ?? initialProfiles[0]!;
+    return (
+        <OntologyProvider ontology={activeProfile.ontology}>
+            <ConnectedIssueTrackerView
+                initialProjectId={initialProjectId}
+                profiles={profiles}
+                setProfiles={setProfiles}
+                activeProfileId={activeProfileId}
+                setActiveProfileId={setActiveProfileId}
+                activeProfile={activeProfile}
+            />
+        </OntologyProvider>
+    );
+}
+function ConnectedIssueTrackerView({
+    initialProjectId,
+    profiles,
+    setProfiles,
+    activeProfileId,
+    setActiveProfileId,
+    activeProfile,
+}: {
+    initialProjectId: string;
+    profiles: ConnectedProfile[];
+    setProfiles: Dispatch<SetStateAction<ConnectedProfile[]>>;
+    activeProfileId: string;
+    setActiveProfileId: Dispatch<SetStateAction<string>>;
+    activeProfile: ConnectedProfile;
+}) {
+    const navigate = useNavigate();
     const [profileDialogOpen, setProfileDialogOpen] = useState(false);
     const [profileMenuOpen, setProfileMenuOpen] = useState(false);
     const [signedOut, setSignedOut] = useState(false);
     const [profileError, setProfileError] = useState<string>();
     const [connectingProfile, setConnectingProfile] = useState(false);
-    const activeProfile = profiles.find((profile) => profile.id === activeProfileId) ?? profiles[0]!;
-    const ontology = activeProfile.ontology;
-    const { createIssue, deleteIssue, updateIssue, createProject, updateProject, deleteProject } =
-        ontology.actions;
+    const ontology = useOntology<IssueTrackerOntology>();
+    const toastManager = Toast.useToastManager();
+    const { deleteIssue, updateIssue, createProject, updateProject, deleteProject } = ontology.actions;
     const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId);
     const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
     const [search, setSearch] = useState("");
@@ -1875,45 +1928,35 @@ function ConnectedIssueTracker({
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, []);
 
-    const devtoolsPlugin = useMemo(() => createOntologyDevtoolsPlugin({ ontology }), [ontology]);
-
     const { data: projects, isLoading: projectsLoading } = useLiveQuery({
         query: (q) =>
-            q
-                .from({ Project: ontology.objects.Project })
-                .orderBy(({ Project }) => Project.projectTitle, "asc"),
+            q.from({ Project: trackerObjects.Project }).orderBy(({ Project }) => Project.projectTitle, "asc"),
     });
 
     const { data: users } = useLiveQuery({
-        query: (q) => q.from({ User: ontology.objects.User }).orderBy(({ User }) => User.familyName, "asc"),
+        query: (q) => q.from({ User: trackerObjects.User }).orderBy(({ User }) => User.familyName, "asc"),
     });
-    const currentUser = users.find((user) => user.id === ontology.context.user);
+    const currentUser = users.find((user) => user.id === ontology.context.userId);
 
     const { data: allIssueIds } = useLiveQuery({
         query: (q) =>
-            q.from({ Issue: ontology.objects.Issue }).select(({ Issue }) => ({
+            q.from({ Issue: trackerObjects.Issue }).select(({ Issue }) => ({
                 issueId: Issue.issueId,
             })),
     });
 
     const { data: issues, isLoading: issuesLoading } = useLiveQuery({
-        query: (q) =>
-            q
-                .from({ Issue: ontology.objects.Issue })
-                .where(({ Issue }) =>
-                    search
-                        ? or(ilike(Issue.issueTitle, `${search}%`), inArray(search, Issue.issueLabels))
-                        : ilike(Issue.issueTitle, "%")
-                )
-                .where(({ Issue }) =>
-                    selectedProjectId ? eq(Issue.projectId, selectedProjectId) : ilike(Issue.issueTitle, "%")
-                )
-                .where(({ Issue }) =>
-                    statusFilter !== "All"
-                        ? eq(Issue.issueStatus, statusFilter)
-                        : ilike(Issue.issueStatus, "%")
-                )
-                .leftJoin({ Project: ontology.objects.Project }, ({ Issue, Project }) =>
+        query: (q) => {
+            let query = q.from({ Issue: trackerObjects.Issue });
+            if (search)
+                query = query.where(({ Issue }) =>
+                    or(ilike(Issue.issueTitle, `${search}%`), inArray(search, Issue.issueLabels))
+                );
+            if (selectedProjectId) query = query.where(({ Issue }) => eq(Issue.projectId, selectedProjectId));
+            if (statusFilter !== "All")
+                query = query.where(({ Issue }) => eq(Issue.issueStatus, statusFilter));
+            return query
+                .leftJoin({ Project: trackerObjects.Project }, ({ Issue, Project }) =>
                     eq(Issue.projectId, Project.projectId)
                 )
                 .select(({ Issue, Project }) => ({
@@ -1932,7 +1975,8 @@ function ConnectedIssueTracker({
                     projectTitle: Project.projectTitle,
                     projectColor: Project.projectColor,
                 }))
-                .orderBy(({ Issue }) => Issue.issueUpdatedAt, "desc"),
+                .orderBy(({ Issue }) => Issue.issueUpdatedAt, "desc");
+        },
     });
 
     // Persistence publishes cached rows while the remote subset is loading.
@@ -1969,7 +2013,7 @@ function ConnectedIssueTracker({
         setCreateIssueOpen(true);
     }
 
-    function saveNewIssue(values: {
+    async function saveNewIssue(values: {
         title: string;
         description: string;
         status: IssueStatus;
@@ -1978,7 +2022,7 @@ function ConnectedIssueTracker({
         issueLabels: string[];
         attachments: IssueAttachment[];
     }) {
-        void createIssue({
+        const parameters = {
             title: values.title,
             description: values.description || null,
             status: values.status,
@@ -1987,9 +2031,29 @@ function ConnectedIssueTracker({
             issueLabels: values.issueLabels,
             attachments: values.attachments,
             completedAt: values.status === "Completed" ? Temporal.Now.instant() : null,
-        }).catch((error: unknown) => {
-            console.error("Failed to create issue", error);
-        });
+        };
+        const showFailure = (error: unknown) => {
+            const descriptions =
+                error instanceof BackendError
+                    ? error.issues?.map((issue) => {
+                          const parameter = ontology.ir.actionTypes
+                              .find((action) => action.name === "createIssue")
+                              ?.parameters.find((parameter) => parameter.name === issue.path?.[0]);
+                          return `${parameter?.displayName ?? issue.path?.join(".") ?? "Submission"}: ${issue.message}`;
+                      })
+                    : undefined;
+            toastManager.add({
+                title: "Couldn’t create issue",
+                description: descriptions?.length
+                    ? descriptions.join(" ")
+                    : error instanceof Error
+                      ? error.message
+                      : "Please try again.",
+                type: "error",
+                priority: "high",
+            });
+        };
+        void ontology.actions.createIssue(parameters, { visibility: "optimistic" }).catch(showFailure);
         setCreateIssueOpen(false);
     }
 
@@ -2176,15 +2240,7 @@ function ConnectedIssueTracker({
                                 className="flex w-full items-center gap-2 rounded-lg p-2 text-left outline-none hover:bg-slate-200/30 focus-visible:ring-2 focus-visible:ring-indigo-500"
                                 onClick={() => setProfileMenuOpen(true)}
                             >
-                                <UserAvatar ontology={ontology} user={currentUser} />
-                                <span className="min-w-0 flex-1">
-                                    <span className="block truncate text-xs font-semibold text-slate-700">
-                                        {userName(currentUser)}
-                                    </span>
-                                    <span className="block truncate text-[11px] text-slate-400">
-                                        {currentUser?.email ?? activeProfile.label}
-                                    </span>
-                                </span>
+                                <ProfileIdentity profile={activeProfile} />
                                 <Icon className="size-3 text-slate-400" name="chevron" />
                             </Menu.Trigger>
                             <Menu.Portal>
@@ -2611,10 +2667,7 @@ function ConnectedIssueTracker({
                     </DialogFrame>
                 </Dialog.Root>
 
-                <TanStackDevtools
-                    config={{ customTrigger: ontologyDevtoolsTrigger }}
-                    plugins={[devtoolsPlugin]}
-                />
+                <TrackerDevtools ontology={ontology} ready={!issuesLoading || issues.length > 0} />
             </div>
         </Tooltip.Provider>
     );

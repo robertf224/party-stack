@@ -2,20 +2,21 @@ import { LucideIcon } from "@party-stack/icons-lucide/react";
 import { isValidElement, type ReactElement } from "react";
 import { describe, expect, it } from "vite-plus/test";
 import {
-    createOntologyDevtoolsPlugin,
     getOutboxActivity,
     layoutSchema,
     moveColumn,
-    OntologyDevtoolsPanel,
     OntologyIcon,
+    timestampPreview,
+    typeDisplayName,
+} from "./OntologyDevtools.js";
+import {
+    createOntologyDevtoolsPlugin,
+    OntologyDevtoolsPanel,
     OntologyDevtoolsPluginName,
     ontologyDevtoolsTrigger,
     OntologyDevtoolsTrigger,
-    schemaEdgePath,
-    timestampPreview,
-    typeDisplayName,
     type OntologyDevtoolsPanelProps,
-} from "./OntologyDevtools.js";
+} from "./index.js";
 import type { LiveOntology, OntologyIR, OntologyOutboxEntry } from "@party-stack/ontology";
 
 describe("createOntologyDevtoolsPlugin", () => {
@@ -128,12 +129,12 @@ describe("layoutSchema", () => {
                 {
                     id: "project-tasks",
                     source: {
-                        objectType: "Project",
+                        objectType: "Task",
                         name: "tasks",
                         displayName: "Tasks",
                     },
                     target: {
-                        objectType: "Task",
+                        objectType: "Project",
                         name: "project",
                         displayName: "Project",
                     },
@@ -160,7 +161,7 @@ describe("layoutSchema", () => {
         expect(layout.height).toBeGreaterThan(0);
         expect(project?.x).toBeLessThan(task?.x ?? 0);
         expect(layout.edges).toHaveLength(1);
-        expect(layout.edges[0]!.label).toBe("Tasks · many");
+        expect(layout.edges[0]!.label).toBe("one-to-many");
     });
 
     it("routes relationship arrows to the object card boundaries", () => {
@@ -177,8 +178,8 @@ describe("layoutSchema", () => {
             linkTypes: [
                 {
                     id: "project-tasks",
-                    source: { objectType: "Project", name: "tasks", displayName: "Tasks" },
-                    target: { objectType: "Task", name: "project", displayName: "Project" },
+                    source: { objectType: "Task", name: "tasks", displayName: "Tasks" },
+                    target: { objectType: "Project", name: "project", displayName: "Project" },
                     foreignKey: "projectId",
                     cardinality: "many",
                 },
@@ -211,16 +212,6 @@ describe("layoutSchema", () => {
             x: target!.x + 115,
             y: target!.y + 88,
         });
-    });
-
-    it("turns routed points into a rounded SVG path", () => {
-        expect(
-            schemaEdgePath([
-                { x: 0, y: 0 },
-                { x: 20, y: 0 },
-                { x: 20, y: 20 },
-            ])
-        ).toBe("M 0 0 L 10 0 Q 20 0 20 10 L 20 20");
     });
 });
 
@@ -262,7 +253,6 @@ describe("getOutboxActivity", () => {
             },
             status: "queued",
             createdAt: 0,
-            updatedAt: 0,
             attempts: 0,
             retryable: true,
             nextAttemptAt: 0,
@@ -274,10 +264,10 @@ describe("getOutboxActivity", () => {
         expect(getOutboxActivity([])).toBe("idle");
         expect(getOutboxActivity([entry()])).toBe("draining");
         expect(getOutboxActivity([entry({ nextAttemptAt: Date.now() + 60_000 })])).toBe("draining");
-        expect(getOutboxActivity([entry({ status: "executing" })])).toBe("draining");
+        expect(getOutboxActivity([entry({ status: "sending" })])).toBe("draining");
         expect(
             getOutboxActivity([
-                entry({ id: "blocked", sequence: 1, status: "failed" }),
+                entry({ id: "blocked", sequence: 1, status: "blocked" }),
                 entry({ id: "behind", sequence: 2 }),
             ])
         ).toBe("paused");
@@ -293,4 +283,75 @@ describe("moveColumn", () => {
             "third",
         ]);
     });
+});
+
+it("shows field paths and unknown outcomes in the outbox error display", async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const { BackendError } = await import("@party-stack/ontology-backend");
+    const { OutboxEntryCard } = await import("./OntologyDevtools.js");
+    const markup = renderToStaticMarkup(
+        createElement(OutboxEntryCard, {
+            entry: {
+                id: "example",
+                sequence: 1,
+                status: "blocked",
+                createdAt: 0,
+                attempts: 1,
+                retryable: false,
+                nextAttemptAt: 0,
+                request: { actionTypeName: "createIssue", idempotencyKey: "example", parameters: {} },
+                lastError: new BackendError({
+                    operation: "applyAction",
+                    kind: "ValidationFailed",
+                    message: "Submission failed validation.",
+                    retryable: false,
+                    actionOutcome: "not-committed",
+                    issues: [
+                        {
+                            path: ["project"],
+                            code: "InvalidObjectReference",
+                            message: "Choose a valid value.",
+                        },
+                    ],
+                }),
+            },
+            outbox: {} as import("@party-stack/ontology").OntologyOutbox,
+            now: 0,
+        })
+    );
+    expect(markup).toContain("ValidationFailed");
+    expect(markup).toContain("project");
+    expect(markup).toContain("Choose a valid value.");
+    expect(markup).toContain("Blocked");
+});
+
+it.each([
+    ["sending", "forwarding", "Forwarding"],
+    ["acknowledged", "forwarding", "Accepted by parent"],
+    ["sending", "execution", "Sending"],
+    ["acknowledged", "execution", "Reconciling"],
+] as const)("distinguishes %s during %s as %s", async (status, attemptStage, label) => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const { OutboxEntryCard } = await import("./OntologyDevtools.js");
+    const markup = renderToStaticMarkup(
+        createElement(OutboxEntryCard, {
+            entry: {
+                id: "entry",
+                sequence: 1,
+                status,
+                attemptStage,
+                createdAt: 0,
+                attempts: 1,
+                retryable: true,
+                nextAttemptAt: 0,
+                request: { actionTypeName: "save", idempotencyKey: "entry", parameters: {} },
+            },
+            outbox: {} as import("@party-stack/ontology").OntologyOutbox,
+            now: 0,
+        })
+    );
+    expect(markup).toContain(label);
+    if (attemptStage === "forwarding") expect(markup).not.toContain("Reconciling");
 });

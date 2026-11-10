@@ -1,0 +1,43 @@
+import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { collectActionAttachments } from "@party-stack/ontology-storage/blobs";
+import { Effect } from "effect";
+import type { BlobManagerService } from "./manager.js";
+import type { AttachmentUpload as OntologyAttachmentUpload } from "@party-stack/ontology-backend";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+
+const failure = (cause: unknown) => {
+    const error = classifyBackendFailure("attachment.prepare", cause);
+    return new BackendError({
+        operation: "attachment.prepare",
+        kind: error.kind,
+        message: "Attachment bytes could not be prepared.",
+        retryable: error.retryable,
+        retryAfterMs: error.retryAfterMs,
+        actionOutcome: "not-committed",
+    });
+};
+
+/** Collect only locally staged bytes. Provider upload/rewriting belongs to applyAction;
+ * cached remote handles must not trigger downloads just because an action reuses them.
+ */
+export const prepareActionParameters = Effect.fn("Ontology.prepareActionParameters")(function* (opts: {
+    ir: OntologyIR;
+    actionTypeName: string;
+    parameters: Record<string, unknown>;
+    blobManager?: Pick<BlobManagerService, "storage" | "source">;
+}) {
+    const attachments = collectActionAttachments(opts.ir, opts.actionTypeName, opts.parameters);
+    if (!attachments.length) return { parameters: opts.parameters, attachmentUploads: [] };
+    const manager = opts.blobManager;
+    // Without local byte storage this replica can only reuse remote handles.
+    if (!manager) return { parameters: opts.parameters, attachmentUploads: [] };
+    const storage = manager.storage;
+    const uploads: OntologyAttachmentUpload[] = [];
+    for (const entry of attachments) {
+        const record = yield* storage.metadata(entry.attachment.id).pipe(Effect.mapError(failure));
+        if (record?.state !== "staged" || record.remoteId) continue;
+        const blob = yield* manager.source(entry.attachment.id).pipe(Effect.mapError(failure));
+        uploads.push({ ...entry, blob });
+    }
+    return { parameters: opts.parameters, attachmentUploads: uploads };
+});

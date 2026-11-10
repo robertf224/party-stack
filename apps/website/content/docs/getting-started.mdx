@@ -1,0 +1,52 @@
+---
+title: Get started
+description: Open an ontology, query its objects, and submit an action.
+---
+
+Try the [live todo playground](/#playground), or connect your own app below.
+
+## Open an ontology
+
+This example connects to an existing server. The [server guide](/docs/server)
+creates the `Issue` type and `createIssue` action used here.
+
+```sh
+pnpm add @party-stack/ontology @tanstack/db@1.0.0-rc.1.4
+```
+
+Party Stack currently targets this exact TanStack DB release. For the optional
+ordered-query and React Suspense fixes, see [installation instructions](/docs/installation#tanstack-db-fixes).
+
+```ts
+import { createLiveOntology } from "@party-stack/ontology";
+import { httpClient } from "@party-stack/ontology/http";
+import { queryOnce } from "@tanstack/db";
+
+const ontology = await createLiveOntology({
+    client: httpClient("https://example.com/api/ontology/rpc"),
+    writes: { defaultVisibility: "optimistic" },
+});
+
+const issues = await queryOnce((q) => q.from({ issue: ontology.objects.Issue! }));
+
+await ontology.actions.createIssue!({ title: "Try Party Stack" });
+
+await ontology.cleanup();
+```
+
+The server supplies the definition and authenticated context. Objects are cached
+in memory by default. `cleanup()` closes this view and its subscriptions; it does
+not delete data on the server.
+
+Action calls predict the change locally and resolve when the authoritative result
+arrives. Catch a rejected call to display a failure. With generated types, you can
+use `ontology.objects.Issue` and `ontology.actions.createIssue` without the `!`.
+
+## Choose a guide
+
+- [TanStack Start](/docs/tanstack-start): React queries, automatic cleanup, and a persistent SharedWorker.
+- [Run a server](/docs/server): define an ontology and store your own objects in SQLite.
+- [Foundry](/docs/foundry): sign in, switch accounts, and share persistent replicas across tabs.
+
+Then read [queries](/docs/queries) and [actions](/docs/actions), [attachments](/docs/attachments), or
+[offline data](/docs/offline) for the app APIs.

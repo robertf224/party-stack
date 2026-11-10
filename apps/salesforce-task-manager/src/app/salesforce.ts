@@ -1,141 +1,124 @@
-import { type LiveOntology, type MetaOntology } from "@party-stack/ontology";
-import {
-    createSalesforceBackendInstallation,
-    createSalesforceOntologyRoute,
-} from "@party-stack/salesforce-ontology";
-import { createWebRuntime } from "@party-stack/web-runtime";
-import ontology from "../ontology/ontology";
-import { SALESFORCE_TASK_MANAGER_ONTOLOGY_ID } from "../settings";
+import { createLiveOntology, createOntologyClient } from "@party-stack/ontology";
+import { createAuthenticationClient } from "@party-stack/ontology/authentication";
+import { workerClient } from "@party-stack/ontology/worker";
+import { webRuntime } from "@party-stack/web-runtime";
+import { clientId, redirectUrl, useDevelopmentCredentials } from "./salesforce-config";
 import type { SalesforceTaskManagerOntology } from "../ontology/generated/types";
+import type { LiveOntology, MetaOntology } from "@party-stack/ontology";
+import type { AccountRef } from "@party-stack/ontology/authentication";
 
-function requiredEnv(name: string, value: string | undefined): string {
-    if (!value) {
-        throw new Error(`Missing required environment variable ${name}.`);
+const runtime = webRuntime({ storage: "memory" });
+let clients: Promise<Awaited<ReturnType<typeof openClients>>> | undefined;
+async function openClients() {
+    const client = await createOntologyClient(
+        workerClient(
+            () =>
+                new SharedWorker(new URL("./salesforce.worker.ts", import.meta.url), {
+                    type: "module",
+                    name: "salesforce-task-manager",
+                })
+        )
+    );
+    try {
+        const authentication = await createAuthenticationClient({ client, runtime });
+        return {
+            client,
+            authentication,
+            oauth: authentication.oauth({ applicationId: clientId, redirectUrl }),
+        };
+    } catch (error) {
+        await client.cleanup();
+        throw error;
     }
-    return value;
 }
-
-function browserEnv(value: unknown): string | undefined {
-    return typeof value === "string" && value.length > 0 ? value : undefined;
+function getClients() {
+    return (clients ??= openClients().catch((error) => {
+        clients = undefined;
+        throw error;
+    }));
 }
-
-const instanceUrl = requiredEnv(
-    "VITE_SALESFORCE_INSTANCE_URL",
-    browserEnv(import.meta.env.VITE_SALESFORCE_INSTANCE_URL)
-);
-const clientId = requiredEnv(
-    "VITE_SALESFORCE_CLIENT_ID",
-    browserEnv(import.meta.env.VITE_SALESFORCE_CLIENT_ID)
-);
-const loginUrl = browserEnv(import.meta.env.VITE_SALESFORCE_LOGIN_URL) ?? instanceUrl;
-const apiVersion = browserEnv(import.meta.env.VITE_SALESFORCE_API_VERSION) ?? "65.0";
-const redirectUrl =
-    browserEnv(import.meta.env.VITE_SALESFORCE_REDIRECT_URL) ?? `${window.location.origin}/auth/callback`;
-const useDevelopmentCredentials =
-    import.meta.env.DEV && import.meta.env.VITE_SALESFORCE_DEV_CREDENTIALS === true;
-
-const installation = await createSalesforceBackendInstallation({
-    instanceUrl,
-    apiVersion,
-    runtime: createWebRuntime,
-    connections: {
-        cometdUrl: import.meta.env.DEV
-            ? `${window.location.origin}/__salesforce/cometd/${apiVersion}`
-            : undefined,
-        oauth: {
-            clientId,
-            redirectUrl,
-            loginUrl,
-            // Demo-only: Web Runtime does not yet expose a secure
-            // browser SecretStore for OAuth refresh tokens.
-            dangerouslyPersistSecrets: true,
-        },
-    },
-    routes: [
-        createSalesforceOntologyRoute({
-            ontologyId: SALESFORCE_TASK_MANAGER_ONTOLOGY_ID,
-            ir: ontology,
-            persistObjects: false,
-            writes: {
-                // defaultMode: "outbox",
-                defaultVisibility: "optimistic",
-            },
-            crudActionTypes: [
-                {
-                    objectType: "Task",
-                    operations: ["create", "update", "delete"],
-                },
-            ],
-        }),
-    ],
-});
-
+let current: SalesforceOntologies | undefined;
 export interface SalesforceOntologies {
     data: LiveOntology<SalesforceTaskManagerOntology>;
     meta: LiveOntology<MetaOntology>;
     userId: string;
 }
-
-async function openOntologies(userId: string): Promise<SalesforceOntologies> {
-    const [data, meta] = await Promise.all([
-        installation.openOntology<SalesforceTaskManagerOntology>({
-            userId,
-            ontologyId: SALESFORCE_TASK_MANAGER_ONTOLOGY_ID,
+async function openOntologies(connection: AccountRef): Promise<SalesforceOntologies> {
+    const { client } = await getClients();
+    const objectType = {
+        oauth: "OAuthConnection",
+        "api-key": "ApiKeyConnection",
+        "external-session": "ExternalSessionConnection",
+    }[connection.kind];
+    const key = `${objectType}/${encodeURIComponent(connection.id)}`;
+    const opened = await Promise.allSettled([
+        createLiveOntology<SalesforceTaskManagerOntology>({
+            client,
+            ontology: `data/${key}`,
+            runtime,
+            writes: { defaultVisibility: "optimistic" },
         }),
-        installation.openMetaOntology({
-            userId,
-            ontologyId: SALESFORCE_TASK_MANAGER_ONTOLOGY_ID,
-        }),
+        createLiveOntology<MetaOntology>({ client, ontology: `metadata/${key}`, runtime }),
     ]);
-    return { data, meta, userId };
-}
-
-async function connectWithDevelopmentCredentials() {
-    const response = await fetch("/__salesforce/dev-session", {
-        method: "POST",
-    });
-    if (!response.ok) {
-        throw new Error(`Development Salesforce session failed (${response.status}).`);
+    if (opened[0].status === "rejected" || opened[1].status === "rejected") {
+        await Promise.allSettled(
+            opened.flatMap((result) => (result.status === "fulfilled" ? [result.value.cleanup()] : []))
+        );
+        throw opened[0].status === "rejected"
+            ? opened[0].reason
+            : (opened[1] as PromiseRejectedResult).reason;
     }
-    const result = (await response.json()) as {
-        accessToken?: unknown;
-        userId?: unknown;
-    };
-    if (typeof result.accessToken !== "string" || typeof result.userId !== "string") {
+    const data = opened[0].value;
+    const meta = opened[1].value;
+    const previous = current;
+    current = { data, meta, userId: String(data.context.user) };
+    if (previous) await Promise.allSettled([previous.data.cleanup(), previous.meta.cleanup()]);
+    return current;
+}
+async function developmentConnection() {
+    const response = await fetch("/__salesforce/dev-session", { method: "POST" });
+    if (!response.ok) throw new Error(`Development Salesforce session failed (${response.status}).`);
+    const result = (await response.json()) as { accessToken?: unknown };
+    if (typeof result.accessToken !== "string")
         throw new Error("Development Salesforce session returned an invalid response.");
-    }
-    return installation.authentication.signIn.accessToken({
-        token: result.accessToken,
-        userId: result.userId,
-    });
+    return (await getClients()).authentication.connectApiKey("salesforce", result.accessToken);
 }
-
 export async function restoreSalesforceOntologies(): Promise<SalesforceOntologies | undefined> {
-    const connection = [...installation.connections.values()].find(
-        (candidate) => candidate.state.status === "active"
-    );
-    if (connection) {
-        return openOntologies(connection.userId);
-    }
-    if (useDevelopmentCredentials) {
-        const developmentConnection = await connectWithDevelopmentCredentials();
-        return openOntologies(developmentConnection.userId);
-    }
-    return undefined;
+    const { authentication } = await getClients();
+    const saved = (await authentication.connections()).find((row) => row.status === "active");
+    return saved
+        ? openOntologies(saved)
+        : useDevelopmentCredentials
+          ? openOntologies(await developmentConnection())
+          : undefined;
 }
-
 export async function connectSalesforce(): Promise<SalesforceOntologies> {
-    const connection = useDevelopmentCredentials
-        ? await connectWithDevelopmentCredentials()
-        : await installation.authentication.signIn.oauth({
-              browserPresentation: "popup",
-          });
-    return openOntologies(connection.userId);
+    const { oauth } = await getClients();
+    const selected = useDevelopmentCredentials
+        ? await developmentConnection()
+        : await oauth.signIn({ browserPresentation: "popup" });
+    return openOntologies(selected);
 }
-
 export async function completeSalesforceOAuthRedirect(
     url: string
 ): Promise<SalesforceOntologies | undefined> {
-    const connection = await installation.authentication.completeOAuthRedirect(url);
-    return connection ? openOntologies(connection.userId) : undefined;
+    const { oauth } = await getClients();
+    const selected = await oauth.complete(url);
+    return selected ? openOntologies(selected) : undefined;
 }
+const cleanup = async () => {
+    if (current) await Promise.allSettled([current.data.cleanup(), current.meta.cleanup()]);
+    current = undefined;
+    const opened = await clients?.catch(() => undefined);
+    await opened?.authentication.cleanup();
+    await opened?.client.cleanup();
+    clients = undefined;
+};
+window.addEventListener(
+    "pagehide",
+    () => {
+        void cleanup();
+    },
+    { once: true }
+);
+if (import.meta.hot) import.meta.hot.dispose(cleanup);

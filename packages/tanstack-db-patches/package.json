@@ -1,0 +1,27 @@
+{
+    "name": "@party-stack/tanstack-db-patches",
+    "version": "0.1.0",
+    "description": "Effect CLI setup for Party Stack's tested TanStack DB patches",
+    "bin": {
+        "tanstack-db-patches": "./lib/cli.js"
+    },
+    "files": [
+        "lib",
+        "patches",
+        "ordered-window.md"
+    ],
+    "type": "module",
+    "publishConfig": {
+        "access": "public"
+    },
+    "devDependencies": {
+        "@effect/platform-node": "^4.0.5",
+        "@effect/vitest": "^4.0.5",
+        "@party-stack/build-config": "workspace:*",
+        "@types/node": "^24.10.1",
+        "effect": "^4.0.5",
+        "typescript": "~7.0.2",
+        "vite": "catalog:",
+        "vite-plus": "catalog:"
+    }
+}

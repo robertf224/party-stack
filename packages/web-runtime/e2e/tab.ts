@@ -1,38 +1,10 @@
-import { createIndexedDBPersistence } from "@party-stack/db-indexeddb-persistence";
-import { createLocalCollection } from "@party-stack/runtime";
-import { createCollection, createLiveQueryCollection } from "@tanstack/db";
-import { eagerStorageTarget } from "@tanstack/db-sqlite-persistence-core";
-import { persistedCollectionOptions } from "@tanstack/db-sqlite-persistence-core";
-import { BroadcastCollectionCoordinator } from "@tanstack/db-sqlite-persistence-core/broadcast-coordinator";
-import { createWebRuntime } from "../src/createWebRuntime.js";
-
-// Drop only event notifications; RPC, leader election, locks, and storage stay real.
-const NativeBroadcastChannel = globalThis.BroadcastChannel;
-let dropEvents = false;
-class LossyBroadcastChannel extends EventTarget {
-    private readonly channel: BroadcastChannel;
-    readonly name: string;
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    constructor(name: string) {
-        super();
-        this.name = name;
-        this.channel = new NativeBroadcastChannel(name);
-        this.channel.addEventListener("message", (event: MessageEvent<{ type?: string }>) => {
-            if (dropEvents && event.data.type === "event") return;
-            const message = new MessageEvent("message", { data: event.data });
-            this.dispatchEvent(message);
-            this.onmessage?.(message);
-        });
-        this.channel.addEventListener("messageerror", () => this.dispatchEvent(new Event("messageerror")));
-    }
-    postMessage(value: unknown) {
-        this.channel.postMessage(value);
-    }
-    close() {
-        this.channel.close();
-    }
-}
-globalThis.BroadcastChannel = LossyBroadcastChannel as unknown as typeof BroadcastChannel;
+import { Table } from "@party-stack/ontology-storage/tables";
+import { createLocalCollection } from "@party-stack/ontology/tanstack";
+import { byteSource } from "@party-stack/runtime";
+import { Runtime, RuntimePartition } from "@party-stack/runtime";
+import { createLiveQueryCollection, queryOnce } from "@tanstack/db";
+import { Effect, Exit, Layer, ManagedRuntime, Scope, Stream } from "effect";
+import { layer } from "../src/WebRuntime.js";
 
 interface Item {
     id: string;
@@ -40,65 +12,85 @@ interface Item {
     score: number;
 }
 const namespace = new URL(location.href).searchParams.get("scope")!;
-const runtime = createWebRuntime("browser-test", namespace);
-const upstream =
-    new URL(location.href).searchParams.get("coordinator") === "upstream"
-        ? new BroadcastCollectionCoordinator({ dbName: namespace, coordinatorName: "contract-control" })
-        : undefined;
-const upstreamPersistence = upstream
-    ? createIndexedDBPersistence({ databaseName: `upstream-${namespace}`, coordinator: upstream })
-    : undefined;
-const collection = upstreamPersistence
-    ? createCollection(
-          persistedCollectionOptions<Item, string>({
-              id: "items",
-              getKey: (item) => item.id,
-              persistence: upstreamPersistence,
-          })
-      )
-    : createLocalCollection<Item, string>({ name: "items", runtime, getKey: (item) => item.id });
+const app = ManagedRuntime.make(
+    layer().pipe(Layer.provide(Layer.succeed(RuntimePartition)({ owner: "browser-test", namespace })))
+);
+const service = await app.runPromise(Runtime);
+const runtime = service;
+const collectionScope = Effect.runSync(Scope.make());
+const collection = createLocalCollection<Item, string>({
+    name: "items",
+    runtime,
+    scope: collectionScope,
+    getKey: (item) => item.id,
+});
 const query = createLiveQueryCollection((q) =>
     q.from({ item: collection }).orderBy(({ item }) => item.score)
 );
-await Promise.all([collection.preload(), query.preload()]);
+const subscription = query.subscribeChanges(() => {}, { includeInitialState: true });
+await queryOnce((q) => q.from({ item: query }));
 Object.assign(window, {
     persistenceTest: {
-        durable: async () => ({
-            position: await (upstreamPersistence ?? runtime.persistence)!.adapter.getStreamPosition?.(
-                eagerStorageTarget(collection.id)
-            ),
-            keys: (
-                await (upstreamPersistence ?? runtime.persistence)!.adapter.loadSubset(
-                    eagerStorageTarget(collection.id),
-                    {}
+        streamRecording: async (fail = false) => {
+            const chunks = function* () {
+                for (let part = 0; part < 160; part++) yield new Uint8Array(64 * 1024).fill(part);
+            };
+            const source = Stream.fromIterable(chunks(), { chunkSize: 1 });
+            const result = await app.runPromise(
+                Effect.result(
+                    service.bytes.write(fail ? "interrupted-recording" : "recording", {
+                        type: "audio/webm",
+                        stream: fail
+                            ? Stream.concat(source, Stream.fail(new Error("Recording interrupted")))
+                            : source,
+                    })
                 )
-            ).map((row) => row.key),
-        }),
+            );
+            return result._tag;
+        },
+        recordingSize: async (fail = false) => {
+            const input = await app.runPromise(
+                service.bytes.read(fail ? "interrupted-recording" : "recording")
+            );
+            return input
+                ? await app.runPromise(
+                      Stream.runFold(
+                          byteSource(input).stream,
+                          () => 0,
+                          (size, part) => size + part.length
+                      )
+                  )
+                : undefined;
+        },
+        durable: async () => {
+            const service = await app.runPromise(Runtime);
+            const table = Table.make<Item>({
+                name: JSON.stringify(["local", runtime.owner, runtime.namespace, "items"]),
+            });
+            return {
+                keys: (await app.runPromise(service.tables.query(table))).map((row) => row.key),
+            };
+        },
         rows: () => [...query.values()].map(({ id, title, score }) => ({ id, title, score })),
         insert: async (item: Item) => {
-            await collection.insert(item).isPersisted.promise;
+            await collection.insert(item).when("settled");
         },
         update: async (id: string, title: string) => {
-            await collection.update(id, (draft) => {
-                draft.title = title;
-            }).isPersisted.promise;
+            await collection
+                .update(id, (draft) => {
+                    draft.title = title;
+                })
+                .when("settled");
         },
         remove: async (id: string) => {
-            await collection.delete(id).isPersisted.promise;
+            await collection.delete(id).when("settled");
         },
-        drop: (value: boolean) => {
-            dropEvents = value;
-        },
-        resume: () => {
-            window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
-        },
-        leader: () => "isLeader" in runtime.coordination && runtime.coordination.isLeader,
         cleanup: async () => {
+            subscription.unsubscribe();
             await query.cleanup();
             await collection.cleanup();
-            upstream?.dispose();
-            upstreamPersistence?.close();
-            await runtime.cleanup?.();
+            await Effect.runPromise(Scope.close(collectionScope, Exit.void));
+            await app.dispose();
         },
     },
 });

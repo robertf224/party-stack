@@ -1,6 +1,6 @@
 // Auto-generated file - do not edit manually
 
-import * as v from "@party-stack/ontology/values";
+import * as v from "@party-stack/ontology-spec/values";
 
 export type Task = {
     Id: string;
@@ -1144,18 +1144,23 @@ export type SalesforceTaskManagerOntology = {
     actionTypes: {
         confirmSalesMeeting: {
             parameters: ConfirmSalesMeetingParameters;
+            returnType: void;
         };
         createTask: {
             parameters: CreateTaskParameters;
+            returnType: void;
         };
         deleteTask: {
             parameters: DeleteTaskParameters;
+            returnType: void;
         };
         sales_sfa_flows__CreateSalesLead: {
             parameters: SalesSfaFlowsCreateSalesLeadParameters;
+            returnType: void;
         };
         updateTask: {
             parameters: UpdateTaskParameters;
+            returnType: void;
         };
     };
     queryFunctionTypes: {

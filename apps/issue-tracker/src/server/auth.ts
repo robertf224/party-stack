@@ -1,10 +1,10 @@
-import { mkdirSync } from "node:fs";
 import { partyStack } from "@party-stack/better-auth";
+import { eq, field } from "@party-stack/ontology-storage";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
-import { getMigrations } from "better-auth/db/migration";
 import { oauthPopup } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
-import Database from "better-sqlite3";
+import { Effect } from "effect";
+import { serverStorage } from "./storage";
 
 export const issueTrackerUsers = [
     {
@@ -23,8 +23,7 @@ export const issueTrackerUsers = [
     },
 ] as const;
 
-mkdirSync("temp", { recursive: true });
-const database = new Database("temp/issue-tracker-authentication.sqlite");
+const { adapter: database, storage } = serverStorage;
 const googleClientId = process.env.GOOGLE_CLIENT_ID;
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
@@ -38,6 +37,12 @@ const authOptions = {
     emailAndPassword: {
         enabled: true,
         minPasswordLength: 3,
+    },
+    user: {
+        additionalFields: {
+            givenName: { type: "string", required: false },
+            familyName: { type: "string", required: false },
+        },
     },
     socialProviders:
         googleClientId && googleClientSecret
@@ -57,18 +62,25 @@ const authOptions = {
     ],
 } satisfies BetterAuthOptions;
 
-await (await getMigrations(authOptions)).runMigrations();
-
 export const auth = betterAuth(authOptions);
 
-const findUser = database.prepare(`SELECT "id" FROM "user" WHERE "email" = ?`);
 for (const user of issueTrackerUsers) {
-    if (findUser.get(user.email)) continue;
+    const existing = await Effect.runPromise(
+        storage.read((tx) =>
+            tx.loadSubset("User", {
+                where: eq(field("email"), user.email),
+                limit: 1,
+            })
+        )
+    );
+    if (existing.length) continue;
     await auth.api.signUpEmail({
         body: {
             email: user.email,
             password: user.password,
             name: user.name,
+            givenName: user.givenName,
+            familyName: user.familyName,
         },
     });
 }

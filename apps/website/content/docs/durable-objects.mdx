@@ -1,0 +1,157 @@
+---
+title: Cloudflare Durable Objects
+description: Host owned data or an upstream cache with SQLite and optional R2 attachments.
+---
+
+A Durable Object is a useful owner for one project's ontology: requests for that
+project reach one instance, and its SQLite storage survives instance eviction.
+Different projects can use different instances. See Cloudflare's
+[SQLite storage](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/) reference.
+
+## Choose the server role
+
+| Role                 | Source of truth            | What the Durable Object stores                    | Actions                                    |
+| -------------------- | -------------------------- | ------------------------------------------------- | ------------------------------------------ |
+| Owned backend        | This Durable Object        | Objects, journal, receipts, attachment references | Execute and commit locally                 |
+| Proxy                | Foundry or another backend | No replica cache required                         | Forward to the source                      |
+| Cached proxy         | Upstream backend           | A reusable read cache                             | Forward; invalidate the cache after writes |
+| Intermediate replica | Upstream backend           | Parent state, outbox, speculative overlay, pins   | Accept locally and forward later           |
+
+Use an owned backend for an app you control. Use a cached proxy when you want to
+reduce upstream reads without accepting queued writes on the server. Use an
+intermediate replica only when the server should own durable pending work.
+Its raw replication endpoint is for trusted peers; public callers need a
+policy-projected read/action endpoint.
+
+## Create an owned server with Alchemy
+
+Install `@party-stack/durable-object-ontology-storage`, `@party-stack/ontology-server`,
+`@party-stack/ontology-spec`, `effect`, and the supported `alchemy@2.0.0-beta.83`.
+Define your IR as in [Run a server](/docs/server#define-objects-and-an-action).
+
+```ts title="src/ontology-resource.ts"
+import { OntologyDurableObject } from "@party-stack/durable-object-ontology-storage/alchemy";
+import { Bucket } from "alchemy/Cloudflare/R2/Bucket";
+import { ir } from "./ontology";
+import { authenticateRequest } from "./authentication";
+
+export const Notes = OntologyDurableObject("Notes", {
+    ir,
+    bucket: Bucket("Attachments"),
+    authenticate: authenticateRequest,
+});
+```
+
+`authenticateRequest(request)` returns an Effect containing the IR's declared
+context, such as `{ userId }`, and fails for an invalid session. Declare an
+[IR policy](/docs/authorization) for those callers. The factory owns SQLite,
+R2 bytes, encryption keys, HTTP handlers, and garbage-collection alarms.
+
+Forward requests from an Alchemy Worker:
+
+```ts title="src/worker.ts"
+import { Worker } from "alchemy/Cloudflare/Workers/Worker";
+import { Effect } from "effect";
+import { HttpServerRequest } from "effect/http";
+import { Notes } from "./ontology-resource";
+
+export default Worker(
+    "NotesApi",
+    { main: import.meta.url },
+    Effect.gen(function* () {
+        const notes = yield* Notes;
+        return {
+            fetch: Effect.gen(function* () {
+                const request = yield* HttpServerRequest.HttpServerRequest;
+                return yield* notes.getByName("primary").fetch(request);
+            }),
+        };
+    })
+);
+```
+
+The [complete deployable example](https://github.com/robertf224/party-stack/tree/codex/effect-ontology-migration/packages/durable-object-ontology-storage/examples/alchemy)
+includes the Alchemy Stack. For multiple projects, choose a stable instance name
+from an authenticated project route instead of `primary`; instance selection is
+not itself an authorization check.
+
+Each instance hosts one ontology with this helper. R2 prefixes isolate its bytes.
+The generated encryption key persists in deployment state and Secrets Store;
+retain it while any stored ciphertext needs it. The package also accepts a
+configured keyring for rotation.
+
+## Compose a cached proxy
+
+For a custom role, provide the DO SQLite client to the shared SQL tables and
+byte stores, then acquire a cache in that runtime. Inside your Durable Object's
+owned Effect Scope:
+
+```ts
+import { sqlLayer } from "@party-stack/durable-object-ontology-storage";
+import { makeReplica } from "@party-stack/ontology-replica";
+import { makeOntologyServer } from "@party-stack/ontology-server";
+import { makeOntologyHttpHandler } from "@party-stack/ontology-server/rpc/http";
+import { Runtime, RuntimePartition } from "@party-stack/runtime";
+import { make as makeTables } from "@party-stack/sql-ontology-storage/tables";
+import { makeBytes } from "@party-stack/sql-ontology-storage/sqlite";
+import { Effect } from "effect";
+import { SqlClient } from "effect/sql";
+
+const runtime =
+    yield *
+    Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        return yield* Runtime.make({
+            tables: yield* makeTables(),
+            blobBytes: yield* makeBytes(sql),
+        });
+    }).pipe(
+        Effect.provide(sqlLayer(state.storage)),
+        Effect.provideService(RuntimePartition, {
+            owner: "project",
+            namespace: "project-cache",
+        })
+    );
+const cache =
+    yield *
+    makeReplica({
+        ir,
+        backend: upstreamBackend,
+        live: false,
+        cache: { objects: false },
+    }).pipe(Effect.provideService(Runtime, runtime));
+const server =
+    yield *
+    makeOntologyServer({
+        enableRealtime: true,
+        kind: "cached-proxy",
+        cache,
+        backend: upstreamBackend,
+        ir,
+        authenticate: authenticateRequest,
+    });
+const handler = yield * makeOntologyHttpHandler(server);
+```
+
+Here `upstreamBackend` is an acquired adapter, such as a Foundry backend. This is
+an acquisition excerpt: your DO owns the Scope and handler across requests. The
+IR includes the public policy. The cache is shared; final reads still apply each
+caller's grants. `live: false` leaves work request-driven, and `objects: false`
+disables the background object sweep; schedule bounded cleanup from an alarm.
+
+The high-level `OntologyDurableObject` factory currently creates **owned** servers.
+It does not accept a cached-proxy switch. Custom roles use the composition above
+and the DO lifecycle you provide.
+
+## Plan for eviction and background work
+
+Persist correctness-critical state, not just in-memory subscriptions. Cloudflare
+can evict an idle instance without a shutdown callback; recreate your scoped
+services when its constructor runs again. Use alarms for bounded maintenance or
+replication checkpoints instead of relying on an always-running timer.
+[Cloudflare lifecycle reference](https://developers.cloudflare.com/durable-objects/concepts/durable-object-lifecycle/).
+
+The Alchemy owned-server helper schedules its maintenance alarm. A custom replica
+host can call `replica.syncOnce` from its alarm and schedule the next run according
+to its workload. Active HTTP change streams are not automatically hibernating
+WebSockets; the ontology HTTP transport uses streamed NDJSON.

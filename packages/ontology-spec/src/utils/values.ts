@@ -1,0 +1,42 @@
+import type { Temporal } from "temporal-polyfill";
+
+export type integer = number;
+
+export type float = number;
+
+export type double = number;
+
+export type geopoint = { lat: double; lon: double };
+
+export type date = Temporal.PlainDate;
+
+export type timestamp = Temporal.Instant;
+
+export type Union<T extends Record<string, unknown>> = {
+    [K in keyof T]: { kind: K; value: T[K] };
+}[keyof T];
+
+export type Result<T, E> = Union<{ ok: T; err: E }>;
+
+declare const encryptedValueType: unique symbol;
+
+/** Opaque encrypted data. Reading a record never implicitly decrypts it. */
+export interface Encrypted<T = unknown> {
+    readonly ciphertext: string;
+    readonly source?: {
+        readonly objectType: string;
+        readonly primaryKey: string | number;
+        readonly property: string;
+    };
+    readonly [encryptedValueType]?: T;
+}
+
+export type attachment<Type extends string = string> = {
+    id: string;
+    type?: Type;
+    source?: {
+        objectType: string;
+        primaryKey: string | number;
+        property: string;
+    };
+};

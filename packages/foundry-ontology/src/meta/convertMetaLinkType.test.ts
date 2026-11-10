@@ -42,11 +42,11 @@ describe("convertFoundryMetaLinkTypes", () => {
                 apiName: "Post",
                 linkTypes: [
                     {
-                        apiName: "posts",
-                        displayName: "Posts",
+                        apiName: "author",
+                        displayName: "Author",
                         status: "ACTIVE",
-                        objectTypeApiName: "Post",
-                        cardinality: "MANY",
+                        objectTypeApiName: "Author",
+                        cardinality: "ONE",
                         foreignKeyPropertyApiName: "authorId",
                         linkTypeRid: linkRid,
                     },
@@ -56,11 +56,11 @@ describe("convertFoundryMetaLinkTypes", () => {
                 apiName: "Author",
                 linkTypes: [
                     {
-                        apiName: "author",
-                        displayName: "Author",
+                        apiName: "posts",
+                        displayName: "Posts",
                         status: "ACTIVE",
-                        objectTypeApiName: "Author",
-                        cardinality: "ONE",
+                        objectTypeApiName: "Post",
+                        cardinality: "MANY",
                         linkTypeRid: linkRid,
                     },
                 ],
@@ -115,4 +115,39 @@ describe("convertFoundryMetaLinkTypes", () => {
         expect(result).toEqual([]);
         expect(result.every((link) => Boolean(link.foreignKey))).toBe(true);
     });
+
+    it.each(["ONE", "MANY"] as const)(
+        "uses the reverse traversal's %s cardinality, including self-links",
+        (cardinality) => {
+            const side = {
+                objectTypeApiName: "Employee",
+                status: "ACTIVE" as const,
+                linkTypeRid: "employee-manager",
+            };
+            const metadata = [
+                objectType({
+                    apiName: "Employee",
+                    linkTypes: [
+                        { ...side, apiName: "reports", displayName: "Direct reports", cardinality },
+                        {
+                            ...side,
+                            apiName: "manager",
+                            displayName: "Manager",
+                            cardinality: "ONE",
+                            foreignKeyPropertyApiName: "managerId",
+                        },
+                    ],
+                }),
+            ];
+            expect(convertFoundryMetaLinkTypes(metadata)).toEqual([
+                {
+                    id: "employee-manager",
+                    source: { objectType: "Employee", name: "reports", displayName: "Direct reports" },
+                    target: { objectType: "Employee", name: "manager", displayName: "Manager" },
+                    foreignKey: "managerId",
+                    cardinality: cardinality === "ONE" ? "one" : "many",
+                },
+            ]);
+        }
+    );
 });

@@ -23,42 +23,77 @@
         },
         "./values": {
             "types": "./lib/utils/values.d.ts"
+        },
+        "./testing/sqlite": {
+            "types": "./lib/testing/sqlite.d.ts",
+            "default": "./lib/testing/sqlite.js"
+        },
+        "./testing/sqliteBackend": {
+            "types": "./lib/testing/sqliteBackend.d.ts",
+            "default": "./lib/testing/sqliteBackend.js"
+        },
+        "./tanstack": {
+            "types": "./lib/tanstack/index.d.ts",
+            "default": "./lib/tanstack/index.js"
+        },
+        "./query": {
+            "types": "./lib/query.d.ts",
+            "default": "./lib/query.js"
+        },
+        "./http": {
+            "types": "./lib/http.d.ts",
+            "default": "./lib/http.js"
+        },
+        "./local": {
+            "types": "./lib/local.d.ts",
+            "default": "./lib/local.js"
+        },
+        "./worker": {
+            "types": "./lib/worker.d.ts",
+            "default": "./lib/worker.js"
+        },
+        "./authentication": {
+            "types": "./lib/authentication.d.ts",
+            "default": "./lib/authentication.js"
         }
     },
     "scripts": {
-        "bootstrap": "tsx ./src/cli/index.ts generate --ontology ./src/ir/schema.ts --outDir ./src/ir/generated",
+        "bootstrap": "pnpm --filter @party-stack/ontology-spec bootstrap",
         "generate:examples": "tsx ./src/cli/index.ts generate --ontology ./src/examples/blog.ts --outDir ./src/examples/generated --namespace Blog",
-        "generate:meta": "tsx ./src/cli/index.ts generate --ontology ./src/meta/ontology.ts --outDir ./src/meta/generated --namespace Meta",
+        "generate:meta": "pnpm --filter @party-stack/ontology-spec generate:meta",
         "ontology": "tsx ./src/cli/index.ts"
     },
     "dependencies": {
         "@bobbyfidz/panic": "^0.1.0",
+        "@effect/platform-browser": "^4.0.5",
+        "@effect/platform-node": "^4.0.5",
         "@next/env": "^16.1.6",
-        "@party-stack/blobs": "workspace:*",
-        "@party-stack/connections": "workspace:*",
-        "@party-stack/coordination": "workspace:*",
-        "@party-stack/errors": "workspace:*",
-        "@party-stack/icons": "workspace:*",
+        "@party-stack/connect": "workspace:*",
         "@party-stack/node-runtime": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/ontology-replica": "workspace:*",
+        "@party-stack/ontology-server": "workspace:*",
+        "@party-stack/ontology-spec": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
-        "@tanstack/db-sqlite-persistence-core": "0.4.9",
+        "@party-stack/sql-ontology-storage": "workspace:*",
         "change-case": "^5.4.4",
-        "commander": "^14.0.2",
-        "effection": "^4.0.2",
+        "effect": "^4.0.5",
         "jiti": "^2.6.1",
-        "oxfmt": "^0.72.0",
         "temporal-polyfill": "^0.3.0",
-        "ts-morph": "^27.0.2",
         "zod": "^4.4.3"
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.14.0",
+        "@tanstack/db": "1.0.0-rc.1.4",
+        "@types/node": "^24.10.1",
+        "better-sqlite3": "^12.9.0",
         "tsx": "^4.20.6",
         "typescript": "~7.0.2",
+        "vite": "catalog:",
         "vite-plus": "catalog:"
     },
     "peerDependencies": {
-        "@tanstack/db": "0.14.0"
+        "@tanstack/db": "1.0.0-rc.1.4"
     }
 }

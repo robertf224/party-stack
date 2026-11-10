@@ -1,8 +1,9 @@
 import { Users } from "@osdk/foundry.admin";
+import { readableByteSource } from "@party-stack/ontology-storage/blobs";
 import { decodeFoundryUserProfilePictureAttachment } from "./foundryUser.js";
-import { userCollectionOptions } from "./userCollectionOptions.js";
-import type { FoundryUsersIntegration } from "../adapter/createFoundryOntologyBackendAdapter.js";
-import type { Lens, OntologyCollectionOptions } from "@party-stack/ontology";
+import { loadUserSubset } from "./loadUserSubset.js";
+import type { FoundryUsersIntegration } from "../adapter/makeFoundryOntologyBackend.js";
+import type { Lens } from "@party-stack/ontology-spec";
 
 export function createFoundryUsersIntegration(options: {
     objectType: string;
@@ -10,12 +11,8 @@ export function createFoundryUsersIntegration(options: {
 }): FoundryUsersIntegration {
     return {
         objectType: options.objectType,
-        getCollectionOptions: (client) =>
-            // oxlint-disable-next-line typescript/no-unnecessary-type-assertion -- TypeScript 5 needs this variance boundary.
-            userCollectionOptions({
-                client: client,
-                lens: options.lens,
-            }) as unknown as OntologyCollectionOptions,
+        loadSubset: (client, query, signal) =>
+            loadUserSubset(client, options.objectType, options.lens, query, signal),
         async getAttachmentContent(client, attachment) {
             const userId = decodeFoundryUserProfilePictureAttachment(attachment.id);
             if (!userId) return;
@@ -23,7 +20,11 @@ export function createFoundryUsersIntegration(options: {
             if (profilePicture.status === 204) {
                 return new Blob();
             }
-            return profilePicture.blob();
+            return profilePicture.body
+                ? readableByteSource(profilePicture.body, {
+                      type: profilePicture.headers.get("content-type") ?? "application/octet-stream",
+                  })
+                : new Blob();
         },
         getAttachmentMetadata(_client, attachment) {
             const userId = decodeFoundryUserProfilePictureAttachment(attachment.id);

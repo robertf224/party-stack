@@ -13,16 +13,15 @@
     },
     "scripts": {
         "demo": "pnpm --filter @party-stack/salesforce-task-manager demo",
-        "smoke": "vp run -t @party-stack/salesforce-client#build && node --env-file-if-exists=.env scripts/smoke.mjs"
+        "smoke": "pnpm --filter @party-stack/salesforce-task-manager client:smoke"
     },
     "dependencies": {
         "@bobbyfidz/panic": "^0.1.0"
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
-        "@party-stack/node-runtime": "workspace:*",
-        "@party-stack/oauth": "workspace:*",
         "typescript": "~7.0.2",
+        "vite": "catalog:",
         "vite-plus": "catalog:"
     }
 }

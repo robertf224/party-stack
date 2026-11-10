@@ -1,6 +1,6 @@
 // Auto-generated file - do not edit manually
 
-import * as v from "@party-stack/ontology/values";
+import * as v from "@party-stack/ontology-spec/values";
 
 /** A tracked unit of work that can optionally belong to a project and progress through a simple status lifecycle. */
 export type Issue = {
@@ -52,11 +52,23 @@ export type User = {
 };
 
 export type IssueTrackerOntologyContext = {
-    user: string;
+    userId: string;
 } & Record<string, unknown>;
 export type CreateIssueParameters = {
     completedAt?: v.timestamp | null;
     attachments?: Array<v.attachment<"image/png" | "image/jpeg">> | null;
+    issueLabels?: Array<string> | null;
+    project?: string | null;
+    description?: string | null;
+    assignee?: string | null;
+    title: string;
+    status?: "Open" | "In Progress" | "Waiting" | "Completed";
+    "__uuid_0df17cad-fc40-4f4b-b755-dfccb968d615"?: string;
+    __now?: v.timestamp;
+};
+export type CreateIssueInput = {
+    completedAt?: v.timestamp | null;
+    attachments?: Array<v.attachment<"image/png" | "image/jpeg"> | Blob> | null;
     issueLabels?: Array<string> | null;
     project?: string | null;
     description?: string | null;
@@ -91,6 +103,18 @@ export type UpdateIssueParameters = {
     status?: "Open" | "In Progress" | "Waiting" | "Completed";
     __now?: v.timestamp;
 };
+export type UpdateIssueInput = {
+    completedAt?: v.timestamp | null;
+    attachments?: Array<v.attachment<"image/png" | "image/jpeg"> | Blob> | null;
+    issue: string;
+    issueLabels?: Array<string> | null;
+    description?: string | null;
+    project?: string | null;
+    assignee?: string | null;
+    title?: string;
+    status?: "Open" | "In Progress" | "Waiting" | "Completed";
+    __now?: v.timestamp;
+};
 export type UpdateProjectParameters = {
     color?: string | null;
     project: string;
@@ -108,21 +132,29 @@ export type IssueTrackerOntology = {
     actionTypes: {
         createIssue: {
             parameters: CreateIssueParameters;
+            inputParameters: CreateIssueInput;
+            returnType: void;
         };
         createProject: {
             parameters: CreateProjectParameters;
+            returnType: void;
         };
         deleteIssue: {
             parameters: DeleteIssueParameters;
+            returnType: void;
         };
         deleteProject: {
             parameters: DeleteProjectParameters;
+            returnType: void;
         };
         updateIssue: {
             parameters: UpdateIssueParameters;
+            inputParameters: UpdateIssueInput;
+            returnType: void;
         };
         updateProject: {
             parameters: UpdateProjectParameters;
+            returnType: void;
         };
     };
     queryFunctionTypes: Record<never, never>;

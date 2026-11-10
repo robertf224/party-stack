@@ -1,0 +1,9 @@
+{
+    "$schema": "https://json.schemastore.org/tsconfig",
+    "extends": "@party-stack/build-config/tsconfig.json",
+    "compilerOptions": {
+        "rootDir": ".",
+        "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types", "node"]
+    },
+    "include": ["src/**/*.ts", "test/**/*.ts", "fixtures/**/*.ts", "examples/**/*.ts"]
+}

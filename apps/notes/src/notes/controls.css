@@ -1,0 +1,784 @@
+.notes-app.folders-collapsed,
+.notes-app.compact-layout {
+    border-top-left-radius: 0;
+}
+.notes-app {
+    --list-header-height: 87px;
+    --date-header-height: 32px;
+}
+/* One glass surface spans the heading and the exposed sidebar inset. Separate
+   backdrop layers here leave a seam at the curved edge of the sidebar. */
+.notes-app:not(.compact-layout)::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    /* Stop inside the list's border so the frost cannot cover its divider. */
+    width: calc(7px + var(--folders-width, 240px) + var(--notes-width, 300px) - 1px);
+    height: var(--list-header-height);
+    z-index: 1;
+    pointer-events: none;
+    background: color-mix(in srgb, var(--list) 65%, transparent);
+    backdrop-filter: blur(24px) saturate(1.25);
+}
+.notes-app:not(.compact-layout):has(.list-date-heading)::before {
+    height: calc(var(--list-header-height) + var(--date-header-height));
+}
+.notes-app.folders-collapsed:not(.compact-layout):has(.list-date-heading)::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: calc(var(--list-header-height) + var(--date-header-height) - 1px);
+    width: 7px;
+    height: 1px;
+    background: var(--line);
+    z-index: 2;
+    pointer-events: none;
+}
+.notes-app > .sidebar {
+    position: relative;
+    z-index: 2;
+}
+.note-list {
+    --list-content-gap: 12px;
+    --list-fixed-height: var(--list-header-height);
+}
+.note-list:has(.list-date-heading) {
+    --list-fixed-height: calc(var(--list-header-height) + var(--date-header-height));
+}
+.list-heading {
+    position: absolute;
+    inset: 0 0 auto;
+    height: var(--list-header-height);
+    flex-shrink: 0;
+    z-index: 2;
+    background: transparent;
+}
+.compact-layout .note-list::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: var(--list-fixed-height);
+    z-index: 1;
+    pointer-events: none;
+    background: color-mix(in srgb, var(--list) 65%, transparent);
+    backdrop-filter: blur(24px) saturate(1.25);
+}
+.note-list-scroll-area {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+}
+.note-list-scroll {
+    width: 100%;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scroll-padding-top: calc(var(--list-fixed-height) + 12px);
+}
+.note-list .entries {
+    overflow: visible;
+    padding-top: var(--list-header-height);
+}
+.date-section {
+    display: flow-root;
+}
+.date-group {
+    height: var(--date-header-height);
+    padding: 0 11px 7px;
+    margin: 0 0 6px;
+    font-size: 15px;
+    line-height: 24px;
+    color: var(--text);
+}
+.date-section[data-current] > .date-group {
+    visibility: hidden;
+}
+.list-date-heading {
+    position: absolute;
+    top: var(--list-header-height);
+    inset-inline: 0;
+    padding: 0 22px 7px;
+    margin: 0;
+    z-index: 2;
+}
+.list-date-heading > span {
+    animation: date-label-appear 160ms ease;
+}
+@keyframes date-label-appear {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+.note-list-scrollbar {
+    width: 10px;
+    padding: 3px 2px;
+    z-index: 3;
+    opacity: 0;
+    transition: opacity 180ms ease;
+}
+.note-list-scrollbar:is([data-hovering], [data-scrolling]),
+.note-list-scroll-area:focus-within .note-list-scrollbar {
+    opacity: 1;
+}
+.note-list-scroll-thumb {
+    border-radius: 99px;
+    background: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+.list-heading h1 {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+}
+.list-heading h1 > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.view-icon {
+    width: 19px;
+    height: 19px;
+    flex: 0 0 auto;
+    color: var(--accent);
+}
+.insert-menu-slot,
+.icon-button.mobile-search-button,
+.icon-button.note-menu-trigger,
+.icon-button.list-search-button {
+    display: none;
+}
+.insert-menu {
+    max-height: min(70dvh, 540px);
+    overflow-y: auto;
+}
+.sidebar.sidebar-drawer.open {
+    width: min(320px, calc(100vw - 28px));
+    padding-inline: 12px;
+}
+.sidebar-drawer .nav-item {
+    min-height: 46px;
+    padding: 11px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    gap: 12px;
+}
+.sidebar-drawer .nav-item svg {
+    width: 20px;
+    height: 20px;
+}
+.sidebar-drawer nav {
+    gap: 5px;
+}
+.brand > .icon-button {
+    margin-left: 0;
+}
+.brand > .icon-button:first-of-type {
+    margin-left: auto;
+}
+.brand {
+    gap: 6px;
+    padding-inline: 6px;
+}
+.workspace-toolbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.toolbar-left {
+    grid-column: 1;
+}
+.toolbar-middle {
+    grid-column: 2;
+    width: max-content;
+    max-width: 100%;
+    min-width: 0;
+    justify-self: center;
+    justify-content: center;
+}
+.toolbar-right {
+    grid-column: 3;
+    margin-left: 0;
+    flex-shrink: 0;
+}
+.workspace-toolbar .search {
+    width: clamp(120px, 20cqi, 280px);
+}
+.desktop-new {
+    display: inline-flex;
+}
+.note-main {
+    container: editor / inline-size;
+}
+@container editor (max-width: 600px) {
+    .workspace-toolbar .desktop-format,
+    .workspace-toolbar .desktop-search,
+    .workspace-toolbar .toolbar-actions > .icon-button:not([aria-label="Note options"]) {
+        display: none;
+    }
+    .workspace-toolbar .mobile-search-button,
+    .insert-menu-slot:not(:empty) {
+        display: inline-flex;
+    }
+}
+.icon-button,
+.glass-button {
+    width: 35px;
+    min-width: 35px;
+    height: 35px;
+}
+.icon-button,
+.glass-button,
+.glass-control,
+.select-trigger,
+.primary-button,
+.secondary-button,
+.text-button {
+    border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+    border-radius: 999px;
+    background:
+        linear-gradient(145deg, #ffffff12, #ffffff02), color-mix(in srgb, var(--canvas) 78%, transparent);
+    box-shadow:
+        inset 0 1px 0 #ffffff12,
+        0 2px 7px #0000000a;
+    backdrop-filter: blur(18px) saturate(1.35);
+    color: var(--text);
+}
+.glass-control {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 35px;
+    padding: 7px 14px;
+    font-size: 13px;
+    transition:
+        background-color 150ms ease,
+        border-color 150ms ease,
+        box-shadow 150ms ease;
+}
+.glass-control.icon-button {
+    padding: 0;
+}
+.glass-control:hover:not(:disabled):not([data-disabled]),
+.primary-button:hover:not(:disabled),
+.secondary-button:hover:not(:disabled) {
+    background:
+        linear-gradient(145deg, #ffffff1c, #ffffff06), color-mix(in srgb, var(--text) 10%, var(--canvas));
+    border-color: color-mix(in srgb, var(--text) 30%, transparent);
+}
+.glass-control:active:not(:disabled):not([data-disabled]) {
+    background: color-mix(in srgb, var(--text) 14%, var(--canvas));
+    box-shadow: inset 0 1px 3px #00000018;
+}
+.primary-button,
+.secondary-button {
+    padding: 8px 15px;
+}
+.primary-button {
+    background:
+        linear-gradient(145deg, #ffffff12, transparent), color-mix(in srgb, var(--accent) 18%, var(--canvas));
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.format-toolbar .icon-button,
+.toolbar-actions .icon-button {
+    background: none;
+    border-color: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+}
+.workspace-toolbar .format-toolbar,
+.workspace-toolbar .toolbar-actions {
+    padding: 2px 4px;
+    gap: 1px;
+    border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+    background:
+        linear-gradient(145deg, #ffffff12, #ffffff02), color-mix(in srgb, var(--canvas) 78%, transparent);
+    box-shadow:
+        inset 0 1px 0 #ffffff12,
+        0 2px 7px #0000000a;
+}
+.workspace-toolbar :is(.format-toolbar, .toolbar-actions) .icon-button.glass-control {
+    width: 29px;
+    min-width: 29px;
+    min-height: 0;
+    height: 100%;
+    border: 0;
+    border-radius: 50%;
+    box-shadow: none;
+    background: transparent;
+}
+.workspace-toolbar :is(.format-toolbar, .toolbar-actions) .icon-button.glass-control.active {
+    background: transparent;
+    color: var(--accent);
+    box-shadow: none;
+}
+.workspace-toolbar :is(.format-toolbar, .toolbar-actions) .icon-button.glass-control:hover {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.icon-button:hover {
+    background:
+        linear-gradient(145deg, #ffffff14, #ffffff05), color-mix(in srgb, var(--text) 7%, var(--canvas));
+}
+.icon-button.active {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+@media (min-width: 701px) {
+    .list-heading .mobile-new {
+        display: none;
+    }
+}
+.dialog-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.dialog-heading h2 {
+    margin: 0;
+    font-size: 21px;
+    font-weight: 650;
+}
+.search-dialog,
+.folder-dialog {
+    width: min(480px, calc(100vw - 32px));
+    max-height: calc(100dvh - 40px);
+    padding: 24px;
+    overflow-y: auto;
+}
+.glass-dialog {
+    opacity: 1;
+    scale: 1;
+    translate: 0 0;
+    transition:
+        opacity 240ms ease,
+        scale 300ms cubic-bezier(0.22, 1, 0.36, 1),
+        translate 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.glass-dialog[data-starting-style],
+.glass-dialog[data-ending-style] {
+    opacity: 0;
+    scale: 0.97;
+    translate: 0 12px;
+}
+.dialog-backdrop {
+    opacity: 1;
+    transition: opacity 260ms ease;
+}
+.dialog-backdrop[data-starting-style],
+.dialog-backdrop[data-ending-style] {
+    opacity: 0;
+}
+.folder-dialog {
+    background: color-mix(in srgb, var(--list) 96%, transparent);
+    border-radius: 24px;
+}
+.list-heading > div {
+    min-width: 0;
+}
+.list-heading .list-count {
+    min-height: 1.2em;
+}
+.list-load-more {
+    display: flex;
+    justify-content: center;
+    padding: 18px 0 24px;
+}
+.folder-query-view {
+    display: contents;
+}
+.text-button {
+    color: var(--accent);
+    padding: 4px;
+}
+.folder-color-field {
+    margin: 22px 0 0;
+    padding: 0;
+    border: 0;
+}
+.folder-delete-description {
+    margin: 0 0 24px;
+    color: var(--muted);
+    line-height: 1.5;
+    font-size: 14px;
+}
+.folder-color-field legend {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 11px;
+}
+.folder-color-options,
+.folder-colors {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.folder-color,
+.custom-folder-color {
+    display: grid;
+    place-items: center;
+    width: 35px;
+    height: 35px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    border: 1px solid #ffffff35;
+    box-shadow:
+        inset 0 1px 0 #ffffff30,
+        0 2px 5px #00000012;
+    color: white;
+    cursor: pointer;
+}
+.folder-color[data-checked],
+.custom-folder-color[data-selected] {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+}
+.custom-folder-color {
+    position: relative;
+    background: var(--canvas);
+    border-color: var(--line);
+}
+.custom-folder-color input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    padding: 0;
+    border: 0;
+    cursor: pointer;
+}
+.custom-folder-color:focus-within {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+}
+.spinning {
+    animation: notes-spin 1.1s linear infinite;
+}
+@keyframes notes-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+.search-dialog {
+    --search-dialog-top: clamp(20px, 10dvh, 96px);
+    top: var(--search-dialog-top);
+    transform: translateX(-50%);
+    max-height: calc(100dvh - var(--search-dialog-top) - 20px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.search-dialog .dialog-heading,
+.search-dialog .modal-search {
+    flex-shrink: 0;
+}
+.search-dialog .modal-search {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0;
+    width: 100%;
+    height: 44px;
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+}
+.search-dialog .modal-search input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    background: none;
+}
+.search-results {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-top: 16px;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+}
+.search-results ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.search-results a {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 15px 10px;
+    border-radius: 10px;
+    font-size: 14px;
+}
+.search-results a:hover,
+.search-results a:focus-visible {
+    background: var(--selection);
+}
+.search-results svg {
+    width: 19px;
+    height: 19px;
+    color: var(--muted);
+    flex: 0 0 auto;
+}
+.search-results a span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.search-empty {
+    padding: 36px 10px;
+    color: var(--muted);
+    text-align: center;
+}
+.search-loading {
+    height: 50px;
+}
+@media (max-width: 1250px) {
+    .insert-menu-slot:not(:empty) {
+        display: flex;
+    }
+}
+@media (max-width: 1000px) {
+    .workspace-toolbar .desktop-search {
+        display: none;
+    }
+    .workspace-toolbar .mobile-search-button {
+        display: inline-flex;
+    }
+    .sidebar-drawer .brand {
+        height: 65px;
+    }
+    .sidebar-drawer .icon-button {
+        width: 35px;
+        min-width: 35px;
+        height: 35px;
+    }
+}
+@media (max-width: 700px) {
+    .note-list {
+        --list-header-height: 80px;
+        --list-content-gap: 0px;
+    }
+    .notes-app {
+        border-radius: 0;
+    }
+    .workspace-toolbar {
+        --control-height: 44px;
+        padding: 0 12px;
+        gap: 8px;
+        height: 80px;
+    }
+    .sidebar-drawer .icon-button,
+    .dialog-heading .icon-button {
+        width: 44px;
+        min-width: 44px;
+        height: 44px;
+    }
+    .dialog-actions .glass-control {
+        min-height: 44px;
+    }
+    .workspace-toolbar .toolbar-left,
+    .workspace-toolbar .toolbar-right {
+        gap: 8px;
+        flex: 0 0 auto;
+        min-width: 0;
+    }
+    .workspace-toolbar .icon-button,
+    .workspace-toolbar .glass-button,
+    .list-heading > .icon-button,
+    .list-heading .glass-button {
+        width: 44px;
+        min-width: 44px;
+        height: 44px;
+        flex: 0 0 auto;
+    }
+    .workspace-toolbar .toolbar-left > .glass-button {
+        margin-left: 0;
+    }
+    .workspace-toolbar .back-to-list {
+        width: auto;
+        min-width: 70px;
+        gap: 1px;
+        padding: 0 10px 0 5px;
+        font-size: 16px;
+        color: var(--text);
+    }
+    .workspace-toolbar .toolbar-actions {
+        height: 44px;
+        padding: 0;
+        border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+        background:
+            linear-gradient(145deg, #ffffff12, #ffffff02), color-mix(in srgb, var(--canvas) 78%, transparent);
+        box-shadow:
+            inset 0 1px 0 #ffffff12,
+            0 2px 7px #0000000a;
+    }
+    .workspace-toolbar .toolbar-actions .icon-button.glass-control {
+        width: 44px;
+        min-width: 44px;
+        border-radius: 50%;
+    }
+    .workspace-toolbar .toolbar-actions > .icon-button:not([aria-label="Note options"]) {
+        display: none;
+    }
+    .workspace-toolbar .desktop-new,
+    .workspace-toolbar .mobile-search-button,
+    .workspace-toolbar .note-menu-trigger {
+        display: none;
+    }
+    .insert-menu-slot:not(:empty),
+    .list-heading .list-search-button {
+        display: inline-flex;
+    }
+    .list-heading {
+        padding: 12px;
+        gap: 8px;
+    }
+    .list-heading > div {
+        min-width: 0;
+    }
+    .list-heading h1 {
+        font-size: 18px;
+        gap: 6px;
+    }
+    .list-heading .view-icon {
+        width: 20px;
+        height: 20px;
+    }
+    .search-dialog {
+        inset: 0;
+        width: 100%;
+        height: 100dvh;
+        max-height: none;
+        transform: none;
+        border-radius: 0;
+        padding: max(20px, env(safe-area-inset-top)) 18px max(20px, env(safe-area-inset-bottom));
+    }
+}
+@media (max-width: 350px) {
+    .workspace-toolbar .back-to-list {
+        min-width: 44px;
+        width: 44px;
+    }
+    .back-label {
+        display: none;
+    }
+}
+@media (max-width: 700px) and (prefers-reduced-motion: no-preference) {
+    :root:active-view-transition-type(notes-forward),
+    :root:active-view-transition-type(notes-back) {
+        view-transition-name: root;
+    }
+    :root:active-view-transition-type(notes-forward)::view-transition-old(root) {
+        animation: notes-page-away 240ms ease both;
+    }
+    :root:active-view-transition-type(notes-forward)::view-transition-new(root) {
+        animation: notes-page-in 240ms ease both;
+    }
+    :root:active-view-transition-type(notes-back)::view-transition-old(root) {
+        animation: notes-page-out 240ms ease both;
+        z-index: 2;
+    }
+    :root:active-view-transition-type(notes-back)::view-transition-new(root) {
+        animation: notes-page-return 240ms ease both;
+    }
+}
+@keyframes notes-page-in {
+    from {
+        transform: translateX(100%);
+    }
+}
+@keyframes notes-page-away {
+    to {
+        transform: translateX(-20%);
+        opacity: 0.7;
+    }
+}
+@keyframes notes-page-out {
+    to {
+        transform: translateX(100%);
+    }
+}
+@keyframes notes-page-return {
+    from {
+        transform: translateX(-20%);
+        opacity: 0.7;
+    }
+}
+
+.folder-download {
+    display: inline-flex;
+    flex-shrink: 0;
+}
+.folder-download-icon {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    color: var(--muted);
+    transition: color 260ms ease;
+}
+.folder-download-icon > span {
+    grid-area: 1 / 1;
+    display: flex;
+    opacity: 0;
+    scale: 0.72;
+    transition:
+        opacity 220ms ease,
+        scale 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.folder-download-icon > span[data-visible="true"] {
+    opacity: 1;
+    scale: 1;
+}
+.folder-download-icon[data-status="ready"] {
+    color: light-dark(#21825f, #6bc9a5);
+}
+.folder-download-icon[data-status="downloading"] {
+    color: var(--accent);
+}
+.folder-download-icon[data-status="failed"] {
+    color: light-dark(#a66327, #e0a069);
+}
+.folder-download-icon[data-status="downloading"] .download-spinner {
+    animation: folder-download-spin 1.1s linear infinite;
+}
+.nav-item .folder-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.nav-item .folder-download-icon {
+    margin-left: auto;
+    width: 17px;
+    height: 17px;
+}
+.nav-item .folder-download-icon svg {
+    color: inherit;
+    width: 16px;
+    height: 16px;
+}
+@keyframes folder-download-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .folder-download-icon,
+    .folder-download-icon > span {
+        transition: none;
+    }
+    .folder-download-icon .download-spinner {
+        animation: none;
+    }
+}

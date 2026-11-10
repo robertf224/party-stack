@@ -1,5 +1,7 @@
+import { Schema } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { getFoundryAttachmentKind } from "../meta/foundryAttachmentMetadata.js";
+import { decodeFoundryCiphertext, encodeFoundryCiphertext } from "./encrypted.js";
 import {
     decodeFoundryMediaId,
     foundryMediaIdToReference,
@@ -7,15 +9,10 @@ import {
 } from "./foundryMediaId.js";
 import type { MediaReference } from "@osdk/foundry.core";
 import type { AttachmentProperty, OntologyObjectV2 } from "@osdk/foundry.ontologies";
-import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology";
+import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology-spec";
+import type { Encrypted } from "@party-stack/ontology-spec/values";
 
 type FoundryObjectRecord = Record<string, unknown>;
-/** @deprecated Use {@link FoundryCodec} instead. */
-export type FoundryObjectDecoder = FoundryCodec;
-
-/** @deprecated Use {@link createFoundryCodec} instead. */
-export const createFoundryObjectDecoder = createFoundryCodec;
-
 export interface FoundryCodec {
     decodeObject: (objectType: string, object: OntologyObjectV2 | FoundryObjectRecord) => FoundryObjectRecord;
     decodeEditObject: (objectType: string, object: FoundryObjectRecord) => FoundryObjectRecord;
@@ -27,6 +24,7 @@ export function createFoundryCodec(
     ir: OntologyIR,
     options?: {
         resolveMediaReference?: (id: string) => MediaReference | undefined;
+        resolveAttachmentId?: (id: string) => string | undefined;
     }
 ): FoundryCodec {
     const objectTypes = new Map(ir.objectTypes.map((objectType) => [objectType.name, objectType]));
@@ -53,7 +51,7 @@ export function createFoundryCodec(
     const decodeValue = (
         type: TypeDef,
         value: unknown,
-        context: { editHistory: boolean; optional: boolean } = {
+        context: { editHistory: boolean; optional: boolean; source?: Encrypted["source"] } = {
             editHistory: false,
             optional: false,
         }
@@ -82,6 +80,8 @@ export function createFoundryCodec(
         }
 
         switch (resolvedType.kind) {
+            case "encrypted":
+                return decodeFoundryCiphertext(value, context.source);
             case "string":
                 return value;
             case "boolean":
@@ -139,6 +139,10 @@ export function createFoundryCodec(
         object: FoundryObjectRecord,
         editHistory = false
     ): FoundryObjectRecord => {
+        const keyProperty = objectType.properties.find((property) => property.name === objectType.primaryKey);
+        const primaryKey = keyProperty
+            ? decodeValue(keyProperty.type, object[objectType.primaryKey], { editHistory, optional: false })
+            : undefined;
         return Object.fromEntries(
             Object.entries(object).map(([key, value]) => {
                 const property = objectType.properties.find((candidate) => candidate.name === key);
@@ -148,6 +152,13 @@ export function createFoundryCodec(
                         ? decodeValue(property.type, value, {
                               editHistory,
                               optional: false,
+                              source: Schema.is(Schema.Union([Schema.String, Schema.Finite]))(primaryKey)
+                                  ? {
+                                        objectType: objectType.name,
+                                        primaryKey,
+                                        property: key,
+                                    }
+                                  : undefined,
                           })
                         : value,
                 ];
@@ -162,6 +173,8 @@ export function createFoundryCodec(
         const resolvedType = resolveType(type);
 
         switch (resolvedType.kind) {
+            case "encrypted":
+                return encodeFoundryCiphertext(value);
             case "string":
             case "boolean":
             case "integer":
@@ -177,7 +190,12 @@ export function createFoundryCodec(
             case "geopoint":
                 return encodeGeoPoint(value);
             case "attachment":
-                return encodeAttachment(value, resolvedType.value.meta, options?.resolveMediaReference);
+                return encodeAttachment(
+                    value,
+                    resolvedType.value.meta,
+                    options?.resolveMediaReference,
+                    options?.resolveAttachmentId
+                );
             case "objectReference":
             case "unknown":
                 return value;
@@ -355,7 +373,8 @@ function decodeMediaReference(value: unknown): unknown {
 function encodeAttachment(
     value: unknown,
     meta?: Record<string, unknown>,
-    resolveMediaReference?: (id: string) => MediaReference | undefined
+    resolveMediaReference?: (id: string) => MediaReference | undefined,
+    resolveAttachmentId?: (id: string) => string | undefined
 ): unknown {
     if (!isPlainObject(value)) {
         return value;
@@ -364,7 +383,7 @@ function encodeAttachment(
         throw new Error("Invalid Foundry attachment value: expected an attachment with a string id.");
     }
     if (getFoundryAttachmentKind(meta) !== "media") {
-        return value.id;
+        return resolveAttachmentId?.(value.id) ?? value.id;
     }
     const resolved = resolveMediaReference?.(value.id);
     if (resolved) return resolved;

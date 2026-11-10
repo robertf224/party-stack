@@ -1,7 +1,7 @@
 import { createMetaLiveOntology } from "@party-stack/ontology";
 import { eq, queryOnce } from "@tanstack/db";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { createFoundryMetaOntologyBackendAdapter } from "./createFoundryMetaOntologyBackendAdapter.js";
+import { makeFoundryMetadataBackend } from "./backend.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
 
 const mocks = vi.hoisted(() => ({
@@ -61,8 +61,7 @@ describe("Foundry ActionType metadata ID queries", () => {
             nextPageToken: undefined,
         });
         const meta = await createMetaLiveOntology({
-            backend: () => createFoundryMetaOntologyBackendAdapter({ client }),
-            persistObjects: false,
+            backend: makeFoundryMetadataBackend({ client }),
         });
 
         try {
@@ -122,11 +121,9 @@ describe("Foundry ActionType metadata ID queries", () => {
             ],
         });
         const meta = await createMetaLiveOntology({
-            backend: () =>
-                createFoundryMetaOntologyBackendAdapter({
-                    client,
-                }),
-            persistObjects: false,
+            backend: makeFoundryMetadataBackend({
+                client,
+            }),
         });
 
         try {

@@ -1,0 +1,401 @@
+---
+title: Run a server
+description: Define an Issue type and expose a SQLite backend from TanStack Start.
+---
+
+This example is a local, full-access development server. It uses SQLite for
+objects, action receipts, and attachment storage.
+
+## Install
+
+```sh
+pnpm add @party-stack/ontology-spec @party-stack/ontology-backend @party-stack/ontology-server @party-stack/sql-ontology-storage @effect/sql-sqlite-node effect
+```
+
+## Define objects and an action
+
+```ts title="src/server/ontology.ts"
+import { defineOntology, o } from "@party-stack/ontology-spec";
+
+export const ir = defineOntology({
+    types: [],
+    context: {
+        type: o.struct({
+            fields: [{ name: "userId", displayName: "User ID", type: o.string({}) }],
+        }),
+        partition: [["userId"]],
+    },
+    objectTypes: [
+        {
+            name: "Issue",
+            displayName: "Issue",
+            pluralDisplayName: "Issues",
+            primaryKey: "id",
+            title: "title",
+            properties: [
+                { name: "id", displayName: "ID", type: o.string({}) },
+                { name: "title", displayName: "Title", type: o.string({}) },
+            ],
+        },
+    ],
+    linkTypes: [],
+    actionTypes: [
+        {
+            name: "createIssue",
+            displayName: "Create issue",
+            parameters: [
+                { name: "id", displayName: "ID", type: o.string({}), defaultValue: o.Expression.uuid({}) },
+                { name: "title", displayName: "Title", type: o.string({}) },
+            ],
+            logic: [
+                o.ActionLogicStep.createObject({
+                    objectType: "Issue",
+                    values: [
+                        { property: ["id"], value: o.Expression.inputReference({ name: "id" }) },
+                        { property: ["title"], value: o.Expression.inputReference({ name: "title" }) },
+                    ],
+                }),
+            ],
+        },
+    ],
+    queryFunctionTypes: [],
+});
+
+export default ir;
+```
+
+The backend executes the action's declarative logic. Clients can use it to
+predict the same change locally.
+
+## Open one backend for the server process
+
+```ts title="src/server/ontology-server.ts"
+import { layer as sqliteLayer } from "@effect/sql-sqlite-node/SqliteClient";
+import { makeStorageBackend } from "@party-stack/ontology-backend/storage";
+import { makeOntologyServer, OntologyHttpServer, toWebHandler } from "@party-stack/ontology-server/http";
+import { makeStorage } from "@party-stack/sql-ontology-storage/sqlite";
+import { Effect, Layer } from "effect";
+import { ir } from "./ontology";
+
+const serverLayer = OntologyHttpServer.layer(
+    Effect.gen(function* () {
+        const storage = yield* makeStorage({
+            namespace: "issues",
+            attachmentBytesRetentionMode: "authoritative",
+        });
+        const backend = yield* makeStorageBackend({ ir, ...storage });
+        return yield* makeOntologyServer({
+            enableRealtime: true,
+            kind: "owned",
+            backend,
+            context: { userId: "local" },
+            dangerouslyAllowInternalAccess: true, // Full access for this local demo.
+        });
+    })
+).pipe(Layer.provide(sqliteLayer({ filename: "issues.sqlite" })));
+
+export const { handler, dispose } = toWebHandler(serverLayer);
+if (import.meta.hot) import.meta.hot.dispose(dispose);
+```
+
+The SQLite Layer opens and closes the database. The server Layer owns the backend,
+maintenance, and active requests. Dispose it during shutdown; HMR does so above.
+Requests share one backend.
+
+`namespace` identifies this ontology's stored objects, receipts, journal, and
+attachment metadata. Storage carries it into the backend, so specify it once.
+`kind: "owned"` selects an authoritative server. Storage's `attachmentBytesRetentionMode: "authoritative"`
+protects referenced attachment bytes from cache eviction; it is a separate storage
+retention setting. The other mode, `"cache"` (the default), allows locally cached
+bytes to be evicted and downloaded again. Both modes collect unreferenced attachments
+after their retention period. This setting does not change object-table behavior.
+
+## Mount the HTTP handler
+
+```ts title="src/routes/api.ontology.rpc.ts"
+import { createFileRoute } from "@tanstack/react-router";
+import { handler } from "../server/ontology-server";
+
+export const Route = createFileRoute("/api/ontology/rpc")({
+    server: {
+        handlers: {
+            GET: ({ request }) => handler(request),
+            POST: ({ request }) => handler(request),
+        },
+    },
+});
+```
+
+The handler serves RPC and attachment transfers at this URL. Application code does
+not need to implement multipart parsing or chunk endpoints.
+
+The same `Request → Promise<Response>` handler mounts in a Next.js route:
+
+```ts title="app/api/ontology/rpc/route.ts"
+export { handler as GET, handler as POST } from "../../../../server/ontology-server";
+export const runtime = "nodejs";
+```
+
+For Cloudflare Workers, mount a handler built with a Worker-compatible backend:
+
+```ts
+import { handler } from "./ontology-server";
+
+export default { fetch: (request: Request) => handler(request) };
+```
+
+The HTTP binding is portable. The Node SQLite Layer above is for Node hosts;
+a Worker uses its platform's storage or a provider backend instead.
+
+Now follow [TanStack Start](/docs/tanstack-start) and submit:
+
+```ts
+await ontology.actions.createIssue({ title: "My first issue" });
+```
+
+## Add caller permissions
+
+For a multi-user app, declare an ontology [policy and context type](/docs/authorization),
+then replace `dangerouslyAllowInternalAccess: true` with an authentication hook:
+
+```ts
+import { classifyBackendFailure, unauthenticated } from "@party-stack/ontology-backend";
+
+// Inside the server Layer: the backend remains shared across requests.
+return (
+    yield *
+    makeOntologyServer({
+        enableRealtime: true,
+        kind: "owned",
+        backend,
+        authenticate: Effect.fn("App.authenticate")(function* (request: Request) {
+            const session = yield* Effect.tryPromise({
+                try: () => auth.api.getSession({ headers: request.headers }),
+                catch: (cause) => classifyBackendFailure("authentication", cause),
+            });
+            if (!session) return yield* unauthenticated();
+            return { userId: session.user.id };
+        }),
+    })
+);
+```
+
+Here `auth` is your application's authentication service, such as Better Auth. The
+returned values must match the IR context type. Authentication runs for each HTTP
+request; the server applies the IR policy to reads, actions, schema discovery, and
+attachments. The request binding stays alive through streamed response bodies and
+closes on completion or cancellation. Authentication failures return typed errors
+with the corresponding HTTP status.
+
+You do not construct another server in the route handler. Storage, maintenance,
+and any cached-proxy state belong to the server Layer and remain shared.
+
+## Enable live updates
+
+Servers expose finite queries, actions, query functions, and attachment operations by
+default. Set `enableRealtime: true` to also expose supported query watches, change
+feeds, and client replication sessions. Each subscription is acquired only when a
+client requests it; a query or action never waits for a watch to start.
+
+For a route table, this option is a server-wide default that individual routes can
+override. For example, an app can enable live updates while a public submission form
+uses `enableRealtime: false`. Disabling it removes those advertised capabilities and
+rejects direct synchronization calls too. It does not stop the backend's own upstream
+sync or maintenance, nor grant any access that its policy denies.
+
+A plain proxy can expose the synchronization capabilities its backend implements.
+A policy-bound proxy currently exposes only invalidation watches; raw change feeds
+and selected-delivery sessions remain unavailable. Privileged diagnostic streams are
+separate and still require explicit internal access.
+
+## Serve several ontologies
+
+Configure `routes` on the same `makeOntologyServer` constructor. Exact routes
+are indexed by name; parameter routes receive decoded parameters. Each route has
+its own backend, authenticated context and policy.
+
+```ts
+import { makeOntologyServer } from "@party-stack/ontology-server";
+
+const server =
+    yield *
+    makeOntologyServer({
+        enableRealtime: true,
+        routes: {
+            issues: { kind: "owned", backend, ir, authenticate },
+            "forms/:formId": ({ formId }) =>
+                Effect.gen(function* () {
+                    const formBackend = yield* openFormBackend(formId);
+                    return {
+                        kind: "proxy" as const,
+                        backend: formBackend,
+                        ir: formIR,
+                        authenticate,
+                        enableRealtime: false,
+                    };
+                }),
+        },
+        idleRetentionMs: 60_000,
+    });
+```
+
+Here `openFormBackend` is your application's scoped backend acquisition. A route
+can return a backend directly or acquire it with an Effect. The server retains
+that acquisition through active requests and streams, then closes it after the
+idle interval. Unknown names fail with `NotFound`.
+
+HTTP and worker bindings serve this same server. Clients share one transport and
+select targets with `client.ontology("issues")` or `client.ontology("forms/123")`.
+These are logical ontology addresses. A handler mounted at `/api/ontology/rpc`
+does not also create `/forms/123` as an HTTP path. HTTP selection travels in the
+`ontology` query parameter and `x-party-stack-ontology` RPC header; attachment
+requests carry the same selection. You can map your framework's URL paths to
+these addresses, but the default transport uses one endpoint.
+RPC uses HTTP POST with streamed NDJSON responses. Watches keep their response
+stream open until cancellation; this binding does not use SSE or WebSockets.
+Attachment uploads/multipart actions use the same endpoint with an `ontology`
+query parameter so their byte requests reach the selected backend. This parameter
+is an address, not an authorization token.
+The React [environment provider](/docs/tanstack-start#select-among-several-ontologies)
+owns that shared client for UI views.
+
+For managed local replicas, return a `kind: "replica"` configuration from the
+route. The server automatically handles sharing and partition inventory;
+you do not construct a separate replica registry. The [Foundry guide](/docs/foundry)
+shows Connect and persistent data replicas in one server.
+
+When several servers share one runtime platform, `replicas: { scope: "my-server" }`
+isolates both their partition inventories and data namespaces. Omit the scope
+when the application already owns its storage platform; the configured replica
+namespace then stays unchanged. An omitted `replicas` field and `replicas: {}`
+behave identically. The route determines whether the server requires `Runtimes`.
+
+## Reopen downloaded ontologies
+
+A managed route can acquire its parent through an existing ontology client:
+
+```ts
+const deviceServer =
+    yield *
+    makeOntologyServer({
+        enableRealtime: true,
+        routes: {
+            "workspaces/:workspaceId": ({ workspaceId }) =>
+                Effect.succeed({
+                    kind: "replica" as const,
+                    upstream: {
+                        client: upstreamClient,
+                        ontology: `workspaces/${workspaceId}`,
+                    },
+                    context: { userId },
+                    definition: { onIncompatible: "rebuild" as const },
+                    dangerouslyAllowInternalAccess: true as const,
+                }),
+        },
+    });
+```
+
+Here `upstreamClient` is an acquired HTTP, worker, or local client, and `userId`
+comes from the selected account. Provide persistent `Runtimes` to this device
+server, as in the [Expo guide](/docs/expo). Keep its internal-access endpoint private.
+
+The first open obtains the parent's description. The partition catalog then saves
+the IR, context, source identity, and protocol capabilities with the partition
+address. Later opens restore that binding locally. They can answer from retained
+data without a startup `Describe` request or a validation gate. Normal requests
+still verify source and context; they cannot silently use another account's data.
+
+Omit `definition` to preserve retained data and report incompatible definitions.
+For an app generated from a fixed schema, supply `definition: { ir: appIR }`.
+This checks the retained/remote contract against the bundled application contract;
+it does not make a first-ever remote connection possible offline.
+
+With `onIncompatible: "rebuild"`, a typed schema mismatch triggers acquisition of
+the new definition and rebuilding of the downloaded cache. Pending or accepted
+actions block that rebuild. Completed receipts, submission identities, keys, and
+desired offline pins survive; compatible pins reacquire their data afterward.
+A bundled `ir` remains a fixed contract and is never silently replaced. Existing
+views also have a fixed IR: reopen them against the rebuilt route to use its new
+schema.
+
+Display names, descriptions, and other presentation metadata do not force a cache
+reset. Other contract changes are conservatively incompatible for now, including
+property additions. Migrating retained rows and queued declarative actions is
+future work.
+
+At the native client layer, `client.definition.get` and `.changes` expose
+`retained`, `current`, or `incompatible` status. `.refresh` explicitly checks the
+parent description. Typed schema/source failures from normal operations also
+update that status; there is no periodic metadata poll or live definition stream.
+Source/account changes are errors, never automatic schema rebuilds.
+
+Selected delivery checks the schema hash already carried in each batch. A
+finite-only adapter that does not report typed `SchemaMismatch` errors needs an
+explicit definition refresh to discover upstream schema changes.
+
+Native adapters that need IR before construction can use `route.definition` to
+restore it from the same catalog. The [Expo Foundry example](/docs/expo) shows this
+with `loadDefinition(metadataBackend)`.
+
+## Use separate HTTP endpoints
+
+Create a handler for each bound server and mount each handler at its own framework
+route. They can borrow backends owned by the same application Layer:
+
+```ts
+const issueHandler =
+    yield *
+    makeOntologyHttpHandler(
+        yield *
+            makeOntologyServer({
+                enableRealtime: true,
+                kind: "owned",
+                backend: issuesBackend,
+                authenticate: authenticateIssues,
+            })
+    );
+const metadataHandler =
+    yield *
+    makeOntologyHttpHandler(
+        yield *
+            makeOntologyServer({
+                enableRealtime: true,
+                kind: "proxy",
+                backend: metadataBackend,
+                ir: metadataIR,
+                authenticate: authenticateMetadata,
+            })
+    );
+```
+
+Mount `issueHandler` at `/api/issues/rpc` and `metadataHandler` at `/api/metadata/rpc`
+using the GET/POST pattern above. Their clients use `httpClient("/api/issues/rpc")`
+and `httpClient("/api/metadata/rpc")`. Each endpoint has one default ontology, so
+no named target is needed. Effect RPC works independently of the mounted URL path.
+
+## Internal commands
+
+`dangerouslyAllowInternalAccess` enables diagnostics and administrative commands:
+replica status, traces, outbox recovery, local-data deletion and owner release, where
+supplied. They can inspect or change state beyond the caller's policy, so restrict
+them to callers allowed to operate the whole endpoint.
+
+The IR policy still applies to reads, schema discovery, action checks, parameter
+bindings and attachments. Authentication and context validation also stay in place.
+To enable internal commands for selected authenticated callers:
+
+```ts
+dangerouslyAllowInternalAccess: (context) => context.role === "internal-admin",
+```
+
+Declare `role` in the context type and return it from `authenticate`. The predicate
+must return a boolean synchronously; session/database checks belong in `authenticate`.
+Use `true` only when all callers may run internal commands. Trace recording is separate.
+
+The SharedWorker helpers enable internal access for private app ports. Without an
+IR policy, this also exposes raw backend/replica capabilities. With a policy, raw
+journals and selected/speculative state remain disabled until those streams can be
+projected safely.
+
+The [issue-tracker endpoint](https://github.com/robertf224/party-stack/blob/codex/effect-ontology-migration/apps/issue-tracker/src/routes/api.remote-ontology.%24endpoint.ts)
+uses this setup with Better Auth.

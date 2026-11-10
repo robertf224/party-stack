@@ -1,0 +1,39 @@
+---
+title: Overview
+description: Build apps that query local data and synchronize actions with a backend.
+---
+
+import { ReplicaOverview } from "../../src/components/replica-overview";
+
+Party Stack brings reactive queries, optimistic actions, offline data, files,
+authentication, and authorization into one TypeScript framework. Connect an
+existing system or host your own backend.
+
+Each replica stores the parent data it needs, pending actions, and their predicted
+changes. Query demand determines what it loads from its parent.
+
+<ReplicaOverview />
+
+## Get an app running
+
+| You want to…                          | Start here                                 |
+| ------------------------------------- | ------------------------------------------ |
+| Try the smallest example              | [Get started](/docs/getting-started)       |
+| Build a TanStack Start app            | [TanStack Start](/docs/tanstack-start)     |
+| Sign into Foundry and switch accounts | [Foundry](/docs/foundry)                   |
+| Store your own objects in SQLite      | [Run a server](/docs/server)               |
+| Host a project on Cloudflare          | [Durable Objects](/docs/durable-objects)   |
+| Build a mobile object browser         | [Expo](/docs/expo)                         |
+| Connect another API                   | [Build an adapter](/docs/backend-adapters) |
+
+## Build the UI
+
+- [Queries](/docs/queries): render reactive collections.
+- [Actions](/docs/actions): submit changes and handle failures.
+- [Attachments](/docs/attachments): attach files, display images, and read metadata.
+- [Encrypted values](/docs/encrypted-values): decrypt properties and choose whether to cache them.
+- [Offline data](/docs/offline): keep a project available and choose cache limits.
+- [Authorization](/docs/authorization): scope rows, properties, and actions to a caller.
+
+For the conceptual model, [step through an issue update](/docs/architecture).
+For a complete application, browse [issue-tracker](https://github.com/robertf224/party-stack/tree/codex/effect-ontology-migration/apps/issue-tracker).

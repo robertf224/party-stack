@@ -8,7 +8,7 @@ export default defineLibraryConfig({
             postcss: { plugins: [tailwindcss({ optimize: { minify: true } })] },
             splitting: false,
             fileName: "styles.css",
-            inject: true,
+            inject: false,
         },
     },
 });

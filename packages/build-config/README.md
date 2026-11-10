@@ -39,3 +39,47 @@ in the workspace root.
 The package builds during installation. After editing it, run
 `vp run @party-stack/build-config#build`. If its `lib` output is missing, bootstrap
 with `pnpm exec vp -C packages/build-config pack`.
+
+## Effect libraries
+
+Effect packages opt in to separate presets; the ordinary library preset is unchanged:
+
+```ts
+import { defineEffectLibraryConfig } from "@party-stack/build-config/effect";
+
+export default defineEffectLibraryConfig();
+```
+
+```json
+{
+    "extends": "@party-stack/build-config/effect/tsconfig.json"
+}
+```
+
+This adds Effect's recommended type-aware lint rules and language-service plugin.
+The root prepare hook patches workspace TypeScript 7 and Vite+'s bundled Oxlint via
+`effect-tsgo patch --oxlint`. The lockfile pins the integration version. Ordinary
+libraries do not opt in to the Effect rules or TypeScript plugin.
+
+VS Code uses the workspace TypeScript SDK, and the recommended Effect extension
+provides debugger utilities. Its extension does not itself install the language
+service; that comes from the repository's `@effect/tsgo` dependency and patch step.
+Diagnostics are disabled in the editor plugin to avoid duplicate reports from
+Vite+/Oxc; editor hovers/refactors remain available. Reload the editor's TypeScript
+server after the first installation. See [Effect's development guide](https://effect.website/docs/v4/getting-started/devtools).
+
+### Effect tests and repository guidance
+
+Official skills are installed under `.agents/skills`. Read the installed root
+`node_modules/effect/AGENTS.md` completely before writing Effect code, following
+its version-matched links for errors, services, schemas, resources, and tests.
+Reusable Effect functions use `Effect.fnUntraced` unless a named tracing boundary
+is useful. Infrastructure errors use `Schema.TaggedError`; application records
+are not required to use Schema.
+
+The Effect preset maps `vitest` to `vite-plus/test` and inlines `@effect/vitest`,
+so Effect's test helpers use Vite+'s runner instead of registering with a second
+Vitest instance. Install `@effect/vitest` in packages that use it. `it.effect`
+provides Effect test services; use `it.live` for integration tests that need real
+time or native I/O. The ordinary library preset does not add these defaults.
+Caller test aliases and inlined dependencies are merged with the Effect defaults.

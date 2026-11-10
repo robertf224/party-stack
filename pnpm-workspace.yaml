@@ -5,21 +5,10 @@ packages:
 # Shared Vite+ toolchain versions used by catalog: references.
 # https://viteplus.dev/guide/migrate-rules#version-selection
 catalog:
-    vite: npm:@voidzero-dev/vite-plus-core@1.2.0
-    vitest: 5.0.4
-    vite-plus: 1.2.0
     "@vitest/browser-playwright": 5.0.4
-# Apply toolchain versions to transitive dependencies as well.
-# https://viteplus.dev/guide/migrate-rules#vite-and-overrides
-overrides:
-    "vite": "npm:@voidzero-dev/vite-plus-core@1.2.0"
-    "vitest@*": "5.0.4"
-# Plugins may still declare peer ranges for upstream Vite or older Vitest.
-# https://pnpm.io/settings/peer-dependencies#peerdependencyrulesallowany
-peerDependencyRules:
-    allowAny:
-        - "vite"
-        - "vitest"
+    vite: npm:@voidzero-dev/vite-plus-core@1.2.0
+    vite-plus: 1.2.0
+    vitest: 5.0.4
 # Packages allowed to run native build or binary-install scripts.
 # https://pnpm.io/10.x/settings#onlybuiltdependencies
 onlyBuiltDependencies:
@@ -27,3 +16,23 @@ onlyBuiltDependencies:
     - "better-sqlite3"
     - "esbuild"
     - "workerd"
+# Apply toolchain versions to transitive dependencies as well.
+# https://viteplus.dev/guide/migrate-rules#vite-and-overrides
+overrides:
+    # Keep CLI platform services aligned with Effect until the planned 4.1 upgrade.
+    "@effect/platform-node": "4.0.5"
+    "@effect/platform-node-shared": "4.0.5"
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.2.0"
+    "vitest@*": "5.0.4"
+    # One Vite identity for Vite+, Vitest and Cloudflare's plugin.
+    "@voidzero-dev/vite-plus-core>esbuild": "0.28.2"
+# Native pnpm configuration generated from the shared package's patch files.
+patchedDependencies:
+    "@tanstack/db@1.0.0-rc.1.4": packages/tanstack-db-patches/patches/@tanstack__db@1.0.0-rc.1.4.patch
+    "@tanstack/react-db@1.0.0-rc.1.4": packages/tanstack-db-patches/patches/@tanstack__react-db@1.0.0-rc.1.4.patch
+# Plugins may still declare peer ranges for upstream Vite or older Vitest.
+# https://pnpm.io/settings/peer-dependencies#peerdependencyrulesallowany
+peerDependencyRules:
+    allowAny:
+        - "vite"
+        - "vitest"

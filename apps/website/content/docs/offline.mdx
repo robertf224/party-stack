@@ -1,0 +1,199 @@
+---
+title: Offline data
+description: Download folders, projects or an entire app, including attachment bytes.
+---
+
+Normal queries cache what they load. Pins retain selected data after a view closes.
+Each pin is a query document and its inputs. Overlapping downloads share retention:
+removing one does not release data still needed by another.
+
+## Define a download
+
+A descriptor names a family of downloads. Its query can be bundled with an app or
+constructed at runtime from a dynamic ontology.
+
+```ts
+import { definePin, o } from "@party-stack/ontology";
+import { eq, field, input, related, row, sub } from "@party-stack/ontology/query";
+
+export const downloadProject = definePin<{ projectId: string }>("downloadProject", {
+    attachments: "all",
+    query: {
+        inputs: [{ name: "projectId", displayName: "Project", type: o.string({}) }],
+        select: [
+            sub("project", {
+                from: { source: { objectType: "Project" }, binding: "project" },
+                where: eq(field("project", "id"), input("projectId")),
+                select: [
+                    sub("issues", {
+                        from: { source: related(row("project"), "issues"), binding: "issue" },
+                        select: [],
+                    }),
+                ],
+            }),
+        ],
+    },
+});
+```
+
+`related(row("project"), "issues")` follows the ontology’s declared `issues` link;
+the source supplies the target object type and correlation.
+
+Each query node retains whole objects; `select: []` is enough at a leaf. Nested
+queries describe related objects to retain, and their predicates can refer to
+parent bindings without selecting those fields. Field selections remain allowed
+when reusing a query document, but do not limit which object fields are synced.
+`attachments: "all"` also downloads every attachment referenced by those objects;
+the default, `"none"`, retains objects only. Pins follow data changes rather than
+freezing a snapshot.
+
+## Request, cancel and remove
+
+Bind the descriptor to an ontology. The descriptor's input type flows into its
+commands and collection without code generation or registration.
+
+```ts
+const downloads = ontology.pins(downloadProject);
+await downloads.set({ projectId: "alpha" });
+await downloads.update({
+    set: [{ projectId: "beta" }, { projectId: "gamma" }],
+    remove: [{ projectId: "alpha" }],
+});
+await downloads.remove({ projectId: "beta" });
+await downloads.clear(); // Every download named downloadProject, across query revisions.
+```
+
+The SDK uses a normal memory replica for optimistic commands. Its pin collection
+updates before the persistent owner confirms the action. The Promise resolves
+when the owner accepts the command; acquisition continues in the background.
+`remove` cancels an unfinished download or releases a completed download.
+
+A server-backed view targets the persistent replica advertised by its server. A
+standalone view targets its own replica. Native Effect callers use
+`replica.demand.pins` with `set`, `update`, `remove`, `clear`, `list` and `changes`.
+
+Identity includes the name, query definition, attachment policy and inputs.
+Repeated `set` calls address the same download. Changing a query under the same
+name creates a separate revision; existing downloads remain until removed.
+`downloads.collection` contains only this descriptor's revision.
+`ontology.pins.collection` contains every name and revision; use
+`ontology.pins.remove(id)` or `ontology.pins.clear(name)` to manage that inventory.
+
+## Query download status
+
+Pins are TanStack DB collections. Use ordinary queries and joins; there is no
+special React pin hook.
+
+```tsx
+import { useOntology } from "@party-stack/ontology-react";
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { eq } from "@tanstack/db";
+import { objects } from "./ontology/generated/collections";
+
+function Projects({ showError }: { showError: (error: unknown) => void }) {
+    const ontology = useOntology();
+    const downloads = ontology.pins(downloadProject);
+    const { data } = useLiveSuspenseQuery((q) =>
+        q
+            .from({ project: objects.Project })
+            .leftJoin({ pin: downloads.collection }, ({ project, pin }) =>
+                eq(project.id, pin.inputs.projectId)
+            )
+            .select(({ project, pin }) => ({
+                id: project.id,
+                name: project.name,
+                pinId: pin.id,
+                ready: pin.ready,
+                error: pin.error,
+            }))
+    );
+
+    return data.map((project) => (
+        <button
+            key={project.id}
+            onClick={() => {
+                const command = project.pinId
+                    ? downloads.remove({ projectId: project.id })
+                    : downloads.set({ projectId: project.id });
+                void command.catch(showError);
+            }}
+        >
+            {project.name}:{" "}
+            {project.error
+                ? "Download interrupted"
+                : project.ready
+                  ? "Available offline"
+                  : project.pinId
+                    ? "Downloading…"
+                    : "Download"}
+        </button>
+    ));
+}
+```
+
+Row presence means a download is requested. `ready` means its selected objects and
+requested attachment bytes have been retained, not that the device is online or
+has the latest upstream revision. `error` reports an acquisition failure. Incomplete
+upstream coverage remains pending; it is not a timeout failure.
+
+For a single whole-app download, define a descriptor without inputs:
+
+```ts
+const appDownload = definePin("appDownload", { query: appQuery, attachments: "all" });
+await ontology.pins(appDownload).set();
+await ontology.pins(appDownload).remove();
+```
+
+The devtools Pinned panel groups downloads by family, showing its object/query tree
+once and each input set with its status and a command to remove or cancel it.
+
+## Configure the owning replica
+
+Set these options on the owning replica, or on a server route returning
+`kind: "replica"` alongside `ir`, `context`, and `backend`:
+
+```ts
+const settings = {
+    demand: {
+        idleRetentionMs: 30_000,
+        refresh: { maxCoverageAgeMs: 60_000 },
+    },
+    cache: {
+        objects: {
+            minUnusedAgeMs: 24 * 60 * 60 * 1000,
+            sweepIntervalMs: 60_000,
+            maxBytes: 64 * 1024 * 1024,
+            targetBytes: 48 * 1024 * 1024,
+        },
+        attachments: {
+            minUnusedAgeMs: 5 * 60 * 1000,
+            maxBytes: 256 * 1024 * 1024,
+            targetBytes: 192 * 1024 * 1024,
+        },
+    },
+};
+```
+
+`idleRetentionMs` keeps query demand briefly after its last consumer leaves.
+`maxCoverageAgeMs` controls reuse of quiet, unmaintained data; expiry causes
+revalidation on the next demand. Healthy live watches keep coverage current.
+
+`maxBytes` triggers collection toward `targetBytes`. Active demand, pins, and
+pending actions protect the data they need. These limits cover cached payloads,
+not the process's total memory or database overhead.
+
+Polling is opt-in with `demand.refresh.pollIntervalMs`, unless the adapter
+recommends it. Polling does not drive action retries or cache maintenance.
+
+## Pending actions
+
+A persistent owner keeps queued actions through restarts. The SDK's action Promise
+waits for the final result; the outbox collection lets a UI inspect paused work.
+
+Memory tabs lose unaccepted local work when closed. A tab connected to a persistent
+SharedWorker can continue offline once the worker has accepted its action.
+See [Foundry](/docs/foundry) for that placement.
+
+Use the devtools Outbox and Storage panels to inspect retained work and cached
+payloads. An offline page refresh additionally needs the app's own service worker
+to serve its HTML and JavaScript.

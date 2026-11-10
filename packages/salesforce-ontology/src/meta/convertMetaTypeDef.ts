@@ -1,4 +1,4 @@
-import type { StringConstraint, TypeDef } from "@party-stack/ontology";
+import type { StringConstraint, TypeDef } from "@party-stack/ontology-spec";
 import type {
     Field,
     SalesforceFieldDescribe,

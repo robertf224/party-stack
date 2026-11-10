@@ -1,519 +1,122 @@
-import { MemoryBlobBytesStore, SingleProcessCoordination } from "@party-stack/runtime";
+import {
+    BackendError,
+    makeOntologyBackend,
+    type OntologyBackendService,
+} from "@party-stack/ontology-backend";
+import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import { OntologyStorageError, ConfigurationError } from "@party-stack/ontology-storage";
+import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
+import { Runtime, MemoryBlobBytesStore } from "@party-stack/runtime";
+import { asRuntimeLayer } from "@party-stack/runtime/testing";
+import { queryOnce } from "@tanstack/db";
+import { Effect } from "effect";
+import { Temporal } from "temporal-polyfill";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { o } from "../ir/index.js";
-import { createLiveOntology, waitForLiveOntologyReady, type OntologyDefinition } from "./LiveOntology.js";
-import type { OntologyIR } from "../ir/index.js";
-import type { OntologyBackendAdapter } from "./OntologyBackendAdapter.js";
+import { createLiveOntology } from "./LiveOntology.js";
+import type { attachment } from "@party-stack/ontology-spec/values";
 
 const ir: OntologyIR = {
     types: [],
     objectTypes: [],
     linkTypes: [],
-    actionTypes: [],
+    actionTypes: [{ name: "save", displayName: "Save", parameters: [], logic: [] }],
     queryFunctionTypes: [
-        {
-            name: "currentUser",
-            displayName: "Current User",
-            parameters: [],
-            returnType: o.string({}),
-        },
+        { name: "currentUser", displayName: "Current user", parameters: [], returnType: o.string({}) },
     ],
 };
+const native = (overrides: Partial<OntologyBackendService> = {}): OntologyBackendService =>
+    makeOntologyBackend({
+        ir,
+        name: "test",
+        sourceId: "test",
+        supportsIdempotency: true,
+        loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+        applyAction: (action) =>
+            Effect.succeed({ operationId: action.id, outcome: "committed", affected: [] }),
+        queryFunction: () => Effect.succeed("user-1"),
+        ...overrides,
+    });
+const adapter = (backend = native()) => Effect.succeed(backend);
+const platform = (online = true) => {
+    return {
+        owner: "user",
+        namespace: crypto.randomUUID(),
+        blobBytes: new MemoryBlobBytesStore(),
 
-const actionIr: OntologyIR = {
-    ...ir,
-    actionTypes: [
-        {
-            name: "save",
-            displayName: "Save",
-            parameters: [],
-            logic: [],
-        },
-    ],
-    queryFunctionTypes: [],
+        connectivity: { isConnected: online, subscribe: () => () => undefined },
+    };
 };
 
-describe("createLiveOntology", () => {
-    it("uses immutable context.user as the runtime owner", async () => {
-        const context = { user: "user-42" };
-        const ontology = await createLiveOntology({
-            ir: { ...ir, queryFunctionTypes: [] },
-            context,
-            backend: (_providerIr, providerContext) => {
-                expect(providerContext).toBe(context);
-                return {
-                    name: "test",
-                    getCollectionOptions: () => {
-                        throw new Error("unexpected collection");
-                    },
-                    applyAction: () => Promise.reject(new Error("unexpected action")),
-                    runQueryFunction: () => Promise.reject(new Error("unexpected query")),
+describe("native LiveOntology construction", () => {
+    it("typed action calls accept File inputs and providers receive handles with staged uploads", async () => {
+        type UploadDefinition = {
+            objectTypes: {};
+            queryFunctionTypes: {};
+            actionTypes: {
+                upload: {
+                    parameters: { file: attachment };
+                    inputParameters: { file: attachment | Blob };
+                    returnType: void;
                 };
-            },
-            runtime: (owner) => {
-                expect(owner).toBe("user-42");
-                return {
-                    owner,
-                    namespace: "auth-test",
-                    blobBytes: new MemoryBlobBytesStore(),
-                    coordination: new SingleProcessCoordination({
-                        scope: "auth-test",
-                    }),
-                };
-            },
-        });
-
-        expect(ontology.context.user).toBe("user-42");
-        await ontology.cleanup();
-    });
-
-    it("derives runtime scope and owns the provider result", async () => {
-        const context = {
-            user: "user-1",
-            account: { id: "user-1" },
-            role: "editor",
+            };
         };
-        let receivedContext: Record<string, unknown> | undefined;
-        const cleanupOrder: string[] = [];
-        const coordination = new SingleProcessCoordination({
-            scope: "party-stack:user-1:ontology-1",
-        });
-        const closeCoordination = vi.spyOn(coordination, "close").mockImplementation(() => {
-            cleanupOrder.push("coordination");
-            return Promise.resolve();
-        });
-        const cleanupRuntime = vi.fn(async () => {
-            cleanupOrder.push("runtime");
-            await coordination.close();
-        });
-        const destroyRuntime = vi.fn(() => {
-            cleanupOrder.push("destroy");
-        });
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            getCollectionOptions: () => {
-                throw new Error("unexpected collection");
-            },
-            applyAction: () => Promise.reject(new Error("unexpected action")),
-            runQueryFunction: (_name, _parameters, live) => {
-                receivedContext = live.context;
-                return Promise.resolve(context.account.id);
-            },
-            cleanup: () => {
-                cleanupOrder.push("backend");
-            },
+        const uploadIR: OntologyIR = {
+            ...ir,
+            actionTypes: [
+                {
+                    name: "upload",
+                    displayName: "Upload",
+                    logic: [],
+                    parameters: [{ name: "file", displayName: "File", type: o.attachment({}) }],
+                },
+            ],
         };
-        const backend = vi.fn((providerIr: OntologyIR, providerContext: typeof context) => {
-            expect(providerIr).toBe(ir);
-            expect(providerContext).toBe(context);
-            return backendAdapter;
-        });
-
-        const ontology = await createLiveOntology<OntologyDefinition, typeof context>({
-            id: "ontology-1",
-            ir,
-            backend,
-            context,
-            runtime: (owner, namespace) => {
-                expect(owner).toBe("user-1");
-                expect(namespace).toBe("ontology-1");
-                return Promise.resolve({
-                    owner: "user-1",
-                    namespace: "ontology-1",
-                    blobBytes: {
-                        write: () => Promise.resolve(),
-                        read: () => Promise.reject(new Error("unexpected blob read")),
-                        delete: () => Promise.resolve(),
-                    },
-                    coordination,
-                    cleanup: cleanupRuntime,
-                    destroy: destroyRuntime,
-                });
-            },
-        });
-
-        expect(ontology.ir).toBe(ir);
-        expect(ontology.outbox).toBeDefined();
-        await expect(ontology.queryFunctions.currentUser!({})).resolves.toBe("user-1");
-        expect(receivedContext).toBe(context);
-        const firstDestroy = ontology.destroy();
-        const secondDestroy = ontology.destroy();
-        expect(firstDestroy).toBe(secondDestroy);
-        await firstDestroy;
-        expect(backend).toHaveBeenCalledOnce();
-        expect(closeCoordination).toHaveBeenCalledOnce();
-        expect(cleanupRuntime).toHaveBeenCalledOnce();
-        expect(destroyRuntime).toHaveBeenCalledOnce();
-        expect(cleanupOrder).toEqual(["backend", "runtime", "coordination", "destroy"]);
-    });
-
-    it("routes individual writes independently of the defaults", async () => {
-        const applyAction = vi.fn(() => Promise.resolve());
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            getCollectionOptions: () => {
-                throw new Error("unexpected collection");
-            },
-            applyAction,
-            runQueryFunction: () => Promise.reject(new Error("unexpected query")),
-        };
-        const listeners = new Set<(isConnected: boolean) => void>();
-        let isConnected = false;
-        const coordination = new SingleProcessCoordination({
-            scope: "write-routing",
-        });
-
-        const ontology = await createLiveOntology({
-            id: "write-routing",
-            ir: actionIr,
-            backend: () => backendAdapter,
-            runtime: () => ({
-                owner: "user",
-                namespace: "write-routing",
-                blobBytes: new MemoryBlobBytesStore(),
-                coordination,
-                connectivity: {
-                    get isConnected() {
-                        return isConnected;
-                    },
-                    subscribe(listener) {
-                        listeners.add(listener);
-                        return () => listeners.delete(listener);
-                    },
-                },
-            }),
-        });
-
-        await ontology.actions.save!({});
-        expect(applyAction).toHaveBeenCalledOnce();
-
-        const queued = ontology.actions.save!(
-            {},
-            {
-                mode: "outbox",
-                visibility: "optimistic",
-            }
-        );
-        await vi.waitFor(() => {
-            expect(ontology.outbox.collection.size).toBe(1);
-        });
-        expect(applyAction).toHaveBeenCalledOnce();
-        const [entry] = Array.from(ontology.outbox.collection.values());
-        expect(entry?.visibility).toBe("optimistic");
-
-        isConnected = true;
-        for (const listener of listeners) {
-            listener(true);
-        }
-        await queued;
-        expect(applyAction).toHaveBeenCalledTimes(2);
-        await ontology.cleanup();
-        await coordination.close();
-    });
-
-    it("resolves defaults only for direct and outbox optimistic projections", async () => {
-        const applyAction = vi.fn<OntologyBackendAdapter["applyAction"]>(() => Promise.resolve());
-        const projectedParameters: Record<string, unknown>[] = [];
-        const coordination = new SingleProcessCoordination({
-            scope: "projection-defaults",
-        });
-        const ontology = await createLiveOntology({
-            id: "projection-defaults",
-            ir: {
-                ...actionIr,
-                actionTypes: [
-                    {
-                        ...actionIr.actionTypes[0]!,
-                        parameters: [
-                            {
-                                name: "label",
-                                displayName: "Label",
-                                type: o.string({}),
-                                defaultValue: o.Expression.literal({ value: "resolved" }),
-                            },
-                        ],
-                    },
-                ],
-            },
-            backend: () => ({
-                name: "test",
-                getCollectionOptions: () => {
-                    throw new Error("unexpected collection");
-                },
-                applyAction,
-                runQueryFunction: () => Promise.reject(new Error("unexpected query")),
-            }),
-            runtime: () => ({
-                owner: "user",
-                namespace: "projection-defaults",
-                blobBytes: new MemoryBlobBytesStore(),
-                coordination,
-                connectivity: {
-                    isConnected: false,
-                    subscribe: () => () => {},
-                },
-            }),
-            writes: {
-                mutators: {
-                    save: ({ args }) => {
-                        projectedParameters.push(args);
-                    },
-                },
-            },
-        });
-
-        await ontology.actions.save!({}, { visibility: "optimistic" });
-        expect(projectedParameters).toEqual([{ label: "resolved" }]);
-        expect(applyAction.mock.calls[0]?.[1]).toEqual({});
-
-        const queued = ontology.actions.save!(
-            {},
-            {
-                mode: "outbox",
-                visibility: "optimistic",
-            }
-        );
-        void queued.catch(() => undefined);
-        await vi.waitFor(() => {
-            expect(projectedParameters).toEqual([{ label: "resolved" }, { label: "resolved" }]);
-        });
-        expect(Array.from(ontology.outbox.collection.values())[0]?.request.parameters).toEqual({});
-
-        await ontology.cleanup();
-        await coordination.close();
-    });
-
-    it("rejects optimistic actions backed by a non-live adapter", async () => {
-        const applyAction = vi.fn<OntologyBackendAdapter["applyAction"]>(() => Promise.resolve());
-        const coordination = new SingleProcessCoordination({
-            scope: "non-live-optimistic",
-        });
-        const ontology = await createLiveOntology({
-            id: "non-live-optimistic",
-            ir: actionIr,
-            backend: () => ({
-                name: "non-live",
-                live: false,
-                getCollectionOptions: () => {
-                    throw new Error("unexpected collection");
-                },
-                applyAction,
-                runQueryFunction: () => Promise.reject(new Error("unexpected query")),
-            }),
-            runtime: () => ({
-                owner: "user",
-                namespace: "non-live-optimistic",
-                blobBytes: new MemoryBlobBytesStore(),
-                coordination,
-            }),
-        });
-
-        await expect(ontology.actions.save!({}, { visibility: "optimistic" })).rejects.toThrow(
-            'Ontology backend adapter "non-live" is not live and cannot reconcile optimistic actions.'
-        );
-        expect(applyAction).not.toHaveBeenCalled();
-
-        await ontology.cleanup();
-        await coordination.close();
-    });
-
-    it("validates an action without applying it", async () => {
-        const applyAction = vi.fn(() => Promise.resolve());
-        const validateAction = vi.fn(() =>
-            Promise.resolve({
-                certain: true as const,
-                value: {
-                    kind: "err" as const,
-                    value: [{ message: "Invalid action." }],
-                },
-            })
-        );
-        const validateActionDraft = vi.fn(() =>
-            Promise.resolve({
-                certain: false as const,
-            })
-        );
-        const context = { user: "user-1" };
-        const ontology = await createLiveOntology({
-            id: "action-validation",
-            ir: actionIr,
-            context,
-            backend: () => ({
-                name: "test",
-                getCollectionOptions: () => {
-                    throw new Error("unexpected collection");
-                },
-                applyAction,
-                validateAction,
-                validateActionDraft,
-                runQueryFunction: () => Promise.reject(new Error("unexpected query")),
-            }),
-            runtime: () => ({
-                owner: "user-1",
-                namespace: "action-validation",
-                blobBytes: new MemoryBlobBytesStore(),
-                coordination: new SingleProcessCoordination({
-                    scope: "action-validation",
+        const received: { parameters: unknown; text: string }[] = [];
+        const backend = makeOntologyBackend({
+            ir: uploadIR,
+            name: "uploads",
+            sourceId: "uploads",
+            supportsIdempotency: true,
+            loadSubset: () => Effect.succeed({ rows: [], complete: true }),
+            queryFunction: () => Effect.void,
+            applyAction: (action) =>
+                Effect.gen(function* () {
+                    const blob = yield* collectByteBlob(action.attachmentUploads![0]!.blob).pipe(
+                        Effect.orDie
+                    );
+                    received.push({
+                        parameters: action.parameters,
+                        text: yield* Effect.promise(() => blob.text()),
+                    });
+                    return { operationId: action.id, outcome: "committed" as const, affected: [] };
                 }),
-            }),
         });
-
-        await expect(ontology.actions.save!.validate({})).resolves.toEqual({
-            certain: true,
-            value: {
-                kind: "err",
-                value: [{ message: "Invalid action." }],
-            },
+        const live = await createLiveOntology<UploadDefinition>({
+            ir: uploadIR,
+            backend: Effect.succeed(backend),
+            runtime: asRuntimeLayer(() => platform()),
         });
-        expect(validateAction).toHaveBeenCalledWith(
-            "save",
-            {},
-            {
-                objects: {},
-                context,
-            }
-        );
-        await ontology.actions.save!.validateDraft(
-            {},
-            {
-                knownParameters: [],
-            }
-        );
-        expect(validateActionDraft).toHaveBeenCalledWith(
-            "save",
-            {},
-            {
-                objects: {},
-                context,
-                knownParameters: [],
-            }
-        );
-        expect(applyAction).not.toHaveBeenCalled();
-        await ontology.cleanup();
-    });
-
-    it("reports uncertain validation when the backend does not implement it", async () => {
-        const coordination = new SingleProcessCoordination({
-            scope: "unsupported-action-validation",
-        });
-        const ontology = await createLiveOntology({
-            id: "unsupported-action-validation",
-            ir: actionIr,
-            backend: () => ({
-                name: "test",
-                getCollectionOptions: () => {
-                    throw new Error("unexpected collection");
-                },
-                applyAction: () => Promise.resolve(),
-                runQueryFunction: () => Promise.reject(new Error("unexpected query")),
-            }),
-            runtime: () => ({
-                owner: "user",
-                namespace: "unsupported-action-validation",
-                blobBytes: new MemoryBlobBytesStore(),
-                coordination,
-            }),
-        });
-
-        await expect(ontology.actions.save!.validate({})).resolves.toEqual({
-            certain: false,
-        });
-        await ontology.cleanup();
-        await coordination.close();
-    });
-
-    it("exposes ready and settles immediate cleanup without unhandled rejections", async () => {
-        const unhandled: unknown[] = [];
-        const onUnhandled = (reason: unknown) => {
-            unhandled.push(reason);
-        };
-        process.on("unhandledRejection", onUnhandled);
-
-        const coordination = new SingleProcessCoordination({
-            scope: "lifecycle-cleanup",
-        });
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            getCollectionOptions: () => ({
-                syncMode: "on-demand",
-                sync: {
-                    sync: ({ markReady }) => {
-                        markReady();
-                        return {};
-                    },
-                },
-            }),
-            applyAction: () => Promise.resolve(),
-            runQueryFunction: () => Promise.resolve(undefined),
-        };
-
         try {
-            const ontology = await createLiveOntology({
-                id: "lifecycle-cleanup",
-                ir: {
-                    ...ir,
-                    objectTypes: [
-                        {
-                            name: "Note",
-                            displayName: "Note",
-                            pluralDisplayName: "Notes",
-                            primaryKey: "id",
-                            properties: [
-                                {
-                                    name: "id",
-                                    displayName: "ID",
-                                    type: o.string({}),
-                                },
-                            ],
-                        },
-                    ],
-                    queryFunctionTypes: [],
+            const file = new File(["hello"], "hello.txt", { type: "text/plain" });
+            await live.actions.upload({ file });
+            expect(received).toMatchObject([
+                {
+                    parameters: {
+                        file: { id: expect.stringMatching(/^action-attachment:/), type: "text/plain" },
+                    },
+                    text: "hello",
                 },
-                backend: () => backendAdapter,
-                runtime: () => ({
-                    owner: "user",
-                    namespace: "lifecycle-cleanup",
-                    blobBytes: new MemoryBlobBytesStore(),
-                    coordination,
-                }),
-            });
-
-            const ready = ontology.ready;
-            await expect(Promise.all([ready, ontology.cleanup()])).resolves.toBeDefined();
-            await expect(ontology.cleanup()).resolves.toBeUndefined();
-            expect(unhandled).toEqual([]);
+            ]);
+            expect((received[0]!.parameters as { file: unknown }).file).not.toBeInstanceOf(Blob);
         } finally {
-            process.off("unhandledRejection", onUnhandled);
-            await coordination.close();
+            await live.cleanup();
         }
     });
-
-    it("waits for on-demand collections via waitForLiveOntologyReady", async () => {
-        let syncStarted = false;
-        const coordination = new SingleProcessCoordination({
-            scope: "wait-ready",
-        });
-        const backendAdapter: OntologyBackendAdapter = {
-            name: "test",
-            getCollectionOptions: () => ({
-                syncMode: "on-demand",
-                sync: {
-                    sync: ({ markReady }) => {
-                        syncStarted = true;
-                        // Defer ready so waitForCollectionReady must start sync first.
-                        queueMicrotask(() => markReady());
-                        return {
-                            loadSubset: () => true as const,
-                        };
-                    },
-                },
-            }),
-            applyAction: () => Promise.resolve(),
-            runQueryFunction: () => Promise.resolve(undefined),
-        };
-
-        const ontology = await createLiveOntology({
-            id: "wait-ready",
+    it("cachedObjects is lazy, shares the replica and observes data without acquiring upstream demand", async () => {
+        const loadSubset = vi.fn(() =>
+            Effect.succeed({ complete: true, rows: [{ key: "one", value: { id: "one", title: "Loaded" } }] })
+        );
+        const live = await createLiveOntology({
             ir: {
                 ...ir,
                 objectTypes: [
@@ -522,31 +125,349 @@ describe("createLiveOntology", () => {
                         displayName: "Note",
                         pluralDisplayName: "Notes",
                         primaryKey: "id",
-                        properties: [
-                            {
-                                name: "id",
-                                displayName: "ID",
-                                type: o.string({}),
-                            },
-                        ],
+                        properties: ["id", "title"].map((name) => ({
+                            name,
+                            displayName: name,
+                            type: o.string({}),
+                        })),
                     },
                 ],
-                queryFunctionTypes: [],
             },
-            backend: () => backendAdapter,
-            runtime: () => ({
-                owner: "user",
-                namespace: "wait-ready",
-                blobBytes: new MemoryBlobBytesStore(),
-                coordination,
+            backend: adapter(native({ loadSubset })),
+            runtime: asRuntimeLayer(() => platform()),
+        });
+        const collections = vi.spyOn(live.dbClient, "collection");
+        let cached;
+        try {
+            expect(Object.keys(live.objects)).toEqual(["Note"]);
+            expect(Object.keys(live.cachedObjects)).toEqual(["Note"]);
+            expect(collections).not.toHaveBeenCalled();
+            expect(loadSubset).not.toHaveBeenCalled();
+            cached = live.cachedObjects.Note!;
+            expect(cached).toBe(live.cachedObjects.Note);
+            expect(collections).toHaveBeenCalledTimes(1);
+            expect(await queryOnce((q) => q.from({ note: cached! }))).toEqual([]);
+            expect(loadSubset).not.toHaveBeenCalled();
+            expect(await queryOnce((q) => q.from({ note: live.objects.Note! }))).toMatchObject([
+                { id: "one" },
+            ]);
+            expect(loadSubset).toHaveBeenCalledTimes(1);
+            expect(collections).toHaveBeenCalledTimes(2);
+            expect(await queryOnce((q) => q.from({ note: cached! }))).toMatchObject([{ title: "Loaded" }]);
+            expect(loadSubset).toHaveBeenCalledTimes(1);
+        } finally {
+            await live.cleanup();
+        }
+        expect(cached?.status).toBe("cleaned-up");
+    });
+    it("outbox edits preserve replay and Temporal values and report missing entries with a typed error", async () => {
+        const live = await createLiveOntology({
+            ir: {
+                ...ir,
+                actionTypes: [
+                    {
+                        ...ir.actionTypes[0]!,
+                        parameters: [{ name: "at", displayName: "At", type: o.timestamp({}) }],
+                    },
+                ],
+            },
+            runtime: asRuntimeLayer(() => platform(false)),
+            backend: adapter(),
+        });
+        const replay = { now: "2026-11-03T12:00:00Z", seed: "edit-test" };
+        try {
+            await live.outbox.enqueue({
+                idempotencyKey: "edit",
+                actionTypeName: "save",
+                parameters: { at: Temporal.Instant.from(replay.now) },
+                replay,
+            });
+            await live.outbox.edit("edit", (request) => {
+                request.parameters.extra = "changed";
+            });
+            const status = await Effect.runPromise(live.replica.outbox.get("edit"));
+            expect(status.pending?.invocation.replay).toEqual(replay);
+            expect(status.pending?.invocation.parameters.at).toBeInstanceOf(Temporal.Instant);
+            await expect(live.outbox.edit("missing", () => {})).rejects.toMatchObject({
+                kind: "NotFound",
+                operation: "outbox.edit",
+            });
+        } finally {
+            await live.cleanup();
+        }
+    });
+    it("delegates query functions through Replica and preserves logical Temporal results", async () => {
+        const queryFunction = vi.fn(() => Effect.succeed(Temporal.Instant.from("2026-11-03T12:00:00Z")));
+        const live = await createLiveOntology({
+            ir: {
+                ...ir,
+                queryFunctionTypes: [{ ...ir.queryFunctionTypes[0]!, returnType: o.timestamp({}) }],
+            },
+            runtime: asRuntimeLayer(() => platform()),
+            backend: adapter(native({ queryFunction })),
+        });
+        try {
+            expect(live.replica.queryFunction).toBeTypeOf("function");
+            const result = await live.queryFunctions.currentUser!({});
+            expect(result).toBeInstanceOf(Temporal.Instant);
+            expect(String(result)).toBe("2026-11-03T12:00:00Z");
+            expect(queryFunction).toHaveBeenCalledWith("currentUser", {});
+        } finally {
+            await live.cleanup();
+        }
+    });
+    it("decodes authoritative action results after confirmation", async () => {
+        const live = await createLiveOntology({
+            ir: { ...ir, actionTypes: [{ ...ir.actionTypes[0]!, returnType: o.timestamp({}) }] },
+            runtime: asRuntimeLayer(() => platform()),
+            backend: adapter(
+                native({
+                    applyAction: (request) =>
+                        Effect.succeed({
+                            operationId: request.id,
+                            outcome: "committed",
+                            affected: [],
+                            result: "2026-11-03T12:00:00Z",
+                        }),
+                })
+            ),
+        });
+        try {
+            const result = await live.actions.save!({});
+            expect(result.result).toBeInstanceOf(Temporal.Instant);
+            expect(String(result.result)).toBe("2026-11-03T12:00:00Z");
+            expect(result.receipt?.result).toBe("2026-11-03T12:00:00Z");
+        } finally {
+            await live.cleanup();
+        }
+    });
+    it("keeps action.resolveParameters on the native backend path without submitting", async () => {
+        const resolve = vi.fn((name: string, parameters: Record<string, unknown>) =>
+            Effect.succeed({ ...parameters, title: `prefill-${name}` })
+        );
+        const applyAction = vi.fn(() => Effect.die("must not submit"));
+        const live = await createLiveOntology({
+            ir,
+            runtime: asRuntimeLayer(() => platform()),
+            backend: adapter(native({ resolveActionParameters: resolve, applyAction })),
+        });
+        try {
+            expect(await live.actions.save!.resolveParameters({ id: "existing" })).toEqual({
+                id: "existing",
+                title: "prefill-save",
+            });
+            expect(resolve).toHaveBeenCalledWith("save", { id: "existing" });
+            expect(applyAction).not.toHaveBeenCalled();
+            expect(live.outbox.collection.size).toBe(0);
+        } finally {
+            await live.cleanup();
+        }
+    });
+    it("uses the native Replica even without persistent storage and owns its acquisition scope", async () => {
+        const released = vi.fn();
+        const runtime = platform();
+        const context = { user: "user-42" };
+        const live = await createLiveOntology({
+            ir,
+            context,
+            id: "ontology-a",
+            runtime: asRuntimeLayer((owner, namespace) => {
+                expect(owner).toBe("user-42");
+                expect(namespace).toBe("ontology-a");
+                return runtime;
+            }),
+            backend: Effect.gen(function* () {
+                expect((yield* Runtime).owner).toBe("user-42");
+                yield* Effect.addFinalizer(() => Effect.sync(released));
+                return native();
             }),
         });
+        expect(live.replica).toBeDefined();
+        expect(await live.queryFunctions.currentUser!({})).toBe("user-1");
+        expect((await live.actions.save!({}))?.receipt?.outcome).toBe("committed");
+        await live.cleanup();
+        await live.cleanup();
+        expect(released).toHaveBeenCalledOnce();
+        expect(live.outbox.collection.status).toBe("cleaned-up");
+    });
 
-        expect(ontology.objects.Note!.status).toBe("idle");
-        await expect(waitForLiveOntologyReady(ontology)).resolves.toBeUndefined();
-        expect(syncStarted).toBe(true);
-        expect(ontology.objects.Note!.status).toBe("ready");
-        await ontology.cleanup();
-        await coordination.close();
+    it("releases platform resources when Tables acquisition fails", async () => {
+        const openBackend = vi.fn(() => native());
+        const runtime = platform();
+        const cleanupRuntime = vi.fn();
+        await expect(
+            createLiveOntology({
+                ir,
+                backend: Effect.sync(openBackend),
+                runtime: asRuntimeLayer(() => ({
+                    ...runtime,
+                    tables: Effect.fail(
+                        new OntologyStorageError({
+                            operation: "open",
+                            reason: new ConfigurationError({ message: "Could not open tables." }),
+                        })
+                    ),
+                    cleanup: cleanupRuntime,
+                })),
+            })
+        ).rejects.toMatchObject({ _tag: "OntologyStorageError" });
+        expect(openBackend).not.toHaveBeenCalled();
+        expect(cleanupRuntime).toHaveBeenCalledOnce();
+    });
+
+    it("releases runtime and binding on failed native acquisition", async () => {
+        const runtime = platform();
+        const cleanup = vi.fn();
+        const cleanupRuntime = vi.fn();
+        await expect(
+            createLiveOntology({
+                ir,
+                runtime: asRuntimeLayer(() => ({ ...runtime, cleanup: cleanupRuntime })),
+                backend: Effect.acquireRelease(Effect.void, () => Effect.sync(cleanup)).pipe(
+                    Effect.andThen(
+                        Effect.fail(
+                            new BackendError({
+                                operation: "open",
+                                kind: "ValidationFailed",
+                                message: "No access",
+                                retryable: false,
+                            })
+                        )
+                    )
+                ),
+            })
+        ).rejects.toMatchObject({ message: "No access" });
+        expect(cleanup).toHaveBeenCalledOnce();
+        expect(cleanupRuntime).toHaveBeenCalledOnce();
+    });
+
+    it("queued writes survive cancelling an observation and can later be awaited by ID", async () => {
+        const runtime = platform(false);
+        const applyAction = vi.fn(native().applyAction);
+        const live = await createLiveOntology({
+            ir,
+            backend: adapter(native({ applyAction })),
+            runtime: asRuntimeLayer(() => runtime),
+        });
+        try {
+            const queued = await live.outbox.enqueue({
+                actionTypeName: "save",
+                parameters: {},
+                idempotencyKey: "offline",
+            });
+            const abort = new AbortController();
+            const waiting = live.outbox.wait("offline", { signal: abort.signal });
+            abort.abort();
+            await expect(waiting).rejects.toBeDefined();
+            expect(
+                (await Effect.runPromise(live.replica!.outbox.entries)).map((a) => a.invocation.id)
+            ).toEqual(["offline"]);
+            expect(applyAction).not.toHaveBeenCalled();
+            runtime.connectivity.isConnected = true;
+            await Effect.runPromise(live.replica!.syncOnce);
+            expect(((await queued.completed) as { receipt: { outcome: string } }).receipt.outcome).toBe(
+                "committed"
+            );
+            expect(await live.outbox.wait("offline")).toMatchObject({ receipt: { outcome: "committed" } });
+        } finally {
+            await live.cleanup();
+        }
+    });
+
+    it("validation never dispatches an action and missing validation remains uncertain", async () => {
+        const applyAction = vi.fn(native().applyAction);
+        const validate = vi.fn(() =>
+            Effect.succeed({
+                certain: true as const,
+                value: { kind: "ok" as const, value: undefined },
+            })
+        );
+        const live = await createLiveOntology({
+            ir,
+            backend: adapter(native({ applyAction, validateAction: validate })),
+        });
+        try {
+            expect(await live.actions.save!.validate({})).toEqual({
+                certain: true,
+                value: { kind: "ok", value: undefined },
+            });
+            expect(validate).toHaveBeenCalledOnce();
+            expect(applyAction).not.toHaveBeenCalled();
+        } finally {
+            await live.cleanup();
+        }
+        const other = await createLiveOntology({ ir, backend: adapter() });
+        try {
+            expect(await other.actions.save!.validate({})).toEqual({ certain: false });
+        } finally {
+            await other.cleanup();
+        }
+    });
+
+    it.each(["confirmed", "optimistic"] as const)(
+        "actions queue offline and await confirmation (visibility: %s)",
+        async (visibility) => {
+            const runtime = platform(false);
+            const applyAction = vi.fn(native().applyAction);
+            const live = await createLiveOntology({
+                ir,
+                runtime: asRuntimeLayer(() => runtime),
+                backend: adapter(native({ applyAction })),
+            });
+            try {
+                expect(await Effect.runPromise(live.replica!.outbox.entries)).toEqual([]);
+                const confirmed = vi.fn();
+                const applying = live.actions.save!({}, { visibility, idempotencyKey: "queued" }).then(
+                    (result) => {
+                        confirmed();
+                        return result;
+                    }
+                );
+                await vi.waitFor(async () => {
+                    expect(await Effect.runPromise(live.replica!.outbox.entries)).toHaveLength(1);
+                });
+                expect((await Effect.runPromise(live.replica!.outbox.entries))[0]).toMatchObject({
+                    invocation: { id: "queued" },
+                    optimistic: visibility === "optimistic",
+                });
+                expect(confirmed).not.toHaveBeenCalled();
+                expect(applyAction).not.toHaveBeenCalled();
+                runtime.connectivity.isConnected = true;
+                await Effect.runPromise(live.replica!.syncOnce);
+                await expect(applying).resolves.toMatchObject({ receipt: { outcome: "committed" } });
+                expect(confirmed).toHaveBeenCalledOnce();
+            } finally {
+                await live.cleanup();
+            }
+        }
+    );
+
+    it("high-level outbox actions reject with the final structured error after discard-all", async () => {
+        const failure = new BackendError({
+            operation: "applyAction",
+            kind: "ValidationFailed",
+            message: "Submission failed validation.",
+            retryable: false,
+            actionOutcome: "not-committed",
+            issues: [{ path: ["project"], code: "InvalidObjectReference", message: "Choose a valid value." }],
+        });
+        const applyAction = vi.fn(() => Effect.fail(failure));
+        const live = await createLiveOntology({
+            ir,
+            runtime: asRuntimeLayer(() => platform()),
+            backend: adapter(native({ applyAction })),
+            writes: { outbox: { failureStrategy: "discard-all" } },
+        });
+        try {
+            await expect(live.actions.save!({})).rejects.toMatchObject({
+                kind: "ValidationFailed",
+                actionOutcome: "not-committed",
+                issues: failure.issues,
+            });
+            expect(await Effect.runPromise(live.replica!.outbox.entries)).toEqual([]);
+            expect(applyAction).toHaveBeenCalledOnce();
+        } finally {
+            await live.cleanup();
+        }
     });
 });

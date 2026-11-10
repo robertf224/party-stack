@@ -1,0 +1,161 @@
+---
+title: Build a backend adapter
+description: Connect an existing API to reactive queries and optimistic actions.
+---
+
+A backend adapter translates Party Stack reads and actions into calls to an
+existing system. Start with complete subset snapshots. Add watches, attachments,
+and incremental delivery only when the source can support them.
+
+If you own the database and action implementation, use
+[`makeStorageBackend`](/docs/server) instead. It already supplies transactions,
+receipts, a journal, attachments, and declarative action execution.
+
+## Start with reads
+
+`makeOntologyBackend` adds finite Query IR execution over your `loadSubset`
+implementation. This read-only example assumes a small catalogue API returning
+**all** items in one response:
+
+```ts
+import { BackendError, makeOntologyBackend } from "@party-stack/ontology-backend";
+import { objectSubset } from "@party-stack/ontology-backend/subset";
+import { Effect, Schema } from "effect";
+import { ir } from "./ontology";
+
+const Item = Schema.Struct({ id: Schema.String, title: Schema.String });
+const readItems = Effect.fn("Catalogue.readItems")(function* () {
+    const response = yield* Effect.tryPromise({
+        try: (signal) => fetch("https://catalogue.example.com/items", { signal }),
+        catch: () =>
+            new BackendError({
+                operation: "loadSubset",
+                kind: "Unavailable",
+                retryable: true,
+                message: "Catalogue unavailable.",
+            }),
+    });
+    if (!response.ok)
+        return yield* new BackendError({
+            operation: "loadSubset",
+            kind: "Unavailable",
+            retryable: response.status >= 500,
+            message: "Catalogue request failed.",
+        });
+    const json = yield* Effect.tryPromise({
+        try: () => response.json(),
+        catch: () =>
+            new BackendError({
+                operation: "loadSubset",
+                kind: "InvalidResponse",
+                retryable: false,
+                message: "Invalid catalogue response.",
+            }),
+    });
+    return yield* Schema.decodeUnknownEffect(Schema.Array(Item))(json).pipe(
+        Effect.mapError(
+            () =>
+                new BackendError({
+                    operation: "loadSubset",
+                    kind: "InvalidResponse",
+                    retryable: false,
+                    message: "Invalid catalogue items.",
+                })
+        )
+    );
+});
+const unsupported = (operation: string) =>
+    Effect.fail(
+        new BackendError({
+            operation,
+            kind: "NotImplemented",
+            retryable: false,
+            actionOutcome: "not-committed",
+            message: "This catalogue is read-only.",
+        })
+    );
+
+export const backend = makeOntologyBackend({
+    ir,
+    name: "Catalogue",
+    sourceId: "catalogue:production",
+    supportsIdempotency: false,
+    loadSubset: Effect.fn("Catalogue.loadSubset")(function* (subset) {
+        if (!("objectType" in subset.from.source) || subset.from.source.objectType !== "Item")
+            return yield* unsupported("loadSubset");
+        const items = yield* readItems();
+        return {
+            rows: items.map((value) => ({ key: value.id, value })),
+            complete: true,
+            fulfilledSubset: objectSubset("Item", {}),
+        };
+    }),
+    applyAction: () => unsupported("applyAction"),
+    queryFunction: () => unsupported("queryFunction"),
+});
+```
+
+`fulfilledSubset` says the response contains the whole Item type. The engine can
+finish the requested filtering, ordering, and limit locally. This is a correct
+starting point for a small source; a large API should push those operations down.
+Never mark a partially fetched provider page as a complete unbounded result.
+
+Pass `{ ir, backend }` to an `OntologyProvider`, or serve it with
+`makeOntologyServer({ kind: "proxy", backend, ir, authenticate })` and an
+[authorization policy](/docs/authorization).
+
+## Push queries down
+
+`loadSubset` receives a portable `ObjectSubset`: object type, predicates,
+ordering, and an optional window. Translate supported operations into your API.
+Return the requested subset, or explicitly describe a broader fulfilled subset
+so the engine can evaluate the remaining operations.
+
+Do not apply a provider limit before a filter that the provider cannot evaluate:
+that can omit valid rows. String and timestamp ordering must match the requested
+semantics. Unsupported computations should fail with `NotImplemented`, rather
+than silently return a different result.
+
+## Tell replicas when data changes
+
+`watchSubset(subset)` is optional. It returns a **scoped Effect acquiring a change
+stream**. Acquisition must register and buffer notifications before it completes;
+then the replica can read a snapshot without missing a change in between.
+
+Emit a hint when the subset might have changed. On reconnect, emit `"reset"` or
+fail the stream so a fresh snapshot is acquired. Release subscriptions when the
+Effect Scope closes. If the API has no watch, recommend polling through
+`refresh: () => ({ pollIntervalMs: 30_000 })`; the replica owns scheduling.
+
+For a durable source journal, implement `changes.pull` and optionally
+`changes.watch`. A journal cursor must agree with the snapshot it accompanies.
+Selected incremental delivery is an additional capability, not a prerequisite
+for an adapter.
+
+## Submit actions
+
+An action receives a stable invocation ID, parameters, and staged attachments.
+Return an `ActionReceipt` only when the source has committed the operation.
+`operationId` identifies the submitted invocation; a provider's job ID belongs
+in `providerOperationId`.
+
+Advertise `supportsIdempotency: true` only if repeated IDs recover the original
+outcome across source restarts and reject conflicting payloads. A lost network
+reply can mean the action committed. Report `actionOutcome: "unknown"` when you
+cannot prove otherwise; the replica must not blindly resubmit that action.
+
+Return affected keys when known so replicas can refresh the relevant objects.
+[Server projection](/docs/authorization-boundaries#errors-and-receipts) determines
+which identifiers may be disclosed to downstream clients.
+
+## Add optional capabilities
+
+- `attachments`: read/stage bytes and read metadata without embedding files in rows.
+- `encrypted`: decrypt authorized opaque values.
+- `validateAction`: validate a draft without performing the action.
+- `resolveActionParameters`: resolve defaults and edit prefills.
+
+Acquire SDK clients and sockets in an Effect Scope. Keep verified authentication
+context fixed for that acquisition, and keep secrets in services rather than
+public context. Use `BackendError` to distinguish authentication, authorization,
+validation, transport, and schema failures.

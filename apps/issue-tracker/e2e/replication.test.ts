@@ -1,0 +1,646 @@
+import { env } from "node:process";
+import { chromium, type Browser, type Page } from "playwright";
+import { afterAll, beforeAll, expect, test } from "vite-plus/test";
+
+// Start the app with vp run @party-stack/issue-tracker#dev and pass its printed worktree URL.
+const url = env.ISSUE_TRACKER_TEST_URL;
+let browser: Browser;
+beforeAll(async () => {
+    if (url) browser = await chromium.launch();
+});
+afterAll(async () => {
+    await browser?.close();
+});
+const visible = async (page: Page, role: Parameters<Page["getByRole"]>[0], name: string | RegExp) => {
+    await expect.poll(() => page.getByRole(role, { name }).isVisible()).toBe(true);
+};
+
+test.skipIf(!url)("an unavailable inspector chunk cannot take down the issue tracker", async () => {
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await page.route("**/ontology-devtools/lib/OntologyDevtools.js*", (route) => route.abort());
+    try {
+        await page.goto(url!);
+        await visible(page, "heading", "Connect profile");
+        await page.getByRole("button", { name: "Connect", exact: true }).click();
+        await visible(page, "button", "New issue");
+        await page.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
+        await page.getByText("The inspector could not load. Reconnect and reload to try again.").waitFor();
+        await page.getByRole("button", { name: "New issue", exact: true }).click();
+        await page.getByRole("dialog", { name: "Create issue", exact: true }).waitFor();
+    } finally {
+        await context.close();
+    }
+});
+
+test.skipIf(!url).each(["offline", "online"])(
+    "status updates with %s are optimistic with devtools closed, Objects selected, or Outbox selected",
+    async (network) => {
+        const context = await browser.newContext({ ignoreHTTPSErrors: true });
+        const title = `Optimistic status ${crypto.randomUUID().slice(0, 8)}`;
+        try {
+            const page = await context.newPage();
+            await page.goto(url!);
+            await visible(page, "heading", "Connect profile");
+            await page.getByRole("button", { name: "Connect", exact: true }).click();
+            await visible(page, "button", "New issue");
+            await page.getByRole("button", { name: "New issue", exact: true }).click();
+            const form = page.getByRole("dialog", { name: "Create issue", exact: true });
+            await form.getByLabel("Title", { exact: true }).fill(title);
+            await form.getByRole("button", { name: "Create issue", exact: true }).click();
+            await page.getByPlaceholder("Search issues").fill(title);
+            await visible(page, "button", new RegExp(title));
+            // Offline updates prove the UI does not depend on a server reply.
+            // Repeat online as well to catch publication/confirmation races.
+            if (network === "offline") {
+                // Inspector code is optional. Warm it while online before testing its offline UI.
+                await page.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
+                await visible(page, "tab", "Objects");
+                await page.getByTestId("tsd-close-button").click();
+                await context.setOffline(true);
+            }
+            const timings: { panel: string; ms: number }[] = [];
+            let previous = "Open";
+            for (const [panel, next] of [
+                [undefined, "Waiting"],
+                ["Objects", "In Progress"],
+                ["Outbox", "Open"],
+                ["Objects", "Waiting"],
+                ["Outbox", "In Progress"],
+                ["Objects", "Open"],
+            ] as const) {
+                if (panel) {
+                    const opener = page.getByRole("button", { name: "Open TanStack Devtools", exact: true });
+                    if (await opener.isVisible()) await opener.click();
+                    await page
+                        .getByRole("tab", {
+                            name: panel === "Outbox" ? /^Outbox/ : panel,
+                            exact: panel !== "Outbox",
+                        })
+                        .click();
+                }
+                await page
+                    .getByRole("combobox", { name: `Change status from ${previous}`, exact: true })
+                    .click();
+                await page.getByRole("main").evaluate((main, next) => {
+                    const click = () => {
+                        const started = performance.now();
+                        const observer = new MutationObserver(() => {
+                            if (!main.querySelector(`[aria-label="Change status from ${next}"]`)) return;
+                            Reflect.set(window, "statusLatency", performance.now() - started);
+                            observer.disconnect();
+                        });
+                        observer.observe(main, { subtree: true, attributes: true, childList: true });
+                    };
+                    Reflect.deleteProperty(window, "statusLatency");
+                    document.addEventListener("click", click, { once: true, capture: true });
+                }, next);
+                await page.getByRole("listbox").getByRole("option", { name: next, exact: true }).click();
+                await expect
+                    .poll(
+                        () =>
+                            page
+                                .getByRole("combobox", { name: `Change status from ${next}`, exact: true })
+                                .isVisible(),
+                        {
+                            timeout: 1_000,
+                            interval: 10,
+                        }
+                    )
+                    .toBe(true);
+                timings.push({
+                    panel: panel ?? "closed",
+                    ms: await page.evaluate(() => Reflect.get(window, "statusLatency") as number),
+                });
+                previous = next;
+            }
+            console.info(network, timings);
+        } finally {
+            await context.setOffline(false);
+            await context.close();
+        }
+    }
+);
+
+test.skipIf(!url)(
+    "offline actions survive initiating-tab closure and settle through one shared owner",
+    async () => {
+        const context = await browser.newContext({ ignoreHTTPSErrors: true });
+        const errors: string[] = [];
+        const fallback: string[] = [];
+        context.on("page", (page) => {
+            page.on("pageerror", (error) => errors.push(error.message));
+            page.on("console", (message) => {
+                if (message.text().includes("using the in-process owner")) fallback.push(message.text());
+            });
+        });
+        const first = await context.newPage();
+        const title = `Shared-owner acceptance ${crypto.randomUUID().slice(0, 8)}`;
+        const label = `label-${crypto.randomUUID().slice(0, 8)}`;
+        try {
+            await first.goto(url!);
+            await visible(first, "heading", "Connect profile");
+            await first.getByRole("button", { name: "Connect", exact: true }).click();
+            await visible(first, "button", "New issue");
+            await first.getByRole("button", { name: "New issue" }).click();
+            await first.getByLabel("Title", { exact: true }).fill(title);
+            await first.getByLabel("Add issue label", { exact: true }).fill(label);
+            await first.getByLabel("Add issue label", { exact: true }).press("Enter");
+            await first.getByRole("button", { name: "Create issue", exact: true }).click();
+            await first.getByPlaceholder("Search issues").fill(label);
+            await visible(first, "button", new RegExp(title));
+            await first.getByRole("button", { name: "Open TanStack Devtools" }).click();
+            await first.getByRole("tab", { name: "Queries", exact: true }).click();
+            const searchDemand = first
+                .locator(".ps-query-card")
+                .filter({ has: first.locator(".ps-query-component-target").filter({ hasText: label }) });
+            await expect
+                .poll(() => searchDemand.locator(".ps-query-component-target").innerText())
+                .toContain("in");
+            expect(await searchDemand.locator(".ps-query-execution").isVisible()).toBe(false);
+            await searchDemand.locator(".ps-query-pushdown > summary").click();
+            await expect
+                .poll(() => searchDemand.locator(".ps-query-execution").innerText())
+                .toContain("Tab replica");
+            await expect
+                .poll(() => searchDemand.locator(".ps-query-execution").innerText())
+                .toMatch(
+                    /(?:Satisfied by local coverage|Reused this query’s previous result); no upstream request needed\./
+                );
+            expect(
+                await searchDemand.getByRole("heading", { name: "Coverage", exact: true }).isVisible()
+            ).toBe(true);
+            // Initial whole-collection demand may finish before or after this
+            // narrower query. Either complete coverage is a valid cache hit.
+            expect(await searchDemand.locator(".ps-query-execution").innerText()).toMatch(
+                /Complete collection; includes every matching row\.|Previously loaded complete result of the same query or primary-key lookup\./
+            );
+            expect(await searchDemand.locator(".ps-query-execution").innerText()).toMatch(
+                /Refreshed (through journal catch-up|by source change notifications)\./
+            );
+            expect((await searchDemand.locator(".ps-query-step h4").allTextContents()).slice(0, 2)).toEqual([
+                "1Tab replica",
+                "2Shared worker replica",
+            ]);
+            expect(await searchDemand.locator(".ps-query-step").count()).toBe(3);
+            expect(await searchDemand.locator('[data-source-state="cached"]').innerText()).toContain(
+                "Skipped · replica cache hit"
+            );
+            expect(await searchDemand.locator(".ps-query-path").count()).toBe(0);
+            expect(await searchDemand.locator(".ps-query-component-target").innerText()).toContain(
+                "Issue Labels"
+            );
+            expect(await searchDemand.locator(".ps-query-pushdown").getAttribute("open")).not.toBeNull();
+            await first.getByPlaceholder("Search issues").fill(title);
+            await first.getByRole("tab", { name: /^Outbox/ }).click();
+            await expect
+                .poll(() => first.getByText("Queue is clear", { exact: true }).isVisible())
+                .toBe(true);
+            const second = await context.newPage();
+            await second.goto(url!);
+            await visible(second, "button", "New issue");
+            await second.getByPlaceholder("Search issues").fill(title);
+            await visible(second, "button", new RegExp(title));
+            const opener = second.getByRole("button", { name: "Open TanStack Devtools" });
+            if (await opener.isVisible()) await opener.click();
+            await second.getByRole("tab", { name: /^Outbox/ }).click();
+            await context.setOffline(true);
+            await first.getByRole("combobox", { name: "Change status from Open" }).click();
+            await first.getByRole("listbox").getByRole("option", { name: "Waiting", exact: true }).click();
+            await visible(first, "combobox", "Change status from Waiting");
+            await visible(second, "combobox", "Change status from Waiting");
+            await expect
+                .poll(() =>
+                    second
+                        .getByRole("tab", { name: /^Outbox/ })
+                        .locator("span[title]")
+                        .getAttribute("title")
+                )
+                .toMatch(/^1 outbox entries/);
+            await expect
+                .poll(() => second.locator(".ps-outbox-attempts").innerText())
+                .toMatch(/^Attempts: \d+$/);
+            await first.close();
+            await expect
+                .poll(() =>
+                    second
+                        .getByRole("tab", { name: /^Outbox/ })
+                        .locator("span[title]")
+                        .getAttribute("title")
+                )
+                .toMatch(/^1 outbox entries/);
+            // The persisted inspector still reads local data while the backend is inaccessible.
+            await second.getByRole("tab", { name: "Objects", exact: true }).click();
+            await second.getByRole("tab", { name: /^Outbox/ }).click();
+            await context.setOffline(false);
+            await expect
+                .poll(() => second.locator('[data-ps-devtools="true"]').innerText())
+                .toContain("Queue is clear");
+            await second.reload();
+            await visible(second, "button", "New issue");
+            await second.getByPlaceholder("Search issues").fill(title);
+            await visible(second, "combobox", "Change status from Waiting");
+            const devtoolsOpener = second.getByRole("button", { name: "Open TanStack Devtools" });
+            if (await devtoolsOpener.isVisible()) await devtoolsOpener.click();
+            await second.getByRole("tab", { name: "Tracing", exact: true }).click();
+            await visible(second, "table", "Tracing timeline");
+            // Parent tracing is live-only: capture work after the inspector subscribes.
+            for (const [previous, next] of [
+                ["Waiting", "In Progress"],
+                ["In Progress", "Waiting"],
+            ]) {
+                await second
+                    .getByRole("combobox", { name: `Change status from ${previous}`, exact: true })
+                    .click();
+                await second.getByRole("listbox").getByRole("option", { name: next, exact: true }).click();
+                await visible(second, "combobox", `Change status from ${next}`);
+            }
+            const source = second.getByLabel("Trace source", { exact: true });
+            expect(await source.inputValue()).toBe("1");
+            expect(await source.locator("option:checked").innerText()).toBe("Shared worker");
+            const panel = second.getByLabel("Tracing inspector", { exact: true });
+            const viewport = second.getByLabel("Tracing timeline viewport", { exact: true });
+            const panelBounds = await panel.boundingBox();
+            const viewportBounds = await viewport.boundingBox();
+            const operationTable = second.getByRole("table", { name: "Tracing timeline", exact: true });
+            expect(await operationTable.locator(".ps-timeline-bar").count()).toBe(0);
+            expect(await operationTable.getByRole("columnheader", { name: "Status" }).count()).toBe(1);
+            const operation = second.getByRole("button", { name: "Replica.sync", exact: true }).first();
+            await expect.poll(() => operation.isVisible()).toBe(true);
+            await operation.click();
+            await expect
+                .poll(() => second.getByLabel("Trace details", { exact: true }).innerText())
+                .toContain("Replica.sync");
+            expect(await panel.boundingBox()).toEqual(panelBounds);
+            expect(await viewport.boundingBox()).toEqual(viewportBounds);
+            await visible(second, "table", "Operation waterfall");
+            const details = second.getByLabel("Trace details", { exact: true });
+            const closeBounds = await details
+                .getByRole("button", { name: "Close trace details" })
+                .boundingBox();
+            const titleBounds = await details.locator("strong").first().boundingBox();
+            expect(closeBounds!.x).toBeLessThan(titleBounds!.x);
+            await second.getByRole("button", { name: "Close trace details", exact: true }).click();
+            const table = second.getByRole("table", { name: "Tracing timeline", exact: true });
+            await table.getByRole("button", { name: "Duration", exact: true }).click();
+            expect(
+                await table.getByRole("columnheader", { name: "Duration" }).getAttribute("aria-sort")
+            ).toBe("descending");
+            await table.getByRole("button", { name: "Duration", exact: true }).click();
+            expect(
+                await table.getByRole("columnheader", { name: "Duration" }).getAttribute("aria-sort")
+            ).toBe("ascending");
+            const roots = await table.getByRole("row").count();
+            await second.getByRole("checkbox", { name: "Child spans", exact: true }).check();
+            await expect.poll(() => table.getByRole("row").count()).toBeGreaterThan(roots);
+            await second.getByRole("checkbox", { name: "Child spans", exact: true }).uncheck();
+            await second.getByRole("button", { name: "Pause", exact: true }).click();
+            await visible(second, "button", "Resume live");
+            await source.selectOption("0");
+            await expect
+                .poll(() =>
+                    second
+                        .getByRole("button", { name: "Replica.receiveDelivery", exact: true })
+                        .first()
+                        .isVisible()
+                )
+                .toBe(true);
+            await second.getByRole("button", { name: "Replica.delivery", exact: true }).click();
+            await visible(second, "table", "Subscription events");
+            expect(await second.getByLabel("Trace details", { exact: true }).innerText()).toContain(
+                "subscribed"
+            );
+            await second.getByRole("button", { name: "Close trace details", exact: true }).click();
+            await second.getByPlaceholder("Search issues").fill("");
+            await second.getByLabel("Filter by status", { exact: true }).selectOption("Waiting");
+            await second.getByRole("tab", { name: "Queries", exact: true }).click();
+            await expect
+                .poll(() => second.getByLabel("Trace source", { exact: true }).isVisible())
+                .toBe(false);
+            await expect
+                .poll(() => second.getByLabel("Active queries").locator(".ps-query-card").count())
+                .toBeGreaterThan(0);
+            await expect
+                .poll(() => second.getByLabel("Active queries").locator("svg").count())
+                .toBeGreaterThan(0);
+            expect(await second.getByLabel("Active queries").innerText()).not.toContain('"_tag"');
+            expect(await second.getByLabel("Queries inspector").innerText()).not.toContain(
+                "Current live ontology"
+            );
+            expect(await second.getByRole("textbox", { name: "Filter queries" }).count()).toBe(0);
+            expect(
+                await second.getByLabel("Active queries").locator(".ps-query-field").count()
+            ).toBeGreaterThan(0);
+            expect(
+                await second.getByLabel("Active queries").locator(".ps-query-literal").count()
+            ).toBeGreaterThan(0);
+            expect(
+                await second
+                    .getByLabel("Active queries")
+                    .locator(".ps-query-component-target .ps-query-special")
+                    .count()
+            ).toBe(0);
+            // Inactive filters must not become wildcard predicates with undefined guards.
+            await second.getByLabel("Filter by status", { exact: true }).selectOption("All");
+            await expect
+                .poll(() =>
+                    second
+                        .getByLabel("Active queries")
+                        .locator(".ps-query-component-target .ps-query-field")
+                        .filter({ hasText: /Issue Title|Issue Status/ })
+                        .count()
+                )
+                .toBe(0);
+            const views = await second
+                .getByRole("tablist", { name: "Ontology devtools views" })
+                .getByRole("tab")
+                .allTextContents();
+            expect(views.slice(0, 5).map((value) => value.replace(/\d/g, "").trim())).toEqual([
+                "Objects",
+                "Outbox",
+                "Queries",
+                "Tracing",
+                "Schema",
+            ]);
+            expect(await second.getByLabel("Active queries").innerText()).not.toMatch(
+                /loads recorded|recent loads|fetched →|Last load unknown|No row limit|Limit:/
+            );
+            const alignment = await second.locator(".ps-query-sentence").evaluateAll((sentences) =>
+                sentences.map((sentence) => {
+                    const subject = sentence.querySelector(".ps-query-subject")!.getBoundingClientRect();
+                    const keyword = sentence
+                        .querySelector(":scope > .ps-query-keyword")!
+                        .getBoundingClientRect();
+                    return Math.abs(subject.y + subject.height / 2 - keyword.y - keyword.height / 2);
+                })
+            );
+            expect(alignment.every((offset) => offset < 1)).toBe(true);
+            await second.getByRole("tab", { name: "Schema", exact: true }).click();
+            const graph = second.getByLabel("Ontology schema", { exact: true });
+            await expect.poll(() => graph.locator(".react-flow__node").count()).toBeGreaterThan(0);
+            await expect
+                .poll(async () => (await graph.locator(".ps-schema-card").first().boundingBox())?.width ?? 0)
+                .toBeGreaterThan(120);
+            expect(await graph.innerText()).toContain("one-to-many");
+            expect(await graph.innerText()).not.toContain("one-to-one");
+            expect(await graph.locator(".react-flow__edge-text").allTextContents()).toEqual(["one-to-many"]);
+            await graph.getByLabel("Project object type", { exact: true }).click();
+            await visible(second, "table", "Object properties");
+            expect(await second.getByLabel("Project schema details", { exact: true }).innerText()).toContain(
+                "many Issues"
+            );
+            await second.getByRole("button", { name: "Close schema details", exact: true }).click();
+            await graph.getByLabel("Issue object type", { exact: true }).click();
+            expect(await second.getByLabel("Issue schema details", { exact: true }).innerText()).toContain(
+                "one Project"
+            );
+            await second.getByRole("button", { name: "Close schema details", exact: true }).click();
+            expect(fallback).toEqual([]);
+            expect(errors).toEqual([]);
+        } finally {
+            await context.setOffline(false);
+            await context.close();
+        }
+    }
+);
+
+// Known upstream ownership gap: browser hook queries are not registered for DbClient.cleanup().
+// Keep this separate from functional recovery acceptance. An upstream fix should make it pass
+// unexpectedly, prompting removal of .fails rather than hiding the warning in application code.
+test.skipIf(!url).fails("reload cleans derived React queries before their source collections", async () => {
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    const lifecycle: string[] = [];
+    try {
+        const page = await context.newPage();
+        page.on("console", (message) => {
+            if (/Source collection.*(?:manually cleaned|cleaned up while)/.test(message.text()))
+                lifecycle.push(message.text());
+        });
+        await page.goto(url!);
+        await visible(page, "heading", "Connect profile");
+        await page.getByRole("button", { name: "Connect", exact: true }).click();
+        await visible(page, "button", "New issue");
+        await page.reload();
+        await visible(page, "button", "New issue");
+        expect(lifecycle).toEqual([]);
+    } finally {
+        await context.close();
+    }
+});
+
+test.skipIf(!url)(
+    "unsupported worker environments do not silently open persistent tables in the page",
+    async () => {
+        const context = await browser.newContext({ ignoreHTTPSErrors: true });
+        await context.addInitScript(() => {
+            Object.defineProperty(globalThis, "SharedWorker", { value: undefined, configurable: true });
+            indexedDB.open = () => {
+                throw new Error("The page must not open private storage.");
+            };
+        });
+        try {
+            const page = await context.newPage();
+            await page.goto(url!);
+            await expect
+                .poll(() =>
+                    page
+                        .getByText("This example requires SharedWorker support for persistent storage.", {
+                            exact: true,
+                        })
+                        .isVisible()
+                )
+                .toBe(true);
+            expect(await page.getByRole("button", { name: "New issue", exact: true }).count()).toBe(0);
+        } finally {
+            await context.close();
+        }
+    }
+);
+
+test.skipIf(!url)("native image uploads survive reload and can be read offline", async () => {
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    const title = `Attachment acceptance ${crypto.randomUUID().slice(0, 8)}`;
+    const filename = `${crypto.randomUUID()}.png`;
+    try {
+        const page = await context.newPage();
+        await page.goto(url!);
+        await visible(page, "heading", "Connect profile");
+        await page.getByRole("button", { name: "Connect", exact: true }).click();
+        await visible(page, "button", "New issue");
+        await page.getByRole("button", { name: "New issue" }).click();
+        const form = page.getByRole("dialog", { name: "Create issue", exact: true });
+        await form.getByLabel("Title", { exact: true }).fill(title);
+        await form.locator('input[type="file"]').setInputFiles({
+            name: filename,
+            mimeType: "image/png",
+            buffer: Buffer.from(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aDV8AAAAASUVORK5CYII=",
+                "base64"
+            ),
+        });
+        await expect
+            .poll(() => form.getByRole("button", { name: `Remove ${filename}` }).isVisible())
+            .toBe(true);
+        await form.getByRole("button", { name: "Create issue", exact: true }).click();
+        await expect.poll(() => form.count()).toBe(0);
+        await page.getByPlaceholder("Search issues").fill(title);
+        await visible(page, "button", new RegExp(title));
+        await page.getByRole("button", { name: "Open TanStack Devtools" }).click();
+        await page.getByRole("tab", { name: /^Outbox/ }).click();
+        await expect.poll(() => page.getByText("Queue is clear", { exact: true }).isVisible()).toBe(true);
+        await page.reload();
+        await visible(page, "button", "New issue");
+        await context.setOffline(true);
+        await page.getByPlaceholder("Search issues").fill(title);
+        await page.getByRole("button", { name: new RegExp(title) }).click();
+        const image = page.getByRole("img", { name: filename, exact: true });
+        await expect
+            .poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth))
+            .toBe(1);
+        expect(await page.getByText("Attachment unavailable", { exact: true }).count()).toBe(0);
+    } finally {
+        await context.setOffline(false);
+        await context.close();
+    }
+});
+
+test.skipIf(!url)("navigation preserves the devtools panel, selected tab and trace source", async () => {
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    try {
+        const page = await context.newPage();
+        await page.goto(url!);
+        await visible(page, "heading", "Connect profile");
+        await page.getByRole("button", { name: "Connect", exact: true }).click();
+        await visible(page, "button", "New issue");
+        // Newest fixtures sort first even when earlier acceptance data remains.
+        // The selected sidebar row must stay above the open devtools drawer.
+        const project = `000 ${9_999_999_999_999 - Date.now()} Navigation acceptance ${crypto.randomUUID().slice(0, 8)}`;
+        await page.getByRole("button", { name: "Create project", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
+        await dialog.getByLabel("Project name", { exact: true }).fill(project);
+        await dialog.getByRole("button", { name: "Create project", exact: true }).click();
+        await visible(page, "button", project);
+        await page.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
+        const tracingTab = page.getByRole("tab", { name: "Tracing", exact: true });
+        await tracingTab.click();
+        const source = page.getByLabel("Trace source", { exact: true });
+        await source.selectOption("0");
+        const original = await page.getByLabel("Tracing inspector", { exact: true }).elementHandle();
+        await page.getByRole("button", { name: project, exact: true }).click();
+        await expect.poll(() => new URL(page.url()).pathname.startsWith("/project/")).toBe(true);
+        await visible(page, "heading", project);
+        expect(await tracingTab.getAttribute("aria-selected")).toBe("true");
+        expect(await source.inputValue()).toBe("0");
+        expect(await original!.evaluate((element) => element.isConnected)).toBe(true);
+        await page.getByRole("button", { name: /^All issues/ }).click();
+        await expect.poll(() => new URL(page.url()).pathname).toBe("/");
+        await visible(page, "heading", "All issues");
+        expect(await tracingTab.getAttribute("aria-selected")).toBe("true");
+        expect(await source.inputValue()).toBe("0");
+        expect(await original!.evaluate((element) => element.isConnected)).toBe(true);
+    } finally {
+        await context.close();
+    }
+});
+
+test.skipIf(!url)(
+    "optimistic issue creation closes the form and toasts rejection without retaining pending work",
+    async () => {
+        const context = await browser.newContext({ ignoreHTTPSErrors: true });
+        const project = `Validation project ${crypto.randomUUID().slice(0, 8)}`;
+        const title = `Validation issue ${crypto.randomUUID().slice(0, 8)}`;
+        try {
+            const first = await context.newPage();
+            await first.goto(url!);
+            await visible(first, "heading", "Connect profile");
+            await first.getByRole("button", { name: "Connect", exact: true }).click();
+            await visible(first, "button", "New issue");
+            await first.getByRole("button", { name: "Create project", exact: true }).click();
+            const projectForm = first.getByRole("dialog", { name: "Create project", exact: true });
+            await projectForm.getByLabel("Project name", { exact: true }).fill(project);
+            await projectForm.getByRole("button", { name: "Create project", exact: true }).click();
+            await visible(first, "button", project);
+            const second = await context.newPage();
+            await second.goto(url!);
+            await visible(second, "button", project);
+            await first.getByRole("button", { name: "New issue", exact: true }).click();
+            const form = first.getByRole("dialog", { name: "Create issue", exact: true });
+            await form.getByLabel("Title", { exact: true }).fill(title);
+            await form.getByLabel("Project", { exact: true }).selectOption({ label: project });
+            await second.getByRole("button", { name: project, exact: true }).click({ button: "right" });
+            await second.getByRole("menuitem", { name: "Delete project", exact: true }).click();
+            await expect
+                .poll(() => second.getByRole("button", { name: project, exact: true }).count())
+                .toBe(0);
+            await second.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
+            await second.getByRole("tab", { name: /^Outbox/ }).click();
+            // Sidebar removal is optimistic. Establish authoritative deletion
+            // before testing a stale reference submitted from the other tab.
+            await expect
+                .poll(() => second.locator('[data-ps-devtools="true"]').innerText())
+                .toContain("Queue is clear");
+            await form.getByRole("button", { name: "Create issue", exact: true }).click();
+            await expect.poll(() => form.count()).toBe(0);
+            await expect
+                .poll(() => first.locator(".app-toast").innerText())
+                .toContain("Couldn’t create issue");
+            expect(await first.locator(".app-toast").innerText()).toContain("Project: Choose a valid value.");
+            await first.locator(".app-toast-close").click();
+            await expect
+                .poll(() => second.locator('[data-ps-devtools="true"]').innerText())
+                .toContain("Queue is clear");
+            await first.getByRole("button", { name: "New issue", exact: true }).click();
+            await form.getByLabel("Title", { exact: true }).fill(title);
+            await form.getByRole("button", { name: "Create issue", exact: true }).click();
+            await expect.poll(() => form.count()).toBe(0);
+            await first.getByPlaceholder("Search issues").fill(title);
+            await visible(first, "button", new RegExp(title));
+            await expect
+                .poll(() => second.locator('[data-ps-devtools="true"]').innerText())
+                .toContain("Queue is clear");
+        } finally {
+            await context.close();
+        }
+    }
+);
+
+test.skipIf(!url)("storage inspector shows replica bytes and shared platform capacity", async () => {
+    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    try {
+        const page = await context.newPage();
+        await page.goto(url!);
+        await visible(page, "heading", "Connect profile");
+        await page.getByRole("button", { name: "Connect", exact: true }).click();
+        await visible(page, "button", "New issue");
+        await page.getByRole("button", { name: "Open TanStack Devtools", exact: true }).click();
+        await page.getByRole("tab", { name: "Storage", exact: true }).click();
+        const inspector = page.getByLabel("Storage inspector", { exact: true });
+        await expect.poll(() => inspector.innerText()).toContain("transfer buffers are excluded");
+        await expect.poll(() => inspector.locator(".ps-storage-legend").innerText()).toContain("Issues");
+        await page.screenshot({ path: "/tmp/party-stack-storage-inspector.png" });
+        const legend = inspector.locator(".ps-storage-legend");
+        await legend.getByRole("button", { name: /^Issues/ }).hover();
+        await expect
+            .poll(() => inspector.locator('[data-storage-part="Projects"]').getAttribute("data-dimmed"))
+            .toBe("true");
+        expect(await inspector.locator('[data-storage-part="Issues"]').getAttribute("data-dimmed")).toBe(
+            "false"
+        );
+        await inspector.getByLabel("Storage view", { exact: true }).selectOption("available");
+        await expect.poll(() => inspector.innerText()).toContain("shared free quota");
+        expect(await inspector.locator(".ps-storage-legend").innerText()).toContain("Issues");
+        await page.screenshot({ path: "/tmp/party-stack-storage-capacity.png" });
+        await inspector.getByLabel("Storage source", { exact: true }).selectOption("0");
+        await expect
+            .poll(() =>
+                inspector
+                    .getByLabel("Storage view", { exact: true })
+                    .locator('option[value="available"]')
+                    .count()
+            )
+            .toBe(0);
+        expect(await inspector.innerText()).not.toContain("shared free quota");
+    } finally {
+        await context.close();
+    }
+});

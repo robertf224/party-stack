@@ -1,5 +1,1 @@
-export {
-    createNodeRuntime,
-    createNodeRuntimeWithOptions,
-    type CreateNodeRuntimeOptions,
-} from "./createNodeRuntime.js";
+export { make, layer, nodeRuntime, type CreateNodeRuntimeOptions } from "./createNodeRuntime.js";

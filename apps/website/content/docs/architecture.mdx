@@ -1,0 +1,269 @@
+---
+title: Architecture
+description: Follow one issue update through an outbox, a backend, and other tabs.
+---
+
+import { ArchitectureExplorer } from "../../src/components/architecture";
+
+Change Issue #42 from **Open** to **In Progress**. Press Play or step forward,
+then select a box to inspect its data. Add replicas, disconnect the upstream,
+or try a rejected action.
+
+<ArchitectureExplorer />
+
+## Four layers
+
+| Layer            | What it does                                                                                  |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| **Backend**      | Implements object reads and authoritative actions, using owned storage or a provider adapter. |
+| **Replica**      | Keeps local data and pending actions, computes predictions, and synchronizes with a parent.   |
+| **Server**       | Exposes backend or replica capabilities over a transport and enforces its caller policy.      |
+| **Ontology SDK** | Adds typed Promises and TanStack DB collections for application code.                         |
+
+A replica's visible data is **base state + optimistic overlay**. Its **outbox**
+stores local actions awaiting completion. With an intermediate parent, base state
+can include that parent's predictions; confirmed-only reads exclude predictions.
+
+An owned backend commits **object rows + action receipts + change journal** in
+one transaction. A receipt records an action's result. The journal lets replicas
+pull committed changes.
+
+## What completion means
+
+A local prediction can appear immediately. Parent acceptance means an intermediate
+replica has taken responsibility for an action; it is still waiting for the
+authoritative backend. The SDK's action Promise waits for authoritative confirmation
+and local reconciliation.
+
+This animation discards rejected actions. Apps can instead keep them paused in the
+outbox for correction or explicit retry. [Action handling](/docs/actions#handle-a-failure)
+shows how to surface the result.
+
+## What a replica stores
+
+Each replica has its own store. A browser tab usually uses memory; a shared worker
+uses persistent storage such as IndexedDB. The same records have different
+lifetimes depending on that choice.
+
+| State                                | What it is for                                                                                                                                                                                                                                        |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Base objects and indexes**         | The parent data this replica has loaded. It can be a small part of the ontology. Indexes make local filtering and sorting efficient.                                                                                                                  |
+| **Speculative overlays**             | Predicted changes from pending actions, including predictions received from an intermediate parent. Normal reads combine these with the base; confirmed reads exclude them.                                                                           |
+| **Outbox**                           | Action IDs, arguments, ordering, retry information, and progress. A persistent parent saves an accepted action before taking responsibility for it.                                                                                                   |
+| **Receipts and retained outcomes**   | What happened to an action: its result, rejection, attachment mappings, and reconciliation information. Outcomes remain available for callers and child replicas to observe before eventual cleanup.                                                  |
+| **Coverage records**                 | Which object subsets were fetched completely: object type, filter, ordering and window, plus confirmation time, relevant row identities and synchronization positions. These distinguish a known result from an arbitrary collection of cached rows.  |
+| **Pins**                             | Durable requests to retain a query graph, its inputs, and optionally attachment bytes. The installed graph records which objects and files satisfy the request. Desired and installed generations distinguish a new request from a finished download. |
+| **Retention records**                | Why data must stay, or when it was last used: active query roots, pending-action dependencies, pins, access times, and garbage-collection progress. These determine what can be reclaimed.                                                            |
+| **Attachment state**                 | File metadata, locally available bytes, upload/download progress, and local-to-parent IDs. Having an object with an attachment handle does not necessarily mean its file bytes are downloaded.                                                        |
+| **Synchronization and client state** | Parent/source identity, cursors, client sequences and acknowledgement positions. These let replicas reconnect and distinguish an already accepted action from a new submission.                                                                       |
+| **Delivery membership**              | Which base and speculative records belong to the installed parent view. This lets a replacement view remove obsolete records without discarding local pending actions.                                                                                |
+
+The **partition catalog** sits outside those per-replica tables. It maps a logical
+ontology address to its runtime `{ owner, namespace }` and retained IR/context.
+For a remote parent it also keeps the description needed to recreate the client
+binding without a network preflight. `owner` is derived from the IR's context
+partition; the namespace defaults to the resolved route, with an optional server
+scope prefix. The replica package owns this inventory. Server routes decide how
+to acquire each entry and share its running owner; native apps can use a registry
+without a transport server too.
+
+**Coverage, retention, and pins answer different questions.** For example:
+
+- Coverage: “We previously fetched the first 51 deleted notes.”
+- Retention: “These rows are still in the cache and must not be evicted while this view uses them.”
+- Pin: “Keep all notes and their attachment bytes across app sessions.”
+
+A retained coverage record can supply a **cached** result while its freshness is
+rechecked. Restarting a watch makes that result stale; it does not remove the data.
+Evicting required rows removes the cached guarantee too. Current coverage is still
+required for operations that explicitly wait for synchronization.
+
+Coverage currently describes **object subsets**, not a single record for an entire
+TanStack query with joins and included fragments. Those queries can acquire several
+subsets. A pin can describe a larger hierarchical query and retain the subsets and
+attachment bytes needed to satisfy it.
+
+Active queries, pending actions, and pins protect their data. Once those interests
+are released, cache age and capacity settings determine when unused objects and
+file bytes can be collected. Closing a view releases its demand;
+[offline pins](/docs/offline) persist independently.
+
+## What stays in memory
+
+Live demand leases, subscriptions, watch connections, work queues, and coordination
+locks belong to the running replica's scope. They are recreated when it opens.
+Some active-retention roots have table records for transactional checks, but those
+leases are cleared and reacquired on restart.
+
+The producer keeps bounded delivery comparisons and prepared batches in memory.
+The receiver buffers incoming frames until it can install a complete batch in one
+transaction. Losing either buffer requires replay or rebuilding the data view;
+it does **not** discard accepted outbox actions or their outcomes. Installed
+delivery positions remain in the replica's store. Delivery acknowledgements track
+installed data; action acknowledgements track responsibility and observed results.
+
+TanStack keeps the source collections and derived UI queries in memory. Components
+subscribe to those results; the app does not need another row cache.
+
+## Other persisted state
+
+The **authoritative owned backend** stores its objects, attachment bytes, action
+receipts and change journal. The journal is the ordered record of committed changes;
+a replica's cursor records how far it has consumed that journal. Adapters without a
+journal use their read/watch capabilities instead.
+
+The **managed-replica partition catalogue** records the partitions opened for
+managed replica routes, so cleanup can find them after an account connection
+expires. It is separate from the data and coverage inside each replica; it is not
+an inventory of every database created outside that manager.
+
+**Connect** stores saved connections and credentials as its own ontology. A saved
+connection identifies authenticated access; it is not a list of every locally
+cached object or partition.
+
+## Connect, routes, and clients
+
+**Connect's role is saving connections and turning them into authenticated access.**
+It stores service instances, OAuth applications, and saved OAuth, API-key, or
+external-session connections. `makeConnectManager` owns their credentials,
+refresh, and maintenance. `connections.acquire(ref)` returns scoped authenticated
+I/O: the service instance, verified user ID, egress, and authentication status.
+A backend adapter uses that egress to access the service.
+
+In a shared-worker app, the components are arranged like this:
+
+```text
+Browser tab
+  React → LiveOntology → memory replica → ontology server client
+                                             │
+                                      MessagePort RPC
+                                             │
+SharedWorker                         ontology server
+                                      ├─ connect
+                                      │   Connect manager/backend
+                                      │   credentials + saved connections
+                                      │
+                                      └─ issues/:connectionType/:connectionId
+                                          persistent replica
+                                            → authenticated backend adapter
+                                              → Foundry or an HTTP server
+```
+
+Each tab and the worker own separate replica tables and attachment bytes. A replica
+contains base objects, an outbox, and a derived speculative overlay. Demand flows
+toward the parent; selected objects, action outcomes, and requested bytes flow back.
+The worker never shares its tables directly with a tab.
+
+A route binds an ontology name to a backend or replica, definition, and context.
+The server applies its IR policy at the final read/action boundary. The same server
+can expose Connect, owned storage, proxies, cached proxies, and intermediate
+replicas. Routes are logical ontology names: HTTP currently carries the name in
+`?ontology=...` and/or the `x-party-stack-ontology` RPC header beneath one mounted
+handler. Route patterns do not automatically create separate HTTP paths.
+
+`serveOntologyWorker` attaches the normal ontology server to a worker transport.
+An HTTP binding attaches it to a Fetch handler. `workerClient` and `httpClient`
+open the corresponding client. One root client can select several named ontologies;
+`Describe` returns the selected definition, context, and supported capabilities.
+There is no separate installation-worker protocol.
+
+A managed replica can restore its parent description from the catalog and open
+retained data immediately. Definition checks do not block each startup. Normal
+requests enforce the saved source/account binding; typed schema mismatches report
+an incompatible lifecycle state. [Cache rebuild options](/docs/server#reopen-downloaded-ontologies)
+preserve action ledgers and refuse to discard pending work.
+
+Authentication readiness only gates upstream work. A saved Connect connection in
+`needs-auth` can still supply its identity so its local replicas can open. Cached
+queries and local optimistic edits remain available; synchronization and outbox
+forwarding resume after the persisted connection becomes active again. Selecting
+an account and reconnecting it are separate UI actions.
+
+The current HTTP RPC transport keeps one streaming response open per watch.
+Serve browser connections over HTTP/2 or HTTP/3 when using multiple watches:
+HTTP/1 can exhaust the browser's per-origin connection limit and queue later
+queries indefinitely. Worker clients use a MessagePort and do not consume HTTP
+connections for tab-to-worker calls.
+
+`LiveOntology` wraps a local replica with typed Promise APIs and TanStack
+collections. Consuming a collection acquires demand; replica changes update that
+collection, and TanStack maintains the UI query result.
+
+## Authentication in an app
+
+The Connect command client wraps ordinary Connect actions and the runtime's browser
+presentation capability. It reserves an OAuth popup, calls `beginAuthorization`,
+presents the provider page, and calls `completeAuthorization` with the returned
+callback. The credential owner exchanges the code and stores encrypted credentials.
+The command client creates no separate connection inventory or replica.
+
+Better Auth login stays in its tab SDK. Connect verifies the selected external
+session before saving its selector. Both connection variants then acquire backend
+access through the same native manager.
+
+Authentication commands execute directly instead of entering an optimistic outbox.
+The account picker reads the ordinary public Connect ontology reactively, with
+credential properties and PKCE attempts omitted by policy.
+
+A saved connection's status comes from its persisted record. Native acquired access
+also watches that record and reports authentication failures from actual requests.
+That monitor can pause and wake the replica's outbox. Network connectivity is a
+separate runtime signal; an expired credential and an offline device are different
+states.
+
+## React ownership
+
+`OntologyEnvironmentProvider` owns or borrows one server client and supplies default
+view settings. `OntologyProvider` selects a named target or accepts a direct backend,
+opens the local view, and closes it on selection change or unmount. A supplied
+existing `LiveOntology` is borrowed instead. Each view supplies its TanStack
+`DbProvider`, so generated collection descriptors need no client argument.
+
+`AuthenticationProvider` combines a normal Connect ontology view with the command client.
+Its descendants can query account collections and call `useAuthentication()` for sign-in
+and disconnect commands. It adds no credential manager or custom transport.
+
+Provider cache and demand props configure that local view. Worker cache settings
+belong to the worker's replica route. Offline pin calls target the selected parent
+replica when the endpoint supports them.
+
+## Current execution boundaries
+
+`kind: "owned"` serves the native owned backend. Its executor runs action policy
+checks, mutator reads/writes, receipts, and journal publication in the mutation
+transaction. `kind: "proxy"` serves the generic backend interface; that interface
+can be implemented locally or remotely. Both still apply the endpoint's IR policy.
+
+Connect currently uses the generic interface. OAuth completion claims an attempt
+in one transaction, exchanges the code outside storage, then commits credentials in another transaction. It uses normal owned persistence
+for the records, but its workflow executor does not implement the ordinary owned
+action's transaction authorization hook. Server policy checks run before the
+workflow. Durable claims prevent duplicate exchanges; they do not provide generic
+idempotent replay of every authentication action after a lost response.
+
+The trusted tab-to-worker replica binding enables internal access for speculative
+replication and diagnostics. Public HTTP endpoints need their own authenticated,
+policy-bound configuration. Raw speculative state and journals are not currently
+projected safely through an arbitrary read policy.
+
+Saved connection state is available through ordinary Connect queries. Transient
+upstream authentication status on a worker replica currently reaches the tab's
+inspector through parent diagnostics; it is not yet a dedicated public status API.
+The React provider's Promise/Scope bridge owns late acquisitions and StrictMode
+cleanup. `AuthenticationProvider` currently acquires a command handle and a reactive view
+separately over the same transport.
+
+## Future work: loading definitions
+
+A metadata ontology could expose an optional `loadDefinition` query function to
+load a definition on demand. This is a design direction, not an implemented common
+contract. A finite pull is sufficient for the current use case: the request should
+identify its complete intended scope, and the implementation should finish every
+page and expansion needed to answer that scope before reporting completion.
+Completeness of the requested definition does not imply an atomic provider
+snapshot; that guarantee requires explicit support from the provider.
+
+Streaming definition updates and durable outputs for longer-running work are
+separate possible extensions. They would need their own progress, cancellation,
+recovery, and output-lifetime contracts. They are not prerequisites for a finite
+definition query.

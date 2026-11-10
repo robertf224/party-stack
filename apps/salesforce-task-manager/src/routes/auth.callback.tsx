@@ -1,6 +1,6 @@
+import { relayWebBrowserAuthenticationCallback } from "@party-stack/web-runtime";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { completeSalesforceOAuthRedirect } from "../app/salesforce";
 
 export const Route = createFileRoute("/auth/callback")({
     ssr: false,
@@ -12,10 +12,16 @@ function OAuthCallback() {
     const [error, setError] = useState<string>();
 
     useEffect(() => {
-        void completeSalesforceOAuthRedirect(window.location.href).then(
-            () => navigate({ to: "/" }),
-            (reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))
-        );
+        const relay = relayWebBrowserAuthenticationCallback();
+        if (relay) return relay;
+        void import("../app/salesforce")
+            .then(({ completeSalesforceOAuthRedirect }) =>
+                completeSalesforceOAuthRedirect(window.location.href)
+            )
+            .then(
+                () => navigate({ to: "/" }),
+                (reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))
+            );
     }, [navigate]);
 
     return <main className="loading">{error ?? "Completing Salesforce sign-in…"}</main>;

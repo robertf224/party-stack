@@ -1,9 +1,14 @@
 import { fromBlueprintIconName } from "@party-stack/icons-blueprint";
 import { convertFoundryObjectPropertyType } from "./convertMetaTypeDef.js";
 import type { ObjectTypeFullMetadata, PropertyV2 } from "@osdk/foundry.ontologies";
-import type { MetaObjectProperty, MetaObjectType } from "@party-stack/ontology";
+import type {
+    PropertyDef as MetaObjectProperty,
+    ObjectType as MetaObjectType,
+} from "@party-stack/ontology-spec/meta";
 
-export function convertFoundryMetaObjectType(metadata: ObjectTypeFullMetadata): MetaObjectType {
+export function convertFoundryMetaObjectType(
+    metadata: Pick<ObjectTypeFullMetadata, "objectType">
+): MetaObjectType {
     const objectType = metadata.objectType;
     return {
         id: objectType.rid,
@@ -26,9 +31,13 @@ function convertFoundryObjectProperty(
     property: PropertyV2,
     required: boolean
 ): MetaObjectProperty {
-    const type = property.valueTypeApiName
+    const valueType = property.valueTypeApiName
         ? { kind: "ref" as const, value: { name: property.valueTypeApiName } }
         : convertFoundryObjectPropertyType(property.dataType);
+    const type =
+        property.dataType.type === "cipherText" && property.valueTypeApiName
+            ? { kind: "encrypted" as const, value: { type: valueType } }
+            : valueType;
     return {
         id: property.rid,
         name,

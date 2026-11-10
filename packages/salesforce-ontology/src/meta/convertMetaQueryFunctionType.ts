@@ -1,5 +1,5 @@
 import { convertSalesforceInvocableParameterType } from "./convertMetaTypeDef.js";
-import type { QueryFunctionTypeDef } from "@party-stack/ontology";
+import type { QueryFunctionTypeDef } from "@party-stack/ontology-spec";
 import type {
     SalesforceInvocableActionDescribe,
     SalesforceInvocableActionParameter,

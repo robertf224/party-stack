@@ -1,78 +1,54 @@
-import { once, race, run, sleep, type Task } from "effection";
-import type { NetworkConnectivity } from "@party-stack/runtime";
+import { makeNetworkConnectivity } from "@party-stack/runtime";
+import { Effect, PubSub, Stream } from "effect";
 
-const ONLINE_STABILIZATION_MS = 1_000;
+const WORKER_CONNECTIVITY_SAMPLE_MS = 1_000;
 
-export class NavigatorNetworkConnectivity implements NetworkConnectivity {
-    private readonly listeners = new Set<(isConnected: boolean) => void>();
-    private lifetime!: Task<void>;
-    private connected: boolean;
-    private closePromise: Promise<void> | undefined;
-
-    private constructor(initiallyConnected: boolean) {
-        this.connected = initiallyConnected;
-    }
-
-    static create(): NavigatorNetworkConnectivity {
-        const connectivity = new NavigatorNetworkConnectivity(navigator.onLine);
-        connectivity.lifetime = run(function* () {
-            while (true) {
-                const online = yield* race([
-                    (function* () {
-                        yield* once(window, "online");
-                        return true;
-                    })(),
-                    (function* () {
-                        yield* once(window, "offline");
-                        return false;
-                    })(),
-                ]);
-                if (!online) {
-                    connectivity.setConnected(false);
-                    continue;
-                }
-                if (connectivity.isConnected) continue;
-
-                const stabilized = yield* race([
-                    (function* () {
-                        yield* sleep(ONLINE_STABILIZATION_MS);
-                        return navigator.onLine;
-                    })(),
-                    (function* () {
-                        yield* once(window, "offline");
-                        return false;
-                    })(),
-                ]);
-                connectivity.setConnected(stabilized);
-            }
-        });
-        void connectivity.lifetime.catch(() => undefined);
-        return connectivity;
-    }
-
-    get isConnected(): boolean {
-        return this.connected;
-    }
-
-    subscribe(listener: (isConnected: boolean) => void): () => void {
-        this.listeners.add(listener);
-        return () => {
-            this.listeners.delete(listener);
-        };
-    }
-
-    close(): Promise<void> {
-        this.closePromise ??= Promise.resolve(this.lifetime.halt()).finally(() => {
-            this.listeners.clear();
-        });
-        return this.closePromise;
-    }
-
-    private setConnected(isConnected: boolean): void {
-        if (isConnected === this.connected) return;
-        this.connected = isConnected;
-        for (const listener of this.listeners) {
-            listener(isConnected);
-        }
-    }
-}
+/** Native listeners and the worker event fallback belong to the caller's platform scope. */
+export const makeNavigatorNetworkConnectivity = Effect.fnUntraced(function* () {
+    const state = yield* makeNetworkConnectivity(navigator.onLine !== false);
+    const target = typeof window === "undefined" ? globalThis : window;
+    const events = yield* Effect.acquireRelease(
+        PubSub.sliding<void>({ capacity: 1, replay: 1 }),
+        PubSub.shutdown
+    );
+    let observed = navigator.onLine !== false;
+    const changed = () => {
+        observed = navigator.onLine !== false;
+        PubSub.publishUnsafe(events, undefined);
+    };
+    const sample = () => {
+        if (observed !== (navigator.onLine !== false)) changed();
+    };
+    yield* Effect.acquireRelease(
+        Effect.sync(() => {
+            target.addEventListener("online", changed);
+            target.addEventListener("offline", changed);
+        }),
+        () =>
+            Effect.sync(() => {
+                target.removeEventListener("online", changed);
+                target.removeEventListener("offline", changed);
+            })
+    );
+    const changes = Stream.fromPubSub(events).pipe(
+        Stream.mapEffect(() => state.set(navigator.onLine !== false))
+    );
+    yield* Stream.runDrain(changes).pipe(Effect.forkScoped({ startImmediately: true }));
+    // SharedWorkers can observe onLine changes without receiving native events
+    // (including Chromium's emulated offline mode). Sample only the local flag.
+    if (typeof window === "undefined")
+        yield* Effect.forever(
+            Effect.sleep(WORKER_CONNECTIVITY_SAMPLE_MS).pipe(Effect.andThen(Effect.sync(sample)))
+        ).pipe(Effect.forkScoped);
+    return {
+        online: Effect.suspend(() => {
+            sample();
+            // Record an observed state before returning it. Otherwise a
+            // quick reconnect can overtake the event consumer: it sees true -> true,
+            // and an outbox that just paused never receives its reconnect wakeup.
+            const online = navigator.onLine !== false;
+            return state.set(online).pipe(Effect.as(online));
+        }),
+        changes: state.changes,
+    };
+});

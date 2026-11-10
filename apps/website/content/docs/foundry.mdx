@@ -1,0 +1,348 @@
+---
+title: Foundry
+description: Sign in and share a persistent Foundry replica across tabs.
+---
+
+## Install
+
+```sh
+pnpm add @effect/platform-browser @party-stack/connect @party-stack/foundry-ontology @party-stack/ontology @party-stack/ontology-react @party-stack/ontology-server @party-stack/runtime @party-stack/web-runtime @tanstack/db@1.0.0-rc.1.4 @tanstack/react-db@1.0.0-rc.1.4 effect
+```
+
+For the optional fixes to this pinned TanStack release, follow
+[installation instructions](/docs/installation#tanstack-db-fixes) in the application's package root.
+
+## Configure OAuth
+
+Register a public OAuth application in Foundry with your callback URL. Keep the
+stack URL, ontology RID and public client ID in one module:
+
+```ts title="src/app/foundry-config.ts"
+export const foundry = {
+    baseUrl: "https://your-enrollment.palantirfoundry.com",
+    ontologyId: "YOUR_ONTOLOGY_RID",
+    oauth: {
+        clientId: "YOUR_PUBLIC_OAUTH_CLIENT_ID",
+        redirectUrl: "http://localhost:3000/auth/callback",
+        scopes: [
+            "api:use-ontologies-read",
+            "api:use-ontologies-write",
+            "ontology:view-object-type",
+            "ontology:view-unredacted-action-type",
+            "offline_access",
+        ],
+    },
+};
+```
+
+Grant those scopes when registering the application.
+
+## Pull the definition
+
+```ts title="src/ontology/config.ts"
+import { makeFoundryPullBackend, type FoundryOntologyPullConfig } from "@party-stack/foundry-ontology/config";
+import { foundry } from "../app/foundry-config";
+
+export default {
+    backend: makeFoundryPullBackend({
+        baseUrl: foundry.baseUrl,
+        ontologyRid: foundry.ontologyId,
+        connection: { oauth: foundry.oauth },
+    }),
+    objectTypeNames: ["Issue", "Project"],
+    actionTypeNames: ["createIssue", "updateIssue"],
+} satisfies FoundryOntologyPullConfig;
+```
+
+```sh
+pnpm exec ontology pull
+pnpm exec ontology generate --namespace App
+```
+
+Pull opens the CLI's browser authentication flow when needed. It writes
+`src/ontology/ontology.ts`, including `context.userId` and the explicit
+`context.partition: [["userId"]]` declaration. Generation
+writes typed helpers and collection descriptors to `src/ontology/generated`.
+A basic pull needs no transform. Use a transform for application-specific schema
+changes, such as adding a User type or restricting attachment formats.
+For scripts, `connection: { token: process.env.FOUNDRY_TOKEN }` also works.
+
+## Start the SharedWorker
+
+The worker serves `connect` for account inventory and authentication, and
+`foundry/:connectionId` for each account's data. It owns persistent storage;
+tabs open memory views over one shared transport.
+
+```ts title="src/app/ontology.worker.ts"
+import { makeConnectManager, connectDeviceRoute } from "@party-stack/connect";
+import { makeFoundryServiceConnector, makeFoundryBackend } from "@party-stack/foundry-ontology";
+import { makeOntologyServer } from "@party-stack/ontology-server";
+import { serveOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
+import { runMain } from "@effect/platform-browser/BrowserRuntime";
+import { layer as workerRunner } from "@effect/platform-browser/BrowserWorkerRunner";
+import { Runtime, Runtimes } from "@party-stack/runtime";
+import { webRuntime } from "@party-stack/web-runtime";
+import { Effect, Fiber } from "effect";
+import ontology from "../ontology/ontology";
+import { foundry } from "./foundry-config";
+
+const server = Effect.gen(function* () {
+    const runtime = yield* (yield* Runtimes).acquire({ owner: "device", namespace: "my-app:connect" });
+    const connect = yield* makeConnectManager({
+        services: [
+            {
+                connector: makeFoundryServiceConnector(),
+                instances: [
+                    {
+                        id: "foundry",
+                        instanceUrl: foundry.baseUrl,
+                        OAuthApplications: [
+                            {
+                                id: "app",
+                                clientId: foundry.oauth.clientId,
+                                scopes: foundry.oauth.scopes,
+                                redirectUrl: foundry.oauth.redirectUrl,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    }).pipe(Effect.provideService(Runtime, runtime));
+
+    return yield* makeOntologyServer({
+        enableRealtime: true,
+        routes: {
+            connect: connectDeviceRoute(connect),
+            "foundry/:connectionId": ({ connectionId }) =>
+                Effect.gen(function* () {
+                    const access = yield* connect.connections.acquire({
+                        objectType: "OAuthConnection",
+                        id: connectionId,
+                    });
+                    const context = { userId: access.userId };
+                    return {
+                        kind: "replica" as const,
+                        dangerouslyAllowInternalAccess: true as const,
+                        namespace: foundry.ontologyId,
+                        ir: ontology,
+                        context,
+                        authentication: access.authentication,
+                        backend: yield* makeFoundryBackend({
+                            baseUrl: access.serviceInstance.instanceUrl,
+                            ontologyId: foundry.ontologyId,
+                            ir: ontology,
+                            context,
+                            egress: access.egress,
+                        }),
+                    };
+                }),
+        },
+    });
+});
+
+serveOntologyWorker(server).pipe(
+    Effect.flatMap(Fiber.join),
+    Effect.scoped,
+    Effect.provide(webRuntime({ persistEncryptionKeys: true })),
+    Effect.provide(workerRunner),
+    runMain
+);
+```
+
+`device` and `my-app:connect` identify this app's credential-storage partition,
+shared by its accounts. Data partitions use the ontology's declared context
+partition and the route's namespace.
+
+`connect.connections.acquire({ objectType, id })` acquires authenticated access
+to a saved connection for the route's Effect Scope. `objectType` selects the
+OAuth, API-key or external-session connection table. The returned `access`
+contains `userId`, `serviceInstance`, authenticated Effect-returning `egress.fetch` /
+`egress.createWebSocket`, and an `authentication` status stream. Connect rereads
+credentials and coordinates OAuth refresh; closing the route releases its requests
+and sockets. This acquisition does not sign the user in or create a replication session.
+
+`makeConnectManager` expands the service tree into configuration records. Signing
+in creates or refreshes saved connections. It runs scoped maintenance by default;
+set `startMaintenance: false` and call `manager.maintenance.run` from an alarm or job
+when another owner schedules it.
+
+Instance/application IDs and titles are optional. Derived IDs use the service URL
+and client ID; titles come from the connector, and flow defaults to `authorization-code`.
+This example keeps `app` as an explicit ID for the tab's sign-in selector.
+Scopes belong to each `OAuthApplications` entry. Omitting scopes uses the connector's
+recommended defaults; `scopes: []` requests none.
+
+`makeFoundryServiceConnector()` supplies Foundry's OAuth endpoints, token refresh,
+identity verification, and authenticated fetch/WebSocket access. It does not open
+an ontology. `makeFoundryBackend` uses that access to read data and submit actions.
+
+`connectDeviceRoute(connect)` mounts the manager with `connectPublicOntologyIR`.
+It lets private local tabs read account metadata and run authentication actions
+without reading tokens or PKCE attempts. A network-hosted Connect service needs
+its own policy that scopes records and actions to the authenticated caller.
+
+The server shares each resolved backend while it is in use and retains idle routes
+for 60 seconds by default (`idleRetentionMs`). Routes returning `kind: "replica"`
+with a replica configuration automatically acquire persistent replicas and record
+their definitions and storage addresses for reopening. An optional `replicas: { scope }` isolates both the
+inventory and data namespaces when several servers share that runtime platform.
+Native `server.forget(name)` explicitly deletes a stored data partition; closing
+a connection alone does not delete it. Tabs never open those persistent tables.
+
+The route definition is transport-neutral: an HTTP binding can serve the same
+`makeOntologyServer` result. Routes can also return an owned backend, direct proxy
+or cached proxy; they do not all need replicas.
+
+## Configure the tab
+
+This module describes the client and tab storage. Importing it opens no ports or
+storage; the React environment below owns those resources.
+
+```ts title="src/app/ontology-client.ts"
+import { workerClient } from "@party-stack/ontology/worker";
+import { webRuntime } from "@party-stack/web-runtime";
+
+export const client = workerClient(
+    () =>
+        new SharedWorker(new URL("./ontology.worker.ts", import.meta.url), {
+            type: "module",
+            name: "my-app",
+        })
+);
+export const tabOptions = { runtime: webRuntime({ storage: "memory" }) };
+```
+
+Add the popup callback route:
+
+```tsx title="src/routes/auth.callback.tsx"
+import { createFileRoute } from "@tanstack/react-router";
+import { relayWebBrowserAuthenticationCallback } from "@party-stack/web-runtime";
+import { useEffect } from "react";
+
+export const Route = createFileRoute("/auth/callback")({ ssr: false, component: Callback });
+function Callback() {
+    useEffect(() => relayWebBrowserAuthenticationCallback(), []);
+    return <p>Completing sign-in…</p>;
+}
+```
+
+## Build the account switcher
+
+`OntologyEnvironmentProvider` shares the server client and common tab options.
+Each `OntologyProvider` selects a target and owns its local view. The environment
+opens the shared client after mounting and closes it on unmount. `AuthenticationProvider`
+owns the Connect view and its authentication commands.
+
+Keep the account picker inside the `connect` view. Put the issue UI inside a
+separate view selected by the saved connection ID:
+
+```tsx title="src/app/App.tsx"
+import { OntologyProvider, OntologyEnvironmentProvider } from "@party-stack/ontology-react";
+import { authenticationObjects } from "@party-stack/ontology/authentication";
+import { AuthenticationProvider, useAuthentication } from "@party-stack/ontology-react/authentication";
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { Suspense, useState } from "react";
+import { client, tabOptions } from "./ontology-client";
+import { foundry } from "./foundry-config";
+import { Issues } from "./Issues";
+
+export function App() {
+    // To persist the selection, use URL search params or sessionStorage instead.
+    const [selectedOntology, setSelectedOntology] = useState<string>();
+    return (
+        <OntologyEnvironmentProvider client={client} {...tabOptions}>
+            <Suspense fallback={<p>Loading accounts…</p>}>
+                <AuthenticationProvider>
+                    <AccountSwitcher selected={selectedOntology} onSelect={setSelectedOntology} />
+                </AuthenticationProvider>
+            </Suspense>
+            {selectedOntology && (
+                <Suspense fallback={<p>Loading issues…</p>}>
+                    <OntologyProvider ontology={`foundry/${encodeURIComponent(selectedOntology)}`}>
+                        <Issues />
+                    </OntologyProvider>
+                </Suspense>
+            )}
+        </OntologyEnvironmentProvider>
+    );
+}
+
+function AccountSwitcher({
+    selected,
+    onSelect,
+}: {
+    selected?: string;
+    onSelect: (connectionId: string) => void;
+}) {
+    const authentication = useAuthentication();
+    const oauth = authentication.oauth({ applicationId: "app", redirectUrl: foundry.oauth.redirectUrl });
+    const { data } = useLiveSuspenseQuery({
+        query: (q) => q.from({ connection: authenticationObjects.OAuthConnection }),
+    });
+    const [error, setError] = useState<string>();
+    async function signIn(connectionId?: string) {
+        setError(undefined);
+        try {
+            const connection = await oauth.signIn({ browserPresentation: "popup", connectionId });
+            onSelect(connection.id);
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Sign-in failed.");
+        }
+    }
+    return (
+        <nav aria-label="Foundry accounts">
+            {data.map((connection) => (
+                <button
+                    key={connection.id}
+                    aria-pressed={selected === connection.id}
+                    onClick={() =>
+                        connection.status === "active" ? onSelect(connection.id) : void signIn(connection.id)
+                    }
+                >
+                    {connection.title}
+                    {connection.status !== "active" && " — reconnect"}
+                </button>
+            ))}
+            <button onClick={() => void signIn()}>Sign in to Foundry</button>
+            {error && <p role="alert">{error}</p>}
+        </nav>
+    );
+}
+```
+
+Render the app from a client-only TanStack Start route:
+
+```tsx title="src/routes/index.tsx"
+import { createFileRoute } from "@tanstack/react-router";
+import { App } from "../app/App";
+
+export const Route = createFileRoute("/")({ ssr: false, component: App });
+```
+
+The account query uses normal demand and change notifications, including changes
+from another tab. The selected ID lives in React state here; you can keep it in
+router state instead. Signing in again updates the saved connection for that user.
+If the current credential is rejected, Connect saves `status: "needs-auth"`; the
+same query updates the reconnect button. A late rejection of an older credential
+does not overwrite a newer sign-in. Network connectivity is separate from this
+saved authentication state.
+
+Each `OntologyProvider` supplies its own `LiveOntology` and TanStack `DbProvider`.
+The picker queries Connect's collections; `Issues` uses the generated data
+collections from the [TanStack Start guide](/docs/tanstack-start). No query needs a
+client argument. Switching accounts closes the old tab view; the worker owns its
+persistent data independently. Pins target the worker's selected persistent replica.
+
+Sign-in starts only when a button calls `oauth.signIn`. The command facade calls
+Connect's ordinary `beginAuthorization` and `completeAuthorization` actions,
+presents the browser popup, and returns the saved connection ID. The worker
+exchanges the code and encrypts the credentials. These commands bypass the replica
+outbox; the account inventory uses normal replicated collections.
+
+`createAuthenticationClient` from `@party-stack/ontology/authentication` is the same Promise
+command facade for non-React code. It selects the Connect target on a supplied
+server client, obtains the runtime's browser presentation capability, and exposes
+OAuth, API-key, external-session, sign-out and forget commands plus a one-shot
+`connections()` query. It creates no local replica or separate account store.
+Its owner calls `cleanup()`. `AuthenticationProvider` handles this lifecycle in React.

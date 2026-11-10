@@ -1,53 +1,41 @@
-import type { Coordination } from "@party-stack/coordination";
-import type { PersistedCollectionPersistence } from "@tanstack/db-sqlite-persistence-core";
-
-export interface BlobBytesStore {
-    write(id: string, blob: Blob): Promise<void>;
-    read(id: string): Promise<Blob>;
-    delete(id: string): Promise<void>;
-}
+import type { BrowserAuthenticationError } from "./BrowserAuthenticationError.js";
+import type { ResourceCapacity } from "./capacity.js";
+import type { RuntimeError } from "./Runtime.js";
+import type { OntologyStorageError } from "@party-stack/ontology-storage";
+import type { BlobBytesService } from "@party-stack/ontology-storage/blobs";
+import type { EncryptionError, EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
+import type { TablesService } from "@party-stack/ontology-storage/tables";
+import type { Effect, Scope, Stream } from "effect";
 
 export interface NetworkConnectivity {
-    readonly isConnected: boolean;
-    subscribe(callback: (isConnected: boolean) => void): () => void;
-}
-
-export interface SecretStore {
-    get(key: string): Promise<string | undefined>;
-    set(key: string, value: string): Promise<void>;
-    delete(key: string): Promise<void>;
+    readonly online: Effect.Effect<boolean>;
+    /** Includes the current state; intermediate transitions may be coalesced. */
+    readonly changes: Stream.Stream<boolean>;
 }
 
 export type BrowserAuthenticationPresentation = "popup" | "redirect";
 
 export interface BrowserAuthenticationSession {
-    open(authorizationUrl: string): Promise<{ callbackUrl: string }>;
-    close(): void | Promise<void>;
+    open(authorizationUrl: string): Effect.Effect<{ callbackUrl: string }, BrowserAuthenticationError>;
 }
 
 export interface BrowserAuthentication {
     start(options: {
         redirectUrl: string;
         presentation?: BrowserAuthenticationPresentation;
-    }): BrowserAuthenticationSession;
+    }): Effect.Effect<BrowserAuthenticationSession, BrowserAuthenticationError, Scope.Scope>;
 }
 
-export type { PersistenceAdapter } from "@tanstack/db-sqlite-persistence-core";
-
-export interface RuntimeAdapter {
-    readonly owner: string;
-    readonly namespace: string;
-    blobBytes: BlobBytesStore;
-    coordination: Coordination;
+/** Platform-acquired capabilities; Runtime.make assembles the RuntimeService. */
+export interface RuntimeOptions {
+    readonly capacity?: ResourceCapacity;
+    blobBytes: BlobBytesService;
     connectivity?: NetworkConnectivity;
     browserAuthentication?: BrowserAuthentication;
-    secrets?: SecretStore;
-    persistence?: PersistedCollectionPersistence;
-    cleanup?: () => void | Promise<void>;
-    destroy?: () => void | Promise<void>;
+    encryptionKeyring?: EncryptionKeyringService;
+    /** Acquired by the platform layer in its scope, including explicit memory tables. */
+    tables: TablesService;
+    destroy?: Effect.Effect<void, RuntimeError>;
 }
 
-export type RuntimeAdapterProvider = (
-    owner: string,
-    namespace: string
-) => RuntimeAdapter | Promise<RuntimeAdapter>;
+export type RuntimeAcquisitionError = RuntimeError | OntologyStorageError | EncryptionError;

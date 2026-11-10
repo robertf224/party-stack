@@ -15,6 +15,7 @@
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
         "typescript": "~7.0.2",
+        "vite": "catalog:",
         "vite-plus": "catalog:"
     }
 }

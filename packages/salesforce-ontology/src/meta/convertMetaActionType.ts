@@ -9,7 +9,7 @@ import {
     toOntologyActionTypeName,
 } from "../utils/ids.js";
 import { convertSalesforceInvocableParameterType } from "./convertMetaTypeDef.js";
-import type { MetaActionType } from "@party-stack/ontology";
+import type { ActionType as MetaActionType } from "@party-stack/ontology-spec/meta";
 import type {
     SalesforceInvocableActionDescribe,
     SalesforceSObjectDescribe,

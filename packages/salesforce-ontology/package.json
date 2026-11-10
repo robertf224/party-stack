@@ -14,37 +14,33 @@
             "types": "./lib/config/index.d.ts",
             "default": "./lib/config/index.js"
         },
-        "./installation": {
-            "types": "./lib/installation/index.d.ts",
-            "default": "./lib/installation/index.js"
-        },
         "./meta": {
             "types": "./lib/meta/index.d.ts",
             "default": "./lib/meta/index.js"
+        },
+        "./connect": {
+            "types": "./lib/connect.d.ts",
+            "default": "./lib/connect.js"
         }
     },
     "dependencies": {
         "@bobbyfidz/panic": "^0.1.0",
-        "@party-stack/connections": "workspace:*",
-        "@party-stack/errors": "workspace:*",
+        "@party-stack/connect": "workspace:*",
         "@party-stack/icons-salesforce-lightning": "workspace:*",
-        "@party-stack/oauth": "workspace:*",
         "@party-stack/ontology": "workspace:*",
+        "@party-stack/ontology-backend": "workspace:*",
+        "@party-stack/ontology-spec": "workspace:*",
+        "@party-stack/ontology-storage": "workspace:*",
         "@party-stack/runtime": "workspace:*",
         "@party-stack/salesforce-client": "workspace:*",
+        "effect": "^4.0.5",
         "temporal-polyfill": "^0.3.0"
     },
     "devDependencies": {
         "@party-stack/build-config": "workspace:*",
-        "@tanstack/db": "0.14.0",
-        "@tanstack/query-core": "^5.102.8",
-        "@tanstack/query-db-collection": "1.4.4",
+        "@tanstack/db": "1.0.0-rc.1.4",
         "typescript": "~7.0.2",
+        "vite": "catalog:",
         "vite-plus": "catalog:"
-    },
-    "peerDependencies": {
-        "@tanstack/db": "0.14.0",
-        "@tanstack/query-core": "^5.102.8",
-        "@tanstack/query-db-collection": "1.4.4"
     }
 }

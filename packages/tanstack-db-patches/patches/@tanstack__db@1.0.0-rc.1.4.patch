@@ -1,0 +1,611 @@
+diff --git a/dist/cjs/query/compiler/order-by.cjs b/dist/cjs/query/compiler/order-by.cjs
+index ae4a4162b4b2d998e07d41c4b0937507ccfce021..6f31ab44d0989e804a8dc29e0d8bf402029d7648 100644
+--- a/dist/cjs/query/compiler/order-by.cjs
++++ b/dist/cjs/query/compiler/order-by.cjs
+@@ -144,6 +144,7 @@ function processOrderBy(rawQuery, pipeline, orderByClause, selectClause, groupin
+         index,
+         orderBy: sourceOrderBy,
+         joinedFilterSourceIds: joinedFilterSourceId ? [joinedFilterSourceId] : void 0,
++        exactOrderedWindow: false,
+         sourceHoldsAllRows: followRefResult.collection.config.syncMode !== `on-demand`,
+         requiresFullSource: sourceOrderBy.some(
+           ({ compareOptions }) => compareOptions.stringSort === `custom`
+@@ -153,6 +154,46 @@ function processOrderBy(rawQuery, pipeline, orderByClause, selectClause, groupin
+         // root match may sit past the prefix.
+         (rawQuery.join?.some(({ type }) => type !== `left`) ?? false) || (rawQuery.where?.some(ir.isResidualWhere) ?? false) || hasCrossAliasWhere && joinedFilterSourceId === void 0 || (rawQuery.fnWhere?.length ?? 0) > 0 || rawQuery.groupBy !== void 0 || rawQuery.having !== void 0 || rawQuery.fnHaving !== void 0 || rawQuery.distinct === true
+       };
++      // Core admits only a direct plan. The adapter additionally proves its
++      // typed comparison domains, exact pushdown and unique final sort key.
++      if (!info.requiresFullSource && !rawQuery.join?.length && (offset ?? 0) >= 0) {
++        const predicates = (rawQuery.where ?? []).map((where) =>
++          expressions.normalizeExpressionPaths(ir.getWhereExpression(where), orderByAlias),
++        )
++        const where =
++          predicates.length === 0
++            ? undefined
++            : predicates.length === 1
++              ? predicates[0]
++              : new ir.Func(`and`, predicates)
++        info.exactOrderedWindow =
++          followRefResult.collection.config.sync.supportsOrderedWindow?.({
++            where,
++            orderBy: expressions.normalizeOrderByPaths(sourceOrderBy, orderByAlias),
++            limit: (offset ?? 0) + limit,
++          }) === true
++        if (info.exactOrderedWindow) {
++          const terms = sourceOrderBy.map((term) => ({
++            extract: evaluators.compileExpression(
++              new ir.PropRef(
++                ir.followRef(rawQuery, term.expression, collection).path,
++              ),
++              true,
++            ),
++            compare: comparison.makeComparator(term.compareOptions),
++          }))
++          info.comparator = (a, b) => {
++            for (const term of terms) {
++              const compared = term.compare(
++                a ? term.extract(a) : a,
++                b ? term.extract(b) : b,
++              )
++              if (compared !== 0) return compared
++            }
++            return 0
++          }
++        }
++      }
+       orderByOptimizationInfo = info;
+       const previous = optimizableOrderByCollections[orderBySourceId];
+       optimizableOrderByCollections[orderBySourceId] = previous ? {
+@@ -172,19 +213,21 @@ function processOrderBy(rawQuery, pipeline, orderByClause, selectClause, groupin
+             info.offset + info.limit
+           ) - this.offset;
+         },
++        exactOrderedWindow: previous.exactOrderedWindow && info.exactOrderedWindow && utils.deepEquals(previous.orderBy, info.orderBy),
++        comparator: previous.exactOrderedWindow && info.exactOrderedWindow && utils.deepEquals(previous.orderBy, info.orderBy) ? info.comparator : compareSourceRows,
+         // Plan shape is fixed at compilation; only window bounds move.
+-        requiresFullSource: !utils.deepEquals(previous.orderBy, info.orderBy) || previous.requiresFullSource || info.requiresFullSource,
++        requiresFullSource: previous.exactOrderedWindow !== info.exactOrderedWindow || !utils.deepEquals(previous.orderBy, info.orderBy) || previous.requiresFullSource || info.requiresFullSource,
+         dataNeeded: (boundary) => Math.max(
+           previous.dataNeeded?.(boundary) ?? 0,
+           info.dataNeeded?.(boundary) ?? 0
+         )
+       } : info;
+       const needsCount = joinedFilterSourceId !== void 0 && !info.sourceHoldsAllRows;
+-      if (index || needsCount) {
++      if (index || needsCount || info.exactOrderedWindow) {
+         setSizeCallback = (getSize) => {
+           info.dataNeeded = (boundary) => {
+             const size = getSize(
+-              boundary && ((row) => compareSourceRows(
++              boundary && ((row) => info.comparator(
+                 row[orderByAlias],
+                 boundary
+               ) <= 0)
+@@ -235,4 +278,3 @@ function resolveCompareOptions(clause, defaults) {
+ }
+ exports.buildCompareOptions = buildCompareOptions;
+ exports.processOrderBy = processOrderBy;
+-//# sourceMappingURL=order-by.cjs.map
+diff --git a/dist/cjs/query/compiler/order-by.d.cts b/dist/cjs/query/compiler/order-by.d.cts
+index aae21fc720238ddb5d3454e89ffe58c0da0bd8fa..5dea184e1f929438881f9af4e78de6c3332becb4 100644
+--- a/dist/cjs/query/compiler/order-by.d.cts
++++ b/dist/cjs/query/compiler/order-by.d.cts
+@@ -31,6 +31,8 @@ export type OrderByOptimizationInfo = {
+     requiresFullSource: boolean;
+     /** Whether the ordered source's installed rows are the whole source. */
+     sourceHoldsAllRows: boolean;
++    /** Adapter-proven exact full-order prefixes; no leading-value tie is owed. */
++    exactOrderedWindow?: boolean;
+     /** Sources whose lazy demand must settle before a joined-filter page. */
+     joinedFilterSourceIds?: ReadonlyArray<string>;
+ };
+diff --git a/dist/cjs/query/live/ordered-source-loader.cjs b/dist/cjs/query/live/ordered-source-loader.cjs
+index d6554e41a187de4e1bab84482a85d203b2640e98..5c8560433b58ee45843c6027eba8857d5fad676e 100644
+--- a/dist/cjs/query/live/ordered-source-loader.cjs
++++ b/dist/cjs/query/live/ordered-source-loader.cjs
+@@ -42,7 +42,7 @@ class OrderedSourceLoader {
+     this.cr = 0;
+     this.bG = false;
+     this.info.isRequesting = () => this.fT;
+-    this.gp = info.sourceHoldsAllRows && info.index !== void 0 && info.orderBy.length === 1 && !info.joinedFilterSourceIds?.length;
++    this.gp = info.exactOrderedWindow || info.sourceHoldsAllRows && info.index !== void 0 && info.orderBy.length === 1 && !info.joinedFilterSourceIds?.length;
+   }
+   get ap() {
+     return this.gO !== `none`;
+@@ -121,7 +121,7 @@ class OrderedSourceLoader {
+       this.loadFullSource();
+       return;
+     }
+-    if (!index) {
++    if (this.info.exactOrderedWindow || !index) {
+       this.e$(offset + limit);
+       return;
+     }
+@@ -172,15 +172,16 @@ class OrderedSourceLoader {
+       }
+       return this.pending;
+     }
+-    if (this.ap && !(continuesOrderedPrefixRepair && this.work.kind === `repair`) || this.info.requiresFullSource) {
+-      if (this.gO === `bounded` && !this.info.requiresFullSource) {
++    const requiresFullSource = this.info.requiresFullSource || this.info.exactOrderedWindow && this.info.offset < 0;
++    if (this.ap && !(continuesOrderedPrefixRepair && this.work.kind === `repair`) || requiresFullSource) {
++      if (this.gO === `bounded` && !requiresFullSource) {
+         this.dw(windowOperationGeneration);
+       } else {
+         this.loadFullSource(windowOperationGeneration);
+       }
+       return this.pending;
+     }
+-    if (!this.info.index) {
++    if (this.info.exactOrderedWindow || !this.info.index) {
+       const shouldLoad = windowOperationGeneration !== void 0 || this.F || (this.info.dataNeeded?.(this.ah) ?? 0) > 0 || this.bQ !== void 0 && this.bQ < this.info.offset + this.info.limit;
+       if (shouldLoad) {
+         this.F = false;
+@@ -409,7 +410,7 @@ class OrderedSourceLoader {
+   revalidateLoadedCoverage() {
+     if (!this.aL) return;
+     const end = this.he();
+-    if (end !== void 0 && ((this.gI ?? 0) > this.info.offset + this.info.limit || Object.is(this.info.valueExtractorForRawRow(end), this.dl)))
++    if (end !== void 0 && (this.info.exactOrderedWindow || (this.gI ?? 0) > this.info.offset + this.info.limit || Object.is(this.info.valueExtractorForRawRow(end), this.dl)))
+       return;
+     this.invalidateSourceOrdering();
+   }
+@@ -580,6 +581,7 @@ class OrderedSourceLoader {
+     }
+   }
+   fJ(windowOperationGeneration, continuesOrderedPrefixRepair = false) {
++    if (this.info.exactOrderedWindow) return this.loadMore(windowOperationGeneration, continuesOrderedPrefixRepair);
+     const biggest = this.ah;
+     if (biggest === void 0) {
+       return continuesOrderedPrefixRepair ? this.loadMore(windowOperationGeneration, true) : void 0;
+@@ -917,4 +919,3 @@ class OrderedSourceLoader {
+ }
+ exports.OrderedLoaderInvariantError = OrderedLoaderInvariantError;
+ exports.OrderedSourceLoader = OrderedSourceLoader;
+-//# sourceMappingURL=ordered-source-loader.cjs.map
+diff --git a/dist/cjs/types.d.cts b/dist/cjs/types.d.cts
+index c015a28632609ef577f63c19bbad124d27f9bb30..a276cb7a6032ef545f9e2f3cf514046ff093b2b7 100644
+--- a/dist/cjs/types.d.cts
++++ b/dist/cjs/types.d.cts
+@@ -354,6 +354,8 @@ export type SyncConfigRes = {
+     restartAfterScopedRecovery?: (cacheRotated: Promise<void>) => void | Promise<void>;
+ };
+ export interface SyncConfig<T extends object = Record<string, unknown>, TKey extends string | number = string | number> {
++    /** Exact full-order prefix support for every finite window of this fixed normalized query. Not freshness. */
++    supportsOrderedWindow?: (options: LoadSubsetOptions) => boolean;
+     sync: (params: {
+         collection: Collection<T, TKey, any, any, any>;
+         /**
+diff --git a/dist/esm/query/compiler/order-by.d.ts b/dist/esm/query/compiler/order-by.d.ts
+index 7aad9cbbd5a1241da433fdd366bc80a9fb7ddf53..04cfc7a977e9f67065b3043664e4f7b5dde6be3a 100644
+--- a/dist/esm/query/compiler/order-by.d.ts
++++ b/dist/esm/query/compiler/order-by.d.ts
+@@ -31,6 +31,8 @@ export type OrderByOptimizationInfo = {
+     requiresFullSource: boolean;
+     /** Whether the ordered source's installed rows are the whole source. */
+     sourceHoldsAllRows: boolean;
++    /** Adapter-proven exact full-order prefixes; no leading-value tie is owed. */
++    exactOrderedWindow?: boolean;
+     /** Sources whose lazy demand must settle before a joined-filter page. */
+     joinedFilterSourceIds?: ReadonlyArray<string>;
+ };
+diff --git a/dist/esm/query/compiler/order-by.js b/dist/esm/query/compiler/order-by.js
+index 9a0a188851a196728a27421c15df5f0239b34400..7095ca4ef2ac0ea769ebdf4cf765e6730bb01e60 100644
+--- a/dist/esm/query/compiler/order-by.js
++++ b/dist/esm/query/compiler/order-by.js
+@@ -1,13 +1,13 @@
+ import { groupedOrderByWithFractionalIndex, orderByWithFractionalIndex } from "@tanstack/db-ivm";
+ import { makeComparator, defaultComparator } from "../../utils/comparison.js";
+-import { followRef, collectCollectionSources, PropRef, getWhereExpression, isResidualWhere } from "../ir.js";
++import { followRef, collectCollectionSources, Func, PropRef, getWhereExpression, isResidualWhere } from "../ir.js";
+ import { ensureIndexForField } from "../../indexes/auto-index.js";
+ import { findIndexForField, supportsOrderedRange, supportsOrderedIndexStructure } from "../../utils/index-optimization.js";
+ import { hasVirtualPropPath } from "../../virtual-props.js";
+ import { deepEquals } from "../../utils.js";
+ import { devBuild } from "../../error-message.js";
+ import { compileExpression } from "./evaluators.js";
+-import { getSourceAliasesFromExpression } from "./expressions.js";
++import { getSourceAliasesFromExpression, normalizeExpressionPaths, normalizeOrderByPaths } from "./expressions.js";
+ function warnOrderIndexFallback(collection, path, options, index) {
+   if (devBuild() && process.env.NODE_ENV !== `production`) {
+     const field = path.join(`.`);
+@@ -142,6 +142,7 @@ function processOrderBy(rawQuery, pipeline, orderByClause, selectClause, groupin
+         index,
+         orderBy: sourceOrderBy,
+         joinedFilterSourceIds: joinedFilterSourceId ? [joinedFilterSourceId] : void 0,
++        exactOrderedWindow: false,
+         sourceHoldsAllRows: followRefResult.collection.config.syncMode !== `on-demand`,
+         requiresFullSource: sourceOrderBy.some(
+           ({ compareOptions }) => compareOptions.stringSort === `custom`
+@@ -151,6 +152,46 @@ function processOrderBy(rawQuery, pipeline, orderByClause, selectClause, groupin
+         // root match may sit past the prefix.
+         (rawQuery.join?.some(({ type }) => type !== `left`) ?? false) || (rawQuery.where?.some(isResidualWhere) ?? false) || hasCrossAliasWhere && joinedFilterSourceId === void 0 || (rawQuery.fnWhere?.length ?? 0) > 0 || rawQuery.groupBy !== void 0 || rawQuery.having !== void 0 || rawQuery.fnHaving !== void 0 || rawQuery.distinct === true
+       };
++      // Core admits only a direct plan. The adapter additionally proves its
++      // typed comparison domains, exact pushdown and unique final sort key.
++      if (!info.requiresFullSource && !rawQuery.join?.length && (offset ?? 0) >= 0) {
++        const predicates = (rawQuery.where ?? []).map((where) =>
++          normalizeExpressionPaths(getWhereExpression(where), orderByAlias),
++        )
++        const where =
++          predicates.length === 0
++            ? undefined
++            : predicates.length === 1
++              ? predicates[0]
++              : new Func(`and`, predicates)
++        info.exactOrderedWindow =
++          followRefResult.collection.config.sync.supportsOrderedWindow?.({
++            where,
++            orderBy: normalizeOrderByPaths(sourceOrderBy, orderByAlias),
++            limit: (offset ?? 0) + limit,
++          }) === true
++        if (info.exactOrderedWindow) {
++          const terms = sourceOrderBy.map((term) => ({
++            extract: compileExpression(
++              new PropRef(
++                followRef(rawQuery, term.expression, collection).path,
++              ),
++              true,
++            ),
++            compare: makeComparator(term.compareOptions),
++          }))
++          info.comparator = (a, b) => {
++            for (const term of terms) {
++              const compared = term.compare(
++                a ? term.extract(a) : a,
++                b ? term.extract(b) : b,
++              )
++              if (compared !== 0) return compared
++            }
++            return 0
++          }
++        }
++      }
+       orderByOptimizationInfo = info;
+       const previous = optimizableOrderByCollections[orderBySourceId];
+       optimizableOrderByCollections[orderBySourceId] = previous ? {
+@@ -170,19 +211,21 @@ function processOrderBy(rawQuery, pipeline, orderByClause, selectClause, groupin
+             info.offset + info.limit
+           ) - this.offset;
+         },
++        exactOrderedWindow: previous.exactOrderedWindow && info.exactOrderedWindow && deepEquals(previous.orderBy, info.orderBy),
++        comparator: previous.exactOrderedWindow && info.exactOrderedWindow && deepEquals(previous.orderBy, info.orderBy) ? info.comparator : compareSourceRows,
+         // Plan shape is fixed at compilation; only window bounds move.
+-        requiresFullSource: !deepEquals(previous.orderBy, info.orderBy) || previous.requiresFullSource || info.requiresFullSource,
++        requiresFullSource: previous.exactOrderedWindow !== info.exactOrderedWindow || !deepEquals(previous.orderBy, info.orderBy) || previous.requiresFullSource || info.requiresFullSource,
+         dataNeeded: (boundary) => Math.max(
+           previous.dataNeeded?.(boundary) ?? 0,
+           info.dataNeeded?.(boundary) ?? 0
+         )
+       } : info;
+       const needsCount = joinedFilterSourceId !== void 0 && !info.sourceHoldsAllRows;
+-      if (index || needsCount) {
++      if (index || needsCount || info.exactOrderedWindow) {
+         setSizeCallback = (getSize) => {
+           info.dataNeeded = (boundary) => {
+             const size = getSize(
+-              boundary && ((row) => compareSourceRows(
++              boundary && ((row) => info.comparator(
+                 row[orderByAlias],
+                 boundary
+               ) <= 0)
+@@ -235,4 +278,3 @@ export {
+   buildCompareOptions,
+   processOrderBy
+ };
+-//# sourceMappingURL=order-by.js.map
+diff --git a/dist/esm/query/live/ordered-source-loader.js b/dist/esm/query/live/ordered-source-loader.js
+index b4052aa95734005096fe85550110bb1fce46f7bf..3f9139e7783679faa01c47c716e006e2191960f9 100644
+--- a/dist/esm/query/live/ordered-source-loader.js
++++ b/dist/esm/query/live/ordered-source-loader.js
+@@ -40,7 +40,7 @@ class OrderedSourceLoader {
+     this.cr = 0;
+     this.bG = false;
+     this.info.isRequesting = () => this.fT;
+-    this.gp = info.sourceHoldsAllRows && info.index !== void 0 && info.orderBy.length === 1 && !info.joinedFilterSourceIds?.length;
++    this.gp = info.exactOrderedWindow || info.sourceHoldsAllRows && info.index !== void 0 && info.orderBy.length === 1 && !info.joinedFilterSourceIds?.length;
+   }
+   get ap() {
+     return this.gO !== `none`;
+@@ -119,7 +119,7 @@ class OrderedSourceLoader {
+       this.loadFullSource();
+       return;
+     }
+-    if (!index) {
++    if (this.info.exactOrderedWindow || !index) {
+       this.e$(offset + limit);
+       return;
+     }
+@@ -170,15 +170,16 @@ class OrderedSourceLoader {
+       }
+       return this.pending;
+     }
+-    if (this.ap && !(continuesOrderedPrefixRepair && this.work.kind === `repair`) || this.info.requiresFullSource) {
+-      if (this.gO === `bounded` && !this.info.requiresFullSource) {
++    const requiresFullSource = this.info.requiresFullSource || this.info.exactOrderedWindow && this.info.offset < 0;
++    if (this.ap && !(continuesOrderedPrefixRepair && this.work.kind === `repair`) || requiresFullSource) {
++      if (this.gO === `bounded` && !requiresFullSource) {
+         this.dw(windowOperationGeneration);
+       } else {
+         this.loadFullSource(windowOperationGeneration);
+       }
+       return this.pending;
+     }
+-    if (!this.info.index) {
++    if (this.info.exactOrderedWindow || !this.info.index) {
+       const shouldLoad = windowOperationGeneration !== void 0 || this.F || (this.info.dataNeeded?.(this.ah) ?? 0) > 0 || this.bQ !== void 0 && this.bQ < this.info.offset + this.info.limit;
+       if (shouldLoad) {
+         this.F = false;
+@@ -407,7 +408,7 @@ class OrderedSourceLoader {
+   revalidateLoadedCoverage() {
+     if (!this.aL) return;
+     const end = this.he();
+-    if (end !== void 0 && ((this.gI ?? 0) > this.info.offset + this.info.limit || Object.is(this.info.valueExtractorForRawRow(end), this.dl)))
++    if (end !== void 0 && (this.info.exactOrderedWindow || (this.gI ?? 0) > this.info.offset + this.info.limit || Object.is(this.info.valueExtractorForRawRow(end), this.dl)))
+       return;
+     this.invalidateSourceOrdering();
+   }
+@@ -578,6 +579,7 @@ class OrderedSourceLoader {
+     }
+   }
+   fJ(windowOperationGeneration, continuesOrderedPrefixRepair = false) {
++    if (this.info.exactOrderedWindow) return this.loadMore(windowOperationGeneration, continuesOrderedPrefixRepair);
+     const biggest = this.ah;
+     if (biggest === void 0) {
+       return continuesOrderedPrefixRepair ? this.loadMore(windowOperationGeneration, true) : void 0;
+@@ -917,4 +919,3 @@ export {
+   OrderedLoaderInvariantError,
+   OrderedSourceLoader
+ };
+-//# sourceMappingURL=ordered-source-loader.js.map
+diff --git a/dist/esm/types.d.ts b/dist/esm/types.d.ts
+index 734ebd81f8aadd42a5872f759c7a42a2b830f620..795be3fc6fb6e36af9414f030b452312c1d500c5 100644
+--- a/dist/esm/types.d.ts
++++ b/dist/esm/types.d.ts
+@@ -351,6 +351,8 @@ export type SyncConfigRes = {
+     restartAfterScopedRecovery?: (cacheRotated: Promise<void>) => void | Promise<void>;
+ };
+ export interface SyncConfig<T extends object = Record<string, unknown>, TKey extends string | number = string | number> {
++    /** Exact full-order prefix support for every finite window of this fixed normalized query. Not freshness. */
++    supportsOrderedWindow?: (options: LoadSubsetOptions) => boolean;
+     sync: (params: {
+         collection: Collection<T, TKey, any, any, any>;
+         /**
+diff --git a/src/query/compiler/order-by.ts b/src/query/compiler/order-by.ts
+index 01c61fbf48116aa3b0e19cc1eea68290afd39e4c..e757709b5d9b113cabee8d71388ca5d8980af2a9 100644
+--- a/src/query/compiler/order-by.ts
++++ b/src/query/compiler/order-by.ts
+@@ -4,6 +4,7 @@ import {
+ } from '@tanstack/db-ivm'
+ import { defaultComparator, makeComparator } from '../../utils/comparison.js'
+ import {
++  Func,
+   PropRef,
+   collectCollectionSources,
+   followRef,
+@@ -20,7 +21,11 @@ import { hasVirtualPropPath } from '../../virtual-props.js'
+ import { deepEquals } from '../../utils.js'
+ import { devBuild } from '../../error-message.js'
+ import { compileExpression } from './evaluators.js'
+-import { getSourceAliasesFromExpression } from './expressions.js'
++import {
++  getSourceAliasesFromExpression,
++  normalizeExpressionPaths,
++  normalizeOrderByPaths,
++} from './expressions.js'
+ import type { CompareOptions } from '../builder/types.js'
+ import type { WindowOptions } from './types.js'
+ import type { Grouping } from './grouping.js'
+@@ -67,6 +72,8 @@ export type OrderByOptimizationInfo = {
+   requiresFullSource: boolean
+   /** Whether the ordered source's installed rows are the whole source. */
+   sourceHoldsAllRows: boolean
++  /** Adapter-proven exact full-order prefixes; no leading-value tie is owed. */
++  exactOrderedWindow?: boolean
+   /** Sources whose lazy demand must settle before a joined-filter page. */
+   joinedFilterSourceIds?: ReadonlyArray<string>
+ }
+@@ -297,6 +304,7 @@ export function processOrderBy(
+         joinedFilterSourceIds: joinedFilterSourceId
+           ? [joinedFilterSourceId]
+           : undefined,
++        exactOrderedWindow: false,
+         sourceHoldsAllRows:
+           followRefResult.collection.config.syncMode !== `on-demand`,
+         requiresFullSource:
+@@ -319,6 +327,46 @@ export function processOrderBy(
+           rawQuery.fnHaving !== undefined ||
+           rawQuery.distinct === true,
+       }
++      // Core admits only a direct plan. The adapter additionally proves its
++      // typed comparison domains, exact pushdown and unique final sort key.
++      if (!info.requiresFullSource && !rawQuery.join?.length && (offset ?? 0) >= 0) {
++        const predicates = (rawQuery.where ?? []).map((where) =>
++          normalizeExpressionPaths(getWhereExpression(where), orderByAlias),
++        )
++        const where =
++          predicates.length === 0
++            ? undefined
++            : predicates.length === 1
++              ? predicates[0]
++              : new Func<boolean>(`and`, predicates)
++        info.exactOrderedWindow =
++          followRefResult.collection.config.sync.supportsOrderedWindow?.({
++            where,
++            orderBy: normalizeOrderByPaths(sourceOrderBy, orderByAlias),
++            limit: (offset ?? 0) + limit,
++          }) === true
++        if (info.exactOrderedWindow) {
++          const terms = sourceOrderBy.map((term) => ({
++            extract: compileExpression(
++              new PropRef(
++                followRef(rawQuery, term.expression as PropRef, collection)!.path,
++              ),
++              true,
++            ) as CompiledSingleRowExpression,
++            compare: makeComparator(term.compareOptions),
++          }))
++          info.comparator = (a, b) => {
++            for (const term of terms) {
++              const compared = term.compare(
++                a ? term.extract(a) : a,
++                b ? term.extract(b) : b,
++              )
++              if (compared !== 0) return compared
++            }
++            return 0
++          }
++        }
++      }
+       orderByOptimizationInfo = info
+ 
+       // Ordered loading is owned by one lexical source. A collection can occur
+@@ -349,8 +397,19 @@ export function processOrderBy(
+                 ) - this.offset
+               )
+             },
++            exactOrderedWindow:
++              previous.exactOrderedWindow &&
++              info.exactOrderedWindow &&
++              deepEquals(previous.orderBy, info.orderBy),
++            comparator:
++              previous.exactOrderedWindow &&
++              info.exactOrderedWindow &&
++              deepEquals(previous.orderBy, info.orderBy)
++                ? info.comparator
++                : compareSourceRows,
+             // Plan shape is fixed at compilation; only window bounds move.
+             requiresFullSource:
++              previous.exactOrderedWindow !== info.exactOrderedWindow ||
+               !deepEquals(previous.orderBy, info.orderBy) ||
+               previous.requiresFullSource ||
+               info.requiresFullSource,
+@@ -366,7 +425,7 @@ export function processOrderBy(
+       // index, only an on-demand joined filter can leave the window short.
+       const needsCount =
+         joinedFilterSourceId !== undefined && !info.sourceHoldsAllRows
+-      if (index || needsCount) {
++      if (index || needsCount || info.exactOrderedWindow) {
+         setSizeCallback = (getSize) => {
+           info.dataNeeded = (boundary) => {
+             // Window rows at or before the boundary are a leading run of
+@@ -374,7 +433,7 @@ export function processOrderBy(
+             const size = getSize(
+               boundary &&
+                 ((row) =>
+-                  compareSourceRows(
++                  info.comparator(
+                     (row as NamespacedRow)[orderByAlias],
+                     boundary,
+                   ) <= 0),
+diff --git a/src/query/live/ordered-source-loader.ts b/src/query/live/ordered-source-loader.ts
+index 405f06f05397d8c91fd71e75cf88e5e136a00241..7d9cf86b3d55f7e2a3973da68fcd20f7499c5024 100644
+--- a/src/query/live/ordered-source-loader.ts
++++ b/src/query/live/ordered-source-loader.ts
+@@ -163,10 +163,11 @@ export class OrderedSourceLoader {
+     // A joined filter drops rows after the source's limit, so a full window
+     // after a bounded read would not prove it holds the first eligible rows.
+     this.readsBoundedPrefix =
+-      info.sourceHoldsAllRows &&
+-      info.index !== undefined &&
+-      info.orderBy.length === 1 &&
+-      !info.joinedFilterSourceIds?.length
++      info.exactOrderedWindow ||
++      (info.sourceHoldsAllRows &&
++        info.index !== undefined &&
++        info.orderBy.length === 1 &&
++        !info.joinedFilterSourceIds?.length)
+   }
+ 
+   private get needsOrderingRepair(): boolean {
+@@ -292,7 +293,7 @@ export class OrderedSourceLoader {
+       this.loadFullSource()
+       return
+     }
+-    if (!index) {
++    if (this.info.exactOrderedWindow || !index) {
+       this.loadPrefix(offset + limit)
+       return
+     }
+@@ -381,19 +382,22 @@ export class OrderedSourceLoader {
+       }
+       return this.pending
+     }
++    const requiresFullSource =
++      this.info.requiresFullSource ||
++      (this.info.exactOrderedWindow && this.info.offset < 0)
+     if (
+       (this.needsOrderingRepair &&
+         !(continuesOrderedPrefixRepair && this.work.kind === `repair`)) ||
+-      this.info.requiresFullSource
++      requiresFullSource
+     ) {
+-      if (this.debt === `bounded` && !this.info.requiresFullSource) {
++      if (this.debt === `bounded` && !requiresFullSource) {
+         this.loadOrderedPrefixRepair(windowOperationGeneration)
+       } else {
+         this.loadFullSource(windowOperationGeneration)
+       }
+       return this.pending
+     }
+-    if (!this.info.index) {
++    if (this.info.exactOrderedWindow || !this.info.index) {
+       const shouldLoad =
+         windowOperationGeneration !== undefined ||
+         this.needsOptimisticRefill ||
+@@ -713,7 +717,8 @@ export class OrderedSourceLoader {
+     // loader has started or will start a full-source read, which covers it.
+     if (
+       end !== undefined &&
+-      ((this.ownPrefixCount ?? 0) > this.info.offset + this.info.limit ||
++      (this.info.exactOrderedWindow ||
++        (this.ownPrefixCount ?? 0) > this.info.offset + this.info.limit ||
+         Object.is(this.info.valueExtractorForRawRow(end), this.lastBoundary))
+     )
+       return
+@@ -959,6 +964,12 @@ export class OrderedSourceLoader {
+     windowOperationGeneration?: number,
+     continuesOrderedPrefixRepair = false,
+   ): Promise<void> | undefined {
++    if (this.info.exactOrderedWindow) {
++      return this.loadMore(
++        windowOperationGeneration,
++        continuesOrderedPrefixRepair,
++      )
++    }
+     const biggest = this.settledSourceBoundary
+     if (biggest === undefined) {
+       return continuesOrderedPrefixRepair
+diff --git a/src/types.ts b/src/types.ts
+index 8d17b2ae8ee9ce8b1f7ae46991578ddbc49f1fac..c62e0d984faa4e8461559aee00aa307bdb997ede 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -332,8 +332,9 @@ export type CursorExpressions = {
+  * the start of the order through its boundary, the leading order value of the
+  * last row the request returned, ties included. A request that returned no
+  * rows served no prefix. The ordered loader treats every row in a served
+- * prefix as loaded. See `LoadSubsetFn` for what a sync adapter owes after it
+- * refetches.
++ * prefix as loaded. An adapter-declared exact ordered window instead proves
++ * the complete ORDER BY boundary, including its unique final key; core need not
++ * acquire the rest of the leading-value tie. See `LoadSubsetFn` for refetch.
+  */
+ export type LoadSubsetOptions = {
+   /**
+@@ -447,6 +448,15 @@ export interface SyncConfig<
+   T extends object = Record<string, unknown>,
+   TKey extends string | number = string | number,
+ > {
++  /**
++   * Declares exact full-order prefix support for this normalized source query.
++   * Core calls this pure function only for direct, fully pushed ordered plans.
++   * Returning true promises matching comparison domains and a unique non-null
++   * final key: every finite prefix of this fixed WHERE/ORDER is exact, including
++   * after refetch, window changes and optimistic headroom. This is not readiness.
++   * Absent or false preserves conservative leading-value tie acquisition.
++   */
++  supportsOrderedWindow?: (options: LoadSubsetOptions) => boolean
+   sync: (params: {
+     collection: Collection<T, TKey, any, any, any>
+     /**

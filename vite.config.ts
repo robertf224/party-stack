@@ -3,7 +3,8 @@ import { defineConfig } from "vite-plus";
 export default defineConfig({
     run: {
         tasks: {
-            test: { command: "vp run -r test" },
+            // Each package test runner also spawns workers; avoid oversubscribing shared CI runners.
+            test: { command: process.env.CI ? "vp run --concurrency-limit 2 -r test" : "vp run -r test" },
             "check-versions": {
                 command: "syncpack lint",
                 // Only manifests and Syncpack configuration affect version consistency.
