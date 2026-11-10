@@ -1,5 +1,37 @@
 # @party-stack/build-config
 
+## 0.2.0
+
+### Minor Changes
+
+- 92480df: Add Effect-based transactional Tables with portable JavaScript/bigint/Temporal values,
+  native SQL / user-space IndexedDB indexes, subset queries, and separate sparse-overlay composition.
+  Provide IndexedDB, in-memory, and SQLite/PostgreSQL implementations with a shared conformance contract.
+  Add an opt-in Effect library build/TypeScript preset and workspace development tooling.
+
+    Port these experimental packages to ontology-storage, sql-ontology-storage, and
+    indexeddb-ontology-storage. Add an ontology-derived object API with generated codecs,
+    primary-key derivation, validated scalar paths, definition-drift guards, and native
+    transactions. Keep the raw engine under explicit infrastructure exports. Document
+    independent attachment-byte and replica-row retention without adding automatic GC.
+
+    Allow storage models to derive codecs directly from ontology IR while retaining
+    generated schemas for statically typed models.
+
+### Patch Changes
+
+- ca220d2: Replace the SQLite ontology attachment coordinator with shared transactional blob
+  storage and a common owned backend composition. Remove the sqlite-ontology package.
+  Rename durable-object-ontology to durable-object-ontology-storage and consolidate
+  its R2 implementation on Alchemy's client, with separate storage bridges and an
+  Alchemy constructor/resource example. Verify interrupted write/reader recovery with
+  real local Durable Object resets.
+
+    Stream attachment helper transfers over Effect RPC with scoped upload ownership,
+    bounded acknowledged chunks, size/sequence validation and cancellation. Support
+    source-only backend attachment/query helpers without constructing LiveOntology.
+    Keep Effect test aliases from redirecting Vitest worker entry points.
+
 ## 0.1.3
 
 ### Patch Changes

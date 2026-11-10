@@ -1,5 +1,14 @@
 # @party-stack/tanstack-start-build-config
 
+## 0.2.3
+
+### Patch Changes
+
+- Updated dependencies [ca220d2]
+- Updated dependencies [92480df]
+    - @party-stack/build-config@0.2.0
+    - @party-stack/vite-plugin-worktree-dev@0.2.0
+
 ## 0.2.2
 
 ### Patch Changes
