@@ -1263,6 +1263,47 @@
     .ps-query-node-body > .ps-query-selections {
         margin-top: 12px;
     }
+    .ps-query-relation,
+    .ps-query-relation-origin,
+    .ps-query-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+    }
+    .ps-query-relation {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 8px;
+        min-height: 30px;
+    }
+    .ps-query-relation-origin {
+        flex-wrap: wrap;
+        color: var(--ps-inspector-text);
+    }
+    .ps-query-relation-origin > .ps-query-field {
+        border: 0;
+        background: none;
+        padding: 0;
+        color: var(--ps-inspector-muted);
+    }
+    .ps-query-relation-origin > .ps-query-field::before {
+        content: "(";
+    }
+    .ps-query-relation-origin > .ps-query-field::after {
+        content: ")";
+    }
+    .ps-query-link {
+        padding: 3px 7px;
+        border: 1px solid #a78bfa40;
+        border-radius: 5px;
+        background: #a78bfa12;
+        color: #c4b5fd;
+        overflow-wrap: anywhere;
+    }
+    .ps-query-link > svg {
+        flex-shrink: 0;
+    }
     .ps-query-selection {
         display: flex;
         flex-wrap: wrap;

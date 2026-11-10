@@ -1,6 +1,8 @@
 import { resolveRelatedLink, isRelatedFromForeignKeySource } from "@party-stack/ontology/utils";
+import { Link2 } from "lucide-react";
 import { Fragment } from "react";
 import { DisclosureSummary } from "./DisclosureSummary.js";
+import { ObjectTypeIcon } from "./OntologyIcons.js";
 import { OperandToken, QuerySubject, nullOrderLabel } from "./QueryTokens.js";
 import { typeDisplayName } from "./typeDisplayName.js";
 import type { Load } from "./diagnostics.js";
@@ -423,12 +425,13 @@ export function QueryView({
     const relation = query.from.source.related;
     const owner = relation?.source.kind === "localReference" ? scope[relation.source.value.name] : undefined;
     const link = ir && owner && relation && resolveRelatedLink(ir, owner.name, relation.link);
-    const target =
+    const endpoint =
         link && owner && relation
             ? isRelatedFromForeignKeySource(link, owner.name, relation.link)
-                ? link.target.objectType
-                : link.source.objectType
-            : query.from.source.objectType;
+                ? link.target
+                : link.source
+            : undefined;
+    const target = endpoint?.objectType ?? query.from.source.objectType;
     const type = object ?? ir?.objectTypes.find((type) => type.name === target);
     const bindings = { ...scope, [query.from.binding]: type };
     const expressionProps = {
@@ -441,10 +444,29 @@ export function QueryView({
     const clauses = (
         <>
             {relation && (
-                <div className="ps-query-clause">
-                    <span className="ps-query-keyword">related</span>
-                    <QueryExpression expression={relation.source} scope={scope} ir={ir} />
-                    <span className="ps-query-binding">{relation.link}</span>
+                <div className="ps-query-relation">
+                    <span className="ps-query-keyword">From</span>
+                    <span className="ps-query-relation-origin">
+                        {owner && (
+                            <>
+                                <ObjectTypeIcon className="ps-query-object-icon" objectType={owner} />
+                                <span>{owner.displayName ?? owner.name}</span>
+                            </>
+                        )}
+                        <QueryExpression expression={relation.source} scope={scope} ir={ir} />
+                    </span>
+                    <span className="ps-query-keyword">via</span>
+                    <span
+                        className="ps-query-link"
+                        title={
+                            relation.source.kind === "localReference"
+                                ? `${relation.source.value.name}.${relation.link}${target ? ` → ${target}` : ""}`
+                                : relation.link
+                        }
+                    >
+                        <Link2 size={13} aria-hidden />
+                        {endpoint?.displayName ?? relation.link}
+                    </span>
                 </div>
             )}
             {query.where ? (

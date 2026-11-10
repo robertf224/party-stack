@@ -147,7 +147,10 @@ test("pin trees display declared links and their target types without scalar fie
     expect(markup.match(/class="ps-query-node"/g)).toHaveLength(2);
     expect(markup).toContain("Folders");
     expect(markup).toContain("Notes");
-    expect(markup).toContain("related");
+    expect(markup).toContain('class="ps-query-keyword">From</span>');
+    expect(markup).toContain('class="ps-query-keyword">via</span>');
+    expect(markup).toContain('title="folder.notes → Note"');
+    expect(markup).toContain('class="ps-query-link"');
     expect(markup).not.toContain("Related objects");
     expect(markup).not.toContain("folderId");
 });
