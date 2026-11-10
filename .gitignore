@@ -31,8 +31,7 @@ out
 build
 dist
 temp
-/packages/*/lib/
-/old/*/lib/
+lib
 *.tsbuildinfo
 
 # Generated code
