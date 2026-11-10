@@ -1,5 +1,7 @@
+import { resolveQuerySource } from "@party-stack/ontology-spec/query";
 import { indexesForQuery, field } from "@party-stack/ontology-storage";
 import type { Expression, OntologyIR, Query, QuerySelection, TypeDef } from "@party-stack/ontology-spec";
+import type { ObjectQuerySource } from "@party-stack/ontology-spec/query";
 import type { Index } from "@party-stack/ontology-storage";
 
 /** Static policy dependencies keep transaction-local reads indexed without
@@ -75,8 +77,19 @@ export function policyIndexes(ir: OntologyIR): { objectType: string; index: Inde
         }
     }
     function query(q: Query, parent: Map<string, string>) {
-        if (q.from.source.ontology) return;
-        const scope = new Map([...parent, [q.from.binding, q.from.source.objectType]]);
+        const resolved = resolveQuerySource(
+            ir,
+            q.from,
+            new Map(
+                [...parent].map(([binding, objectType]) => [
+                    binding,
+                    { objectType } satisfies ObjectQuerySource,
+                ])
+            )
+        );
+        if (resolved.source.ontology) return;
+        const scope = new Map([...parent, [q.from.binding, resolved.source.objectType]]);
+        if (resolved.correlation) expression(resolved.correlation, scope);
         if (q.where) expression(q.where, scope);
         q.orderBy?.forEach((order) => expression(order.expression, scope));
         selection(q.select, scope);

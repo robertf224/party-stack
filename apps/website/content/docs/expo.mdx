@@ -228,7 +228,7 @@ ordinary collections; authentication runs only when a button calls `signIn`.
 ```tsx title="src/App.tsx"
 import { foundryPlatformObjects } from "@party-stack/foundry-ontology/platform/collections";
 import { authenticationObjects } from "@party-stack/ontology/authentication";
-import { field, selectField, sub } from "@party-stack/ontology-spec/query";
+import { sub } from "@party-stack/ontology-spec/query";
 import { OntologyEnvironmentProvider, OntologyProvider, useOfflinePin } from "@party-stack/ontology-react";
 import { AuthenticationProvider, useAuthentication } from "@party-stack/ontology-react/authentication";
 import { useLiveSuspenseQuery } from "@tanstack/react-db";
@@ -242,9 +242,7 @@ const discoveryDownload = {
     select: [
         sub("ontologies", {
             from: { source: { objectType: "Ontology" }, binding: "row" },
-            select: ["id", "rid", "apiName", "displayName", "description"].map((name) =>
-                selectField(name, field("row", name))
-            ),
+            select: [],
         }),
     ],
 };
@@ -376,7 +374,7 @@ types are not known at code-generation time. Fixed-schema apps can use generated
 collection descriptors instead.
 
 ```tsx title="src/ObjectBrowser.tsx"
-import { selectField, field, sub } from "@party-stack/ontology-spec/query";
+import { sub } from "@party-stack/ontology-spec/query";
 import { useOfflinePin, useOntology } from "@party-stack/ontology-react";
 import { useLiveSuspenseQuery } from "@tanstack/react-db";
 import { Suspense, useMemo, useState } from "react";
@@ -393,9 +391,7 @@ export function ObjectBrowser() {
             select: view.ir.objectTypes.map((type) =>
                 sub(type.name, {
                     from: { source: { objectType: type.name }, binding: "row" },
-                    select: type.properties.map((property) =>
-                        selectField(property.name, field("row", property.name))
-                    ),
+                    select: [],
                 })
             ),
         }),

@@ -39,8 +39,8 @@ string. A nested query's order and limit apply per parent. Composite correlation
 and multiple nested projections of the same relationship must remain expressible.
 Projection aliases belong to result shape, not source identity.
 
-Use `related` in both ontology expressions and the future ontology query IR. A named
-link supplies the child source, correlation and directional cardinality; explicit
+Use `related` in both ontology expressions and query sources. A named
+link supplies the child source and correlation; explicit
 correlations remain possible when no named link exists. Nested shaping, filtering
 and per-parent windows belong to that related query. Planning lowers it into the
 general correlation machinery; a flat join is one possible execution strategy.
@@ -141,3 +141,19 @@ values; the entire prediction is omitted rather than publishing part of an actio
 Underlying provider schema drift is not automatically harmless: rebuild/revalidate the
 projection against fresh metadata, and stop serving an incompatible policy. Runtime
 schema migration and automatic metadata-change rebinding remain separate work.
+
+## Related query sources (November 10)
+
+`from.source: related(row("project"), "issues")` follows a declared link from an
+ancestor query row. `sub` continues to name the result and choose its cardinality;
+`where`, ordering and per-parent windows stay on the query. Both link directions
+and self links use endpoint names. The ontology source is inherited from the
+ancestor. Unknown/ambiguous links and mixed explicit/related sources fail validation.
+
+The portable source has either `objectType` (and optional `ontology`) or `related`.
+The related-source helper uses ancestor row references; computed lookup/map values
+remain expression operations, not query-source bindings. Standalone object subsets
+still require an explicit type. The resolver emits ordinary source/equality plans,
+so native pushdown, child batching, policy planning and pin retention share the
+existing paths. Pins retain whole rows and inspect whole-row attachment references;
+scalar selections do not narrow synced fields or attachment retention.

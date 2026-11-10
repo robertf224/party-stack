@@ -25,7 +25,15 @@ import type { QueryDocument } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
     types: [],
-    linkTypes: [],
+    linkTypes: [
+        {
+            id: "projectIssues",
+            source: { objectType: "Issue", name: "issues", displayName: "Issues" },
+            target: { objectType: "Project", name: "project", displayName: "Project" },
+            foreignKey: "project",
+            cardinality: "many",
+        },
+    ],
     queryFunctionTypes: [],
     actionTypes: [],
     objectTypes: [
@@ -49,19 +57,17 @@ const ir: OntologyIR = {
         },
     ],
 };
-const document = (id: string): QueryDocument => ({
+const document = (id: string, fields: "none" | "id" | "all" = "none"): QueryDocument => ({
     select: [
         q.sub("projects", {
             from: { source: { objectType: "Project" }, binding: "p" },
             where: q.eq(q.field("p", "id"), q.literal(id)),
             select: [
-                q.selectField("id", q.field("p", "id")),
                 q.sub("issues", {
-                    from: { source: { objectType: "Issue" }, binding: "i" },
-                    where: q.eq(q.field("i", "project"), q.field("p", "id")),
+                    from: { source: q.related(q.row("p"), "issues"), binding: "i" },
                     select: [
-                        q.selectField("id", q.field("i", "id")),
-                        q.selectField("file", q.field("i", "file")),
+                        ...(fields !== "none" ? [q.selectField("id", q.field("i", "id"))] : []),
+                        ...(fields === "all" ? [q.selectField("file", q.field("i", "file"))] : []),
                     ],
                 }),
             ],
@@ -377,44 +383,57 @@ test("refreshing an unchanged pin graph preserves its membership rows", async ()
     );
 });
 
-test("attachment bytes are opt-in and share the graph's transactional retention", async () => {
-    await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                const f = yield* fixture();
-                const blobs = yield* makeBlobStorage({
-                    namespace: "pin-blobs",
-                    tables: f.tables,
-                    bytes: new MemoryBlobBytesStore(),
-                });
-                let downloads = 0;
-                const replica = yield* makeReplica({
-                    ...f,
-                    namespace: "pin-bytes",
-                    ir,
-                    live: false,
-                    blobs,
-                    attachments: {
-                        read: () =>
-                            Effect.sync(() => {
-                                downloads++;
-                                return byteSource(new Blob(["content"]));
-                            }),
-                    },
-                });
-                yield* replica.demand.setPin(document("a"));
-                expect(downloads).toBe(0);
-                yield* replica.demand.setPin(document("a"), { attachments: "all" });
-                expect(downloads).toBe(1);
-                expect(yield* replica.demand.pinStatus).toMatchObject({ ready: true, attachments: "all" });
-                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
-                yield* replica.demand.clearPin;
-                yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
-                expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBeGreaterThan(0);
-            })
-        )
-    );
-});
+test.each(["none", "id", "all"] as const)(
+    "attachment bytes are opt-in and retain whole objects with %s field selections",
+    async (fields) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const f = yield* fixture();
+                    const blobs = yield* makeBlobStorage({
+                        namespace: "pin-blobs",
+                        tables: f.tables,
+                        bytes: new MemoryBlobBytesStore(),
+                    });
+                    let downloads = 0;
+                    const replica = yield* makeReplica({
+                        ...f,
+                        namespace: "pin-bytes",
+                        ir,
+                        live: false,
+                        blobs,
+                        attachments: {
+                            read: () =>
+                                Effect.sync(() => {
+                                    downloads++;
+                                    return byteSource(new Blob(["content"]));
+                                }),
+                        },
+                    });
+                    yield* replica.demand.setPin(document("a", fields));
+                    expect(downloads).toBe(0);
+                    expect(yield* replica.get("Issue", "one")).toMatchObject({
+                        id: "one",
+                        project: "a",
+                        file: { id: "file-a" },
+                    });
+                    yield* replica.demand.setPin(document("a", fields), { attachments: "all" });
+                    expect(downloads).toBe(1);
+                    expect(yield* replica.demand.pinStatus).toMatchObject({
+                        ready: true,
+                        attachments: "all",
+                    });
+                    expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
+                    yield* replica.demand.clearPin;
+                    yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                    expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBeGreaterThan(
+                        0
+                    );
+                })
+            )
+        );
+    }
+);
 
 test("replacing a pin cancels its pending acquisition and cannot install the obsolete graph", async () => {
     await Effect.runPromise(
@@ -786,7 +805,7 @@ test("caller refresh settings override adapter recommendations while healthy wat
     );
 });
 
-test("invalid entity projections/options do not replace a pin and unselected attachments are not downloaded", async () => {
+test("invalid entity projections/options do not replace a pin", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -800,7 +819,7 @@ test("invalid entity projections/options do not replace a pin and unselected att
                         }),
                     ],
                 };
-                yield* replica.demand.setPin(query, { attachments: "all" });
+                yield* replica.demand.setPin(query);
                 expect(yield* replica.demand.pinStatus).toMatchObject({ ready: true });
                 const invalid: QueryDocument = {
                     select: [

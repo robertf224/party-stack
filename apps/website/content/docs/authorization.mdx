@@ -57,13 +57,11 @@ const projectObjects = {
             select: [
                 ...fields("p", "id", "name"),
                 q.sub("forms", {
-                    from: { source: { objectType: "Form" }, binding: "f" },
-                    where: q.eq(q.field("f", "projectId"), q.field("p", "id")),
+                    from: { source: q.related(q.row("p"), "forms"), binding: "f" },
                     select: [
                         ...fields("f", "id", "name", "projectId"),
                         q.sub("revisions", {
-                            from: { source: { objectType: "FormRevision" }, binding: "r" },
-                            where: q.eq(q.field("r", "formId"), q.field("f", "id")),
+                            from: { source: q.related(q.row("f"), "revisions"), binding: "r" },
                             select: fields("r", "id", "formId", "createdAt"),
                         }),
                     ],
@@ -75,8 +73,10 @@ const projectObjects = {
 ```
 
 This grants forms and revisions transitively through projects the user administers.
-Add sibling roots for unrelated public data. Policy selections use actual property
-names; UI query projections can use aliases and computations.
+These sources follow declared ontology links (`forms`, `revisions`, `person`, or
+`bids` in the examples). The link supplies both the target type and its join
+predicate; `where` can add further restrictions. Add sibling roots for unrelated
+public data. Policy selections use actual property names; UI query projections can use aliases and computations.
 
 ## Check an action
 
@@ -230,15 +230,13 @@ const tokenIR = {
                         q.sub(
                             "person",
                             {
-                                from: { source: { objectType: "Person" }, binding: "p" },
-                                where: q.eq(q.field("p", "id"), q.field("a", "personId")),
+                                from: { source: q.related(q.row("a"), "person"), binding: "p" },
                                 select: fields("p", "id", "name"),
                             },
                             "one"
                         ),
                         q.sub("bids", {
-                            from: { source: { objectType: "Bid" }, binding: "b" },
-                            where: q.eq(q.field("b", "approvalId"), q.field("a", "id")),
+                            from: { source: q.related(q.row("a"), "bids"), binding: "b" },
                             select: fields("b", "id", "postId", "status"),
                         }),
                     ],

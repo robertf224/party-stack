@@ -12,7 +12,8 @@ Version `0.1.0` is **not published yet**. It targets exactly:
 | `@tanstack/db`       | `1.0.0-rc.1.4` | Bounded exact ordered prefixes ([#2398](https://github.com/TanStack/db/issues/2398))                                                                                      |
 | `@tanstack/react-db` | `1.0.0-rc.1.4` | Synchronous Suspense readiness ([#2396](https://github.com/TanStack/db/issues/2396)) and initial-load error retries ([#2397](https://github.com/TanStack/db/issues/2397)) |
 
-Neither patch changes React itself. See the repository's
+The [ordered-window contract](./ordered-window.md) explains the DB patch and
+its upstream proposal. Neither patch changes React itself. See the repository's
 [patch inventory](../../patches/README.md) for scope and regression coverage.
 
 ## Setup after publication

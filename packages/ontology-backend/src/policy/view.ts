@@ -1,4 +1,9 @@
-import { validatePolicy, selectedProperty, validateQueryDocument } from "@party-stack/ontology-spec/query";
+import {
+    resolveQuerySources,
+    validatePolicy,
+    selectedProperty,
+    validateQueryDocument,
+} from "@party-stack/ontology-spec/query";
 import { field as ref, eq, evaluateQuery } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
 import { BackendError } from "../index.js";
@@ -64,7 +69,7 @@ export function policyProperties(ir: OntologyIR) {
             }
         }
     }
-    roots(ir.policy?.objects.select ?? []);
+    if (ir.policy) roots(resolveQuerySources(ir, ir.policy.objects).select);
     return { allowed, guaranteed };
 }
 function filterFields(query: Scan): Set<string> {
@@ -111,7 +116,10 @@ export function evaluatePolicyView(
             message: "An explicit ontology policy is required.",
             retryable: false,
         });
-    const documents = [ir.policy.objects, ...(options?.additionalObjects ? [options.additionalObjects] : [])];
+    const documents = [
+        ir.policy.objects,
+        ...(options?.additionalObjects ? [options.additionalObjects] : []),
+    ].map((document) => resolveQuerySources(ir, document));
     const properties = policyProperties(
         options?.additionalObjects
             ? {

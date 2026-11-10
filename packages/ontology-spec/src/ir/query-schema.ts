@@ -69,7 +69,8 @@ export const queryTypes: NamedTypeDef[] = [
     ]),
     struct("QuerySource", "A logical object source, resolved by an execution binding rather than raw SQL.", [
         field("ontology", optional(o.string({}))),
-        field("objectType", o.string({})),
+        field("objectType", optional(o.string({}))),
+        field("related", optional(ref("RelatedExpression"))),
     ]),
     struct("QueryFrom", "Introduces a source with an explicit lexical row binding.", [
         field("source", ref("QuerySource")),

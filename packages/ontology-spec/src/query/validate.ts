@@ -1,6 +1,7 @@
 import { o } from "../ir/generated/builders.js";
 import { isRelatedFromForeignKeySource, resolveRelatedLink } from "../utils/links.js";
 import { resolveLookupReference } from "../utils/lookup.js";
+import { resolveQuerySource } from "./sources.js";
 import type {
     Expression,
     FieldDef,
@@ -13,6 +14,7 @@ import type {
     TypeDef,
 } from "../ir/generated/types.js";
 import type { ValidationIssue } from "../utils/validation.js";
+import type { ObjectQuerySource } from "./index.js";
 
 type Path = (string | number)[];
 type Scope = Map<string, TypeDef>;
@@ -399,12 +401,23 @@ export function analyzeQueryDocument(
                 issue("Cursor key must be a source primary key.", [...path, "page", "after", "key"]);
         }
     }
+    const querySources = new Map<string, ObjectQuerySource>();
     function query(value: Query, parent: Scope, path: Path) {
         if (!admit(path)) return;
-        const source = value.from.source.ontology ? options.sources?.[value.from.source.ontology] : ir;
-        const object = source && objectType(value.from.source.objectType, source);
-        const untyped =
-            !value.from.source.ontology && options.untypedSources?.has(value.from.source.objectType);
+        let resolved: ObjectQuerySource;
+        try {
+            resolved = resolveQuerySource(ir, value.from, querySources, options.sources).source;
+        } catch (error) {
+            issue(error instanceof Error ? error.message : "Invalid query source.", [
+                ...path,
+                "from",
+                "source",
+            ]);
+            return;
+        }
+        const source = resolved.ontology ? options.sources?.[resolved.ontology] : ir;
+        const object = source && objectType(resolved.objectType, source);
+        const untyped = !resolved.ontology && options.untypedSources?.has(resolved.objectType);
         if (!object && !untyped) {
             issue("Unknown query source/object type.", [...path, "from"]);
             return;
@@ -415,8 +428,12 @@ export function analyzeQueryDocument(
             ...parent,
             [value.from.binding, object ? objectValue(object, source) : unknown],
         ]);
+        const previous = querySources.get(value.from.binding);
+        querySources.set(value.from.binding, resolved);
         subset(value, scope, path);
         selections(value.select, scope, [...path, "select"]);
+        if (previous) querySources.set(value.from.binding, previous);
+        else querySources.delete(value.from.binding);
     }
     if (
         new Set((options.inputs ?? document.inputs ?? []).map((f) => f.name)).size !==

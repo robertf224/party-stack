@@ -78,7 +78,7 @@ field, despite the first request being limited to 51. A leading `favorite = fals
 previously expanded this reproduction to about 1,400 rows. Trash no longer sorts
 by pin status. The explicitly approved workspace DB patch also lets adapters
 declare exact composite-order support and use the full tuple boundary; see
-`patches/tanstack-db-ordered-window.md`. Published consumers do not automatically
+`packages/tanstack-db-patches/ordered-window.md`. Published consumers do not automatically
 inherit workspace patches. These acquisition costs are separate from installing
 the rows that were actually requested.
 

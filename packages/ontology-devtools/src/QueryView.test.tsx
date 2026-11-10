@@ -1,3 +1,4 @@
+import { related, row, sub } from "@party-stack/ontology/query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vite-plus/test";
@@ -114,6 +115,43 @@ const graph: QueryDocument = {
     ],
 };
 
+test("pin trees display declared links and their target types without scalar fields", () => {
+    const definition: OntologyIR = {
+        ...ir,
+        linkTypes: [
+            {
+                id: "folderNotes",
+                source: { objectType: "Note", name: "notes", displayName: "Notes" },
+                target: { objectType: "Folder", name: "folder", displayName: "Folder" },
+                foreignKey: "folderId",
+                cardinality: "many",
+            },
+        ],
+    };
+    const document: QueryDocument = {
+        select: [
+            sub("folders", {
+                ...query("Folder", "folder"),
+                select: [
+                    sub("notes", {
+                        from: { source: related(row("folder"), "notes"), binding: "note" },
+                        select: [],
+                    }),
+                ],
+            }),
+        ],
+    };
+    const markup = renderToStaticMarkup(
+        createElement(QueryDocumentView, { query: document, ir: definition, showFields: false })
+    );
+    expect(markup.match(/class="ps-query-node"/g)).toHaveLength(2);
+    expect(markup).toContain("Folders");
+    expect(markup).toContain("Notes");
+    expect(markup).toContain("related");
+    expect(markup).not.toContain("Related objects");
+    expect(markup).not.toContain("folderId");
+});
+
 test("query graphs retain nested selection and correlation boundaries, cardinality and windows", () => {
     const markup = renderToStaticMarkup(createElement(QueryDocumentView, { query: graph, ir }));
     expect(markup.match(/class="ps-query-node"/g)).toHaveLength(3);
@@ -170,6 +208,27 @@ test("conditional selections and expression subqueries remain visible instead of
     for (const text of ["WHEN", "input.showNotes", "ELSE", "EXISTS", "allowedNote"])
         expect(markup).toContain(text);
     expect(markup.match(/class="ps-query-node"/g)).toHaveLength(4);
+});
+
+test("pin graphs omit scalar outputs while preserving nested queries, correlations and windows", () => {
+    const markup = renderToStaticMarkup(
+        createElement(QueryDocumentView, { query: graph, ir, showFields: false })
+    );
+    expect(markup.match(/class="ps-query-node"/g)).toHaveLength(3);
+    for (const text of [
+        "Folders",
+        "Notes",
+        "Attachments",
+        "note.folderId",
+        "folder.id",
+        "file.noteId",
+        "note.id",
+        "note.updatedAt",
+        "last-note",
+    ])
+        expect(markup).toContain(text);
+    for (const text of ["folder.name", "note.title", "file.file", "←"]) expect(markup).not.toContain(text);
+    expect(markup).toMatch(/folders[^]*?notes[^]*?files/);
 });
 
 test("portable expression variants preserve links, context, transformations and escaped literals", () => {
@@ -262,6 +321,8 @@ test("the pinned view distinguishes empty, loading, ready and retained replaceme
     expect(ready).toContain("Available offline");
     expect(ready).toContain("Includes attachment bytes");
     expect(ready).toContain("Pinned query graph");
+    expect(ready).not.toContain("folder.name");
+    expect(ready).not.toContain("note.title");
     expect(render({ status: { ...status, ready: false } })).toContain("Loading pinned graph");
     const failed = render({
         status: {

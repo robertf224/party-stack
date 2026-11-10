@@ -14,7 +14,7 @@ constructed at runtime from a dynamic ontology.
 
 ```ts
 import { definePin, o } from "@party-stack/ontology";
-import { eq, field, input, selectField, sub } from "@party-stack/ontology/query";
+import { eq, field, input, related, row, sub } from "@party-stack/ontology/query";
 
 export const downloadProject = definePin<{ projectId: string }>("downloadProject", {
     attachments: "all",
@@ -25,16 +25,9 @@ export const downloadProject = definePin<{ projectId: string }>("downloadProject
                 from: { source: { objectType: "Project" }, binding: "project" },
                 where: eq(field("project", "id"), input("projectId")),
                 select: [
-                    selectField("id", field("project", "id")),
-                    selectField("name", field("project", "name")),
                     sub("issues", {
-                        from: { source: { objectType: "Issue" }, binding: "issue" },
-                        where: eq(field("issue", "projectId"), field("project", "id")),
-                        select: [
-                            selectField("id", field("issue", "id")),
-                            selectField("title", field("issue", "title")),
-                            selectField("attachments", field("issue", "attachments")),
-                        ],
+                        from: { source: related(row("project"), "issues"), binding: "issue" },
+                        select: [],
                     }),
                 ],
             }),
@@ -43,9 +36,16 @@ export const downloadProject = definePin<{ projectId: string }>("downloadProject
 });
 ```
 
-Selections use real property names. `attachments: "all"` also downloads bytes for
-selected attachment properties; the default, `"none"`, retains objects only.
-Pins follow data changes rather than freezing a snapshot.
+`related(row("project"), "issues")` follows the ontology’s declared `issues` link;
+the source supplies the target object type and correlation.
+
+Each query node retains whole objects; `select: []` is enough at a leaf. Nested
+queries describe related objects to retain, and their predicates can refer to
+parent bindings without selecting those fields. Field selections remain allowed
+when reusing a query document, but do not limit which object fields are synced.
+`attachments: "all"` also downloads every attachment referenced by those objects;
+the default, `"none"`, retains objects only. Pins follow data changes rather than
+freezing a snapshot.
 
 ## Request, cancel and remove
 
@@ -144,8 +144,8 @@ await ontology.pins(appDownload).set();
 await ontology.pins(appDownload).remove();
 ```
 
-The devtools Pinned panel groups downloads by family, showing its query once and each
-input set with its status and a command to remove or cancel it.
+The devtools Pinned panel groups downloads by family, showing its object/query tree
+once and each input set with its status and a command to remove or cancel it.
 
 ## Configure the owning replica
 

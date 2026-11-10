@@ -48,7 +48,7 @@ export function PinnedFamily({
                             <PinDownload key={pin.id} pin={pin} remove={remove} />
                         ))}
                     </div>
-                    <QueryDocumentView query={pins[0]!.query} ir={ir} />
+                    <QueryDocumentView query={pins[0]!.query} ir={ir} showFields={false} />
                 </div>
             ))}
         </section>

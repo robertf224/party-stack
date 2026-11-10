@@ -4,7 +4,7 @@ import type {
     Expression,
     Query,
     Subset,
-    QueryFrom,
+    QuerySource,
     QuerySelection,
     SelectCaseSelection,
 } from "../ir/generated/types.js";
@@ -28,9 +28,12 @@ export type {
     ExistsExpression,
 } from "../ir/generated/types.js";
 
+/** A standalone subset needs an explicit object type, without ancestor bindings. */
+export type ObjectQuerySource = QuerySource & { objectType: string; related?: never };
+
 /** Source-bound subset; shares Query syntax without a result projection. */
 export interface ObjectSubset extends Subset {
-    readonly from: QueryFrom;
+    readonly from: { readonly source: ObjectQuerySource; readonly binding: string };
 }
 
 /** Pure low-level construction. Schema-aware proxy builders produce these same nodes. */
@@ -40,6 +43,8 @@ export const context = (name: string, ...path: string[]): Expression => {
     const source = o.Expression.contextReference({ name });
     return path.length ? o.Expression.getAt({ source, path }) : source;
 };
+/** Follow a declared link from an ancestor query row. */
+export const related = (source: Expression, link: string): QuerySource => ({ related: { source, link } });
 export const row = (binding: string): Expression => o.Expression.localReference({ name: binding });
 export const field = (binding: string, ...path: string[]): Expression =>
     o.Expression.getAt({ source: row(binding), path });
@@ -101,3 +106,5 @@ export type { QueryValidationOptions } from "./validate.js";
 export { equalValues, compareValues, evaluateOperator, matchPattern, booleanValue } from "./operators.js";
 
 export { validatePolicy } from "./policy.js";
+
+export { resolveQuerySource, resolveQuerySources } from "./sources.js";

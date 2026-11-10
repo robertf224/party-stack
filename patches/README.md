@@ -60,7 +60,7 @@ Regressions live in `packages/ontology/src/tanstack/ordered-window.test.ts` and
 `orderedWindow.contract.test.ts`: typed admission, timestamp and boolean orders,
 window growth, mixed-domain fallback, optimistic rollback and confirmation,
 invalidation, late receipts, retry and scoped release. The upstream proposal is
-in [tanstack-db-ordered-window.md](./tanstack-db-ordered-window.md).
+in [ordered-window.md](../packages/tanstack-db-patches/ordered-window.md).
 
 Remove this patch after an upstream release supports
 the same exact ordered-prefix contract and passes those regressions unmodified.

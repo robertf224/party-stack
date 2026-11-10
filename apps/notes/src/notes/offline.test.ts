@@ -42,7 +42,7 @@ test("a folder download retains its notes and attachment handles, excluding tras
     expect(
         [...new Set(result.entities.map((entity) => `${entity.objectType}:${entity.key}`))].sort()
     ).toEqual(["Note:a-note", "NoteAttachment:a-file", "Notebook:a"]);
-    expect(
-        result.entities.find((entity) => entity.objectType === "NoteAttachment")?.properties.has("file")
-    ).toBe(true);
+    expect(result.entities.find((entity) => entity.objectType === "NoteAttachment")?.value.file).toEqual({
+        id: "a-bytes",
+    });
 });

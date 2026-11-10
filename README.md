@@ -2,7 +2,7 @@
 
 Party Stack is an application framework that turns heterogenous backends into a typed, reactive, offline-first data layer.
 
-See the [V0 changelog](CHANGELOG.md) for features, breaking changes and migration notes.
+See the [V0 implementation summary](specs/2026-10-19-effect-tables-replica/v0-summary.md) for features, breaking changes and migration notes.
 
 ## Core ideas
 

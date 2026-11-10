@@ -38,7 +38,8 @@ export type ExistsExpression = {
 /** A logical object source, resolved by an execution binding rather than raw SQL. */
 export type QuerySource = {
     ontology?: string;
-    objectType: string;
+    objectType?: string;
+    related?: RelatedExpression;
 };
 
 /** Introduces a source with an explicit lexical row binding. */

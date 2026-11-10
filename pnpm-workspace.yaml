@@ -24,6 +24,8 @@ overrides:
     "@effect/platform-node-shared": "4.0.5"
     "vite": "npm:@voidzero-dev/vite-plus-core@1.2.0"
     "vitest@*": "5.0.4"
+    # One Vite identity for Vite+, Vitest and Cloudflare's plugin.
+    "@voidzero-dev/vite-plus-core>esbuild": "0.28.2"
 # Native pnpm configuration generated from the shared package's patch files.
 patchedDependencies:
     "@tanstack/db@1.0.0-rc.1.4": packages/tanstack-db-patches/patches/@tanstack__db@1.0.0-rc.1.4.patch

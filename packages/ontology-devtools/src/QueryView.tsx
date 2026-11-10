@@ -1,3 +1,4 @@
+import { resolveRelatedLink, isRelatedFromForeignKeySource } from "@party-stack/ontology/utils";
 import { Fragment } from "react";
 import { DisclosureSummary } from "./DisclosureSummary.js";
 import { OperandToken, QuerySubject, nullOrderLabel } from "./QueryTokens.js";
@@ -22,6 +23,7 @@ interface ExpressionProps {
     annotations?: Annotations;
     path?: readonly number[];
     pattern?: boolean;
+    showFields?: boolean;
 }
 const operators = {
     eq: "=",
@@ -72,6 +74,7 @@ export function QueryExpression({
     annotations,
     path = [],
     pattern,
+    showFields = true,
 }: ExpressionProps) {
     const child = (value: Expression, index = 0, childPattern = false) => (
         <QueryExpression
@@ -82,6 +85,7 @@ export function QueryExpression({
             annotations={annotations}
             path={[...path, index]}
             pattern={childPattern}
+            showFields={showFields}
         />
     );
     if (expression.kind === "literal") {
@@ -292,7 +296,7 @@ export function QueryExpression({
             return (
                 <div className="ps-query-group">
                     <span className="ps-query-connector">EXISTS</span>
-                    <QueryView query={expression.value.query} ir={ir} scope={scope} />
+                    <QueryView query={expression.value.query} ir={ir} scope={scope} showFields={showFields} />
                 </div>
             );
         default: {
@@ -306,14 +310,18 @@ function Selections({
     select,
     ir,
     scope,
+    showFields,
 }: {
     select: readonly QuerySelection[];
     ir?: OntologyIR;
     scope: Scope;
+    showFields: boolean;
 }) {
+    const visible = select.filter((selection) => showFields || hasQueryNode(selection));
+    if (!visible.length) return null;
     return (
         <div className="ps-query-selections">
-            {select.map((selection, index) => {
+            {visible.map((selection, index) => {
                 switch (selection.kind) {
                     case "sub":
                         return (
@@ -324,6 +332,7 @@ function Selections({
                                 cardinality={selection.value.cardinality}
                                 ir={ir}
                                 scope={scope}
+                                showFields={showFields}
                             />
                         );
                     case "field":
@@ -349,15 +358,26 @@ function Selections({
                                                 expression={branch.condition}
                                                 scope={scope}
                                                 ir={ir}
+                                                showFields={showFields}
                                             />
                                         </div>
-                                        <Selections select={branch.select} ir={ir} scope={scope} />
+                                        <Selections
+                                            select={branch.select}
+                                            ir={ir}
+                                            scope={scope}
+                                            showFields={showFields}
+                                        />
                                     </div>
                                 ))}
                                 {selection.value.else && (
                                     <div>
                                         <span className="ps-query-connector">ELSE</span>
-                                        <Selections select={selection.value.else} ir={ir} scope={scope} />
+                                        <Selections
+                                            select={selection.value.else}
+                                            ir={ir}
+                                            scope={scope}
+                                            showFields={showFields}
+                                        />
                                     </div>
                                 )}
                             </div>
@@ -365,6 +385,15 @@ function Selections({
                 }
             })}
         </div>
+    );
+}
+
+function hasQueryNode(selection: QuerySelection): boolean {
+    return (
+        selection.kind === "sub" ||
+        (selection.kind === "selectCase" &&
+            (selection.value.branches.some((branch) => branch.select.some(hasQueryNode)) ||
+                (selection.value.else?.some(hasQueryNode) ?? false)))
     );
 }
 
@@ -377,6 +406,7 @@ export function QueryView({
     cardinality,
     compact = false,
     showSubject = true,
+    showFields = true,
     annotations,
 }: {
     query: Query;
@@ -387,14 +417,36 @@ export function QueryView({
     cardinality?: "one" | "many";
     compact?: boolean;
     showSubject?: boolean;
+    showFields?: boolean;
     annotations?: Annotations;
 }) {
-    const type = object ?? ir?.objectTypes.find((type) => type.name === query.from.source.objectType);
+    const relation = query.from.source.related;
+    const owner = relation?.source.kind === "localReference" ? scope[relation.source.value.name] : undefined;
+    const link = ir && owner && relation && resolveRelatedLink(ir, owner.name, relation.link);
+    const target =
+        link && owner && relation
+            ? isRelatedFromForeignKeySource(link, owner.name, relation.link)
+                ? link.target.objectType
+                : link.source.objectType
+            : query.from.source.objectType;
+    const type = object ?? ir?.objectTypes.find((type) => type.name === target);
     const bindings = { ...scope, [query.from.binding]: type };
-    const expressionProps = { scope: bindings, ir, compactBinding: compact ? query.from.binding : undefined };
-    const subject = showSubject && <QuerySubject object={type} objectType={query.from.source.objectType} />;
+    const expressionProps = {
+        scope: bindings,
+        ir,
+        compactBinding: compact ? query.from.binding : undefined,
+        showFields,
+    };
+    const subject = showSubject && <QuerySubject object={type} objectType={target ?? "Related objects"} />;
     const clauses = (
         <>
+            {relation && (
+                <div className="ps-query-clause">
+                    <span className="ps-query-keyword">related</span>
+                    <QueryExpression expression={relation.source} scope={scope} ir={ir} />
+                    <span className="ps-query-binding">{relation.link}</span>
+                </div>
+            )}
             {query.where ? (
                 <div className={compact ? "ps-query-sentence" : "ps-query-clause"}>
                     {compact && subject}
@@ -405,14 +457,14 @@ export function QueryView({
                         annotations={annotations}
                     />
                 </div>
-            ) : (
+            ) : !relation ? (
                 <div className="ps-query-sentence">
                     {compact && subject}
                     <span className="ps-query-keyword">
                         {compact && showSubject ? "— all rows" : "All rows"}
                     </span>
                 </div>
-            )}
+            ) : null}
             {query.orderBy?.map((order, index) => (
                 <div className="ps-query-clause" key={index}>
                     <span className="ps-query-keyword">order by</span>
@@ -462,13 +514,21 @@ export function QueryView({
             </DisclosureSummary>
             <div className="ps-query-node-body">
                 {clauses}
-                <Selections select={query.select} ir={ir} scope={bindings} />
+                <Selections select={query.select} ir={ir} scope={bindings} showFields={showFields} />
             </div>
         </details>
     );
 }
 
-export function QueryDocumentView({ query, ir }: { query: QueryDocument; ir: OntologyIR }) {
+export function QueryDocumentView({
+    query,
+    ir,
+    showFields = true,
+}: {
+    query: QueryDocument;
+    ir: OntologyIR;
+    showFields?: boolean;
+}) {
     return (
         <div className="ps-query-document" aria-label="Pinned query graph">
             {query.inputs && query.inputs.length > 0 && (
@@ -481,7 +541,7 @@ export function QueryDocumentView({ query, ir }: { query: QueryDocument; ir: Ont
                     ))}
                 </div>
             )}
-            <Selections select={query.select} ir={ir} scope={{}} />
+            <Selections select={query.select} ir={ir} scope={{}} showFields={showFields} />
         </div>
     );
 }

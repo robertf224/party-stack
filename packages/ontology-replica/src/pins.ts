@@ -77,12 +77,10 @@ export const makeQueryPin = Effect.fn("Replica.queryPin")(function* (options: {
 }) {
     const { engine, tables, ir } = options;
     const tracer = yield* Tracer.Tracer;
+    // Pins retain whole objects. Scalar query projections must not narrow which
+    // attachment bytes "all" retains from those objects.
     const attachmentReferences = (entity: QueryEntity) =>
-        collectObjectAttachments(
-            ir,
-            entity.objectType,
-            Object.fromEntries([...entity.properties].map((property) => [property, entity.value[property]]))
-        );
+        collectObjectAttachments(ir, entity.objectType, entity.value);
     const name = (part: string) => JSON.stringify(["replica", options.namespace, part]);
     const id = options.id ?? "head";
     const state = Table.make<PinState>({ name: name("query-pin") });

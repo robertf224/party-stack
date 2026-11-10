@@ -1,4 +1,4 @@
-# Changelog
+# V0 implementation summary
 
 ## V0 — Unreleased
 
@@ -50,11 +50,11 @@ browser tabs, SharedWorkers, servers and mobile runtimes.
 
 This is a breaking migration. Upgrade related clients, servers and runtime
 packages together; old and new replication protocols are not interchangeable.
-Use the current [installation guide](apps/website/content/docs/installation.mdx)
-and [framework/backend guides](apps/website/content/docs/index.mdx) for replacement
+Use the current [installation guide](../../apps/website/content/docs/installation.mdx)
+and [framework/backend guides](../../apps/website/content/docs/index.mdx) for replacement
 APIs. Install the required TanStack patches in each consuming repository; workspace
 patch configuration is not inherited by published packages. See the
-[patch inventory](patches/README.md) for their scope and upstream reports.
+[patch inventory](../../patches/README.md) for their scope and upstream reports.
 
 V0 does not provide general schema or queued-action migrations. Review
 incompatible-definition/rebuild behavior before changing stored schemas with

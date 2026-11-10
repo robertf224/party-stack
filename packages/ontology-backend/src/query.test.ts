@@ -1,6 +1,8 @@
 import { it } from "@effect/vitest";
 import { o } from "@party-stack/ontology-spec";
 import {
+    related,
+    row,
     context,
     contains,
     eq,
@@ -38,7 +40,15 @@ const ir: OntologyIR = {
     types: [],
     actionTypes: [],
     queryFunctionTypes: [],
-    linkTypes: [],
+    linkTypes: [
+        {
+            id: "issueProject",
+            source: { objectType: "Issue", name: "issues", displayName: "Issues" },
+            target: { objectType: "Project", name: "project", displayName: "Project" },
+            foreignKey: "projectId",
+            cardinality: "many",
+        },
+    ],
     context: { type: o.struct({ fields: [p("user")] }) },
     objectTypes: [
         {
@@ -58,8 +68,7 @@ const ir: OntologyIR = {
     ],
 };
 const issueQuery = () => ({
-    from: { source: { objectType: "Issue" }, binding: "i" },
-    where: eq(field("i", "projectId"), field("p", "id")),
+    from: { source: related(row("p"), "issues"), binding: "i" },
     orderBy: [{ expression: field("i", "rank"), direction: "desc" as const }],
     page: { limit: 2 },
     select: [selectField("id", field("i", "id")), selectField("title", field("i", "title"))],
@@ -263,7 +272,79 @@ it("invalid policy configuration is a typed failure, not an Effect defect", asyn
     });
 });
 
+it("related policy grants authorize only linked rows and selected properties", async () => {
+    const definition: OntologyIR = {
+        ...ir,
+        policy: {
+            objects: {
+                select: [
+                    sub("projects", {
+                        from: { source: { objectType: "Project" }, binding: "p" },
+                        where: contains(field("p", "admins"), context("user")),
+                        select: [sub("issues", { ...issueQuery(), page: undefined })],
+                    }),
+                ],
+            },
+        },
+    };
+    const { source } = reader(
+        {
+            Project: projects,
+            Issue: [
+                { id: "allowed", projectId: "a", title: "Visible", rank: 1, secret: "private" },
+                { id: "denied", projectId: "b", title: "Hidden", rank: 2, secret: "private" },
+            ],
+        },
+        definition
+    );
+    const view = await Effect.runPromise(policyView(source, { user: "user" }));
+    expect(await Effect.runPromise(view.tx.get("Issue", "allowed"))).toEqual({
+        id: "allowed",
+        title: "Visible",
+    });
+    expect(await Effect.runPromise(view.tx.get("Issue", "denied"))).toBeUndefined();
+});
+
 describe("finite hierarchical queries", () => {
+    it("follows foreign keys with nullable/dangling targets and inherits named sources", async () => {
+        const remote = reader({
+            Project: projects,
+            Issue: [
+                { id: "one", projectId: "a" },
+                { id: "null", projectId: null },
+                { id: "dangling", projectId: "missing" },
+            ],
+        });
+        const query: QueryDocument = {
+            select: [
+                sub("issues", {
+                    from: { source: { ontology: "remote", objectType: "Issue" }, binding: "i" },
+                    select: [
+                        selectField("id", field("i", "id")),
+                        sub(
+                            "project",
+                            {
+                                from: { source: related(row("i"), "project"), binding: "p" },
+                                select: [selectField("title", field("p", "title"))],
+                            },
+                            "one"
+                        ),
+                    ],
+                }),
+            ],
+        };
+        const result = await Effect.runPromise(
+            executeQuery(query, { reader: reader({}).source, sources: { remote: remote.source } })
+        );
+        expect(result.value).toEqual({
+            issues: [
+                { id: "dangling", project: undefined },
+                { id: "null", project: undefined },
+                { id: "one", project: { title: "A" } },
+            ],
+        });
+        expect(remote.calls.filter((call) => call.objectType === "Project")).toHaveLength(1);
+    });
     it.each([false, true])("batches child equality correlations (reversed: %s)", async (reversed) => {
         const parentRows = Array.from({ length: 12 }, (_, i) => ({
             id: `p${i}`,
@@ -276,6 +357,7 @@ describe("finite hierarchical queries", () => {
         ]);
         const child = {
             ...issueQuery(),
+            from: { source: { objectType: "Issue" }, binding: "i" },
             page: undefined,
             where: and(
                 reversed
@@ -381,6 +463,7 @@ describe("finite hierarchical queries", () => {
                                 selectField("id", field("p", "id")),
                                 sub("issues", {
                                     ...issueQuery(),
+                                    from: { source: { objectType: "Issue" }, binding: "i" },
                                     page: undefined,
                                     where: and(
                                         eq(field("i", "projectId"), field("p", "title")),

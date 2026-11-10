@@ -1,0 +1,9 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "party-stack-website",
+    "main": "@tanstack/react-start/server-entry",
+    "compatibility_date": "2026-11-10",
+    "compatibility_flags": ["nodejs_compat"],
+    "routes": [{ "pattern": "partystack.dev", "custom_domain": true }],
+    "observability": { "enabled": true },
+}

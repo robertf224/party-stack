@@ -148,7 +148,7 @@ export function PinnedContent({
                     <QueryExpression expression={{ kind: "literal", value: { value: status.inputs } }} />
                 </details>
             )}
-            <QueryDocumentView query={status.query} ir={ir} />
+            <QueryDocumentView query={status.query} ir={ir} showFields={false} />
         </div>
     );
 }

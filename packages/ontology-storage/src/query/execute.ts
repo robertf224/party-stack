@@ -1,5 +1,6 @@
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import {
+    resolveQuerySource,
     booleanValue,
     evaluateOperator,
     validateQueryDocument,
@@ -88,12 +89,16 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
     // Per-execution candidates only; ordinary evaluation still checks each
     // parent's predicate, ordering and projection. Weak keys release old scopes.
     const batched = new WeakMap<Query, WeakMap<Scope, readonly Row<Record<string, unknown>>[]>>();
+    const objectType = (ref: QuerySource): string => {
+        if (!ref.objectType || ref.related) throw new Error("Expected a resolved object query source.");
+        return ref.objectType;
+    };
     const source = (ref: QuerySource) => {
         const reader = ref.ontology ? options.sources?.[ref.ontology] : options.reader;
         if (
             !reader ||
             (!reader.ir.objectTypes.some((t) => t.name === ref.objectType) &&
-                !reader.untypedSources?.has(ref.objectType))
+                !reader.untypedSources?.has(objectType(ref)))
         )
             throw new Error("Unknown query source.");
         return reader;
@@ -115,7 +120,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 : row.value;
             rowEntities.set(value, {
                 source: ref.ontology,
-                objectType: ref.objectType,
+                objectType: objectType(ref),
                 key: row.key,
                 value: row.value,
                 properties: new Set(),
@@ -124,12 +129,12 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
         });
     const fetch = Effect.fnUntraced(function* (ref: QuerySource, scan: Scan = {}) {
         const reader = yield* attempt(() => source(ref));
-        return install(ref, reader, yield* reader.loadSubset(ref.objectType, scan));
+        return install(ref, reader, yield* reader.loadSubset(objectType(ref), scan));
     });
     const fetchGrouped = Effect.fnUntraced(function* (ref: QuerySource, scan: Scan, partition: Field) {
         const reader = yield* attempt(() => source(ref));
         const rows = yield* (
-            reader.loadGroupedSubset?.(ref.objectType, partition, scan) ?? Effect.succeed(undefined)
+            reader.loadGroupedSubset?.(objectType(ref), partition, scan) ?? Effect.succeed(undefined)
         );
         return rows === undefined ? undefined : install(ref, reader, rows);
     });
@@ -399,8 +404,31 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             };
         return { exact: false };
     });
+    const resolveQuery = (query: Query, parent: Scope): Query => {
+        if (!query.from.source.related) return query;
+        const bindings = new Map<string, { objectType: string; ontology?: string }>();
+        for (const [binding, value] of parent) {
+            const entity = value && typeof value === "object" ? rowEntities.get(value) : undefined;
+            if (entity) bindings.set(binding, { objectType: entity.objectType, ontology: entity.source });
+        }
+        const resolved = resolveQuerySource(
+            ir,
+            query.from,
+            bindings,
+            options.sources &&
+                Object.fromEntries(Object.entries(options.sources).map(([name, reader]) => [name, reader.ir]))
+        );
+        return {
+            ...query,
+            from: { ...query.from, source: resolved.source },
+            where:
+                resolved.correlation && query.where
+                    ? { kind: "and", value: { expressions: [resolved.correlation, query.where] } }
+                    : (resolved.correlation ?? query.where),
+        };
+    };
     const queryRows = Effect.fnUntraced(function* (
-        q: Query,
+        original: Query,
         parent: Scope,
         allowUncertain = false
     ): Effect.fn.Return<
@@ -410,6 +438,9 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
         },
         E
     > {
+        const q = original.from.source.related
+            ? yield* attempt(() => resolveQuery(original, parent))
+            : original;
         let uncertain = false;
         const candidate =
             options.strategy === "reference"
@@ -436,7 +467,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             };
         const pushedPage = candidate.exact && directOrder && !options.canReadProperty;
         if (pushedPage) Object.assign(scan, q.page);
-        const prefetched = batched.get(q)?.get(parent);
+        const prefetched = batched.get(original)?.get(parent);
         const accepted: { row: Row<Record<string, unknown>>; scope: Scope; order: unknown[] }[] = [];
         const compare = (left: unknown[], leftKey: unknown, right: unknown[], rightKey: unknown): number => {
             for (const [i, order] of (q.orderBy ?? []).entries()) {
@@ -458,7 +489,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             !prefetched &&
             !directOrder &&
             q.page?.limit !== undefined &&
-            source(q.from.source).untypedSources?.has(q.from.source.objectType);
+            source(q.from.source).untypedSources?.has(objectType(q.from.source));
         const keep = (q.page?.offset ?? 0) + (q.page?.limit ?? 0);
         const accept = Effect.fnUntraced(function* (row: Row<Record<string, unknown>>) {
             const scope = new Map([...parent, [q.from.binding, row.value]]);
@@ -537,7 +568,9 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
         if (options.strategy === "reference" || options.canReadProperty || parents.length < 2) return;
         for (const item of items) {
             if (item.kind !== "sub") continue;
-            const query = item.value.query;
+            const query = item.value.query.from.source.related
+                ? yield* attempt(() => resolveQuery(item.value.query, parents[0]!))
+                : item.value.query;
             const windowed = query.page?.limit !== undefined || query.page?.offset !== undefined;
             if (query.page?.after || (windowed && !source(query.from.source).loadGroupedSubset)) continue;
             const plan = batchCorrelation(query, windowed);
@@ -624,7 +657,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 for (const [key, group] of chunk)
                     for (const parent of group.parents) candidates.set(parent, grouped.get(key)!);
             }
-            if (eligible) batched.set(query, candidates);
+            if (eligible) batched.set(item.value.query, candidates);
         }
     });
     const select = Effect.fnUntraced(function* (
@@ -656,7 +689,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 for (const row of rows) {
                     if (options.mode === "entity") {
                         const entity = rowEntities.get(row.row.value)!;
-                        const reader = source(item.value.query.from.source);
+                        const reader = source({ objectType: entity.objectType, ontology: entity.source });
                         const id = JSON.stringify([entity.source ?? "", entity.objectType, entity.key]);
                         const grant = grants.get(id) ?? {
                             ...entity,

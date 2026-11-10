@@ -8,7 +8,35 @@ const pin = (id: string, definition = "v1"): PinRecord => ({
     id,
     name: "folders",
     definition,
-    query: { select: [] },
+    query: {
+        select: [
+            {
+                kind: "sub",
+                value: {
+                    name: "notes",
+                    cardinality: "many",
+                    query: {
+                        from: { source: { objectType: "Note" }, binding: "note" },
+                        select: [
+                            {
+                                kind: "field",
+                                value: {
+                                    name: "title",
+                                    expression: {
+                                        kind: "getAt",
+                                        value: {
+                                            source: { kind: "localReference", value: { name: "note" } },
+                                            path: ["title"],
+                                        },
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                },
+            },
+        ],
+    },
     inputs: { folderId: id },
     attachments: "all",
     generation: id,
@@ -32,4 +60,6 @@ test("a family shows one query per revision and separate input/status rows", () 
     expect(html).toContain("Downloading");
     expect(html).toContain("folderId");
     expect(html).toContain("Includes attachment bytes");
+    expect(html).not.toContain("note.title");
+    expect(html.match(/class="ps-query-node"/g)).toHaveLength(2);
 });

@@ -37,6 +37,9 @@ Complete the Party Stack V0 offline-first ontology stack.
 - Compose generated collection links and component-local singular/list fragments.
   `useFragment` returns `{ data }`; attachment hooks return values directly with
   Suspense. Action attachment parameters accept File/Blob inputs.
+- Follow declared links in native query sources with `related(row("project"), "issues")`,
+  including policies and pin graphs. Pins retain full objects and their attachment
+  bytes regardless of scalar projections.
 - Manage named download families through ordinary queryable pin collections and
   optimistic commands. Inspect one query per family with per-input status in devtools.
 - Reduce repeated storage/query/delivery work and use copy-on-write memory indexes.
@@ -44,4 +47,4 @@ Complete the Party Stack V0 offline-first ontology stack.
 This is a breaking migration: upgrade related clients, servers and runtimes together.
 TanStack DB/react-db 1.0.0-rc.1.4 require the tracked patches installed by
 `@party-stack/tanstack-db-patches` in each consuming repository. See the repository
-V0 changelog, patch inventory and current guides for migration details.
+V0 implementation summary, patch inventory and current guides for migration details.

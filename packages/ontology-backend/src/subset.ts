@@ -84,7 +84,21 @@ export const compileObjectSubset = Effect.fnUntraced(function* (
             retryable: false,
             message: "Invalid object subset selection.",
         });
-    subset = selection.value.query;
+    const decoded = selection.value.query;
+    if (!decoded.from.source.objectType || decoded.from.source.related)
+        return yield* new BackendError({
+            operation: "subset.compile",
+            kind: "InvalidRequest",
+            retryable: false,
+            message: "An object subset requires an explicit object type.",
+        });
+    subset = {
+        ...decoded,
+        from: {
+            ...decoded.from,
+            source: { ontology: decoded.from.source.ontology, objectType: decoded.from.source.objectType },
+        },
+    };
     const unsupported = () =>
         new BackendError({
             operation: "subset.compile",
