@@ -202,7 +202,9 @@ export const runQueryContract = Effect.fnUntraced(function* (tables: TablesServi
         select: [
             q.sub("users", {
                 from: { source: { objectType: "User" }, binding: "u" },
-                select: [q.selectField("tasks", o.Expression.related({ source: q.row("u"), link: "tasks" }))],
+                select: [
+                    q.selectField("tasks", o.Expression.related({ source: q.local("u"), link: "tasks" })),
+                ],
             }),
         ],
     };

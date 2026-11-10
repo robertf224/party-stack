@@ -1,4 +1,4 @@
-import { related, row, sub } from "@party-stack/ontology/query";
+import { related, local, sub } from "@party-stack/ontology/query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vite-plus/test";
@@ -134,7 +134,7 @@ test("pin trees display declared links and their target types without scalar fie
                 ...query("Folder", "folder"),
                 select: [
                     sub("notes", {
-                        from: { source: related(row("folder"), "notes"), binding: "note" },
+                        from: { source: related(local("folder"), "notes"), binding: "note" },
                         select: [],
                     }),
                 ],

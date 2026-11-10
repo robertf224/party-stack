@@ -1,5 +1,11 @@
 # @party-stack/ontology-spec
 
+Query sources follow declared links with `related(local("project"), "issues")`
+from `@party-stack/ontology-spec/query`. `local(name)` constructs a
+`localReference` expression for a bound value, including query rows and map items;
+`field(name, property)` selects a property of that value. Related query sources
+currently require a local reference to an ancestor query binding.
+
 Relationship traversal uses `o.Expression.related({ source, link })`. Static
 validation derives an object for a to-one direction and an object list for a
 to-many direction; `map` bindings retain the target object type. Execution support

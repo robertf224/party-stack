@@ -64,7 +64,7 @@ const document = (id: string, fields: "none" | "id" | "all" = "none"): QueryDocu
             where: q.eq(q.field("p", "id"), q.literal(id)),
             select: [
                 q.sub("issues", {
-                    from: { source: q.related(q.row("p"), "issues"), binding: "i" },
+                    from: { source: q.related(q.local("p"), "issues"), binding: "i" },
                     select: [
                         ...(fields !== "none" ? [q.selectField("id", q.field("i", "id"))] : []),
                         ...(fields === "all" ? [q.selectField("file", q.field("i", "file"))] : []),
