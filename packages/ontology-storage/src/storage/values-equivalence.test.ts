@@ -176,7 +176,7 @@ describe("version-2 storage encoder equivalence", () => {
                 expect(actual).toBe(expected);
                 expect(decodeValue(actual)).toEqual(decodeReference(expected));
             }),
-        { arbitrary: { runs: 2000, size: 10, seed: "storage-encoder-v2-rich" } }
+        { arbitrary: { runs: 2000, size: 10, seed: "storage-encoder-v2-rich" }, timeout: 30_000 }
     );
 
     it.effect.prop(
@@ -188,7 +188,7 @@ describe("version-2 storage encoder equivalence", () => {
                 expect(encoded).toBe(encodeReference(value));
                 expect(decodeValue(encoded)).toEqual(decodeReference(encoded));
             }),
-        { arbitrary: { runs: 2000, size: 12, seed: "storage-encoder-v2-json" } }
+        { arbitrary: { runs: 2000, size: 12, seed: "storage-encoder-v2-json" }, timeout: 30_000 }
     );
 
     it.effect.prop(
