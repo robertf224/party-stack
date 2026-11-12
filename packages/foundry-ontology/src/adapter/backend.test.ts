@@ -1,9 +1,9 @@
 import { objectSubset, resolveSubsetSnapshot } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
 import { and, contains, eq, field, inArray, ilike, like, or } from "@party-stack/ontology-storage";
-import { Effect, Exit, Scope, Stream, Fiber } from "effect";
+import { Effect, Exit, Redacted, Scope, Stream, Fiber } from "effect";
 import { expect, test, vi } from "vite-plus/test";
-import { makeFoundryBackend } from "./backend.js";
+import { foundryWatchQosRetryMs, makeFoundryBackend, subscriptionStateError } from "./backend.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
@@ -267,7 +267,11 @@ test("a denied or QoS-limited watcher fails explicitly so Replica can fall back 
                     backend.watchSubset!(objectSubset("Issue"))!.pipe(Effect.flatMap(Stream.runDrain))
                 );
                 const result = yield* Effect.result(Fiber.join(fiber));
-                expect(result._tag === "Failure" && result.failure.kind).toBe("Unavailable");
+                expect(result._tag === "Failure" && result.failure).toMatchObject({
+                    kind: "RateLimited",
+                    retryable: true,
+                    retryAfterMs: foundryWatchQosRetryMs,
+                });
             })
         )
     );
@@ -523,3 +527,29 @@ function loadSubset(
         Effect.map((result) => result.snapshot)
     );
 }
+
+test("watch state failures keep Foundry's reason and classify retry behavior", () => {
+    const detail = [{ error: "ObjectSetNotSupported", args: [] }];
+    const rejected = subscriptionStateError({
+        type: "state",
+        status: "error",
+        reason: { message: "ObjectSetNotSupported", detail },
+    });
+    expect(rejected).toMatchObject({
+        kind: "InvalidRequest",
+        retryable: false,
+        message: "Foundry rejected the object-set subscription: ObjectSetNotSupported",
+    });
+    expect(Redacted.value(rejected.cause as Redacted.Redacted<unknown>)).toBe(detail);
+    expect(
+        subscriptionStateError({ type: "state", status: "qos", reason: { message: "Reduce load" } })
+    ).toMatchObject({ kind: "RateLimited", retryable: true, retryAfterMs: foundryWatchQosRetryMs });
+    expect(foundryWatchQosRetryMs).toBeGreaterThanOrEqual(60_000);
+    expect(
+        subscriptionStateError({ type: "state", status: "closed", reason: { message: "CHANNEL_CLOSED" } })
+    ).toMatchObject({
+        kind: "Unavailable",
+        retryable: true,
+        message: "The Foundry object-set subscription closed: CHANNEL_CLOSED",
+    });
+});

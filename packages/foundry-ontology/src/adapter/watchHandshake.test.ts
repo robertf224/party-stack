@@ -129,9 +129,13 @@ test.each(["qos", "error"] as const)(
                     });
                     socket.acknowledge(yield* Queue.take(sent), status);
                     const result = yield* Effect.result(Fiber.join(watch));
+                    // QoS backs off for minutes; a rejected object set is terminal.
                     expect(result).toMatchObject({
                         _tag: "Failure",
-                        failure: { kind: "Unavailable", retryable: true },
+                        failure:
+                            status === "qos"
+                                ? { kind: "RateLimited", retryable: true, retryAfterMs: 120_000 }
+                                : { kind: "InvalidRequest", retryable: false },
                     });
                 })
             ).pipe(Effect.timeout("2 seconds"))

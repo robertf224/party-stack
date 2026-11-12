@@ -65,6 +65,44 @@ const unavailable = (cause: unknown) => classifyBackendFailure("foundry.sync", c
 /** Each logical object set has its own acknowledgement. Pump before returning so
  * changes between that acknowledgement and the snapshot read remain observable.
  */
+/** Foundry asked clients to shed subscriptions; do not reconnect for a while. */
+export const foundryWatchQosRetryMs = 2 * 60_000;
+/** Keep Foundry's reported reason. A rejected object set will not start working on
+ * retry, so it is terminal; QoS backs off for minutes; a closure may reopen. */
+export const subscriptionStateError = (
+    message: Extract<ObjectSetSubscriptionMessage, { type: "state" }>
+): BackendError => {
+    const reason = message.reason?.message;
+    const cause = message.reason?.detail === undefined ? undefined : Redacted.make(message.reason.detail);
+    switch (message.status) {
+        case "error":
+            return new BackendError({
+                operation: "foundry.watchSubset",
+                kind: "InvalidRequest",
+                retryable: false,
+                message: `Foundry rejected the object-set subscription${reason ? `: ${reason}` : "."}`,
+                cause,
+            });
+        case "qos":
+            return new BackendError({
+                operation: "foundry.watchSubset",
+                kind: "RateLimited",
+                retryable: true,
+                retryAfterMs: foundryWatchQosRetryMs,
+                message: `Foundry asked to reduce object-set subscriptions${reason ? `: ${reason}` : "."}`,
+                cause,
+            });
+        default:
+            return new BackendError({
+                operation: "foundry.watchSubset",
+                kind: "Unavailable",
+                retryable: true,
+                message: `The Foundry object-set subscription closed${reason ? `: ${reason}` : "."}`,
+                cause,
+            });
+    }
+};
+
 const acquireWatch = Effect.fn("Foundry.acquireWatch")(function* (
     messages: Stream.Stream<ObjectSetSubscriptionMessage, WatcherError>
 ) {
@@ -83,7 +121,7 @@ const acquireWatch = Effect.fn("Foundry.acquireWatch")(function* (
         if (message.type !== "state") return Queue.offer(events, undefined).pipe(Effect.asVoid);
         return message.status === "open"
             ? Deferred.succeed(ready, undefined).pipe(Effect.asVoid)
-            : Effect.fail(interrupted());
+            : Effect.fail(subscriptionStateError(message));
     }).pipe(
         Effect.mapError(unavailable),
         Effect.andThen(Effect.fail(interrupted())),
