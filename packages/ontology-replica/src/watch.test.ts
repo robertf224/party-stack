@@ -1,5 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { Deferred, Effect, Fiber, Stream } from "effect";
+import { Deferred, Effect, Fiber, Random, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { superviseWatch } from "./watch.js";
@@ -174,5 +174,144 @@ test("normal watch EOF reconnects rather than leaving a dead subscription", asyn
                 expect(attempts).toBe(2);
             })
         ).pipe(Effect.provide(TestClock.layer()))
+    );
+});
+
+// The upper end of equal jitter waits for the full backoff delay.
+const maximumJitter = Effect.provideService(Random.Random, {
+    nextIntUnsafe: () => Number.MAX_SAFE_INTEGER,
+    nextDoubleUnsafe: () => 0.999_999,
+});
+const unavailable = new BackendError({
+    operation: "watch",
+    kind: "Unavailable",
+    message: "Closed",
+    retryable: true,
+});
+
+test("watch attempts report whether they opened and delivered, and a stable acquisition resets backoff", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const reports: { error?: string; established?: boolean; delivered?: boolean }[] = [];
+                const opened: number[] = [];
+                let attempts = 0;
+                const fiber = yield* Effect.forkChild(
+                    superviseWatch({
+                        retryDelayMs: 1_000,
+                        stableMs: 5_000,
+                        acquire: () =>
+                            Effect.gen(function* () {
+                                const attempt = ++attempts;
+                                opened.push(attempt);
+                                if (attempt === 1) return yield* Effect.fail(unavailable);
+                                if (attempt === 2)
+                                    return Stream.make(1).pipe(Stream.concat(Stream.fail(unavailable)));
+                                if (attempt === 3)
+                                    return Stream.fromEffect(Effect.sleep(6_000)).pipe(
+                                        Stream.drain,
+                                        Stream.concat(Stream.fail(unavailable))
+                                    );
+                                return Stream.never;
+                            }),
+                        onValue: () => Effect.void,
+                        onError: (error, attempt) =>
+                            Effect.sync(() => {
+                                if (error)
+                                    reports.push({
+                                        error: error.kind,
+                                        established: attempt?.established,
+                                        delivered: attempt?.delivered,
+                                    });
+                            }),
+                    }).pipe(maximumJitter)
+                );
+                yield* Effect.yieldNow;
+                expect(reports).toEqual([{ error: "Unavailable", established: false, delivered: false }]);
+                yield* TestClock.adjust(1_000);
+                yield* Effect.yieldNow;
+                expect(reports[1]).toEqual({ error: "Unavailable", established: true, delivered: true });
+                // A delivered value reset the backoff to its initial delay.
+                yield* TestClock.adjust(1_000);
+                yield* Effect.yieldNow;
+                expect(opened).toEqual([1, 2, 3]);
+                // The third acquisition stayed open longer than stableMs, so its
+                // undelivered failure still retries after the initial delay.
+                yield* TestClock.adjust(6_000);
+                yield* Effect.yieldNow;
+                expect(reports[2]).toEqual({ error: "Unavailable", established: true, delivered: false });
+                yield* TestClock.adjust(1_000);
+                yield* Effect.yieldNow;
+                expect(opened).toEqual([1, 2, 3, 4]);
+                yield* Fiber.interrupt(fiber);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
+});
+
+test("watch backoff doubles with jitter up to five minutes", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                let attempts = 0;
+                const fiber = yield* Effect.forkChild(
+                    superviseWatch({
+                        retryDelayMs: 60_000,
+                        acquire: () =>
+                            Effect.sync(() => {
+                                attempts++;
+                                return Stream.fail(unavailable);
+                            }),
+                        onValue: () => Effect.void,
+                        onError: () => Effect.void,
+                    }).pipe(maximumJitter)
+                );
+                yield* Effect.yieldNow;
+                // 60 s, 120 s, 240 s, then capped at 300 s.
+                for (const [wait, expected] of [
+                    [60_000, 2],
+                    [120_000, 3],
+                    [240_000, 4],
+                    [300_000, 5],
+                    [300_000, 6],
+                ] as const) {
+                    yield* TestClock.adjust(wait - 1);
+                    yield* Effect.yieldNow;
+                    expect(attempts).toBe(expected - 1);
+                    yield* TestClock.adjust(1);
+                    yield* Effect.yieldNow;
+                    expect(attempts).toBe(expected);
+                }
+                yield* Fiber.interrupt(fiber);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
+});
+
+test("a non-retryable watch failure runs the terminal fallback instead of retrying", async () => {
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            let attempts = 0;
+            const terminal: string[] = [];
+            yield* superviseWatch({
+                acquire: () =>
+                    Effect.sync(() => {
+                        attempts++;
+                        return Stream.fail(
+                            new BackendError({
+                                operation: "watch",
+                                kind: "InvalidRequest",
+                                message: "Rejected",
+                                retryable: false,
+                            })
+                        );
+                    }),
+                onValue: () => Effect.void,
+                onError: () => Effect.void,
+                onTerminal: (error) => Effect.sync(() => terminal.push(error.kind)),
+            });
+            expect(attempts).toBe(1);
+            expect(terminal).toEqual(["InvalidRequest"]);
+        })
     );
 });
