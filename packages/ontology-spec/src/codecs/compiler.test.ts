@@ -173,3 +173,11 @@ it("rejects nested encrypted wrappers through containers and named references", 
         })
     ).not.toThrow();
 });
+
+it("shares compiled codecs per definition object", () => {
+    const ir = definition();
+    const first = compileEffectSchemas(ir);
+    expect(compileEffectSchemas(ir)).toBe(first);
+    // Equal definitions in other objects compile independently.
+    expect(compileEffectSchemas(definition())).not.toBe(first);
+});

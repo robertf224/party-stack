@@ -1,16 +1,33 @@
 import { OntologyIRSchema } from "@party-stack/ontology-spec/effect";
-import { Schema } from "effect";
+import { Effect, Schema, Stream } from "effect";
+import { digestBytes } from "./blobs/bytes.js";
 import { encodeValue } from "./storage/values.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { FieldDef, QueryDocument, TypeDef } from "@party-stack/ontology-spec";
 
 const decodeDefinition = Schema.decodeUnknownSync(OntologyIRSchema, { onExcessProperty: "error" });
 
+// Definitions are immutable once supplied to storage, replicas or servers. Opening
+// one route computes the same full-definition signatures several times (server
+// Describe, replica engine, bootstrap checks); a large provider IR makes each
+// walk expensive on mobile JavaScript engines. Cache by definition identity.
+const signatures = new WeakMap<object, string>();
+const contractSignatures = new WeakMap<object, string>();
+const memoize = (cache: WeakMap<object, string>, ir: OntologyIR, compute: () => string) => {
+    let signature = cache.get(ir);
+    if (signature === undefined) {
+        signature = compute();
+        cache.set(ir, signature);
+    }
+    return signature;
+};
+
 /** Stable across property ordering introduced by schema/wire decoding.
  * The portable codec also preserves literal undefined, Temporal and collection values.
+ * Results are cached per definition object; do not mutate a definition after use.
  */
 export function ontologyDefinitionSignature(ir: OntologyIR): string {
-    return encodeValue(decodeDefinition(ir));
+    return memoize(signatures, ir, () => encodeValue(decodeDefinition(ir)));
 }
 
 const presentation = new Set([
@@ -102,6 +119,9 @@ const contractQuery = (query: QueryDocument) => ({
  * metadata and all type constraints. This is not a schema migration policy.
  */
 export function ontologyDefinitionContractSignature(ir: OntologyIR): string {
+    return memoize(contractSignatures, ir, () => contractSignature(ir));
+}
+function contractSignature(ir: OntologyIR): string {
     const definition = decodeDefinition(ir);
     return encodeValue({
         ...contractNode(definition),
@@ -143,3 +163,23 @@ export function ontologyDefinitionContractSignature(ir: OntologyIR): string {
         },
     });
 }
+
+const definitionHashes = new WeakMap<object, string>();
+const contractHashes = new WeakMap<object, string>();
+const cachedHash = (cache: WeakMap<object, string>, ir: OntologyIR, signature: (ir: OntologyIR) => string) =>
+    Effect.suspend(() => {
+        const cached = cache.get(ir);
+        if (cached !== undefined) return Effect.succeed(cached);
+        return Effect.try({ try: () => signature(ir), catch: (cause) => cause }).pipe(
+            Effect.flatMap((text) =>
+                digestBytes({ type: "application/json", stream: Stream.make(new TextEncoder().encode(text)) })
+            ),
+            Effect.tap((hash) => Effect.sync(() => cache.set(ir, hash)))
+        );
+    });
+/** SHA-256 of {@link ontologyDefinitionSignature}, cached per definition object. */
+export const ontologyDefinitionHash = (ir: OntologyIR): Effect.Effect<string, unknown> =>
+    cachedHash(definitionHashes, ir, ontologyDefinitionSignature);
+/** SHA-256 of {@link ontologyDefinitionContractSignature}, cached per definition object. */
+export const ontologyDefinitionContractHash = (ir: OntologyIR): Effect.Effect<string, unknown> =>
+    cachedHash(contractHashes, ir, ontologyDefinitionContractSignature);

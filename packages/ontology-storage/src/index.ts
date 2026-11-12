@@ -48,6 +48,11 @@ export {
 /** Pure evaluation of the portable query IR for composed/staged snapshots. */
 export { applyQuery as evaluateQuery } from "./query/evaluate.js";
 
-export { ontologyDefinitionSignature, ontologyDefinitionContractSignature } from "./definition.js";
+export {
+    ontologyDefinitionSignature,
+    ontologyDefinitionContractSignature,
+    ontologyDefinitionHash,
+    ontologyDefinitionContractHash,
+} from "./definition.js";
 
 export { withObjectSources } from "./ontology/sources.js";

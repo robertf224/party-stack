@@ -76,9 +76,37 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
         ),
         rebuild: Schema.optional(Schema.Struct({ description: OntologyDescriptionCodec })),
     });
+    // A record retains a full definition. Lookup, open and restore all read the
+    // same stored row; decoding and validating a large provider IR repeatedly
+    // dominates native startup. Reuse the decoded record for identical stored
+    // data. Records are immutable values, so sharing one decoding is safe and
+    // also lets per-definition signature caches recognize the same IR.
+    const decodeRecord = Schema.decodeUnknownSync(codec);
+    const decoded = new Map<string, StoredReplicaPartition>();
+    const recordKey = (input: unknown) => {
+        try {
+            return JSON.stringify(input);
+        } catch {
+            return undefined;
+        }
+    };
+    const decodeCached = (input: unknown) => {
+        const key = recordKey(input);
+        if (key === undefined) return decodeRecord(input);
+        const cached = decoded.get(key);
+        if (cached) {
+            decoded.delete(key);
+            decoded.set(key, cached);
+            return cached;
+        }
+        const value = decodeRecord(input);
+        decoded.set(key, value);
+        if (decoded.size > 8) decoded.delete(decoded.keys().next().value!);
+        return value;
+    };
     const table = Table.make<StoredReplicaPartition>({
         name: "replica-partitions",
-        codec: { encode: Schema.encodeSync(codec), decode: Schema.decodeUnknownSync(codec) },
+        codec: { encode: Schema.encodeSync(codec), decode: decodeCached },
     });
 
     const active = new Map<string, { scope: Scope.Closeable }>();
@@ -269,14 +297,25 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                     : work;
                 // Do not replace the last usable bootstrap when opening the
                 // native replica rejects a source or definition mismatch.
-                yield* protect(
-                    metadata.tables.put(table, ontology, {
-                        ontology,
-                        partition,
-                        definition: { ir: configuration.ir, context: configuration.context ?? {} },
-                        ...(configuration.bootstrap ? { bootstrap: configuration.bootstrap } : {}),
-                    })
-                );
+                // Reopening an unchanged retained definition needs no rewrite.
+                const unchanged =
+                    rebuilding !== undefined &&
+                    !rebuilding.rebuild &&
+                    rebuilding.partition.owner === partition.owner &&
+                    rebuilding.partition.namespace === partition.namespace &&
+                    rebuilding.definition?.ir === configuration.ir &&
+                    JSON.stringify(rebuilding.definition.context) ===
+                        JSON.stringify(configuration.context ?? {}) &&
+                    rebuilding.bootstrap === configuration.bootstrap;
+                if (!unchanged)
+                    yield* protect(
+                        metadata.tables.put(table, ontology, {
+                            ontology,
+                            partition,
+                            definition: { ir: configuration.ir, context: configuration.context ?? {} },
+                            ...(configuration.bootstrap ? { bootstrap: configuration.bootstrap } : {}),
+                        })
+                    );
                 return {
                     ir: configuration.ir,
                     context: configuration.context ?? {},

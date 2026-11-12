@@ -217,3 +217,26 @@ it.effect.prop(
         }),
     { arbitrary: { runs: 50, seed: "definition-contract-literals-v1" } }
 );
+
+test("signatures are computed once per definition object", () => {
+    const original = decorated("Cached");
+    let reads = 0;
+    const counted = { ...original };
+    Object.defineProperty(counted, "objectTypes", {
+        enumerable: true,
+        get: () => {
+            reads++;
+            return original.objectTypes;
+        },
+    });
+    const signature = ontologyDefinitionSignature(counted);
+    const contract = ontologyDefinitionContractSignature(counted);
+    const afterFirst = reads;
+    expect(afterFirst).toBeGreaterThan(0);
+    expect(ontologyDefinitionSignature(counted)).toBe(signature);
+    expect(ontologyDefinitionContractSignature(counted)).toBe(contract);
+    expect(reads).toBe(afterFirst);
+    // Equal definitions in other objects still produce the same identities.
+    expect(ontologyDefinitionSignature(structuredClone(original))).toBe(signature);
+    expect(ontologyDefinitionContractSignature(structuredClone(original))).toBe(contract);
+});

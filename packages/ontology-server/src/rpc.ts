@@ -18,8 +18,9 @@ import { pinOntology } from "@party-stack/ontology-replica";
 import {
     ontologyDefinitionSignature,
     ontologyDefinitionContractSignature,
+    ontologyDefinitionContractHash,
+    ontologyDefinitionHash,
 } from "@party-stack/ontology-storage";
-import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import {
     Cause,
@@ -392,12 +393,13 @@ const baseOntologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => {
                                       }),
                               })
                             : undefined;
-                        const definitionHash = options.ir
-                            ? yield* digestBytes({
-                                  type: "application/json",
-                                  stream: Stream.make(new TextEncoder().encode(signature!)),
-                              }).pipe(Effect.mapError((cause) => classifyBackendFailure("describe", cause)))
-                            : undefined;
+                        // Cached per definition: Describe must not rehash a large IR per client.
+                        const definitionHash =
+                            options.ir && signature !== undefined
+                                ? yield* ontologyDefinitionHash(options.ir).pipe(
+                                      Effect.mapError((cause) => classifyBackendFailure("describe", cause))
+                                  )
+                                : undefined;
                         return {
                             version: 1 as const,
                             replication:
@@ -770,10 +772,14 @@ export const observeOntologyClientFailure = <A, R>(
         )
     );
 
+type AcceptDescription = (
+    description: OntologyDescription
+) => Effect.Effect<OntologyDescription, BackendError>;
+
 const makeDefinitionClient = Effect.fnUntraced(function* (
     raw: OntologyRpcClient,
     description: OntologyDescription,
-    options?: OntologyClientOptions
+    options: OntologyClientOptions | undefined
 ) {
     const scope = yield* Effect.scope;
     const state = yield* SubscriptionRef.make<OntologyClientDefinitionStatus>({
@@ -828,9 +834,7 @@ const makeDefinitionClient = Effect.fnUntraced(function* (
             const pending = Deferred.makeUnsafe<OntologyDescription, BackendError>();
             attempt = pending;
             const check = SubscriptionRef.update(state, (current) => ({ ...current, refreshing: true })).pipe(
-                Effect.andThen(
-                    raw.Describe().pipe(Effect.mapError(unavailable), Effect.flatMap(copyDescription))
-                ),
+                Effect.andThen(raw.Describe().pipe(Effect.mapError(unavailable))),
                 Effect.tap((fresh) => checkBootstrapBinding(description, fresh)),
                 Effect.tap(validate),
                 Effect.tap(() => SubscriptionRef.set(state, { status: "current", refreshing: false })),
@@ -871,14 +875,7 @@ const makeDefinitionClient = Effect.fnUntraced(function* (
     // lifecycle handling even when the transport successfully delivered a frame.
     const schemaHash = yield* Effect.cached(
         Effect.suspend(() =>
-            description.ir
-                ? digestBytes({
-                      type: "application/json",
-                      stream: Stream.make(
-                          new TextEncoder().encode(ontologyDefinitionContractSignature(description.ir))
-                      ),
-                  })
-                : Effect.succeed(undefined)
+            description.ir ? ontologyDefinitionContractHash(description.ir) : Effect.succeed(undefined)
         ).pipe(Effect.mapError(unavailable))
     );
     const checkFrame = Effect.fnUntraced(function* (frame: DeliveryFrame) {
@@ -937,14 +934,38 @@ const makeDefinitionClient = Effect.fnUntraced(function* (
     };
 });
 
+const makeProtocolClient = (accept: AcceptDescription) => {
+    const open: (
+        client: OntologyRpcClient,
+        options?: OntologyClientOptions
+    ) => Effect.Effect<OntologyClient, BackendError, Scope.Scope> = Effect.fn("RemoteOntology.protocol")(
+        function* (client: OntologyRpcClient, options?: OntologyClientOptions) {
+            return yield* openProtocolClient(client, options, accept, open);
+        }
+    );
+    return open;
+};
 /** Use the same source contract with Effect RPC's worker, HTTP or socket transport. */
-export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(function* (
+export const makeOntologyProtocolClient = makeProtocolClient(copyDescription);
+/** Same-runtime transports without serialization receive the server's own,
+ * already validated description. Skip the defensive wire copy: re-encoding and
+ * decoding a large definition dominates startup on mobile JavaScript engines,
+ * and sharing the definition object lets per-definition signature caches apply.
+ */
+export const makeTrustedOntologyProtocolClient = makeProtocolClient(Effect.succeed);
+
+const openProtocolClient = Effect.fnUntraced(function* (
     client: OntologyRpcClient,
-    options?: OntologyClientOptions
+    options: OntologyClientOptions | undefined,
+    accept: AcceptDescription,
+    open: (client: OntologyRpcClient) => Effect.Effect<OntologyClient, BackendError, Scope.Scope>
 ): Effect.fn.Return<OntologyClient, BackendError, Scope.Scope> {
+    // Serialized RPC clients already decoded Describe with its success schema, and
+    // a same-runtime client receives the server's validated value: neither needs a
+    // second encode/decode copy. Only a caller-retained description is copied.
     const description = yield* options?.description
-        ? copyDescription(options.description)
-        : client.Describe().pipe(Effect.mapError(unavailable), Effect.flatMap(copyDescription));
+        ? accept(options.description)
+        : client.Describe().pipe(Effect.mapError(unavailable));
     if (options?.description && !description.ir)
         return yield* new BackendError({
             operation: "remote.bootstrap",
@@ -954,9 +975,7 @@ export const makeOntologyProtocolClient = Effect.fn("RemoteOntology.protocol")(f
         });
     const described = yield* makeDefinitionClient(client, description, options);
     const pinBackend = description.pins
-        ? makeOntologyProtocolClient(selectPinResource(client)).pipe(
-              Effect.map((resource) => resource.backend)
-          )
+        ? open(selectPinResource(client)).pipe(Effect.map((resource) => resource.backend))
         : undefined;
     client = described.client;
     const operations = yield* makeOntologyOperationsClient(client);

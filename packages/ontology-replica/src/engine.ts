@@ -3,9 +3,11 @@ import { objectSubset, resolveSubsetSnapshot, coversSubset } from "@party-stack/
 import {
     ontologyDefinitionSignature,
     ontologyDefinitionContractSignature,
+    ontologyDefinitionContractHash,
 } from "@party-stack/ontology-storage";
 import { tableUsage } from "@party-stack/ontology-storage/tables";
 import { alwaysOnlineConnectivity } from "@party-stack/runtime";
+import { definitionStamp, definitionTable, isDefinitionStamp } from "./definitionStamp.js";
 import type { ConnectionMonitor } from "@party-stack/connect";
 import type { DeliveryPosition } from "@party-stack/ontology-backend/delivery";
 import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
@@ -740,12 +742,18 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             return false;
         }
     };
-    const schemaHash = yield* boundary(
-        digestBytes({
-            type: "application/json",
-            stream: Stream.make(new TextEncoder().encode(contractSignature)),
-        })
-    );
+    const schemaHash = yield* boundary(ontologyDefinitionContractHash(options.ir));
+    const stamp = yield* boundary(definitionStamp(options.ir));
+    const storedDefinition = definitionTable(name);
+    // Heads hold the compact stamp; a different stored stamp is compared via its
+    // full signature row. Older heads hold the full signature directly.
+    const sameStoredDefinition = (tx: ReadTransaction, stored: string) =>
+        Effect.gen(function* () {
+            if (stored === stamp || stored === signature) return true;
+            if (!isDefinitionStamp(stored)) return sameDefinitionContract(stored);
+            const previous = yield* tx.get(storedDefinition, "current");
+            return previous !== undefined && sameDefinitionContract(previous.signature);
+        });
     const deliveryActive =
         options.startSync !== false && Boolean(options.source?.subscribe || adapter?.subscribeSelection);
     const events = yield* PubSub.sliding<void>(1);
@@ -991,17 +999,17 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     "SourceMismatch",
                     "Replica source changed; reset this namespace explicitly."
                 );
-            if (stored && !sameDefinitionContract(stored.signature))
+            if (stored && !(yield* sameStoredDefinition(tx, stored.signature)))
                 return yield* fault(
                     "SchemaMismatch",
                     "Replica definition changed; migrate or reset this namespace explicitly."
                 );
             return stored
-                ? { ...stored, signature }
+                ? { ...stored, signature: stamp }
                 : {
                       sequence: 0,
                       source: sourceId,
-                      signature,
+                      signature: stamp,
                       ...(options.source ? { mode: "parent" as const } : {}),
                   };
         });
@@ -1272,7 +1280,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     yield* boundary(
         tables.transaction((tx) =>
             Effect.gen(function* () {
+                const previousStamp = (yield* tx.get(metadata, "head"))?.signature;
                 yield* tx.put(metadata, "head", yield* position(tx));
+                if (previousStamp !== stamp) yield* tx.put(storedDefinition, "current", { signature });
                 // One designated owner opens this namespace. Query/read leases from
                 // a previous incarnation are volatile; pins and outbox roots are separate.
                 yield* tx.clear(roots);

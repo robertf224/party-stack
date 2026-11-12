@@ -1,7 +1,11 @@
 import { Effect } from "effect";
 import { RpcGroup, RpcServer } from "effect/rpc";
 import { ontologyServerDispatch, selectOntology } from "./routing.js";
-import { makeOntologyProtocolClient, makeTracedRpcClientNoSerialization, OntologyRpcs } from "./rpc.js";
+import {
+    makeTracedRpcClientNoSerialization,
+    makeTrustedOntologyProtocolClient,
+    OntologyRpcs,
+} from "./rpc.js";
 import type { OntologyServer } from "./routing.js";
 import type { OntologyServerClient, OntologyClientOptions } from "./rpc.js";
 import type { Scope } from "effect";
@@ -30,7 +34,7 @@ export const makeOntologyLocalClient = Effect.fn("OntologyClient.local")(functio
             clientOptions?: OntologyClientOptions
         ) {
             const name = selected ?? options?.ontology;
-            return yield* makeOntologyProtocolClient(
+            return yield* makeTrustedOntologyProtocolClient(
                 name === undefined ? rpc : selectOntology(rpc, name),
                 clientOptions
             );
