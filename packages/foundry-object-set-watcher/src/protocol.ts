@@ -83,10 +83,35 @@ export function convertSubscriptionMessage(
             if (!subscriptionId) return undefined;
             return {
                 type: "state",
-                updates: [{ subscriptionId, status: "closed" }],
+                updates: [{ subscriptionId, status: "closed", reason: closureReason(message.cause) }],
             };
         }
         default:
             return undefined;
     }
+}
+
+/** Summarize Foundry error payloads by error name only; arguments stay in detail. */
+export function errorReason(errors: readonly unknown[] | undefined) {
+    const names = (errors ?? []).flatMap((error) =>
+        error !== null &&
+        typeof error === "object" &&
+        typeof (error as { error?: unknown }).error === "string"
+            ? [(error as { error: string }).error]
+            : []
+    );
+    return {
+        message: names.length ? names.join(", ") : "Foundry rejected the subscription.",
+        detail: errors,
+    };
+}
+
+function closureReason(cause: unknown) {
+    if (cause === null || typeof cause !== "object") return undefined;
+    const value = cause as { type?: unknown; reason?: unknown; error?: unknown };
+    if (value.type === "error") return errorReason([cause]);
+    return {
+        message: typeof value.reason === "string" ? value.reason : "Foundry closed the subscription.",
+        detail: cause,
+    };
 }

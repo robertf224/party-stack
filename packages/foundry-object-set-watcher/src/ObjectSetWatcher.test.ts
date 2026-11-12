@@ -9,6 +9,8 @@ class Socket extends EventTarget {
     readyState = 1;
     requests: { id: string; requests: unknown[] }[] = [];
     acknowledge: "success" | "qos" | "none" = "success";
+    /** Object types Foundry rejects with an error response. */
+    rejected = new Set<string>();
     close = vi.fn(() => {
         this.readyState = 3;
         this.dispatchEvent(new Event("close"));
@@ -21,10 +23,17 @@ class Socket extends EventTarget {
             this.message({
                 type: "subscribeResponses",
                 id: request.id,
-                responses: request.requests.map((_, index) =>
-                    this.acknowledge === "success"
-                        ? { type: "success", id: `remote-${index}` }
-                        : { type: "qos" }
+                responses: request.requests.map((entry, index) =>
+                    this.rejected.has((entry as { objectSet: { objectType: string } }).objectSet.objectType)
+                        ? {
+                              type: "error",
+                              errors: [
+                                  { error: "ObjectSetNotSupported", args: [{ name: "detail", value: "x" }] },
+                              ],
+                          }
+                        : this.acknowledge === "success"
+                          ? { type: "success", id: `remote-${index}` }
+                          : { type: "qos" }
                 ),
             });
         });
@@ -287,6 +296,97 @@ test("QoS reconnects within the scope and resubscribes the current demand", asyn
                 expect(sockets[0]?.close).toHaveBeenCalledOnce();
                 yield* Scope.close(consumer, Exit.void);
                 expect(sockets[1]?.close).toHaveBeenCalledOnce();
+            })
+        )
+    );
+});
+
+const collect = (
+    watcher: Effect.Success<ReturnType<typeof makeObjectSetWatcher>>,
+    objectType: string,
+    into: ObjectSetSubscriptionMessage[],
+    scope: Scope.Scope
+) =>
+    Effect.forkIn(
+        Stream.runForEach(watcher.subscribe({ type: "base", objectType }), (value) =>
+            Effect.sync(() => {
+                into.push(value);
+            })
+        ),
+        scope
+    );
+
+test("rejected subscriptions keep Foundry's error and joining consumers do not resend the list", async () => {
+    const socket = new Socket();
+    socket.rejected.add("Broken");
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const watcher = yield* makeObjectSetWatcher(client(async () => socket));
+                const scope = yield* Effect.scope;
+                const healthy: ObjectSetSubscriptionMessage[] = [];
+                const first: ObjectSetSubscriptionMessage[] = [];
+                yield* collect(watcher, "Note", healthy, scope);
+                yield* collect(watcher, "Broken", first, scope);
+                yield* until(() =>
+                    expect(first).toContainEqual({
+                        type: "state",
+                        status: "error",
+                        reason: {
+                            message: "ObjectSetNotSupported",
+                            detail: [
+                                { error: "ObjectSetNotSupported", args: [{ name: "detail", value: "x" }] },
+                            ],
+                        },
+                    })
+                );
+                yield* until(() =>
+                    expect(
+                        healthy.some((message) => message.type === "state" && message.status === "open")
+                    ).toBe(true)
+                );
+                const sent = socket.requests.length;
+                const joined: ObjectSetSubscriptionMessage[] = [];
+                yield* collect(watcher, "Broken", joined, scope);
+                yield* until(() => expect(joined[0]).toMatchObject({ type: "state", status: "error" }));
+                yield* Effect.sleep(10);
+                expect(socket.requests.length).toBe(sent);
+            })
+        )
+    );
+});
+
+test("new consumers do not receive a closed state left by an earlier connection", async () => {
+    const sockets: Socket[] = [];
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const watcher = yield* makeObjectSetWatcher(
+                    client(async () => {
+                        const socket = new Socket();
+                        sockets.push(socket);
+                        return socket;
+                    }),
+                    { retryDelayMs: 60_000 }
+                );
+                const scope = yield* Effect.scope;
+                const first: ObjectSetSubscriptionMessage[] = [];
+                yield* collect(watcher, "Note", first, scope);
+                yield* until(() =>
+                    expect(
+                        first.some((message) => message.type === "state" && message.status === "open")
+                    ).toBe(true)
+                );
+                sockets[0]!.close();
+                yield* until(() =>
+                    expect(
+                        first.some((message) => message.type === "state" && message.status === "closed")
+                    ).toBe(true)
+                );
+                const joined: ObjectSetSubscriptionMessage[] = [];
+                yield* collect(watcher, "Note", joined, scope);
+                yield* Effect.sleep(10);
+                expect(joined).toEqual([]);
             })
         )
     );
