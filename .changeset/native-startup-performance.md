@@ -15,13 +15,9 @@ Speed up opening large definitions, especially on mobile JavaScript engines.
 - Same-runtime local clients share the server's validated description, and
   serialized clients no longer re-encode and decode a Describe response that the
   RPC client already decoded. Caller-retained descriptions are still copied.
-- Replica heads store a compact `sha256:` definition stamp, with the full
-  signature in a separate row written only when the definition changes. Heads
-  are rewritten on every sequence and cursor advance; they previously rewrote the
-  complete definition signature each time. Existing heads remain readable.
 - The replica partition catalog reuses decoded records and skips rewriting an
   unchanged retained definition when a route reopens.
 
 A local benchmark opening a 74-object-type, 189-action Foundry definition through
-`localClient` dropped from about 420 ms to 155 ms for the first view, 437 ms to
-135 ms after a restart, and 184 ms to 11 ms for an additional view.
+`localClient` dropped from about 420 ms to 230 ms for the first view, 437 ms to
+190 ms after a restart, and 184 ms to 40 ms for an additional view.

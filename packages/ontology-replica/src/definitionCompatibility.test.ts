@@ -1,5 +1,6 @@
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o } from "@party-stack/ontology-spec";
+import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Exit, Scope } from "effect";
@@ -100,50 +101,39 @@ test("cosmetic definition updates preserve rows, coverage, pin retention and que
     );
 });
 
-test("replica heads store a compact definition stamp and still reopen heads holding a full signature", async () => {
+test("reopened replicas keep the full definition signature that app storage migrations compare", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const ir = definition("Stamp");
+                const ir = definition("Persisted");
                 const tables = yield* Memory.make();
                 const backend = yield* makeOwnedBackend({
                     ir,
-                    namespace: "stamp-source",
+                    namespace: "persisted-source",
                     tables: yield* Memory.make(),
                     mutators: {},
                 });
                 const options: ReplicaOptions = {
                     ir,
                     tables,
-                    namespace: "stamp-cache",
+                    namespace: "persisted-cache",
                     backend,
                     startSync: false,
                     execute: () => Effect.void,
                 };
-                const name = (part: string) => JSON.stringify(["replica", "stamp-cache", part]);
-                const head = Table.make<{ signature: string }>({ name: name("position") });
-                const stored = Table.make<{ signature: string }>({ name: name("definition") });
-                const open = Effect.gen(function* () {
+                const head = Table.make<{ signature: string }>({
+                    name: JSON.stringify(["replica", "persisted-cache", "position"]),
+                });
+                // Applications such as Notes migrate this head by comparing it with
+                // ontologyDefinitionSignature before the replica opens.
+                for (let launch = 0; launch < 3; launch++) {
                     const scope = yield* Scope.fork(yield* Effect.scope);
                     yield* Scope.provide(makeReplica(options), scope);
                     yield* Scope.close(scope, Exit.void);
-                });
-                yield* open;
-                const stamp = (yield* tables.get(head, "head"))!.signature;
-                expect(stamp).toMatch(/^sha256:[0-9a-f]{64}$/);
-                const full = (yield* tables.get(stored, "current"))!.signature;
-                expect(full.length).toBeGreaterThan(stamp.length);
-                // Heads written by earlier releases kept the full signature.
-                yield* tables.transaction((tx) =>
-                    Effect.gen(function* () {
-                        const current = (yield* tx.get(head, "head"))!;
-                        yield* tx.put(head, "head", { ...current, signature: full });
-                        yield* tx.delete(stored, "current");
-                    })
-                );
-                yield* open;
-                expect((yield* tables.get(head, "head"))!.signature).toBe(stamp);
-                expect((yield* tables.get(stored, "current"))!.signature).toBe(full);
+                    expect((yield* tables.get(head, "head"))!.signature).toBe(
+                        ontologyDefinitionSignature(ir)
+                    );
+                }
             })
         )
     );
