@@ -438,57 +438,97 @@ test("narrow watcher hints invalidate broader coverage before it can suppress re
     );
 });
 
-test("a narrow watch failure does not leave a reusable broader coverage claim", async () => {
+const lostWatch = (stop: PubSub.PubSub<"change" | "fail">) =>
+    PubSub.subscribe(stop).pipe(
+        Effect.map((subscription) =>
+            Stream.fromSubscription(subscription).pipe(
+                Stream.mapEffect((event) =>
+                    event === "change"
+                        ? Effect.succeed(undefined)
+                        : Effect.fail(
+                              new BackendError({
+                                  operation: "watch",
+                                  kind: "Unavailable",
+                                  retryable: true,
+                                  message: "Lost watch",
+                              })
+                          )
+                )
+            )
+        )
+    );
+const watchedReplica = Effect.fnUntraced(function* (
+    namespace: string,
+    stop: PubSub.PubSub<"change" | "fail">,
+    counter: { loads: number }
+) {
+    return yield* makeReplica({
+        namespace,
+        ir,
+        tables: yield* Memory.make(),
+        execute: () => Effect.void,
+        startSync: false,
+        storeBroaderSubsets: true,
+        demand: { refresh: { maxCoverageAgeMs: 200 } },
+        backend: makeOntologyBackend({
+            ir,
+            name: "test",
+            sourceId: "test",
+            supportsIdempotency: false,
+            applyAction: () => Effect.die("Unexpected action"),
+            queryFunction: () => Effect.void,
+            watchSubset: () => lostWatch(stop),
+            loadSubset: () =>
+                Effect.sync(() => {
+                    counter.loads++;
+                    return { rows, complete: true, fulfilledSubset: objectSubset("Issue") };
+                }),
+        }),
+    });
+});
+
+test("a watch lost after delivering changes does not leave a reusable broader coverage claim", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const stop = yield* PubSub.unbounded<void>();
-                let loads = 0;
-                const replica = yield* makeReplica({
-                    namespace: "failed-watch-broader",
-                    ir,
-                    tables: yield* Memory.make(),
-                    execute: () => Effect.void,
-                    startSync: false,
-                    storeBroaderSubsets: true,
-                    backend: makeOntologyBackend({
-                        ir,
-                        name: "test",
-                        sourceId: "test",
-                        supportsIdempotency: false,
-                        applyAction: () => Effect.die("Unexpected action"),
-                        queryFunction: () => Effect.void,
-                        watchSubset: () =>
-                            PubSub.subscribe(stop).pipe(
-                                Effect.map((subscription) =>
-                                    Stream.fromSubscription(subscription).pipe(
-                                        Stream.flatMap(() =>
-                                            Stream.fail(
-                                                new BackendError({
-                                                    operation: "watch",
-                                                    kind: "Unavailable",
-                                                    retryable: true,
-                                                    message: "Lost watch",
-                                                })
-                                            )
-                                        )
-                                    )
-                                )
-                            ),
-                        loadSubset: () =>
-                            Effect.sync(() => {
-                                loads++;
-                                return { rows, complete: true, fulfilledSubset: objectSubset("Issue") };
-                            }),
-                    }),
-                });
+                const stop = yield* PubSub.unbounded<"change" | "fail">();
+                const counter = { loads: 0 };
+                const replica = yield* watchedReplica("failed-watch-broader", stop, counter);
                 yield* replica.demand(selected);
                 yield* Effect.yieldNow;
                 yield* replica.syncSubset(selected);
-                yield* PubSub.publish(stop, undefined);
+                yield* PubSub.publish(stop, "change");
+                yield* PubSub.publish(stop, "fail");
                 yield* Effect.sleep(1);
                 yield* replica.syncSubset(selected);
-                expect(loads).toBe(2);
+                expect(counter.loads).toBe(2);
+            })
+        )
+    );
+});
+
+test("a watch lost before delivering anything keeps its snapshot until coverage ages out", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const stop = yield* PubSub.unbounded<"change" | "fail">();
+                const counter = { loads: 0 };
+                const replica = yield* watchedReplica("failed-watch-undelivered", stop, counter);
+                yield* replica.demand(selected);
+                yield* Effect.yieldNow;
+                yield* replica.syncSubset(selected);
+                yield* PubSub.publish(stop, "fail");
+                yield* Effect.sleep(1);
+                // No hint can have been dropped: the fresh snapshot remains usable.
+                yield* replica.syncSubset(selected);
+                expect(counter.loads).toBe(1);
+                expect((yield* replica.status).demands[0]?.watchError).toMatchObject({
+                    kind: "Unavailable",
+                });
+                // The unmaintained demand revalidates once its coverage ages out.
+                yield* Effect.sleep(250);
+                yield* replica.syncSubset(selected);
+                expect(counter.loads).toBe(2);
             })
         )
     );

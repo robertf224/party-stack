@@ -3580,13 +3580,20 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                             },
                         })
                     ),
-                onError: (error) =>
+                onError: (error, attempt) =>
                     Effect.sync(() => {
-                        if (error || demand.watchFailure) demand.revision++;
+                        // Only an attempt that was delivering hints can have dropped one.
+                        // A watch that never opened or never reported a change leaves
+                        // its snapshot valid: mark the demand unmaintained so coverage
+                        // falls back to age-based revalidation instead of reloading now.
+                        // Successful re-acquisitions still repair the gap (see acquire).
+                        const missed = error !== undefined && (attempt?.delivered ?? true);
+                        if (missed || (!error && demand.watchFailure)) demand.revision++;
                         demand.watchFailure = error;
+                        return missed;
                     }).pipe(
-                        Effect.andThen(
-                            error
+                        Effect.flatMap((missed) =>
+                            missed
                                 ? invalidateCoverage.pipe(Effect.catch(service.reportReplicationFailure))
                                 : Effect.void
                         ),
@@ -3598,6 +3605,23 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         Effect.andThen(localNotify),
                         Effect.andThen(ready && error ? Deferred.fail(ready, error) : Effect.void)
                     ),
+                // A provider that rejects this watch outright is not retried. Fall back
+                // to the route's poll policy when configured; otherwise coverage ages out.
+                onTerminal: () =>
+                    watched && typeof configuredInterval === "number"
+                        ? Effect.gen(function* () {
+                              demand.pollIntervalMs = configuredInterval;
+                              yield* diagnostics.changed;
+                              for (;;) {
+                                  yield* Effect.sleep(configuredInterval);
+                                  demand.revision++;
+                                  yield* invalidateCoverage.pipe(
+                                      Effect.catch(service.reportReplicationFailure)
+                                  );
+                                  yield* wakeState;
+                              }
+                          })
+                        : Effect.void,
             }).pipe(
                 Effect.withSpan("Replica.watchSubset", {
                     root: true,
