@@ -1,5 +1,11 @@
 # @party-stack/foundry-ontology
 
+## 0.20.2
+
+### Patch Changes
+
+- @party-stack/ontology@0.22.1
+
 ## 0.20.1
 
 ### Patch Changes

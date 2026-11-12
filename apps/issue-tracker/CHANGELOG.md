@@ -1,5 +1,18 @@
 # @party-stack/issue-tracker
 
+## 0.2.27
+
+### Patch Changes
+
+- Updated dependencies [e971546]
+    - @party-stack/ontology-replica@0.2.2
+    - @party-stack/ontology@0.22.1
+    - @party-stack/ontology-server@0.11.2
+    - @party-stack/web-runtime@0.5.1
+    - @party-stack/foundry-ontology@0.20.2
+    - @party-stack/ontology-devtools@0.7.2
+    - @party-stack/ontology-react@0.2.2
+
 ## 0.2.26
 
 ### Patch Changes
