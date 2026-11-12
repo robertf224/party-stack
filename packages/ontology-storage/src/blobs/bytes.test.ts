@@ -1,6 +1,6 @@
 import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
-import { expect, test } from "vite-plus/test";
-import { scopedByteSource } from "./bytes.js";
+import { afterEach, describe, expect, it, test, vi } from "vite-plus/test";
+import { configureNativeSha256, digestBytes, scopedByteSource } from "./bytes.js";
 
 test("caller scopes release an acquired source before consumption without closing its owner", async () => {
     await Effect.runPromise(
@@ -82,4 +82,44 @@ test("closing the caller interrupts pending acquisition and active consumption",
             })
         )
     );
+});
+
+describe("native SHA-256", () => {
+    const portable = (bytes: Uint8Array<ArrayBuffer>) => Effect.runPromise(digestBytes(new Blob([bytes])));
+    afterEach(() => configureNativeSha256(undefined));
+
+    it("hashes bounded inputs with the platform digest and matches portable output", async () => {
+        const bytes = new Uint8Array(200_000).map((_, index) => index % 251);
+        const expected = await portable(bytes);
+        const native = vi.fn((input: Uint8Array<ArrayBuffer>) => crypto.subtle.digest("SHA-256", input));
+        configureNativeSha256(native);
+        expect(await portable(bytes)).toBe(expected);
+        expect(native).toHaveBeenCalledTimes(1);
+        expect(native.mock.calls[0]![0]).toEqual(bytes);
+        // Unknown-size one-shot streams are buffered only up to the bound.
+        expect(
+            await Effect.runPromise(
+                digestBytes({ type: "application/octet-stream", stream: Stream.make(bytes) })
+            )
+        ).toBe(expected);
+    });
+
+    it("keeps streaming portable hashing above the bound", async () => {
+        const bytes = new Uint8Array(9 * 1024 * 1024).fill(3);
+        const expected = await portable(bytes);
+        const native = vi.fn((input: Uint8Array<ArrayBuffer>) => crypto.subtle.digest("SHA-256", input));
+        configureNativeSha256(native);
+        expect(await portable(bytes)).toBe(expected);
+        expect(
+            await Effect.runPromise(
+                digestBytes({ type: "application/octet-stream", stream: Stream.make(bytes) })
+            )
+        ).toBe(expected);
+        expect(native).not.toHaveBeenCalled();
+    });
+
+    it("reports platform digest failures", async () => {
+        configureNativeSha256(() => Promise.reject(new Error("native failed")));
+        await expect(portable(new Uint8Array([1]))).rejects.toThrow();
+    });
 });

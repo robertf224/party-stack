@@ -1,3 +1,4 @@
+import { configureNativeSha256 } from "@party-stack/ontology-storage/blobs";
 import { storageError } from "@party-stack/ontology-storage/driver";
 import * as MemoryTables from "@party-stack/ontology-storage/memory/tables";
 import { Runtime, RuntimeError, RuntimePartition, makeKeyMaterialStoreKeyring } from "@party-stack/runtime";
@@ -7,6 +8,7 @@ import * as SqlTables from "@party-stack/sql-ontology-storage/tables";
 import { Effect, Layer, Schema } from "effect";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as SqlClient from "effect/sql/SqlClient";
+import { CryptoDigestAlgorithm, digest } from "expo-crypto";
 import { Paths } from "expo-file-system";
 import { deleteDatabaseAsync, openDatabaseAsync } from "expo-sqlite";
 import { createExpoBrowserAuthentication } from "./createExpoBrowserAuthentication.js";
@@ -16,6 +18,10 @@ import { makeKeyMaterialStore } from "./ExpoKeyMaterialStore.js";
 import { makeExpoNetworkConnectivity } from "./ExpoNetworkConnectivity.js";
 import { hashStorageName } from "./hashStorageName.js";
 import type { SQLiteBindValue } from "expo-sqlite";
+
+// Content digests use the platform SHA-256; portable JavaScript hashing costs
+// hundreds of milliseconds per MiB on Hermes. Bounded inputs only; see digestBytes.
+configureNativeSha256((bytes) => digest(CryptoDigestAlgorithm.SHA256, bytes));
 
 export interface ExpoRuntimeOptions {
     /** Persistent SQLite/filesystem storage by default; memory keeps native platform capabilities. */

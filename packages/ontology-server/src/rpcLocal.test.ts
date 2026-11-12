@@ -5,6 +5,7 @@ import { o } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
 import { collectByteBlob } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
+import { MemoryRuntime, Runtimes } from "@party-stack/runtime";
 import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { expect, test } from "vite-plus/test";
 import { makeReplica } from "../../ontology-replica/lib/service.js";
@@ -320,6 +321,58 @@ test("local attachment operations keep streamed upload and download semantics", 
                     expected
                 );
             })
+        )
+    );
+});
+
+test("local clients share the server's validated definition instead of copying it", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* owned();
+                const server = yield* makeOntologyServer({
+                    enableRealtime: true,
+                    routes: { items: { kind: "owned", ir, backend, dangerouslyAllowInternalAccess: true } },
+                });
+                const local = yield* makeOntologyLocalClient(server);
+                const first = yield* local.ontology("items");
+                const second = yield* local.ontology("items");
+                expect(first.ir).toBe(ir);
+                expect(second.ir).toBe(first.ir);
+                expect(yield* first.definition.refresh).toMatchObject({ ir });
+            })
+        )
+    );
+});
+
+test("managed replica routes resolve action parameters from the replica without a provider resolver", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const upstream = yield* owned();
+                const { resolveActionParameters: _, ...withoutResolver } = upstream;
+                const server = yield* makeOntologyServer({
+                    enableRealtime: true,
+                    replicas: {},
+                    routes: {
+                        items: {
+                            kind: "replica",
+                            ir,
+                            backend: withoutResolver,
+                            live: false,
+                            dangerouslyAllowInternalAccess: true,
+                        },
+                    },
+                });
+                const local = yield* makeOntologyLocalClient(server);
+                const client = yield* local.ontology("items");
+                expect(client.description.actionParameterResolution).toBe(true);
+                expect(
+                    yield* client.backend.resolveActionParameters!("edit", { title: "Kept" })
+                ).toMatchObject({
+                    title: "Kept",
+                });
+            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );
 });

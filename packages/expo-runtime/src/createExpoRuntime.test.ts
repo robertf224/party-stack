@@ -41,6 +41,8 @@ vi.mock("expo-file-system", () => ({
 }));
 vi.mock("expo-crypto", () => ({
     CryptoDigestAlgorithm: { SHA256: "SHA-256" },
+    digest: (_algorithm: string, bytes: Uint8Array) =>
+        Promise.resolve(createHash("sha256").update(bytes).digest()),
     digestStringAsync: (_algorithm: string, value: string) =>
         Promise.resolve(createHash("sha256").update(value).digest("hex")),
 }));
