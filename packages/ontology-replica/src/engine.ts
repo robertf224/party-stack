@@ -2289,6 +2289,25 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         // Snapshot refresh follows journal catch-up, so historical commits cannot replace newer snapshots.
         let demandFailure: BackendError | undefined;
         let coverageChanged = false;
+        type Demand = typeof demands extends Map<string, infer D> ? D : never;
+        type Covering = NonNullable<ReturnType<typeof checks.get>>["covering"];
+        const applyCoverage = (demand: Demand, covering: NonNullable<Covering>) => {
+            coverageChanged ||=
+                demand.installed !== demand.revision ||
+                !demand.coveredBy ||
+                subsetKey(demand.coveredBy) !== subsetKey(covering.subset);
+            demand.installed = demand.revision;
+            demand.loadFailure = undefined;
+            demand.coveredBy = covering.subset;
+            demand.coverageProof = covering.proof;
+        };
+        // Loads are grouped by object type: different types load concurrently,
+        // while one type's loads stay ordered so a completed superset can still
+        // satisfy the next demand of that type without another fetch.
+        const pendingLoads = new Map<
+            string,
+            Array<{ readonly demand: Demand; readonly relevant: boolean }>
+        >();
         for (const demand of demands.values()) {
             if (deliveryActive) continue;
             const relevant = requested === undefined || requested.has(subsetKey(demand.subset));
@@ -2317,16 +2336,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             }
             if (!check) continue; // A concurrently acquired demand has its own queued check.
             const cached = check.cached;
-            const coveringSubset = check.covering;
-            if (coveringSubset) {
-                coverageChanged ||=
-                    demand.installed !== demand.revision ||
-                    !demand.coveredBy ||
-                    subsetKey(demand.coveredBy) !== subsetKey(coveringSubset.subset);
-                demand.installed = demand.revision;
-                demand.loadFailure = undefined;
-                demand.coveredBy = coveringSubset.subset;
-                demand.coverageProof = coveringSubset.proof;
+            if (check.covering) {
+                applyCoverage(demand, check.covering);
                 continue;
             }
             demand.coveredBy = undefined;
@@ -2344,7 +2355,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             // background pass skips opening watches rather than holding the
             // publication gate across network acquisition.
             if (demand.watchReady && !(yield* Deferred.isDone(demand.watchReady))) continue;
-            yield* Effect.annotateCurrentSpan("stage", "loading-subset");
+            const group = pendingLoads.get(demand.subset.objectType);
+            if (group) group.push({ demand, relevant });
+            else pendingLoads.set(demand.subset.objectType, [{ demand, relevant }]);
+        }
+        const loadDemand = Effect.fnUntraced(function* (demand: Demand, relevant: boolean) {
             const revision = demand.revision;
             const authenticationAtLoad = authenticationGeneration;
             // Demand refresh belongs to the aggregate lease, not its first UI caller.
@@ -2368,14 +2383,40 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     yield* wakeState;
                 } else demand.loadFailure = { revision, error: installed.failure };
                 if (relevant) demandFailure ??= installed.failure;
-            } else if (installed.success) {
-                coverageChanged = true;
-                demand.installed = revision;
-                demand.loadFailure = undefined;
-                // A newly loaded superset can satisfy later demands of this type.
-                yield* readChecks(demand.subset.objectType);
+                return false;
             }
-        }
+            if (!installed.success) return false;
+            coverageChanged = true;
+            demand.installed = revision;
+            demand.loadFailure = undefined;
+            // A newly loaded superset can satisfy later demands of this type.
+            yield* readChecks(demand.subset.objectType);
+            return true;
+        });
+        yield* Effect.annotateCurrentSpan("stage", "loading-subset");
+        yield* Effect.forEach(
+            pendingLoads.values(),
+            Effect.fnUntraced(function* (group) {
+                let loaded = false;
+                for (const { demand, relevant } of group) {
+                    const key = subsetKey(demand.subset);
+                    if (demands.get(key) !== demand) continue;
+                    if (loaded) {
+                        const check = checks.get(key);
+                        if (
+                            check?.demand === demand &&
+                            check.revision === demand.revision &&
+                            check.covering
+                        ) {
+                            applyCoverage(demand, check.covering);
+                            continue;
+                        }
+                    }
+                    loaded = (yield* loadDemand(demand, relevant)) || loaded;
+                }
+            }),
+            { concurrency: "unbounded", discard: true }
+        );
         // Snapshot writes notify before this in-memory readiness bookkeeping.
         // A child may have captured those rows with incomplete coverage already;
         // publish the readiness transition even when no additional rows changed.
