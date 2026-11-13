@@ -67,22 +67,45 @@ const unavailable = (cause: unknown) => classifyBackendFailure("foundry.sync", c
  */
 /** Foundry asked clients to shed subscriptions; do not reconnect for a while. */
 export const foundryWatchQosRetryMs = 2 * 60_000;
+/** Foundry's error code (e.g. `PERMISSION_DENIED`) from a rejected subscription's errors. */
+const subscriptionErrorCode = (detail: unknown): string | undefined => {
+    if (!Array.isArray(detail)) return undefined;
+    for (const error of detail) {
+        const args = (error as { args?: unknown } | null)?.args;
+        if (!Array.isArray(args)) continue;
+        const code = args.find(
+            (arg): arg is { name: "errorCode"; value: string } =>
+                (arg as { name?: unknown } | null)?.name === "errorCode" &&
+                typeof (arg as { value?: unknown }).value === "string"
+        );
+        if (code) return code.value;
+    }
+    return undefined;
+};
+const rejectedKind = (code: string | undefined) =>
+    code === "PERMISSION_DENIED" ? "Forbidden" : code === "NOT_FOUND" ? "NotFound" : "InvalidRequest";
+
 /** Keep Foundry's reported reason. A rejected object set will not start working on
- * retry, so it is terminal; QoS backs off for minutes; a closure may reopen. */
+ * retry, so it is terminal; QoS backs off for minutes; a closure may reopen.
+ * Permission rejections are `Forbidden`: the signed-in user's token works, but this
+ * application or user may not use Foundry's subscription API. */
 export const subscriptionStateError = (
     message: Extract<ObjectSetSubscriptionMessage, { type: "state" }>
 ): BackendError => {
     const reason = message.reason?.message;
     const cause = message.reason?.detail === undefined ? undefined : Redacted.make(message.reason.detail);
     switch (message.status) {
-        case "error":
+        case "error": {
+            const code = subscriptionErrorCode(message.reason?.detail);
+            const summary = [reason, code].filter(Boolean).join(", ");
             return new BackendError({
                 operation: "foundry.watchSubset",
-                kind: "InvalidRequest",
+                kind: rejectedKind(code),
                 retryable: false,
-                message: `Foundry rejected the object-set subscription${reason ? `: ${reason}` : "."}`,
+                message: `Foundry rejected the object-set subscription${summary ? `: ${summary}` : "."}`,
                 cause,
             });
+        }
         case "qos":
             return new BackendError({
                 operation: "foundry.watchSubset",

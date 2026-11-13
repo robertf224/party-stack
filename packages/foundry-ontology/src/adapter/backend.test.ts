@@ -541,6 +541,37 @@ test("watch state failures keep Foundry's reason and classify retry behavior", (
         message: "Foundry rejected the object-set subscription: ObjectSetNotSupported",
     });
     expect(Redacted.value(rejected.cause as Redacted.Redacted<unknown>)).toBe(detail);
+    const denied = [
+        {
+            error: "ApiUsageDenied",
+            args: [
+                { name: "errorName", value: "ApiUsageDenied" },
+                { name: "errorInstanceId", value: "instance" },
+                { name: "errorCode", value: "PERMISSION_DENIED" },
+            ],
+        },
+    ];
+    expect(
+        subscriptionStateError({
+            type: "state",
+            status: "error",
+            reason: { message: "ApiUsageDenied", detail: denied },
+        })
+    ).toMatchObject({
+        kind: "Forbidden",
+        retryable: false,
+        message: "Foundry rejected the object-set subscription: ApiUsageDenied, PERMISSION_DENIED",
+    });
+    expect(
+        subscriptionStateError({
+            type: "state",
+            status: "error",
+            reason: {
+                message: "ObjectTypeNotFound",
+                detail: [{ error: "ObjectTypeNotFound", args: [{ name: "errorCode", value: "NOT_FOUND" }] }],
+            },
+        })
+    ).toMatchObject({ kind: "NotFound", retryable: false });
     expect(
         subscriptionStateError({ type: "state", status: "qos", reason: { message: "Reduce load" } })
     ).toMatchObject({ kind: "RateLimited", retryable: true, retryAfterMs: foundryWatchQosRetryMs });
