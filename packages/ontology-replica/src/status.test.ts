@@ -158,7 +158,11 @@ test("network and connection state remain independent and either can pause remot
                 yield* Deferred.await(initial);
                 yield* replica.demand({ objectType: "Item" });
                 yield* replica.enqueue({ id: "write-1", name: "write", parameters: {} });
-                yield* replica.syncOnce;
+                // An explicit checkpoint can't pretend to have synced while signed out.
+                expect(yield* Effect.result(replica.syncOnce)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "Unauthenticated", retryable: false },
+                });
                 expect([loads, writes]).toEqual([0, 0]);
                 expect(yield* replica.status).toMatchObject({
                     networkOnline: true,
@@ -691,6 +695,49 @@ test("monitor subscribes lazily, detaches its upstream stream and reports transp
                     vi.waitFor(() => expect(broken.getSnapshot().error).toBe("Transport closed"))
                 );
                 unsubscribe();
+            })
+        )
+    );
+});
+
+test("an explicit checkpoint fails for a signed-out connection without contacting the backend", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                let loads = 0;
+                const replica = yield* makeReplica({
+                    namespace: "signed-out-checkpoint",
+                    ir,
+                    tables: yield* Memory.make(),
+                    startSync: false,
+                    connection: { state: { status: "inactive" }, changes: Stream.never },
+                    execute: () => Effect.void,
+                    backend: makeOntologyBackend({
+                        ir,
+                        name: "fixture",
+                        sourceId: "fixture",
+                        supportsIdempotency: true,
+                        refresh: () => ({ pollIntervalMs: false }),
+                        queryFunction: () => Effect.void,
+                        loadSubset: () =>
+                            Effect.sync(() => {
+                                loads++;
+                                return { complete: true, rows: [] };
+                            }),
+                        applyAction: (request) =>
+                            Effect.succeed({
+                                operationId: request.id,
+                                outcome: "committed" as const,
+                                affected: [],
+                            }),
+                    }),
+                });
+                yield* replica.demand({ objectType: "Item" });
+                expect(yield* Effect.result(replica.syncOnce)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "Unauthenticated", message: "The connection is signed out." },
+                });
+                expect(loads).toBe(0);
             })
         )
     );

@@ -2577,8 +2577,25 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 Effect.withSpan("Replica.stateSyncWork", { attributes: { activity: "request" } }),
                 Effect.provideService(Tracer.Tracer, deliveryTracer)
             );
+    // Background sync waits for authentication silently, but an explicit checkpoint
+    // that skipped the backend must not report success.
+    const requireAuthentication = Effect.suspend(() => {
+        const status = connection?.state.status;
+        if (status !== "needs-auth" && status !== "inactive") return Effect.void;
+        return Effect.fail(
+            new BackendError({
+                operation: "replica.syncOnce",
+                kind: "Unauthenticated",
+                retryable: false,
+                message:
+                    status === "needs-auth"
+                        ? "The connection must sign in again before it can sync."
+                        : "The connection is signed out.",
+            })
+        );
+    });
     const syncOnce = Effect.andThen(
-        maintain(),
+        Effect.andThen(requireAuthentication, maintain()),
         options.source
             ? Effect.suspend(() => service.syncParent(options.source!))
             : gate
