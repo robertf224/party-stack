@@ -1,5 +1,41 @@
 # @party-stack/ontology
 
+## 0.22.2
+
+### Patch Changes
+
+- b9eb3bd: Missing-value and empty-list checks push down exactly instead of forcing query-result demand. `isUndefined`/`isNull` work on every field type, including lists and structs. The query language gains a `length` expression (lists and strings; a missing value has length 0, as in TanStack DB), and TanStack's `length(list)` passes through to it. Storage accepts `length` only as an emptiness test (`length(list)` compared with 0 or 1), which it lowers to "missing or empty" with a new `isEmpty` predicate; other uses still need query-result demand.
+
+    Foundry filters were checked against the search API and corrected: `like`/`ilike` no longer sends term searches that dropped rows for substrings inside words, or leading wildcards that failed with a server error; a pattern that starts with a word is sent as a token-prefix wildcard. Ranges, `ne` and negations of exact filters are now sent exactly, and on arrays `isNull` answers "missing or empty".
+
+- 40a3627: Outbox entries report whether their prediction is reflected locally. `prediction` is
+  `"applied"`, `"dropped"` (the last replay failed; `predictionError` says why, and the
+  action is still pending and sent) or `"none"` (confirmed visibility, or predicted by a
+  parent). Servers project the prediction error like other action errors.
+- Updated dependencies [40a3627]
+- Updated dependencies [b9eb3bd]
+- Updated dependencies [403708c]
+- Updated dependencies [dfefbac]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+- Updated dependencies [2f8567b]
+- Updated dependencies [d5ca58e]
+- Updated dependencies [03f4516]
+- Updated dependencies [cc43c56]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+    - @party-stack/connect@0.3.0
+    - @party-stack/ontology-replica@0.2.3
+    - @party-stack/ontology-spec@0.3.1
+    - @party-stack/ontology-storage@0.2.2
+    - @party-stack/ontology-server@0.11.3
+    - @party-stack/ontology-backend@0.2.2
+    - @party-stack/sql-ontology-storage@0.2.2
+    - @party-stack/runtime@0.6.0
+    - @party-stack/node-runtime@0.4.2
+
 ## 0.22.1
 
 ### Patch Changes

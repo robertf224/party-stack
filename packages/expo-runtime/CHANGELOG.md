@@ -1,5 +1,50 @@
 # @party-stack/expo-runtime
 
+## 0.6.0
+
+### Minor Changes
+
+- cc43c56: Runtimes can provide device location. `Runtime.geolocation` (and `Runtimes.geolocation`)
+  reads positions with the web API's options and fails with a `GeolocationError` whose
+  `reason` is `PermissionDenied`, `PositionUnavailable` or `Timeout`
+  (`geolocationErrorCode` maps a reason to the web API's numeric code).
+
+    - **web-runtime** provides it over `navigator.geolocation` where available. Unknown
+      error codes fail as `PositionUnavailable` rather than leaving a read pending.
+    - **expo-runtime** provides it through expo-location, now a dependency: permission is
+      requested on first use, and a recent last-known fix is used when no fresh one is
+      available. Pass `geolocation: false` to leave it out. The config plugin adds only the
+      foreground "when in use" purpose string; `locationPermission` replaces or omits it.
+
+### Patch Changes
+
+- 403708c: Fix native Expo sign-in, startup responsiveness and replica action helpers.
+
+    - Connect accepts a native app's custom-scheme OAuth redirect when it exactly
+      matches the trusted OAuth application registration. Provider endpoints keep
+      the HTTPS/localhost policy; unsafe schemes and unregistered redirects are
+      rejected. Callbacks now compare scheme, host and path explicitly, since
+      `URL.origin` is `"null"` for custom schemes.
+    - The Expo polyfill runs React Native immediates in short time slices. React
+      Native implements `setImmediate` with microtasks, so Effect fibers never
+      yielded to the event loop and long ontology work starved rendering and timers.
+    - The Expo polyfill adds `AbortSignal.prototype.throwIfAborted` and tags React
+      Native's global `Response` prototype, so Expo fetch responses interoperate with
+      OAuth token handling.
+    - `configureNativeSha256` lets platform runtimes provide SHA-256 for bounded
+      content digests; the Expo runtime uses Expo Crypto.
+    - Managed replica routes resolve action parameters with the replica when the
+      provider backend has no resolver, matching the advertised capability.
+
+- Updated dependencies [b9eb3bd]
+- Updated dependencies [403708c]
+- Updated dependencies [dfefbac]
+- Updated dependencies [40a3627]
+- Updated dependencies [cc43c56]
+    - @party-stack/ontology-storage@0.2.2
+    - @party-stack/sql-ontology-storage@0.2.2
+    - @party-stack/runtime@0.6.0
+
 ## 0.5.1
 
 ### Patch Changes
