@@ -28,6 +28,7 @@ import {
     useId,
     useMemo,
     useRef,
+    useDeferredValue,
     useState,
     type FormEvent,
     type KeyboardEvent as ReactKeyboardEvent,
@@ -1838,6 +1839,9 @@ function ConnectedIssueTrackerView({
     const [selectedProjectId, setSelectedProjectId] = useState(initialProjectId);
     const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
     const [search, setSearch] = useState("");
+    // The input updates at once; the filtered query follows at lower priority, so typing
+    // never waits on building and loading a new live query.
+    const searchQuery = useDeferredValue(search.trim());
     const [statusFilter, setStatusFilter] = useState("All");
     const [collapsedSections, setCollapsedSections] = useState<Set<IssueStatus>>(() => new Set());
     const [viewMode, setViewMode] = useState<"list" | "kanban">("list");
@@ -1948,9 +1952,9 @@ function ConnectedIssueTrackerView({
     const { data: issues, isLoading: issuesLoading } = useLiveQuery({
         query: (q) => {
             let query = q.from({ Issue: trackerObjects.Issue });
-            if (search)
+            if (searchQuery)
                 query = query.where(({ Issue }) =>
-                    or(ilike(Issue.issueTitle, `${search}%`), inArray(search, Issue.issueLabels))
+                    or(ilike(Issue.issueTitle, `${searchQuery}%`), inArray(searchQuery, Issue.issueLabels))
                 );
             if (selectedProjectId) query = query.where(({ Issue }) => eq(Issue.projectId, selectedProjectId));
             if (statusFilter !== "All")
@@ -1990,8 +1994,8 @@ function ConnectedIssueTrackerView({
             ISSUE_SECTIONS.map((section) => ({
                 ...section,
                 issues: issues.filter((issue) => issue.issueStatus === section.status),
-            })).filter((section) => section.issues.length > 0 || (!search && statusFilter === "All")),
-        [issues, search, statusFilter]
+            })).filter((section) => section.issues.length > 0 || (!searchQuery && statusFilter === "All")),
+        [issues, searchQuery, statusFilter]
     );
 
     function openProject(projectId: string) {
