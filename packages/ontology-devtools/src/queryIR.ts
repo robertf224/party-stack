@@ -21,6 +21,7 @@ function predicate(value: Predicate): Expression {
     if (value.op === "not") return { kind: "not", value: { expression: predicate(value.predicate) } };
     if (value.op === "in")
         return { kind: "in", value: { left: operand(value.left), right: literal(value.values) } };
+    if (value.op === "empty") return { kind: "eq", value: { left: operand(value.left), right: literal([]) } };
     return { kind: value.op, value: { left: operand(value.left), right: operand(value.right) } };
 }
 
