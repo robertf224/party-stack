@@ -97,13 +97,7 @@ export function makeSalesforceServiceConnector(
             subject((options.loginUrl ?? serviceInstance.instanceUrl).replace(/\/+$/, ""), apiKey).pipe(
                 Effect.map((userId) => ({ userId }))
             ),
-        acquire: Effect.fnUntraced(function* ({
-            connection,
-            serviceInstance,
-            credential,
-            refreshCredential,
-            handlers,
-        }) {
+        acquire: Effect.fnUntraced(function* ({ connection, serviceInstance, credential, handlers }) {
             if (connection.objectType === "ExternalSessionConnection")
                 return yield* new BackendError({
                     operation: "salesforce.acquire",
@@ -120,20 +114,10 @@ export function makeSalesforceServiceConnector(
                             retryable: false,
                             message: "Salesforce egress target is outside the configured instance.",
                         });
-                    const token = yield* credential;
-                    // Salesforce can omit token lifetime. Preserve its one retry
-                    // after a 401, with refresh owned by Connect's single authority.
-                    const retry = connection.objectType === "OAuthConnection" ? request.clone() : undefined;
-                    const send = (value: Request, accessToken: string) => {
-                        const headers = new Headers(value.headers);
-                        headers.set("Authorization", `Bearer ${accessToken}`);
-                        return handlers.fetch(new Request(value, { headers }));
-                    };
-                    const response = yield* send(request, token);
-                    if (response.status !== 401 || !retry) return response;
-                    if (response.body)
-                        yield* Effect.promise(() => response.body!.cancel()).pipe(Effect.ignoreCause);
-                    return yield* send(retry, yield* refreshCredential(token));
+                    const headers = new Headers(request.headers);
+                    // Connect renews a rejected token and retries the request.
+                    headers.set("Authorization", `Bearer ${yield* credential}`);
+                    return yield* handlers.fetch(new Request(request, { headers }));
                 }),
                 createWebSocket: () =>
                     Effect.fail(

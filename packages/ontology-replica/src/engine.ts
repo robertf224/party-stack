@@ -7,7 +7,7 @@ import {
 } from "@party-stack/ontology-storage";
 import { tableUsage } from "@party-stack/ontology-storage/tables";
 import { alwaysOnlineConnectivity } from "@party-stack/runtime";
-import type { ConnectionMonitor } from "@party-stack/connect";
+import type { ConnectionLifecycle, ConnectionMonitor } from "@party-stack/connect";
 import type { DeliveryPosition } from "@party-stack/ontology-backend/delivery";
 import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { NetworkConnectivity } from "@party-stack/runtime";
@@ -97,7 +97,12 @@ import { superviseWatch } from "./watch.js";
 export type { DemandPolicy } from "./demandCache.js";
 import { affectsCoverage, markQuery, retentionQuery } from "./retention.js";
 import { trackVisible, observeRows, type VisibleCommit, type ReplicaRowsBatch } from "./visible.js";
-import type { ActionRequest, ActionReceipt, OntologyBackendService } from "@party-stack/ontology-backend";
+import type {
+    ActionRequest,
+    ActionReceipt,
+    OntologyBackendService,
+    SubsetWatchChange,
+} from "@party-stack/ontology-backend";
 import type {
     ClientLease,
     ClientPolicy,
@@ -351,6 +356,10 @@ export interface ReplicaService extends OwnedReadTransaction {
         settings?: { readonly resultType?: "cached" | "complete" }
     ) => Effect.Effect<void, BackendError>;
     readonly invalidate: (objectTypes?: readonly string[]) => Effect.Effect<void, BackendError>;
+    /** Mark demanded coverage stale, including coverage a healthy watch maintains, so the
+     * next sync reloads it. Rows stay visible meanwhile. A change-feed backend or a
+     * protocol source is already exact after a sync, so this does nothing for them. */
+    readonly markDemandedStale: Effect.Effect<void, BackendError>;
     readonly ensureIndex: (objectType: string, index: Index) => Effect.Effect<void, BackendError>;
     readonly collectGarbage: (options?: ObjectCacheSweepOptions) => Effect.Effect<number, BackendError>;
     readonly wake: Effect.Effect<void>;
@@ -476,6 +485,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         (options.resultRetentionMs <= 0 || Number.isNaN(options.resultRetentionMs))
     )
         return yield* fault("InvalidConfiguration", "Result retention must be positive.");
+    if (options.outbox?.prediction === "source" && !options.source)
+        return yield* fault("InvalidConfiguration", "Source prediction requires a protocol source.");
+    // Actions are predicted by the source; this replica only stores and forwards them.
+    const sourcePredicts = options.outbox?.prediction === "source";
     // Delivery producers are consumed by RPC fibers outside the acquisition scope.
     // Keep their spans on the owning replica's configured tracer.
     const deliveryTracer = yield* Tracer.Tracer;
@@ -838,18 +851,23 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     });
     const diagnostics = yield* makeReplicaDiagnostics();
     let authenticationGeneration = 0;
+    const lifecycle = connection && "refresh" in connection ? (connection as ConnectionLifecycle) : undefined;
+    // A lifecycle versions its credential; read it rather than counting activation
+    // events, which this replica could miss if it subscribed after a renewal.
+    const activationGeneration = () => (lifecycle ? lifecycle.credentialVersion : authenticationGeneration);
     const authentication = connection
         ? {
               awaitActive: awaitAuthentication,
-              generation: Effect.sync(() => authenticationGeneration),
+              generation: Effect.sync(activationGeneration),
+              credential: lifecycle ? Effect.sync(() => lifecycle.credentialVersion) : undefined,
+              renew: lifecycle?.refresh,
               awaitActivation: (after: number) =>
                   Effect.scoped(
                       Effect.gen(function* () {
                           const changes = yield* diagnostics.subscribe;
                           yield* Stream.concat(Stream.succeed(undefined), changes).pipe(
                               Stream.filter(
-                                  () =>
-                                      authenticationGeneration > after && connection.state.status === "active"
+                                  () => activationGeneration() > after && connection.state.status === "active"
                               ),
                               Stream.runHead
                           );
@@ -1163,11 +1181,22 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         const invocation = resolved ? { ...entry.invocation, parameters: resolved } : entry.invocation;
         if (options.blobs)
             yield* options.blobs.in(tx).retain(blobOwner(invocation.id), attachmentIds(invocation));
+        const { predictionFailure: _failure, predictionMessage: _message, ...previous } = entry;
         return {
-            ...entry,
+            ...previous,
             invocation,
             touchedTypes: [...new Set([...staged.values()].map((write) => write.type))],
+            prediction: entry.optimistic ? ("applied" as const) : ("none" as const),
         };
+    });
+    // Source prediction: keep the invocation exactly as requested (the source resolves
+    // its defaults) and retain its staged attachments until it is forwarded.
+    const forwardOnly = Effect.fnUntraced(function* (tx: Transaction, entry: PendingAction) {
+        if (options.blobs)
+            yield* options.blobs
+                .in(tx)
+                .retain(blobOwner(entry.invocation.id), attachmentIds(entry.invocation));
+        return { ...entry, prediction: "none" as const };
     });
     const discardFailedTail = Effect.fnUntraced(function* (tx: Transaction) {
         for (const candidate of yield* pendingIn(tx)) {
@@ -1239,30 +1268,26 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 blocked = true;
                 continue;
             }
+            if (sourcePredicts) continue;
             const result = yield* Effect.result(boundary(replay(tx, entry)));
-            if (result._tag === "Failure") {
-                // Failed replay must not erase evidence of an unresolved remote outcome.
-                const possibleRemoteOutcome =
-                    entry.receipt ||
-                    entry.retryRequiresAcknowledgement === true ||
-                    entry.state === "sending" ||
-                    (entry.attempts > 0 &&
-                        entry.failure === "Unavailable" &&
-                        entry.failureOutcome !== "not-committed");
-                const failed: PendingAction = {
-                    ...entry,
-                    state: possibleRemoteOutcome ? entry.state : "blocked",
-                    failure: possibleRemoteOutcome ? entry.failure : result.failure.kind,
-                    failureMessage: result.failure.message,
-                    failureRetryable: result.failure.retryable,
-                };
-                yield* tx.put(outbox, entry.invocation.id, failed);
-                if (options.outbox?.failureStrategy === "discard-all") {
-                    yield* discardFailedTail(tx);
-                    return;
-                }
-                blocked = true;
-            } else yield* tx.put(outbox, entry.invocation.id, result.success);
+            if (result._tag === "Success") {
+                yield* tx.put(outbox, entry.invocation.id, result.success);
+                continue;
+            }
+            // Only the local prediction is dropped: the action stays pending and is still
+            // sent, and the source decides its outcome. A prediction can fail without
+            // anything being wrong, e.g. newer data changed what it reads. Later actions
+            // keep replaying without this one's writes (as Zero does on rebase).
+            yield* Effect.annotateCurrentSpan({
+                droppedPrediction: entry.invocation.id,
+                droppedPredictionKind: result.failure.kind,
+            });
+            yield* tx.put(outbox, entry.invocation.id, {
+                ...entry,
+                prediction: "dropped",
+                predictionFailure: result.failure.kind,
+                predictionMessage: result.failure.message,
+            });
         }
     });
     yield* boundary(
@@ -1843,6 +1868,83 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             )
         );
         yield* notify;
+    });
+    // Apply the exact changes a watch reported instead of reloading its subset. Returns
+    // false when they must not be applied now; the caller then invalidates instead.
+    const applyWatchChanges = Effect.fn("Replica.applyWatchChanges")(function* (
+        objectType: string,
+        changes: readonly SubsetWatchChange[]
+    ) {
+        return yield* gate.withPermit(
+            Effect.gen(function* () {
+                // Wait for ack: while our own action is in flight or committed but not
+                // yet read back, its prediction is still applied on top of the base. A
+                // change that already includes it would apply it twice. Hold the base;
+                // the reload after confirmation picks the change up.
+                const pending = yield* boundary(tables.read(pendingIn));
+                if (
+                    pending.some(
+                        (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
+                    )
+                )
+                    return false;
+                const primaryKey = definitions.get(objectType)!.primaryKey;
+                const exits: Key[] = [];
+                yield* boundary(
+                    tables.transaction((tx) =>
+                        Effect.gen(function* () {
+                            const v = yield* view(objectType);
+                            const now = yield* Clock.currentTimeMillis;
+                            for (const change of changes) {
+                                if (change.kind === "exit") {
+                                    exits.push(change.key);
+                                    continue;
+                                }
+                                if (change.kind === "put") {
+                                    if (change.value[primaryKey] !== change.key)
+                                        return yield* fault(
+                                            "InvalidResponse",
+                                            "Watch change key does not match its row."
+                                        );
+                                    yield* retainRowBlobs(tx, objectType, change.key, change.value, "base");
+                                    yield* putBase(tx, objectType, change.key, change.value);
+                                    yield* tx.put(retention, identity(objectType, change.key), {
+                                        objectType,
+                                        key: change.key,
+                                        accessedAt: now,
+                                    });
+                                    continue;
+                                }
+                                yield* retainRowBlobs(tx, objectType, change.key, undefined, "base");
+                                yield* tx.delete(v.base, change.key);
+                                yield* tx.delete(retention, identity(objectType, change.key));
+                            }
+                            yield* rebase(tx);
+                        })
+                    )
+                );
+                // An object that left the subset may have changed or been deleted. Read it
+                // back by primary key: present means changed, absent means deleted.
+                for (let offset = 0; offset < exits.length; offset += 128) {
+                    const keys = exits.slice(offset, offset + 128);
+                    const write = yield* prepareSnapshot(
+                        { objectType, query: { where: inArray(field(primaryKey), keys) } },
+                        keys,
+                        false,
+                        "repair"
+                    );
+                    yield* boundary(
+                        tables.transaction((tx) =>
+                            Effect.gen(function* () {
+                                yield* write(tx);
+                                yield* rebase(tx);
+                            })
+                        )
+                    );
+                }
+                return true;
+            })
+        );
     });
     const bindReceiptBlobs = (tx: Transaction, receipt: ActionReceipt, invocation?: ActionRequest) =>
         Effect.gen(function* () {
@@ -2565,7 +2667,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             attempts: 0,
             touchedTypes: [],
         };
-        const resolved = yield* replay(tx, proposed);
+        const resolved = sourcePredicts ? yield* forwardOnly(tx, proposed) : yield* replay(tx, proposed);
         yield* tx.put(outbox, invocation.id, resolved);
         yield* tx.put(metadata, "head", { ...state, sequence: resolved.sequence });
         return resolved;
@@ -3620,6 +3722,15 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 authentication,
                 onValue: (event) =>
                     Effect.gen(function* () {
+                        if (backendWatch && event && typeof event === "object") {
+                            const applied = yield* applyWatchChanges(copy.objectType, event.changes);
+                            yield* Effect.annotateCurrentSpan("applied", applied);
+                            if (applied) {
+                                yield* notify;
+                                yield* diagnostics.changed;
+                                return;
+                            }
+                        }
                         // Fence this watch's old request synchronously. A reset
                         // repairs its own missed events; unrelated healthy watches
                         // retain their proofs and their in-flight type generation.
@@ -3634,7 +3745,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         Effect.withSpan("Replica.watchHint", {
                             attributes: {
                                 objectType: copy.objectType,
-                                hint: event === "reset" ? "reset" : "invalidate",
+                                hint:
+                                    event === "reset"
+                                        ? "reset"
+                                        : event && typeof event === "object"
+                                          ? "changes"
+                                          : "invalidate",
                             },
                         })
                     ),
@@ -4941,6 +5057,21 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 Effect.tap(() => notify),
                 Effect.tap(() => wakeOutbox)
             ),
+        markDemandedStale: Effect.suspend(() => {
+            if (options.source || adapter?.changes) return Effect.void;
+            const types = new Set([...demands.values()].map((demand) => demand.subset.objectType));
+            // Fence snapshots already in flight, as a watch invalidation does.
+            for (const type of types) coverageGenerations.set(type, Symbol());
+            return access(
+                tables.transaction((tx) =>
+                    Effect.gen(function* () {
+                        for (const row of yield* tx.query(coverage))
+                            if (types.has(row.value.subset.objectType) && !row.value.invalidated)
+                                yield* tx.put(coverage, row.key, { ...row.value, invalidated: true });
+                    })
+                )
+            );
+        }).pipe(Effect.withSpan("Replica.markDemandedStale")),
         invalidate: (objectTypes) =>
             access(
                 tables.transaction((tx) =>

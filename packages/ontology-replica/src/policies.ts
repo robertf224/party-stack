@@ -9,6 +9,8 @@ export interface ReplicaOutboxPolicy {
     readonly retryDelayMs?: number;
     /** Abandon pending intent on terminal failure, including unknown remote outcomes. */
     readonly failureStrategy?: "pause" | "discard-all";
+    /** See ReplicaConfiguration.outbox.prediction. */
+    readonly prediction?: "local" | "source";
 }
 export interface ObjectCacheSweepOptions {
     /** Minimum time since a row was last accessed before it can be considered. Defaults to 24 hours.

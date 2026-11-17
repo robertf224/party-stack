@@ -315,3 +315,93 @@ test("a non-retryable watch failure runs the terminal fallback instead of retryi
         })
     );
 });
+
+const rejected = () =>
+    new BackendError({
+        operation: "watch",
+        kind: "Unauthenticated",
+        retryable: false,
+        message: "Token expired.",
+    });
+
+test("a rejected watch renews the credential it used, then reopens once it is renewed", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const reopened = yield* Deferred.make<void>();
+                let generation = 0,
+                    credential = 7,
+                    attempts = 0;
+                const renewed: number[] = [];
+                yield* superviseWatch({
+                    authentication: {
+                        generation: Effect.sync(() => generation),
+                        credential: Effect.sync(() => credential),
+                        renew: (used) =>
+                            Effect.sync(() => {
+                                renewed.push(used);
+                                credential++;
+                                generation++;
+                            }),
+                        awaitActivation: (after) =>
+                            Effect.sync(() => expect(generation).toBeGreaterThan(after)),
+                    },
+                    acquire: () =>
+                        Effect.gen(function* () {
+                            if (++attempts === 1) return Stream.fail(rejected());
+                            yield* Deferred.succeed(reopened, undefined);
+                            return Stream.never;
+                        }),
+                    onValue: () => Effect.void,
+                    onError: () => Effect.void,
+                }).pipe(Effect.forkScoped);
+                yield* Deferred.await(reopened);
+                expect(renewed).toEqual([7]);
+                expect(attempts).toBe(2);
+            })
+        )
+    );
+});
+
+test("a renewal that cannot reach the provider retries the watch with backoff", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const reopened = yield* Deferred.make<void>();
+                const failedOnce = yield* Deferred.make<void>();
+                let attempts = 0,
+                    renewals = 0;
+                yield* superviseWatch({
+                    authentication: {
+                        generation: Effect.succeed(0),
+                        credential: Effect.succeed(1),
+                        renew: () =>
+                            Effect.gen(function* () {
+                                renewals++;
+                                yield* Deferred.succeed(failedOnce, undefined);
+                                return yield* new BackendError({
+                                    operation: "renew",
+                                    kind: "Unavailable",
+                                    retryable: true,
+                                    message: "Offline.",
+                                });
+                            }),
+                        awaitActivation: () => Effect.die("A failed renewal must not wait for sign-in."),
+                    },
+                    acquire: () =>
+                        Effect.gen(function* () {
+                            if (++attempts === 1) return Stream.fail(rejected());
+                            yield* Deferred.succeed(reopened, undefined);
+                            return Stream.never;
+                        }),
+                    onValue: () => Effect.void,
+                    onError: () => Effect.void,
+                }).pipe(Effect.forkScoped);
+                yield* Deferred.await(failedOnce);
+                yield* TestClock.adjust(1_000);
+                yield* Deferred.await(reopened);
+                expect([attempts, renewals]).toEqual([2, 1]);
+            })
+        ).pipe(Effect.provide(TestClock.layer()))
+    );
+});

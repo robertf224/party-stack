@@ -96,20 +96,15 @@ test("API-key identity rejects missing IDs and authentication failures", async (
 });
 
 test.each(["OAuthConnection", "ApiKeyConnection"] as const)(
-    "%s egress confines credentials and retries a rejected OAuth token only once",
+    "%s egress confines credentials and reports a rejected token to Connect",
     async (objectType) => {
         await Effect.runPromise(
             Effect.scoped(
                 Effect.gen(function* () {
                     const requests: Request[] = [];
-                    let status = 401;
                     const fetch = vi.fn((request: Request) => {
                         requests.push(request);
-                        return Effect.succeed(new Response(null, { status }));
-                    });
-                    const refresh = vi.fn(() => {
-                        status = 200;
-                        return Effect.succeed("refreshed");
+                        return Effect.succeed(new Response(null, { status: 401 }));
                     });
                     const connection: Parameters<ServiceConnector["acquire"]>[0]["connection"] =
                         objectType === "OAuthConnection"
@@ -128,7 +123,6 @@ test.each(["OAuthConnection", "ApiKeyConnection"] as const)(
                         serviceInstance,
                         connection,
                         credential: Effect.succeed("original"),
-                        refreshCredential: refresh,
                         handlers: { fetch, createWebSocket: () => Effect.die("unused") },
                     });
                     const egress = yield* toWebEgress(nativeEgress);
@@ -136,37 +130,12 @@ test.each(["OAuthConnection", "ApiKeyConnection"] as const)(
                         await expect(
                             egress.fetch(new Request("https://elsewhere.test/data"))
                         ).rejects.toMatchObject({ kind: "InvalidRequest" });
-                        if (objectType === "OAuthConnection") {
-                            expect(
-                                (
-                                    await egress.fetch(
-                                        new Request(`${serviceInstance.instanceUrl}/data`, {
-                                            method: "POST",
-                                            body: "payload",
-                                        })
-                                    )
-                                ).status
-                            ).toBe(200);
-                            expect(requests.map((request) => request.headers.get("Authorization"))).toEqual([
-                                "Bearer original",
-                                "Bearer refreshed",
-                            ]);
-                            expect(await requests[1]!.text()).toBe("payload");
-                            expect(refresh).toHaveBeenCalledWith("original");
-                            status = 401;
-                            refresh.mockImplementation(() => Effect.succeed("still-rejected"));
-                            await expect(
-                                egress.fetch(new Request(`${serviceInstance.instanceUrl}/data`))
-                            ).rejects.toMatchObject({ kind: "Unauthenticated" });
-                            expect(fetch).toHaveBeenCalledTimes(4);
-                            expect(refresh).toHaveBeenCalledTimes(2);
-                        } else {
-                            await expect(
-                                egress.fetch(new Request(`${serviceInstance.instanceUrl}/data`))
-                            ).rejects.toMatchObject({ kind: "Unauthenticated" });
-                            expect(refresh).not.toHaveBeenCalled();
-                            expect(fetch).toHaveBeenCalledOnce();
-                        }
+                        // Connect renews the credential and retries; the connector only reports.
+                        await expect(
+                            egress.fetch(new Request(`${serviceInstance.instanceUrl}/data`))
+                        ).rejects.toMatchObject({ kind: "Unauthenticated" });
+                        expect(fetch).toHaveBeenCalledOnce();
+                        expect(requests[0]!.headers.get("Authorization")).toBe("Bearer original");
                     });
                 })
             )

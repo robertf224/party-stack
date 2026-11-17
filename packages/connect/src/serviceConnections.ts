@@ -12,7 +12,7 @@ import type { ConnectOntology, ServiceInstanceRecord } from "./spec/index.js";
 import type {
     ConnectionEgress,
     ConnectionEgressHandlers,
-    ConnectionMonitor,
+    ConnectionLifecycle,
     ConnectionState,
 } from "./types.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
@@ -25,7 +25,8 @@ export interface ConnectionAccess {
     readonly userId: string;
     readonly serviceInstance: ServiceInstanceRecord;
     readonly egress: ConnectionEgress;
-    readonly authentication: ConnectionMonitor;
+    /** Pass to the replica that syncs this connection; show apps only its monitor fields. */
+    readonly authentication: ConnectionLifecycle;
 }
 
 const unavailable = (message: string) =>
@@ -42,6 +43,23 @@ const CredentialObserver = Context.Reference<(version: string) => void>(
     "@party-stack/connect/CredentialObserver",
     { defaultValue: () => () => {} }
 );
+const retryAfterRenewal = () =>
+    new BackendError({
+        operation: "connect.egress",
+        kind: "Unavailable",
+        retryable: true,
+        actionOutcome: "not-committed",
+        message: "The credential was renewed after the service rejected it; retry the request.",
+    });
+const renewalUnavailable = (cause: BackendError) =>
+    new BackendError({
+        operation: "connect.refresh",
+        kind: "Unavailable",
+        retryable: true,
+        actionOutcome: "not-committed",
+        message: "The rejected credential could not be renewed yet; retry the request.",
+        cause,
+    });
 
 /** Acquire saved identity and egress from ontology records. The map holds only
  * scoped access; the Connect backend remains the sole durable inventory.
@@ -246,12 +264,34 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                 state = value;
                 for (const listener of listeners) listener(value);
             };
+            // The credential itself, not bookkeeping such as an in-progress refresh marker:
+            // only a new credential (or a status change) is a new activation.
+            const credentialIdentity = (value: typeof row | undefined) =>
+                JSON.stringify(
+                    !value
+                        ? null
+                        : [
+                              value.status,
+                              value.userId,
+                              "application" in value
+                                  ? value.accessToken?.ciphertext
+                                  : "sessionId" in value
+                                    ? [value.sessionId, value.expiresAt]
+                                    : [value.apiKey?.ciphertext, value.expiresAt],
+                          ]
+                );
+            let credentialGeneration = 0;
+            let credential = credentialIdentity(row);
             const install = (value: typeof row | undefined) => {
                 const next = JSON.stringify(value);
                 const changed = fingerprint !== next;
                 fingerprint = next;
+                const nextCredential = credentialIdentity(value);
+                const renewed = nextCredential !== credential;
+                credential = nextCredential;
+                if (renewed) credentialGeneration++;
                 if (changed || state.status === "error")
-                    publish({ status: value?.status ?? "inactive" }, changed);
+                    publish({ status: value?.status ?? "inactive" }, renewed);
             };
             const watch =
                 backend.changes?.watch ??
@@ -290,10 +330,7 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
             yield* read(ref.objectType, ref.id).pipe(
                 Effect.tap((value) => Effect.sync(() => install(value)))
             );
-            const authentication: ConnectionMonitor = {
-                get state() {
-                    return state;
-                },
+            const monitor = {
                 changes: Stream.callback<ConnectionState>(
                     (queue) =>
                         Effect.acquireRelease(
@@ -324,27 +361,10 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                     sockets.clear();
                 })
             );
-            const refresh = yield* Semaphore.make(1);
-            const refreshCredential = (rejected: string) =>
-                refresh.withPermit(
-                    Effect.gen(function* () {
-                        const current = yield* currentCredential();
-                        if (current !== rejected) return current;
-                        if (ref.objectType !== "OAuthConnection")
-                            return yield* unavailable("This connection requires authentication.");
-                        yield* backend.applyAction({
-                            id: crypto.randomUUID(),
-                            name: "refreshConnection",
-                            parameters: { connectionId: ref.id },
-                        });
-                        return yield* currentCredential();
-                    })
-                );
             const acquired = yield* service.acquire({
                 connection: { objectType: ref.objectType, value: row } as SavedConnection,
                 serviceInstance,
                 credential: currentCredential(),
-                refreshCredential,
                 handlers: {
                     fetch: (request) =>
                         handlers.fetch(
@@ -374,34 +394,75 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                         ? Effect.fail(unavailable("The selected connection was released."))
                         : Effect.acquireUseRelease(Effect.forkIn(work, scope), Fiber.join, Fiber.interrupt)
                 );
+            // Compare and persist in one transaction: a late rejection must neither
+            // pause a newer login nor resurrect a disconnected row. The ordinary
+            // journal/watch path also updates account queries.
+            const markNeedsAuthentication = (observed: string | undefined) =>
+                options.store
+                    .transaction(
+                        Effect.gen(function* () {
+                            const current = yield* options.store.get(ref.objectType, ref.id);
+                            if (current?.status === "active" && credentialVersion(current) === observed)
+                                yield* options.store.put(ref.objectType, {
+                                    ...current,
+                                    status: "needs-auth",
+                                });
+                        })
+                    )
+                    .pipe(
+                        Effect.mapError(connectBackendError),
+                        Effect.tapError((cause) =>
+                            Effect.logError("Could not save connection authentication status", cause)
+                        ),
+                        Effect.ignore,
+                        Effect.uninterruptible
+                    );
             const failed = Effect.fnUntraced(function* (error: BackendError, observed: string | undefined) {
-                if (isUnauthenticatedError(error)) {
-                    // Compare and persist in one transaction: a late rejection must
-                    // neither pause a newer login nor resurrect a disconnected row.
-                    // The ordinary journal/watch path also updates account queries.
-                    yield* options.store
-                        .transaction(
-                            Effect.gen(function* () {
-                                const current = yield* options.store.get(ref.objectType, ref.id);
-                                if (current?.status === "active" && credentialVersion(current) === observed) {
-                                    yield* options.store.put(ref.objectType, {
-                                        ...current,
-                                        status: "needs-auth",
-                                    });
-                                }
-                            })
-                        )
-                        .pipe(
-                            Effect.mapError(connectBackendError),
-                            Effect.tapError((cause) =>
-                                Effect.logError("Could not save connection authentication status", cause)
-                            ),
-                            Effect.ignore,
-                            Effect.uninterruptible
-                        );
-                }
+                if (isUnauthenticatedError(error)) yield* markNeedsAuthentication(observed);
                 return yield* error;
             });
+            const renewal = yield* Semaphore.make(1);
+            // Renew the credential that was saved at `version`, once: concurrent rejections
+            // of the same credential share one renewal, and a newer credential wins.
+            // Rejections queued behind a renewal that failed share its failure instead of
+            // each asking the provider again; a rejection after it tries again.
+            let renewals = 0;
+            let failedRenewal: { version: number; attempt: number; error: BackendError } | undefined;
+            const renew = (version: number) =>
+                Effect.suspend(() => {
+                    const waitingSince = renewals;
+                    return renewal.withPermit(
+                        Effect.gen(function* () {
+                            if (version !== credentialGeneration) return;
+                            if (failedRenewal?.version === version && failedRenewal.attempt > waitingSince)
+                                return yield* failedRenewal.error;
+                            const current = yield* read(ref.objectType, ref.id);
+                            if (current?.status !== "active") return;
+                            if (ref.objectType !== "OAuthConnection") {
+                                yield* markNeedsAuthentication(credentialVersion(current));
+                                return;
+                            }
+                            const result = yield* Effect.result(
+                                backend.applyAction({
+                                    id: crypto.randomUUID(),
+                                    name: "refreshConnection",
+                                    parameters: { connectionId: ref.id },
+                                })
+                            );
+                            // Publish now rather than when the row watch catches up, so a
+                            // concurrent rejection of the old credential does not renew again.
+                            install(yield* read(ref.objectType, ref.id));
+                            // A refresh token that no longer works already moved the
+                            // connection to needs-auth; anything else may succeed later.
+                            if (result._tag === "Failure" && !isUnauthenticatedError(result.failure)) {
+                                const error = renewalUnavailable(result.failure);
+                                failedRenewal = { version, attempt: ++renewals, error };
+                                return yield* error;
+                            }
+                            renewals++;
+                        })
+                    );
+                });
             const requireAuthentication = Effect.fnUntraced(function* () {
                 const current = yield* read(ref.objectType, ref.id);
                 if (!current || current.status === "inactive")
@@ -414,17 +475,34 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                 fetch: (input, init) =>
                     owned(
                         Effect.gen(function* () {
+                            const version = credentialGeneration;
                             let observed = credentialVersion(yield* requireAuthentication());
                             const request = yield* Effect.try({
                                 try: () => new Request(input, init),
                                 catch: (cause) => classifyBackendFailure("connect.egress.fetch", cause),
                             });
-                            return yield* acquired.fetch(request).pipe(
-                                Effect.provideService(CredentialObserver, (value) => {
-                                    observed = value;
-                                }),
-                                Effect.catch((error) => failed(error, observed))
-                            );
+                            // Only a request without a body is sent again after a renewal. A body
+                            // can be a one-shot stream (a proxied upload); the outbox or sync
+                            // retries those after the renewal instead.
+                            const replay = request.body === null ? request.clone() : undefined;
+                            const send = (value: Request) =>
+                                acquired.fetch(value).pipe(
+                                    Effect.provideService(CredentialObserver, (value) => {
+                                        observed = value;
+                                    })
+                                );
+                            const first = yield* Effect.result(send(request));
+                            if (first._tag === "Success") return first.success;
+                            if (
+                                !isUnauthenticatedError(first.failure) ||
+                                ref.objectType !== "OAuthConnection"
+                            )
+                                return yield* failed(first.failure, observed);
+                            yield* renew(version);
+                            if (state.status !== "active") return yield* first.failure;
+                            if (!replay) return yield* retryAfterRenewal();
+                            observed = credentialVersion(yield* requireAuthentication());
+                            return yield* send(replay).pipe(Effect.catch((error) => failed(error, observed)));
                         })
                     ),
                 createWebSocket: (url, protocols) =>
@@ -439,6 +517,16 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                             );
                         })
                     ),
+            };
+            const authentication: ConnectionLifecycle = {
+                get state() {
+                    return state;
+                },
+                changes: monitor.changes,
+                get credentialVersion() {
+                    return credentialGeneration;
+                },
+                refresh: renew,
             };
             return {
                 connection: ref,

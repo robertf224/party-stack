@@ -216,7 +216,7 @@ test("sync ingestion and dependency replacement commit together while an outbox 
     );
 });
 
-test("blocked replays keep previous dependencies, partial reads, and newly matching query rows", async () => {
+test("a failed rebase prediction keeps the action pending, its dependencies, and later dispatch", async () => {
     let fail = false;
     await Effect.runPromise(
         Effect.scoped(
@@ -229,26 +229,89 @@ test("blocked replays keep previous dependencies, partial reads, and newly match
                             return yield* new BackendError({
                                 operation: "test",
                                 kind: "ValidationFailed",
-                                message: "Blocked",
+                                message: "Prediction failed",
                                 retryable: false,
                             });
                     })
                 );
-                yield* replica.enqueue({ id: "blocked", name: "queued", parameters: {} });
+                yield* replica.enqueue({ id: "pending", name: "queued", parameters: {} });
                 fail = true;
                 yield* put("trigger", 0);
-                yield* replica.syncOnce;
-                expect((yield* replica.pending)[0]?.state).toBe("blocked");
+                // The source still receives the action: the stub backend is unavailable.
+                const dispatch = yield* Effect.result(replica.syncOnce);
+                expect(Result.isFailure(dispatch) && dispatch.failure.kind).toBe("Unavailable");
+                const [entry] = yield* replica.pending;
+                expect(entry?.state).toBe("queued");
+                expect(entry?.attempts).toBeGreaterThan(0);
+                expect(entry?.failure).not.toBe("ValidationFailed");
                 yield* put("phantom", 9);
-                yield* replica.syncOnce;
+                yield* Effect.result(replica.syncOnce);
                 expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(4);
                 expect((yield* replica.loadSubset("Row")).map((row) => row.key)).toEqual([
                     "phantom",
                     "row1",
                     "row2",
                 ]);
-                yield* replica.remove("blocked");
+                yield* replica.remove("pending", { allowUnknownOutcome: true });
                 expect(yield* replica.collectGarbage({ minUnusedAgeMs: 0 })).toBe(3);
+            })
+        )
+    );
+});
+
+test("later actions keep their predictions after an earlier prediction fails on rebase", async () => {
+    let fail = false;
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { replica, put } = yield* setup((tx, action) =>
+                    Effect.gen(function* () {
+                        const id = String(action.parameters.id);
+                        if (fail && id === "row1")
+                            return yield* new BackendError({
+                                operation: "test",
+                                kind: "ValidationFailed",
+                                message: "Prediction failed",
+                                retryable: false,
+                            });
+                        yield* tx.put("Row", { id, count: Number(action.parameters.count) });
+                    })
+                );
+                yield* replica.enqueue({
+                    id: "first",
+                    name: "queued",
+                    parameters: { id: "row1", count: 10 },
+                });
+                yield* replica.enqueue({
+                    id: "second",
+                    name: "queued",
+                    parameters: { id: "row2", count: 20 },
+                });
+                fail = true;
+                yield* put("trigger", 0);
+                yield* Effect.result(replica.syncOnce);
+                expect((yield* replica.pending).map((entry) => [entry.invocation.id, entry.state])).toEqual([
+                    ["first", "queued"],
+                    ["second", "queued"],
+                ]);
+                // The failed prediction is dropped; the later one still applies.
+                expect((yield* replica.get("Row", "row1"))?.count).toBe(1);
+                expect((yield* replica.get("Row", "row2"))?.count).toBe(20);
+                // The outbox reports which actions are not reflected locally, and why.
+                const [first, second] = yield* replica.pending;
+                expect([first?.prediction, first?.predictionFailure, first?.predictionMessage]).toEqual([
+                    "dropped",
+                    "ValidationFailed",
+                    "Prediction failed",
+                ]);
+                expect(second?.prediction).toBe("applied");
+                // A later successful replay applies it again and clears the failure.
+                fail = false;
+                yield* put("trigger", 1);
+                yield* Effect.result(replica.syncOnce);
+                const [recovered] = yield* replica.pending;
+                expect([recovered?.prediction, recovered?.predictionFailure]).toEqual(["applied", undefined]);
+                expect((yield* replica.get("Row", "row1"))?.count).toBe(10);
             })
         )
     );

@@ -29,7 +29,6 @@ test("saved Foundry connections read current credentials and reject cross-origin
                         instanceUrl: "https://foundry.example",
                     },
                     credential: Effect.sync(credentials),
-                    refreshCredential: () => Effect.die("unused"),
                     handlers: { fetch, createWebSocket: socket },
                 });
                 const egress = yield* toWebEgress(nativeEgress);

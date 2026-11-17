@@ -3,7 +3,12 @@ import { o } from "@party-stack/ontology-spec";
 import { and, contains, eq, field, inArray, ilike, like, or } from "@party-stack/ontology-storage";
 import { Effect, Exit, Redacted, Scope, Stream, Fiber } from "effect";
 import { expect, test, vi } from "vite-plus/test";
-import { foundryWatchQosRetryMs, makeFoundryBackend, subscriptionStateError } from "./backend.js";
+import {
+    foundryWatchChanges,
+    foundryWatchQosRetryMs,
+    makeFoundryBackend,
+    subscriptionStateError,
+} from "./backend.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
@@ -572,6 +577,23 @@ test("watch state failures keep Foundry's reason and classify retry behavior", (
             },
         })
     ).toMatchObject({ kind: "NotFound", retryable: false });
+    // The rejection Foundry sends once the socket's access token has expired.
+    expect(
+        subscriptionStateError({
+            type: "state",
+            status: "error",
+            reason: {
+                message: "Default:Unauthorized",
+                detail: [
+                    { error: "Default:Unauthorized", args: [{ name: "errorCode", value: "UNAUTHORIZED" }] },
+                ],
+            },
+        })
+    ).toMatchObject({
+        kind: "Unauthenticated",
+        retryable: false,
+        message: "Foundry rejected the object-set subscription: Default:Unauthorized, UNAUTHORIZED",
+    });
     expect(
         subscriptionStateError({ type: "state", status: "qos", reason: { message: "Reduce load" } })
     ).toMatchObject({ kind: "RateLimited", retryable: true, retryAfterMs: foundryWatchQosRetryMs });
@@ -583,4 +605,62 @@ test("watch state failures keep Foundry's reason and classify retry behavior", (
         retryable: true,
         message: "The Foundry object-set subscription closed: CHANNEL_CLOSED",
     });
+});
+
+test("Foundry object updates become row puts and subset exits; anything uncertain is a hint", () => {
+    const decode = (_type: string, value: Record<string, unknown>) => {
+        if (value.broken) throw new Error("Cannot decode.");
+        const { __apiName: _api, __primaryKey: _pk, __rid: _rid, ...rest } = value;
+        return rest;
+    };
+    const updated = {
+        type: "object" as const,
+        state: "ADDED_OR_UPDATED" as const,
+        object: { __apiName: "Issue", __primaryKey: "a", __rid: "ri.a", id: "a", title: "Renamed" },
+    };
+    const removed = {
+        type: "object" as const,
+        state: "REMOVED" as const,
+        object: { __apiName: "Issue", __primaryKey: "b", __rid: "ri.b" },
+    };
+    expect(foundryWatchChanges([updated, removed], "Issue", "id", decode)).toEqual({
+        changes: [
+            { kind: "put", key: "a", value: { id: "a", title: "Renamed" } },
+            { kind: "exit", key: "b" },
+        ],
+    });
+    // A reference update, another object type, or an undecodable object cannot be applied exactly.
+    expect(
+        foundryWatchChanges(
+            [
+                updated,
+                {
+                    type: "reference",
+                    objectType: "Issue",
+                    primaryKey: "a",
+                    property: "p",
+                    value: {},
+                } as never,
+            ],
+            "Issue",
+            "id",
+            decode
+        )
+    ).toBeUndefined();
+    expect(
+        foundryWatchChanges(
+            [{ ...updated, object: { ...updated.object, __apiName: "Project" } }],
+            "Issue",
+            "id",
+            decode
+        )
+    ).toBeUndefined();
+    expect(
+        foundryWatchChanges(
+            [{ ...updated, object: { ...updated.object, broken: true } }],
+            "Issue",
+            "id",
+            decode
+        )
+    ).toBeUndefined();
 });

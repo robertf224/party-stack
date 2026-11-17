@@ -92,7 +92,6 @@ test("Better Auth egress follows the current selector and confines credentials t
                         },
                     },
                     credential: Effect.sync(() => selector),
-                    refreshCredential: () => Effect.die("unused"),
                     handlers: { fetch, createWebSocket: socket },
                 });
                 const egress = yield* toWebEgress(nativeEgress);

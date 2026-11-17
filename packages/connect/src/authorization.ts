@@ -190,6 +190,8 @@ export function makeOAuthAuthorizationClient(options: {
                           kind: "Unavailable",
                           retryable: false,
                           message: cause.message,
+                          // Keeps the browser's reason, e.g. PopupBlocked, for a redirect fallback.
+                          cause,
                       })
             )
         ),

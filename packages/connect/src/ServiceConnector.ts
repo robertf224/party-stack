@@ -54,12 +54,11 @@ export interface ServiceConnector {
     readonly acquire: (input: {
         readonly connection: SavedConnection;
         readonly serviceInstance: ServiceInstanceRecord;
-        /** Rechecks and decrypts the saved credential; OAuth refresh is coordinated by Connect. */
+        /** Rechecks and decrypts the saved credential. Read it for every request: Connect
+         * renews it before it expires and after the service rejects it. Report a rejection
+         * as an `Unauthenticated` error (see withHttpAuthenticationErrors); Connect renews
+         * the credential and retries or fails the request as appropriate. */
         readonly credential: Effect.Effect<string, BackendError>;
-        /** Refresh a rejected OAuth credential only if it is still current. An
-         * older response must not replace a newer login or another refresh.
-         */
-        readonly refreshCredential: (rejected: string) => Effect.Effect<string, BackendError>;
         readonly handlers: ConnectionEgressHandlers;
     }) => Effect.Effect<ConnectionEgressHandlers, BackendError, Scope.Scope>;
 }

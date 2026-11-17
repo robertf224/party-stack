@@ -8,7 +8,7 @@ import { Deferred, Effect, Exit, Fiber, PubSub, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { makeReplica } from "./testing.js";
-import type { OntologyBackendService } from "@party-stack/ontology-backend";
+import type { OntologyBackendService, SubsetWatchEvent } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const ir: OntologyIR = {
@@ -35,7 +35,7 @@ const until = <E, R>(predicate: Effect.Effect<boolean, E, R>) =>
     Effect.repeat(Effect.yieldNow, { until: () => predicate }).pipe(Effect.asVoid);
 const fixture = Effect.fnUntraced(function* (
     watchSubset: NonNullable<OntologyBackendService["watchSubset"]>,
-    settings?: { startSync?: boolean }
+    settings?: { startSync?: boolean; applyAction?: OntologyBackendService["applyAction"] }
 ) {
     const tables = yield* Memory.make();
     const network = yield* makeNetworkConnectivity(true);
@@ -55,7 +55,7 @@ const fixture = Effect.fnUntraced(function* (
             name: "watch-test",
             sourceId: "watch-test",
             supportsIdempotency: false,
-            applyAction: () => Effect.die("Unexpected action"),
+            applyAction: settings?.applyAction ?? (() => Effect.die("Unexpected action")),
             queryFunction: () => Effect.void,
             watchSubset,
             loadSubset: (request) =>
@@ -78,6 +78,9 @@ const fixture = Effect.fnUntraced(function* (
         },
         edit(value: number) {
             values = values.map((row) => ({ ...row, value: { ...row.value, value } }));
+        },
+        remove(id: string) {
+            values = values.filter((row) => row.key !== id);
         },
     };
 });
@@ -271,6 +274,126 @@ test("a ready quiet watch needs no first event and makes only one cold load", as
                     watchers: 1,
                     watchError: undefined,
                 });
+            })
+        ).pipe(Effect.timeout("2 seconds"))
+    );
+});
+
+test("marking demanded data stale reloads a subset a healthy watch keeps current", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture(() => Effect.succeed(Stream.never));
+                yield* f.replica.demand(subset);
+                yield* f.replica.syncSubset(subset);
+                expect(f.loads).toBe(1);
+                // A change the watch never reported: an ordinary checkpoint trusts the watch.
+                f.edit(2);
+                yield* f.replica.syncOnce;
+                expect(f.loads).toBe(1);
+                expect(yield* f.replica.get("Item", "a")).toEqual({ id: "a", value: 0 });
+                yield* f.replica.markDemandedStale;
+                // Rows stay readable until the reload replaces them.
+                expect(yield* f.replica.get("Item", "a")).toEqual({ id: "a", value: 0 });
+                yield* f.replica.syncOnce;
+                expect(f.loads).toBe(2);
+                expect(yield* f.replica.get("Item", "a")).toEqual({ id: "a", value: 2 });
+            })
+        ).pipe(Effect.timeout("2 seconds"))
+    );
+});
+
+const changeFeed = Effect.fnUntraced(function* () {
+    const events = yield* PubSub.unbounded<SubsetWatchEvent>();
+    const watchSubset: NonNullable<OntologyBackendService["watchSubset"]> = () =>
+        Effect.map(PubSub.subscribe(events), (subscription) => Stream.fromSubscription(subscription));
+    return { events, watchSubset };
+});
+const valueOf = (
+    replica: { get: (type: string, key: string) => Effect.Effect<unknown, BackendError> },
+    key: string
+) => Effect.map(replica.get("Item", key), (row) => (row as { value?: number } | undefined)?.value);
+
+test("watch row changes apply without reloading, and an exit is read back by key", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const feed = yield* changeFeed();
+                const f = yield* fixture(feed.watchSubset);
+                yield* f.replica.demand(subset);
+                yield* f.replica.syncSubset(subset);
+                expect(f.loads).toBe(1);
+                yield* PubSub.publish(feed.events, {
+                    changes: [
+                        { kind: "put", key: "a", value: { id: "a", value: 5 } },
+                        { kind: "put", key: "c", value: { id: "c", value: 7 } },
+                        { kind: "delete", key: "b" },
+                    ],
+                });
+                yield* until(Effect.map(valueOf(f.replica, "c"), (value) => value === 7));
+                expect(yield* valueOf(f.replica, "a")).toBe(5);
+                expect(yield* f.replica.get("Item", "b")).toBeUndefined();
+                expect(f.loads).toBe(1);
+                // The subset is still maintained by the watch: a checkpoint does not reload it.
+                yield* f.replica.syncOnce;
+                expect(f.loads).toBe(1);
+                // "a" left the subset: one keyed read finds it changed; "c" is gone.
+                f.edit(9);
+                yield* PubSub.publish(feed.events, {
+                    changes: [
+                        { kind: "exit", key: "a" },
+                        { kind: "exit", key: "c" },
+                    ],
+                });
+                yield* until(Effect.map(valueOf(f.replica, "a"), (value) => value === 9));
+                expect(yield* f.replica.get("Item", "c")).toBeUndefined();
+                expect(f.loads).toBe(2);
+            })
+        ).pipe(Effect.timeout("2 seconds"))
+    );
+});
+
+test("watch row changes wait while our own action is in flight, then reload", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const feed = yield* changeFeed();
+                const sending = yield* Deferred.make<void>();
+                const reply = yield* Deferred.make<void>();
+                let f: Effect.Success<ReturnType<typeof fixture>> | undefined;
+                f = yield* fixture(feed.watchSubset, {
+                    applyAction: (action) =>
+                        Effect.gen(function* () {
+                            yield* Deferred.succeed(sending, undefined);
+                            yield* Deferred.await(reply);
+                            f!.edit(3);
+                            return {
+                                operationId: action.id,
+                                outcome: "committed" as const,
+                                affected: [{ objectType: "Item", keys: ["a", "b"] }],
+                            };
+                        }),
+                });
+                yield* f.replica.demand(subset);
+                yield* f.replica.syncSubset(subset);
+                yield* f.replica.enqueue({ id: "mine", name: "noop", parameters: {} }, { optimistic: false });
+                const dispatch = yield* f.replica.syncOnce.pipe(Effect.forkScoped);
+                yield* Deferred.await(sending);
+                // The source already includes our edit; the watch reports it before our receipt.
+                const before = f.loads;
+                yield* PubSub.publish(feed.events, {
+                    changes: [{ kind: "put", key: "a", value: { id: "a", value: 3 } }],
+                });
+                yield* Effect.sleep("20 millis");
+                // Held: the synced base does not move while our action awaits its receipt.
+                expect(yield* valueOf(f.replica, "a")).toBe(0);
+                yield* Deferred.succeed(reply, undefined);
+                yield* Fiber.join(dispatch);
+                yield* f.replica.syncOnce;
+                // The receipt is read back before anything else is applied.
+                expect(f.loads).toBeGreaterThan(before);
+                expect(yield* valueOf(f.replica, "a")).toBe(3);
+                expect(yield* valueOf(f.replica, "b")).toBe(3);
             })
         ).pipe(Effect.timeout("2 seconds"))
     );

@@ -50,6 +50,16 @@ const toEntry = (entry: PendingAction, forwarding = false): OntologyOutboxEntry 
               issues: entry.failureIssues,
           })
         : undefined,
+    prediction: entry.prediction ?? (entry.optimistic ? "applied" : "none"),
+    predictionError:
+        entry.prediction === "dropped" && entry.predictionFailure
+            ? new BackendError({
+                  operation: "replayAction",
+                  kind: entry.predictionFailure,
+                  message: entry.predictionMessage ?? "The local prediction failed.",
+                  retryable: false,
+              })
+            : undefined,
 });
 const actionResult = (receipt: ActionReceipt): OntologyApplyActionResult => ({
     receipt,

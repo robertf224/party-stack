@@ -24,6 +24,12 @@ export const superviseWatch = Effect.fnUntraced(function* <A>(options: {
     readonly authentication?: {
         readonly generation: Effect.Effect<number>;
         readonly awaitActivation: (after: number) => Effect.Effect<void>;
+        /** The credential an attempt uses, captured before it opens. */
+        readonly credential?: Effect.Effect<number>;
+        /** Renew a credential the source rejected after the subscription opened. Fails
+         * only for a retryable problem; otherwise the connection publishes either a
+         * renewed credential or that it needs sign-in. */
+        readonly renew?: (credential: number) => Effect.Effect<void, BackendError>;
     };
     readonly onValue: (value: A) => Effect.Effect<void, BackendError>;
     readonly onError: (error: BackendError | undefined, attempt?: WatchAttempt) => Effect.Effect<void>;
@@ -42,6 +48,7 @@ export const superviseWatch = Effect.fnUntraced(function* <A>(options: {
             continue;
         }
         const generation = yield* options.authentication?.generation ?? Effect.succeed(0);
+        const credential = yield* options.authentication?.credential ?? Effect.succeed(undefined);
         let established = false;
         let delivered = false;
         let openedAt: number | undefined;
@@ -97,12 +104,21 @@ export const superviseWatch = Effect.fnUntraced(function* <A>(options: {
                       message: "The change subscription ended; reconnecting.",
                   });
         yield* options.onError(error, { established, delivered });
+        let renewalFailed = false;
         if (error.kind === "Unauthenticated" && options.authentication) {
-            yield* options.authentication.awaitActivation(generation);
-            delay = initialDelay;
-            continue;
+            const renew = options.authentication.renew;
+            const renewed =
+                renew && credential !== undefined ? yield* Effect.result(renew(credential)) : undefined;
+            // A renewal that could not reach the provider is retried like any other
+            // transient failure; otherwise wait for the renewed credential or a sign-in.
+            renewalFailed = renewed?._tag === "Failure";
+            if (!renewalFailed) {
+                yield* options.authentication.awaitActivation(generation);
+                delay = initialDelay;
+                continue;
+            }
         }
-        if (!error.retryable) {
+        if (!error.retryable && !renewalFailed) {
             if (options.onTerminal) yield* options.onTerminal(error);
             return;
         }
