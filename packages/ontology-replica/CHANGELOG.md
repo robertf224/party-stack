@@ -1,5 +1,13 @@
 # @party-stack/ontology-replica
 
+## 0.3.2
+
+### Patch Changes
+
+- Updated dependencies [7f13a4d]
+    - @party-stack/ontology-backend@0.3.1
+    - @party-stack/connect@0.3.2
+
 ## 0.3.1
 
 ### Patch Changes

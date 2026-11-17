@@ -1,5 +1,12 @@
 # @party-stack/connections
 
+## 0.3.2
+
+### Patch Changes
+
+- Updated dependencies [7f13a4d]
+    - @party-stack/ontology-backend@0.3.1
+
 ## 0.3.1
 
 ### Patch Changes

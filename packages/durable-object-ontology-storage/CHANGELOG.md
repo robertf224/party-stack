@@ -1,5 +1,14 @@
 # @party-stack/durable-object-ontology-storage
 
+## 0.4.6
+
+### Patch Changes
+
+- Updated dependencies [7f13a4d]
+    - @party-stack/ontology-backend@0.3.1
+    - @party-stack/ontology-server@0.11.6
+    - @party-stack/sql-ontology-storage@0.3.0
+
 ## 0.4.5
 
 ### Patch Changes

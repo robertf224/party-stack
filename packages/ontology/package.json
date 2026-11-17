@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/ontology",
-    "version": "0.23.1",
+    "version": "0.23.2",
     "bin": {
         "ontology": "./lib/cli/index.js"
     },
