@@ -1,5 +1,12 @@
 # @party-stack/ontology-server
 
+## 0.11.5
+
+### Patch Changes
+
+- Updated dependencies [6038606]
+    - @party-stack/ontology-replica@0.3.1
+
 ## 0.11.4
 
 ### Patch Changes
