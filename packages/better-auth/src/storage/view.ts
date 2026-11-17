@@ -181,6 +181,8 @@ export function compileAuthViews(
                         return { ...value, predicate: predicate(value.predicate, path) };
                     case "in":
                         return { ...value, left: remap(value.left, path) };
+                    case "empty":
+                        return { ...value, left: field(...path(value.left.path)) };
                     case "contains":
                         return {
                             ...value,

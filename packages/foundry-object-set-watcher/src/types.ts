@@ -6,9 +6,19 @@ export interface ObjectSetSubscription extends ObjectSetStreamSubscribeRequest {
 
 export type ObjectSetSubscriptionStateUpdateStatus = "open" | "closed" | "qos" | "error";
 
+/** Why a subscription is not open, as reported by Foundry. Raw payloads may contain
+ * provider error arguments; keep them out of user-facing messages. */
+export interface ObjectSetSubscriptionStateReason {
+    /** Short summary, such as Foundry error names or a closure reason. */
+    message: string;
+    /** The provider's error or closure payload. */
+    detail?: unknown;
+}
+
 export interface ObjectSetSubscriptionsStateUpdateMessage {
     subscriptionId: string;
     status: ObjectSetSubscriptionStateUpdateStatus;
+    reason?: ObjectSetSubscriptionStateReason;
 }
 
 export interface ObjectSetSubscriptionsStateUpdateMessages {
@@ -36,4 +46,8 @@ export type ObjectSetSubscriptionsMessage =
 export type ObjectSetSubscriptionMessage =
     | { type: "change"; updates: ObjectSetUpdate[] }
     | { type: "refresh"; objectType: string }
-    | { type: "state"; status: ObjectSetSubscriptionStateUpdateStatus };
+    | {
+          type: "state";
+          status: ObjectSetSubscriptionStateUpdateStatus;
+          reason?: ObjectSetSubscriptionStateReason;
+      };

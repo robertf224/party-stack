@@ -1,4 +1,3 @@
-import { Schema } from "effect";
 import { Temporal } from "temporal-polyfill";
 
 type EncodedValue =
@@ -13,33 +12,10 @@ type EncodedValue =
     | { readonly tag: "object"; readonly value: readonly (readonly [string, EncodedValue])[] }
     | { readonly tag: "map"; readonly value: readonly (readonly [EncodedValue, EncodedValue])[] };
 
-const EncodedValueSchema: Schema.Codec<EncodedValue> = Schema.suspend(() =>
-    Schema.Union([
-        Schema.Null,
-        Schema.Boolean,
-        Schema.String,
-        Schema.Finite,
-        Schema.Struct({ tag: Schema.Literal("undefined") }),
-        Schema.Struct({ tag: Schema.Literal("bigint"), value: Schema.String.check(Schema.isStringBigInt()) }),
-        Schema.Struct({ tag: Schema.Literals(["instant", "plainDate"]), value: Schema.String }),
-        Schema.Struct({ tag: Schema.Literal("date"), value: Schema.Finite }),
-        Schema.Struct({ tag: Schema.Literals(["array", "set"]), value: Schema.Array(EncodedValueSchema) }),
-        Schema.Struct({
-            tag: Schema.Literal("object"),
-            value: Schema.Array(Schema.Tuple([Schema.String, EncodedValueSchema])),
-        }),
-        Schema.Struct({
-            tag: Schema.Literal("map"),
-            value: Schema.Array(Schema.Tuple([EncodedValueSchema, EncodedValueSchema])),
-        }),
-    ])
-);
 // Every container is wrapped, so application objects/arrays cannot collide with type tags.
 // Version 2 replaces the unreleased reference-graph prototype; it does not decode that format.
-const Storage = Schema.fromJsonString(
-    Schema.Struct({ version: Schema.Literal(2), value: EncodedValueSchema })
-);
-const decodeStorage = Schema.decodeUnknownSync(Storage);
+// Envelope: { version: 2, value: EncodedValue }. The frozen Schema reference lives in
+// values-equivalence.test.ts, which checks this hand-written decoder against it.
 
 /** JSON-shaped values with a small, explicit set of additional database value types. */
 export function encodeValue(value: unknown): string {
@@ -95,37 +71,94 @@ export function encodeValue(value: unknown): string {
         }
     };
     // Only fresh tagged containers and validated scalar values reach JSON.
-    // Persisted input still passes the complete Schema decoder below.
+    // Persisted input is still fully validated by decodeValue below.
     return JSON.stringify({ version: 2, value: encode(value) });
 }
 
+const invalid = (): never => {
+    throw new Error("Invalid persisted value encoding.");
+};
+const isTagged = (value: object): value is { readonly tag: unknown; readonly value?: unknown } =>
+    !Array.isArray(value) && "tag" in value;
+// Same accepted text as Schema.isStringBigInt().
+const bigIntPattern = /^-?\d+$/;
+
+/** Validate the version-2 envelope while decoding in one pass. This accepts
+ * exactly the version-2 Schema format; a recursive Schema union decoder was too
+ * slow for large persisted rows on mobile JavaScript engines.
+ */
 export function decodeValue(encoded: string): unknown {
-    const stored = decodeStorage(encoded);
-    const decode = (value: EncodedValue): unknown => {
-        if (value === null || typeof value !== "object") return value;
+    let stored: unknown;
+    try {
+        stored = JSON.parse(encoded);
+    } catch {
+        return invalid();
+    }
+    if (
+        stored === null ||
+        typeof stored !== "object" ||
+        Array.isArray(stored) ||
+        (stored as { version?: unknown }).version !== 2 ||
+        !("value" in stored)
+    )
+        return invalid();
+    const decode = (value: unknown): unknown => {
+        if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+        if (typeof value === "number") return Number.isFinite(value) ? value : invalid();
+        if (typeof value !== "object" || !isTagged(value)) return invalid();
         switch (value.tag) {
             case "undefined":
                 return undefined;
             case "bigint":
-                return BigInt(value.value);
+                return typeof value.value === "string" && bigIntPattern.test(value.value)
+                    ? BigInt(value.value)
+                    : invalid();
             case "instant":
-                return Temporal.Instant.from(value.value);
+                return typeof value.value === "string" ? Temporal.Instant.from(value.value) : invalid();
             case "plainDate":
-                return Temporal.PlainDate.from(value.value);
+                return typeof value.value === "string" ? Temporal.PlainDate.from(value.value) : invalid();
             case "date": {
+                if (typeof value.value !== "number" || !Number.isFinite(value.value)) return invalid();
                 const date = new Date(value.value);
                 if (!Number.isFinite(date.getTime())) throw new Error("Invalid persisted date.");
                 return date;
             }
             case "array":
-                return value.value.map(decode);
+                return Array.isArray(value.value) ? value.value.map(decode) : invalid();
             case "set":
-                return new Set(value.value.map(decode));
+                return Array.isArray(value.value) ? new Set(value.value.map(decode)) : invalid();
             case "map":
-                return new Map(value.value.map(([key, item]) => [decode(key), decode(item)]));
-            case "object":
-                return Object.fromEntries(value.value.map(([key, item]) => [key, decode(item)]));
+                return Array.isArray(value.value)
+                    ? new Map(
+                          value.value.map((entry: unknown) =>
+                              Array.isArray(entry) && entry.length === 2
+                                  ? [decode(entry[0]), decode(entry[1])]
+                                  : invalid()
+                          )
+                      )
+                    : invalid();
+            case "object": {
+                if (!Array.isArray(value.value)) return invalid();
+                const result: Record<string, unknown> = {};
+                for (const entry of value.value as unknown[]) {
+                    if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string")
+                        return invalid();
+                    const decoded = decode(entry[1]);
+                    // Match Object.fromEntries, which defines an own "__proto__" data property.
+                    if (entry[0] === "__proto__")
+                        Object.defineProperty(result, entry[0], {
+                            value: decoded,
+                            enumerable: true,
+                            writable: true,
+                            configurable: true,
+                        });
+                    else result[entry[0]] = decoded;
+                }
+                return result;
+            }
+            default:
+                return invalid();
         }
     };
-    return decode(stored.value);
+    return decode((stored as { value: unknown }).value);
 }

@@ -16,12 +16,25 @@ export interface CompiledEffectSchemas {
     readonly queryReturnSchemas: Readonly<Record<string, ValueCodec>>;
 }
 
+// Opening one native route compiles the same definition for its server, replica,
+// policy and each view. Definitions are immutable once in use, so share the
+// compiled codecs per definition object. Failures are not cached.
+const compiled = new WeakMap<OntologyIR, CompiledEffectSchemas>();
 /**
  * Construct codecs directly from runtime IR, without evaluating generated code.
  * Like Schema constructors, invalid definitions throw during setup. Generated
- * codecs additionally supply named static TypeScript types.
+ * codecs additionally supply named static TypeScript types. Results are cached
+ * per definition object; do not mutate a definition after compiling it.
  */
 export function compileEffectSchemas(source: OntologyIR): CompiledEffectSchemas {
+    let schemas = compiled.get(source);
+    if (!schemas) {
+        schemas = compile(source);
+        compiled.set(source, schemas);
+    }
+    return schemas;
+}
+function compile(source: OntologyIR): CompiledEffectSchemas {
     if (nestedEncryptedIssues(source).length)
         throw new TypeError("Encrypted values cannot contain another encrypted wrapper.");
     // Lazy references must not observe later edits to the caller's definitions.

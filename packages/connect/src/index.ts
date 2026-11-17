@@ -5,6 +5,7 @@ export type {
     Connection,
     ConnectionEgress,
     ConnectionEgressHandlers,
+    ConnectionLifecycle,
     ConnectionMonitor,
     ConnectionState,
     ConnectionStatus,

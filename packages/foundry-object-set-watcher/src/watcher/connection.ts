@@ -1,6 +1,6 @@
 import { createFoundryWebSocket } from "@party-stack/foundry-client";
 import { Cause, Clock, Effect, Queue, Schema } from "effect";
-import { bigIntToUuid, convertSubscriptionMessage, serializeRequest } from "../protocol.js";
+import { bigIntToUuid, convertSubscriptionMessage, errorReason, serializeRequest } from "../protocol.js";
 import { WatcherError } from "./model.js";
 import type { ObjectSetSubscription, ObjectSetSubscriptionsMessage } from "../types.js";
 import type { StreamMessage } from "@osdk/foundry.ontologies";
@@ -18,7 +18,7 @@ export interface WatcherConnectionOptions {
 const ResponseSchema = Schema.Union([
     Schema.Struct({ type: Schema.Literal("success"), id: Schema.String }),
     Schema.Struct({ type: Schema.Literal("qos") }),
-    Schema.Struct({ type: Schema.Literal("error") }),
+    Schema.Struct({ type: Schema.Literal("error"), errors: Schema.optional(Schema.Array(Schema.Unknown)) }),
 ]);
 const MessageSchema = Schema.Union([
     Schema.Struct({
@@ -52,7 +52,11 @@ const MessageSchema = Schema.Union([
         ),
     }),
     Schema.Struct({ type: Schema.Literal("refreshObjectSet"), id: Schema.String, objectType: Schema.String }),
-    Schema.Struct({ type: Schema.Literal("subscriptionClosed"), id: Schema.String }),
+    Schema.Struct({
+        type: Schema.Literal("subscriptionClosed"),
+        id: Schema.String,
+        cause: Schema.optional(Schema.Unknown),
+    }),
 ]);
 type Frame = { type: "open" | "close" | "error" | "desired" | "tick" } | { type: "message"; data: unknown };
 const safelyClose = (socket: WebSocket) => {
@@ -203,6 +207,11 @@ export const runWatcherConnection = Effect.fn("ObjectSetWatcher.connection")(fun
                         {
                             subscriptionId: target,
                             status: response.type === "success" ? "open" : response.type,
+                            ...(response.type === "error"
+                                ? { reason: errorReason(response.errors) }
+                                : response.type === "qos"
+                                  ? { reason: { message: "Foundry asked clients to reduce subscriptions." } }
+                                  : {}),
                         },
                     ],
                 });

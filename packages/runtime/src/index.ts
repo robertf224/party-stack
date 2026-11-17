@@ -1,5 +1,7 @@
 export { MemoryBlobBytesStore } from "./memory/MemoryBlobBytesStore.js";
 export { BrowserAuthenticationError } from "./BrowserAuthenticationError.js";
+export { GeolocationError, geolocationErrorCode } from "./Geolocation.js";
+export type { Geolocation, GeolocationOptions, GeolocationPosition } from "./Geolocation.js";
 export { alwaysOnlineConnectivity, makeNetworkConnectivity } from "./NetworkConnectivity.js";
 export type {
     BrowserAuthentication,

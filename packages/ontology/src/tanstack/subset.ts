@@ -93,6 +93,28 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
                 return undefined;
         }
     };
+    // Whether a property path names a declared value of any type.
+    const declared = (
+        type: Definition | undefined,
+        path: readonly string[],
+        seen = new Set<Definition>()
+    ): boolean => {
+        if (!type || seen.has(type)) return false;
+        const next = new Set([...seen, type]);
+        if (type.kind === "optional") return declared(type.value.type, path, next);
+        if (type.kind === "ref") return declared(named.get(type.value.name), path, next);
+        if (!path.length) return true;
+        return (
+            type.kind === "struct" &&
+            declared(type.value.fields.find((prop) => prop.name === path[0])?.type, path.slice(1), next)
+        );
+    };
+    const declaredField = (expression: IR.BasicExpression): Expression | undefined => {
+        if (expression.type !== "ref") return undefined;
+        const path = IR.getPropRefPropertyPath(expression);
+        const type = objects.get(objectType ?? "")?.properties.find((prop) => prop.name === path[0])?.type;
+        return path.length && declared(type, path.slice(1)) ? field(...path) : undefined;
+    };
     const value = (expression: IR.BasicExpression): Value | undefined => {
         if (expression.type === "ref") {
             const path = IR.getPropRefPropertyPath(expression);
@@ -132,6 +154,33 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
               ? // Ontology object decoding normalizes optional nulls to undefined.
                 q.ne(v.operand, q.literal(undefined))
               : false;
+    /** `length(list)` compared with 0 or 1, the comparisons sources can answer. TanStack gives
+     * a missing list length 0, as the ontology expression language does. */
+    const listEmptiness = (name: string, args: readonly IR.BasicExpression[]): Truth | undefined => {
+        if (args.length !== 2) return undefined;
+        const flipped = { lt: "gt", lte: "gte", gt: "lt", gte: "lte", eq: "eq" } as const;
+        if (!(name in flipped)) return undefined;
+        const isLength = (arg: IR.BasicExpression | undefined) =>
+            arg?.type === "func" && arg.name === "length" && arg.args.length === 1;
+        const [length, bound, op] = isLength(args[0])
+            ? [args[0], args[1], name as keyof typeof flipped]
+            : [args[1], args[0], flipped[name as keyof typeof flipped]];
+        if (!isLength(length) || bound?.type !== "val" || typeof bound.value !== "number") return undefined;
+        const list = value((length as IR.Func).args[0]!);
+        if (!list || !("elementFamily" in list) || !isField(list.operand)) return undefined;
+        const n = bound.value;
+        const empty =
+            (op === "eq" && n === 0) || (op === "lt" && n === 1) || (op === "lte" && n === 0)
+                ? true
+                : (op === "gt" && n === 0) || (op === "gte" && n === 1)
+                  ? false
+                  : undefined;
+        if (empty === undefined) return undefined;
+        const size = q.length(list.operand);
+        const none = q.eq(size, q.literal(0));
+        const some = q.gt(size, q.literal(0));
+        return empty ? { yes: none, no: some, exact: true } : { yes: some, no: none, exact: true };
+    };
     const truth = (expression: IR.BasicExpression): Truth => {
         if (expression.type === "val" && (typeof expression.value === "boolean" || expression.value == null))
             return {
@@ -169,12 +218,18 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
             const child = truth(args[0]!);
             return { yes: child.no, no: child.yes, exact: child.exact };
         }
-        const left = args[0] && value(args[0]);
-        if (!left) return unknown;
+        const emptiness = listEmptiness(name, args);
+        if (emptiness) return emptiness;
         if ((name === "isNull" || name === "isUndefined") && args.length === 1) {
-            const yes = q.eq(left.operand, q.literal(name === "isNull" ? null : undefined));
+            // A presence check needs only a declared field, so it also covers lists and
+            // structs, which have no scalar comparison.
+            const operand = args[0] && (value(args[0])?.operand ?? declaredField(args[0]));
+            if (!operand) return unknown;
+            const yes = q.eq(operand, q.literal(name === "isNull" ? null : undefined));
             return { yes, no: negate(yes), exact: true };
         }
+        const left = args[0] && value(args[0]);
+        if (!left) return unknown;
         // Physical PlainDate equality follows ISO day ordering, while TanStack
         // equality also distinguishes calendars. Neither an equality/membership
         // predicate nor its negation is exact at that boundary. Broaden both

@@ -21,6 +21,7 @@ const PredicateShape = Schema.Union([
     }),
     Schema.Struct({ op: Schema.Literal("in"), left: Schema.Unknown, values: Schema.Array(Schema.Unknown) }),
     Schema.Struct({ op: Schema.Literal("contains"), left: FieldSchema, right: Schema.Unknown }),
+    Schema.Struct({ op: Schema.Literal("empty"), left: FieldSchema }),
     Schema.Struct({
         op: Schema.Literals(["like", "ilike"]),
         left: Schema.Unknown,

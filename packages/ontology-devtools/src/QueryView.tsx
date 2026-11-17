@@ -294,6 +294,12 @@ export function QueryExpression({
                     </div>
                 </div>
             );
+        case "length":
+            return (
+                <span>
+                    <span className="ps-query-keyword">length</span>({child(expression.value.expression)})
+                </span>
+            );
         case "exists":
             return (
                 <div className="ps-query-group">

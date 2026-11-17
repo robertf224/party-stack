@@ -1,5 +1,6 @@
 import { attachBetterAuthSession } from "@party-stack/better-auth";
-import { isUnauthenticatedError } from "@party-stack/ontology-backend";
+import { BackendError, isUnauthenticatedError } from "@party-stack/ontology-backend";
+import { BrowserAuthenticationError } from "@party-stack/runtime";
 import { authClient } from "./auth";
 import { authentication, openIssueOntology } from "./sharedOntology";
 import { FOUNDRY_CLIENT_ID, FOUNDRY_REDIRECT_URL } from "./trackerConfig";
@@ -73,8 +74,17 @@ export async function connectGoogleProfile(): Promise<ConnectedProfile> {
         })
     );
 }
+const popupBlocked = (error: unknown) =>
+    error instanceof BackendError &&
+    error.cause instanceof BrowserAuthenticationError &&
+    error.cause.reason === "PopupBlocked";
 export async function connectFoundryProfile(): Promise<ConnectedProfile> {
-    const connection = await foundryOAuth.signIn({ browserPresentation: "popup" });
+    const connection = await foundryOAuth.signIn({ browserPresentation: "popup" }).catch((error: unknown) => {
+        // Some browsers and embedded views refuse popups; sign in by redirect instead.
+        // The callback route completes the sign-in when the app loads again.
+        if (popupBlocked(error)) return foundryOAuth.signIn({ browserPresentation: "redirect" });
+        throw error;
+    });
     return openProfile(connection);
 }
 async function completeFoundryOAuthRedirectInternal(url: string): Promise<ConnectedProfile | undefined> {

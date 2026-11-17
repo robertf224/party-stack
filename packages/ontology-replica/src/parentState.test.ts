@@ -114,14 +114,20 @@ const fixture = Effect.fnUntraced(function* () {
 
 const client = Effect.fnUntraced(function* (
     snapshot: ReplicaStateSnapshot,
-    settings?: { tables?: ReplicaOptions["tables"]; publish?: ReplicaOptions["publish"] }
+    settings?: {
+        tables?: ReplicaOptions["tables"];
+        publish?: ReplicaOptions["publish"];
+        outbox?: ReplicaOptions["outbox"];
+        execute?: ReplicaOptions["execute"];
+    }
 ) {
     const tables = settings?.tables ?? (yield* Memory.make());
     const options: ReplicaOptions = {
         namespace: "child",
         ir,
         tables,
-        execute,
+        execute: settings?.execute ?? execute,
+        outbox: settings?.outbox,
         startSync: false,
         objectCacheGc: false,
         source: {
@@ -263,6 +269,54 @@ test("a protocol source without keyed idempotency pauses an ambiguous submission
                 yield* child.syncParent(source);
                 expect(effects).toBe(1);
                 expect((yield* Effect.result(child.retry("B")))._tag).toBe("Failure");
+            })
+        )
+    );
+});
+
+test("source prediction forwards actions unresolved and shows the parent's prediction", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const snapshot = yield* f.parent.snapshotState;
+                let executed = 0;
+                const child = (yield* client(snapshot, {
+                    outbox: { prediction: "source" },
+                    execute: () =>
+                        Effect.sync(() => {
+                            executed++;
+                        }),
+                })).replica;
+                const entry = yield* child.enqueue(invocation("B", 1));
+                // Neither resolved nor predicted here: the parent does both.
+                expect(executed).toBe(0);
+                expect(entry.prediction).toBe("none");
+                expect(entry.optimistic).toBe(true);
+                expect(yield* count(child)).toBe(10);
+                yield* connectReplicaParent(child, replicaStateSource(f.parent));
+                yield* until(Effect.map(count(child), (value) => value === 11));
+                const [forwarded] = yield* f.parent.pending;
+                expect([forwarded?.invocation.id, forwarded?.optimistic, forwarded?.prediction]).toEqual([
+                    "B",
+                    true,
+                    "applied",
+                ]);
+                expect(executed).toBe(0);
+            })
+        )
+    );
+});
+
+test("source prediction requires a protocol source", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const result = yield* Effect.result(
+                    makeReplica({ ...f.options, namespace: "invalid", outbox: { prediction: "source" } })
+                );
+                expect(result._tag === "Failure" && result.failure.kind).toBe("InvalidConfiguration");
             })
         )
     );

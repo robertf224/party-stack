@@ -102,6 +102,8 @@ export function compileQuery(dialect: Dialect, indexes: readonly StoredIndex[], 
                 ? { sql: `(NOT ${child.sql})`, complete: true }
                 : unsupported();
         }
+        // Multi-entry projections conflate missing and empty lists; evaluate it on rows.
+        if (p.op === "empty") return unsupported();
         const operand = (value: Operand): string | undefined =>
             isField(value) ? expression(value) : bind(scalarKey(value));
         if (p.op === "contains") {

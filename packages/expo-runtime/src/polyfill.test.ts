@@ -80,3 +80,52 @@ it("installs native secure randomness when the host has no Web Crypto global", a
     expect(crypto.getRandomValues(new Uint8Array(2))).toEqual(new Uint8Array([7, 7]));
     expect(crypto.subtle).toBeUndefined();
 });
+
+describe("Expo polyfill Web API baseline", () => {
+    it("adds AbortSignal.throwIfAborted with the exact abort reason", async () => {
+        const original = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "throwIfAborted");
+        Reflect.deleteProperty(AbortSignal.prototype, "throwIfAborted");
+        try {
+            await import("./polyfill.js");
+            const controller = new AbortController();
+            expect(() => controller.signal.throwIfAborted()).not.toThrow();
+            const reason = new Error("stop");
+            controller.abort(reason);
+            expect(() => controller.signal.throwIfAborted()).toThrow(reason);
+        } finally {
+            if (original) Object.defineProperty(AbortSignal.prototype, "throwIfAborted", original);
+        }
+    });
+
+    it("tags an untagged global Response prototype only", async () => {
+        class Untagged {}
+        vi.stubGlobal("Response", Untagged);
+        await import("./polyfill.js");
+        expect(Reflect.get(Untagged.prototype, Symbol.toStringTag)).toBe("Response");
+    });
+
+    it("installs time-sliced immediates on React Native only", async () => {
+        const original = globalThis.setImmediate;
+        const originalClear = globalThis.clearImmediate;
+        await import("./polyfill.js");
+        expect(globalThis.setImmediate).toBe(original);
+        vi.resetModules();
+        vi.stubGlobal("navigator", { product: "ReactNative" });
+        try {
+            await import("./polyfill.js");
+            expect(globalThis.setImmediate).not.toBe(original);
+            await new Promise<void>((resolve) => globalThis.setImmediate(resolve));
+        } finally {
+            Object.defineProperty(globalThis, "setImmediate", {
+                value: original,
+                configurable: true,
+                writable: true,
+            });
+            Object.defineProperty(globalThis, "clearImmediate", {
+                value: originalClear,
+                configurable: true,
+                writable: true,
+            });
+        }
+    });
+});

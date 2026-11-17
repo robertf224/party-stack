@@ -6,7 +6,7 @@ import { QuerySchema } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
 import { Deferred, Effect, Queue, Schema, Stream, Redacted } from "effect";
 import { searchFoundryObjects } from "./foundryObjectSearch.js";
-import { analyzeSubsetFilter, subsetFilter } from "./subsetFilter.js";
+import { analyzeSubsetFilter, arrayProperties, subsetFilter } from "./subsetFilter.js";
 import type { Actions } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { ObjectSetSubscriptionMessage, WatcherError } from "@party-stack/foundry-object-set-watcher";
@@ -15,6 +15,7 @@ import type {
     ActionRequest,
     ActionReceipt,
     SourceQueryPlan,
+    SubsetWatchChange,
     SubsetWatchEvent,
 } from "@party-stack/ontology-backend";
 import type { BackendSnapshot } from "@party-stack/ontology-backend";
@@ -65,11 +66,116 @@ const unavailable = (cause: unknown) => classifyBackendFailure("foundry.sync", c
 /** Each logical object set has its own acknowledgement. Pump before returning so
  * changes between that acknowledgement and the snapshot read remain observable.
  */
+/** Foundry asked clients to shed subscriptions; do not reconnect for a while. */
+export const foundryWatchQosRetryMs = 2 * 60_000;
+/** Foundry's error code (e.g. `PERMISSION_DENIED`) from a rejected subscription's errors. */
+const subscriptionErrorCode = (detail: unknown): string | undefined => {
+    if (!Array.isArray(detail)) return undefined;
+    for (const error of detail) {
+        const args = (error as { args?: unknown } | null)?.args;
+        if (!Array.isArray(args)) continue;
+        const code = args.find(
+            (arg): arg is { name: "errorCode"; value: string } =>
+                (arg as { name?: unknown } | null)?.name === "errorCode" &&
+                typeof (arg as { value?: unknown }).value === "string"
+        );
+        if (code) return code.value;
+    }
+    return undefined;
+};
+const rejectedKind = (code: string | undefined) =>
+    code === "UNAUTHORIZED"
+        ? "Unauthenticated"
+        : code === "PERMISSION_DENIED"
+          ? "Forbidden"
+          : code === "NOT_FOUND"
+            ? "NotFound"
+            : "InvalidRequest";
+
+/** Keep Foundry's reported reason. A rejected object set will not start working on
+ * retry, so it is terminal; QoS backs off for minutes; a closure may reopen.
+ * Permission rejections are `Forbidden`: the signed-in user's token works, but this
+ * application or user may not use Foundry's subscription API. An expired token is
+ * `Unauthenticated`, so watches wait for the connection to authenticate again. */
+export const subscriptionStateError = (
+    message: Extract<ObjectSetSubscriptionMessage, { type: "state" }>
+): BackendError => {
+    const reason = message.reason?.message;
+    const cause = message.reason?.detail === undefined ? undefined : Redacted.make(message.reason.detail);
+    switch (message.status) {
+        case "error": {
+            const code = subscriptionErrorCode(message.reason?.detail);
+            const summary = [reason, code].filter(Boolean).join(", ");
+            return new BackendError({
+                operation: "foundry.watchSubset",
+                kind: rejectedKind(code),
+                retryable: false,
+                message: `Foundry rejected the object-set subscription${summary ? `: ${summary}` : "."}`,
+                cause,
+            });
+        }
+        case "qos":
+            return new BackendError({
+                operation: "foundry.watchSubset",
+                kind: "RateLimited",
+                retryable: true,
+                retryAfterMs: foundryWatchQosRetryMs,
+                message: `Foundry asked to reduce object-set subscriptions${reason ? `: ${reason}` : "."}`,
+                cause,
+            });
+        default:
+            return new BackendError({
+                operation: "foundry.watchSubset",
+                kind: "Unavailable",
+                retryable: true,
+                message: `The Foundry object-set subscription closed${reason ? `: ${reason}` : "."}`,
+                cause,
+            });
+    }
+};
+
+type ObjectSetChange = Extract<ObjectSetSubscriptionMessage, { type: "change" }>["updates"][number];
+/** Foundry reports an object entering or changing in the subscribed set with its
+ * subscribed properties, and an object leaving it without saying whether it was
+ * deleted. Anything else, or anything that cannot be decoded, is only a hint. */
+export const foundryWatchChanges = (
+    updates: readonly ObjectSetChange[],
+    objectType: string,
+    primaryKey: string,
+    decodeObject: (objectType: string, value: Record<string, unknown>) => Record<string, unknown>
+): SubsetWatchEvent => {
+    const changes: SubsetWatchChange[] = [];
+    for (const update of updates) {
+        if (update.type !== "object") return undefined;
+        const raw = update.object as Record<string, unknown>;
+        if (raw.__apiName !== undefined && raw.__apiName !== objectType) return undefined;
+        try {
+            if (update.state === "ADDED_OR_UPDATED") {
+                const value = decodeObject(objectType, raw);
+                const key = value[primaryKey];
+                if (!Schema.is(KeySchema)(key)) return undefined;
+                changes.push({ kind: "put", key, value });
+            } else {
+                const key = decodeObject(objectType, { [primaryKey]: raw[primaryKey] ?? raw.__primaryKey })[
+                    primaryKey
+                ];
+                if (!Schema.is(KeySchema)(key)) return undefined;
+                changes.push({ kind: "exit", key });
+            }
+        } catch {
+            return undefined;
+        }
+    }
+    return changes.length ? { changes } : undefined;
+};
+
 const acquireWatch = Effect.fn("Foundry.acquireWatch")(function* (
-    messages: Stream.Stream<ObjectSetSubscriptionMessage, WatcherError>
+    messages: Stream.Stream<ObjectSetSubscriptionMessage, WatcherError>,
+    decode: (updates: readonly ObjectSetChange[]) => SubsetWatchEvent
 ) {
     const ready = yield* Deferred.make<void, BackendError>();
-    const events = yield* Effect.acquireRelease(Queue.sliding<SubsetWatchEvent, BackendError>(1), (queue) =>
+    // Row changes cannot be coalesced or dropped; hints can, but keep them in order.
+    const events = yield* Effect.acquireRelease(Queue.unbounded<SubsetWatchEvent, BackendError>(), (queue) =>
         Queue.shutdown(queue).pipe(Effect.asVoid)
     );
     const interrupted = () =>
@@ -80,10 +186,12 @@ const acquireWatch = Effect.fn("Foundry.acquireWatch")(function* (
             message: "The Foundry object-set subscription is no longer active.",
         });
     const receive = Stream.runForEach(messages, (message) => {
+        if (message.type === "change")
+            return Queue.offer(events, decode(message.updates)).pipe(Effect.asVoid);
         if (message.type !== "state") return Queue.offer(events, undefined).pipe(Effect.asVoid);
         return message.status === "open"
             ? Deferred.succeed(ready, undefined).pipe(Effect.asVoid)
-            : Effect.fail(interrupted());
+            : Effect.fail(subscriptionStateError(message));
     }).pipe(
         Effect.mapError(unavailable),
         Effect.andThen(Effect.fail(interrupted())),
@@ -100,7 +208,8 @@ const acquireWatch = Effect.fn("Foundry.acquireWatch")(function* (
 });
 
 /** One scoped watcher multiplexes the live object types used by this binding.
- * Watch messages invalidate snapshots; they do not pretend to be durable journal cursors.
+ * Watch messages report row changes or invalidate snapshots; they do not pretend to
+ * be durable journal cursors.
  */
 export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (options: {
     client: OntologyClient;
@@ -198,7 +307,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
             const keys = candidates?.every(Schema.is(KeySchema))
                 ? (candidates as readonly (string | number)[])
                 : undefined;
-            const plan = analyzeSubsetFilter(predicate);
+            const plan = analyzeSubsetFilter(predicate, arrayProperties(options.ir, definition));
             const pushed = keys
                 ? { type: "in" as const, field: definition.primaryKey, value: [...new Set(keys)] }
                 : plan.query;
@@ -309,7 +418,13 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                       ? undefined
                       : Effect.gen(function* () {
                             const subset = yield* compileObjectSubset(options.ir, request, options.context);
-                            const filter = subsetFilter(subset.query?.where);
+                            const definition = options.ir.objectTypes.find(
+                                (type) => type.name === subset.objectType
+                            )!;
+                            const filter = subsetFilter(
+                                subset.query?.where,
+                                arrayProperties(options.ir, definition)
+                            );
                             return yield* acquireWatch(
                                 watcher.subscribe(
                                     filter
@@ -319,7 +434,14 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                                               where: filter,
                                           }
                                         : { type: "base", objectType: subset.objectType }
-                                )
+                                ),
+                                (updates) =>
+                                    foundryWatchChanges(
+                                        updates,
+                                        subset.objectType,
+                                        definition.primaryKey,
+                                        options.decodeObject
+                                    )
                             );
                         })
             : undefined,

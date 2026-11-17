@@ -88,7 +88,11 @@ export const makeObjectSetWatcher = Effect.fn("ObjectSetWatcher.make")(function*
                 const target = shared.get(update.subscriptionId);
                 if (!target) continue;
                 if (update.status === "error") target.disabled = true;
-                target.state = { type: "state", status: update.status };
+                target.state = {
+                    type: "state",
+                    status: update.status,
+                    ...(update.reason ? { reason: update.reason } : {}),
+                };
                 yield* PubSub.publish(target.events, target.state);
             }
         } else {
@@ -140,8 +144,9 @@ export const makeObjectSetWatcher = Effect.fn("ObjectSetWatcher.make")(function*
                                     shared.set(key, entry);
                                 }
                                 entry.consumers++;
-                                if (entry.disabled) changed = true;
-                                entry.disabled = false;
+                                // Foundry rejected this object set. Joining consumers receive
+                                // that terminal state; a fresh entry retries after all of its
+                                // consumers leave, without resending every subscription per join.
                                 return entry;
                             })
                         ),
@@ -170,7 +175,13 @@ export const makeObjectSetWatcher = Effect.fn("ObjectSetWatcher.make")(function*
                     );
                     if (changed) yield* Queue.offer(changes, undefined);
                     const live = Stream.fromEffectRepeat(PubSub.take(messages));
-                    return entry.state ? Stream.concat(Stream.make(entry.state), live) : live;
+                    // Replay only current facts. A "closed" or "qos" state describes an
+                    // earlier connection; the session reports the next state itself.
+                    const replay =
+                        entry.state && (entry.state.status === "open" || entry.state.status === "error")
+                            ? entry.state
+                            : undefined;
+                    return replay ? Stream.concat(Stream.make(replay), live) : live;
                 })
             ),
     };

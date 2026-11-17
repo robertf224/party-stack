@@ -17,7 +17,12 @@ test("registers native plugins once, configures backups and does not request Fac
     expect(result.ios?.infoPlist?.NSFaceIDUsageDescription).toBeUndefined();
     const history = result._internal?.pluginHistory;
     expect(Object.keys(history ?? {})).toEqual(
-        expect.arrayContaining(["expo-secure-store", "expo-sqlite", "@party-stack/expo-runtime"])
+        expect.arrayContaining([
+            "expo-secure-store",
+            "expo-sqlite",
+            "expo-location",
+            "@party-stack/expo-runtime",
+        ])
     );
     expect(withPartyStack(result)).toBe(result);
     expect(result.mods?.android?.manifest).toBeTypeOf("function");
@@ -73,4 +78,37 @@ test("applies SecureStore backup exclusions without overriding custom backup rul
             custom ? "@xml/app_extraction" : "@xml/secure_store_data_extraction_rules"
         );
     }
+});
+
+const infoPlist = async (options?: Parameters<typeof withPartyStack>[1]) => {
+    const result: ExportedConfig = withPartyStack(config(), options);
+    const output = await result.mods!.ios!.infoPlist!({
+        ...result,
+        modResults: {},
+        modRequest: {
+            projectRoot: "/test",
+            platformProjectRoot: "/test/ios",
+            modName: "infoPlist",
+            platform: "ios",
+            introspect: true,
+            ignoreExistingNativeFiles: true,
+        },
+        modRawConfig: result,
+    });
+    return output.modResults as Record<string, unknown>;
+};
+
+test("asks only for foreground location, with a purpose string the app can replace", async () => {
+    const plist = await infoPlist();
+    expect(plist.NSLocationWhenInUseUsageDescription).toBe("Allow $(PRODUCT_NAME) to access your location");
+    expect(plist.NSLocationAlwaysUsageDescription).toBeUndefined();
+    expect(plist.NSLocationAlwaysAndWhenInUseUsageDescription).toBeUndefined();
+    expect(plist.NSMotionUsageDescription).toBeUndefined();
+    expect(
+        (await infoPlist({ locationPermission: "Tag photos with where you took them" }))
+            .NSLocationWhenInUseUsageDescription
+    ).toBe("Tag photos with where you took them");
+    expect(
+        (await infoPlist({ locationPermission: false })).NSLocationWhenInUseUsageDescription
+    ).toBeUndefined();
 });

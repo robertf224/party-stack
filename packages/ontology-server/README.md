@@ -16,55 +16,79 @@ role by where writes commit:
 
 ```ts
 import { makeOntologyServer } from "@party-stack/ontology-server";
+import { Effect } from "effect";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
+import type { OwnedBackendService } from "@party-stack/ontology-backend/owned";
+import type { ReplicaService } from "@party-stack/ontology-replica";
+import type { OntologyAuthenticate } from "@party-stack/ontology-server";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 
-// Authoritative storage; commits actions, receipts and journal atomically.
-const ownedServer =
-    yield *
-    makeOntologyServer({
+export const openServers = Effect.fn("App.openServers")(function* (options: {
+    readonly owned: OwnedBackendService;
+    readonly upstream: OntologyBackendService;
+    readonly ir: OntologyIR;
+    readonly readCache: ReplicaService;
+    readonly replica: ReplicaService;
+    readonly authenticate: OntologyAuthenticate;
+}) {
+    const { owned, upstream, ir, readCache, replica, authenticate } = options;
+
+    // Authoritative storage; commits actions, receipts and journal atomically.
+    const ownedServer = yield* makeOntologyServer({
         kind: "owned",
         backend: owned,
         authenticate,
     });
 
-// Direct forwarding, with no local outbox or client-session registry.
-const proxyServer =
-    yield *
-    makeOntologyServer({
+    // Direct forwarding, with no local outbox or client-session registry.
+    const proxyServer = yield* makeOntologyServer({
         kind: "proxy",
         backend: upstream,
         ir,
         authenticate,
     });
 
-// Confirmed read cache; writes still forward directly to upstream.
-// Configure readCache with makeReplica({ ..., demand: { idleRetentionMs: 60_000, maxSubsets: 128 } }).
-const cachedServer =
-    yield *
-    makeOntologyServer({
+    // Confirmed read cache; writes still forward directly to upstream.
+    // Configure readCache with makeReplica({ ..., demand: { idleRetentionMs: 60_000, maxSubsets: 128 } }).
+    const cachedServer = yield* makeOntologyServer({
         kind: "cached-proxy",
         backend: upstream,
         cache: readCache,
         authenticate,
     });
 
-// Intermediate replica: accepts durable local actions into its own outbox.
-const replicaServer =
-    yield *
-    makeOntologyServer({
+    // Intermediate replica: accepts durable local actions into its own outbox.
+    const replicaServer = yield* makeOntologyServer({
         enableRealtime: true,
         kind: "replica",
         backend: upstream,
         replica,
         dangerouslyAllowInternalAccess: true,
     });
+    return { ownedServer, proxyServer, cachedServer, replicaServer };
+});
 ```
 
 Configure several targets with the same constructor:
 
 ```ts
-const server =
-    yield *
-    makeOntologyServer({
+import { makeOntologyServer } from "@party-stack/ontology-server";
+import { makeOntologyHttpHandler } from "@party-stack/ontology-server/rpc/http";
+import { Effect } from "effect";
+import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { OwnedBackendService } from "@party-stack/ontology-backend/owned";
+import type { OntologyAuthenticate } from "@party-stack/ontology-server";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { Scope } from "effect";
+
+export const openHandler = Effect.fn("App.openHandler")(function* (options: {
+    readonly owned: OwnedBackendService;
+    readonly ir: OntologyIR;
+    readonly authenticate: OntologyAuthenticate;
+    readonly openForm: (formId: string) => Effect.Effect<OntologyBackendService, BackendError, Scope.Scope>;
+}) {
+    const { owned, ir, authenticate, openForm } = options;
+    const server = yield* makeOntologyServer({
         routes: {
             issues: { kind: "owned", backend: owned, authenticate },
             "forms/:formId": Effect.fnUntraced(function* ({ formId }: Readonly<Record<string, string>>) {
@@ -73,7 +97,9 @@ const server =
         },
         idleRetentionMs: 60_000,
     });
-const handleRequest = yield * makeOntologyHttpHandler(server);
+    const handleRequest = yield* makeOntologyHttpHandler(server);
+    return handleRequest;
+});
 ```
 
 Exact names use a map; parameter patterns are compiled at construction. Acquired
@@ -137,10 +163,22 @@ change feeds.
 ```ts
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { makeOntologyHttpBackend } from "@party-stack/ontology-server/rpc/http";
+import { Effect } from "effect";
+import { FetchHttpClient } from "effect/http";
+import type { ActionRequest } from "@party-stack/ontology-backend";
+import type { Query } from "@party-stack/ontology-storage";
 
-const backend = yield * makeOntologyHttpBackend({ url }).pipe(Effect.provide(FetchHttpClient.layer));
-const snapshot = yield * backend.loadSubset(objectSubset("Issue", query));
-const receipt = yield * backend.applyAction(invocation);
+export const readAndApply = Effect.fn("App.readAndApply")(function* (options: {
+    readonly url: string;
+    readonly query: Query;
+    readonly invocation: ActionRequest;
+}) {
+    const { url, query, invocation } = options;
+    const backend = yield* makeOntologyHttpBackend({ url }).pipe(Effect.provide(FetchHttpClient.layer));
+    const snapshot = yield* backend.loadSubset(objectSubset("Issue", query));
+    const receipt = yield* backend.applyAction(invocation);
+    return { snapshot, receipt };
+});
 ```
 
 Mount the endpoint so it accepts the trailing slash appended by Effect's HTTP
@@ -186,15 +224,24 @@ active requests and streamed responses. `ir.policy` remains the domain permissio
 contract for objects, properties, actions and query functions.
 
 ```ts
-return (
-    yield *
-    makeOntologyServer({
+import { makeOntologyServer } from "@party-stack/ontology-server";
+import { Effect } from "effect";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
+import type { OntologyAuthenticate } from "@party-stack/ontology-server";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+
+export const openOwnedServer = Effect.fn("App.openOwnedServer")(function* (
+    backend: OntologyBackendService,
+    ir: OntologyIR,
+    authenticatedContext: OntologyAuthenticate
+) {
+    return yield* makeOntologyServer({
         kind: "owned",
         backend,
         ir,
         authenticate: (request) => authenticatedContext(request),
-    })
-);
+    });
+});
 ```
 
 `authenticatedContext` is the application's Effect returning values matching the
@@ -249,31 +296,45 @@ partition from those same values.
 A gateway can replace the upstream context definition and policy with its own:
 
 ```ts
-const tokenIR = {
-    ...upstreamIR,
-    context: {
-        type: o.struct({
-            fields: [
-                {
-                    name: "approval",
-                    displayName: "Approval",
-                    type: o.objectReference({ objectType: "PostApproval" }),
-                },
-            ],
-        }),
-        partition: [["approval"]],
-    },
-    policy: tokenPolicy,
-};
-const server =
-    yield *
-    makeOntologyServer({
+import { makeOntologyServer } from "@party-stack/ontology-server";
+import { o } from "@party-stack/ontology-spec";
+import { Effect } from "effect";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
+import type { ReplicaService } from "@party-stack/ontology-replica";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+
+export const openApprovalGateway = Effect.fn("App.openApprovalGateway")(function* (options: {
+    readonly upstreamIR: OntologyIR;
+    readonly tokenPolicy: OntologyIR["policy"];
+    readonly upstream: OntologyBackendService;
+    readonly trustedServiceAccountCache: ReplicaService;
+    readonly verifiedToken: { readonly approvalId: string };
+}) {
+    const { upstreamIR, tokenPolicy, upstream, trustedServiceAccountCache, verifiedToken } = options;
+    const tokenIR = {
+        ...upstreamIR,
+        context: {
+            type: o.struct({
+                fields: [
+                    {
+                        name: "approval",
+                        displayName: "Approval",
+                        type: o.objectReference({ objectType: "PostApproval" }),
+                    },
+                ],
+            }),
+            partition: [["approval"]],
+        },
+        policy: tokenPolicy,
+    };
+    return yield* makeOntologyServer({
         kind: "cached-proxy",
         backend: upstream,
         cache: trustedServiceAccountCache,
         ir: tokenIR,
         context: { approval: verifiedToken.approvalId },
     });
+});
 ```
 
 Each policy `bind` hides its parameter from the public action schema and replaces
@@ -319,18 +380,30 @@ servers use the ordinary committed backend contract instead of speculative state
 `./rpc/http` composes the same contract with Fetch handlers and streaming NDJSON:
 
 ```ts
+import { replicaStateSource } from "@party-stack/ontology-replica/infrastructure";
 import { makeOntologyHttpHandler } from "@party-stack/ontology-server/rpc/http";
+import { Effect } from "effect";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
+import type { ReplicaService } from "@party-stack/ontology-replica";
+import type { OntologyRpcServerOptions } from "@party-stack/ontology-server/rpc";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 
-// Inside the server's scoped Effect program:
-const handleRequest =
-    yield *
-    makeOntologyHttpHandler({
+// Runs in the server's Scope; mount the returned handler at a dedicated HTTP route.
+export const openReplicaHandler = Effect.fn("App.openReplicaHandler")(function* (options: {
+    readonly upstream: OntologyBackendService;
+    readonly replica: ReplicaService;
+    readonly ir: OntologyIR;
+    readonly authorizeRequest: OntologyRpcServerOptions["authorize"];
+}) {
+    const { upstream, replica, ir, authorizeRequest } = options;
+    const handleRequest = yield* makeOntologyHttpHandler({
         backend: upstream,
         source: replicaStateSource(replica),
         ir,
         authorize: authorizeRequest,
     });
-// Mount handleRequest at a dedicated HTTP route.
+    return handleRequest;
+});
 ```
 
 ```ts
@@ -338,14 +411,15 @@ import { makeOntologyHttpClient } from "@party-stack/ontology-server/rpc/http";
 import { Effect } from "effect";
 import { FetchHttpClient } from "effect/http";
 
-// Inside the client's scoped Effect program:
-const client =
-    yield *
-    makeOntologyHttpClient({ url: "https://example.test/ontology/rpc" }).pipe(
+// Runs in the client's Scope.
+export const openClient = Effect.gen(function* () {
+    const client = yield* makeOntologyHttpClient({ url: "https://example.test/ontology/rpc" }).pipe(
         Effect.provide(FetchHttpClient.layer)
     );
-// makeLiveOntology({ ir, client: Effect.succeed(client) }) composes
-// the correct replica path with normal local row and blob storage.
+    // makeLiveOntology({ ir, client: Effect.succeed(client) }) composes
+    // the correct replica path with normal local row and blob storage.
+    return client;
+});
 ```
 
 The HttpClient service supplies authentication/fetch behavior; its Layer constructs
@@ -382,23 +456,31 @@ method envelope. Supply the browser platform Layer on each side:
 ```ts
 import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
 import { makeOntologyWorkerClient } from "@party-stack/ontology-server/rpc/worker";
+import { Effect } from "effect";
 
-// Inside the tab's long-lived scoped program:
-const source = yield * makeOntologyWorkerClient().pipe(Effect.provide(BrowserWorker.layer(() => worker)));
+// Runs in the tab's long-lived Scope.
+export const connectToWorker = Effect.fn("App.connectToWorker")(function* (worker: Worker) {
+    return yield* makeOntologyWorkerClient().pipe(Effect.provide(BrowserWorker.layer(() => worker)));
+});
 ```
 
 ```ts
 import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunner";
 import { serveOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
-import { Fiber } from "effect";
+import { Effect, Fiber } from "effect";
+import type { OntologyRpcServerOptions } from "@party-stack/ontology-server/rpc";
 
-// Inside the owning worker's scoped program:
-const server =
-    yield *
-    serveOntologyWorker({ source, authorize, enableRealtime: true }).pipe(
+// Runs in the owning worker's Scope.
+export const serveWorker = Effect.fn("Worker.serve")(function* (options: {
+    readonly source: OntologyRpcServerOptions["source"];
+    readonly authorize: OntologyRpcServerOptions["authorize"];
+}) {
+    const { source, authorize } = options;
+    const server = yield* serveOntologyWorker({ source, authorize, enableRealtime: true }).pipe(
         Effect.provide(BrowserWorkerRunner.layer)
     );
-yield * Fiber.join(server);
+    yield* Fiber.join(server);
+});
 ```
 
 The server fiber is owned by the calling Scope. Separate port servers may also use

@@ -121,3 +121,16 @@ await ontology.outbox.remove(entry.id);
 By default, failed actions can remain paused for correction. Configure
 `outbox.failureStrategy: "discard-all"` on the owning replica when the app should
 drop failed actions and only display a toast, as issue-tracker does.
+
+A pending action's prediction is replayed whenever newer data arrives. If a replay
+fails, for example because the object it edits changed, only the prediction is
+dropped: the action stays queued and is still sent, and the source decides its
+outcome. `entry.prediction` says whether the action is reflected in what you read:
+
+| `prediction` | Meaning                                                                                        |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| `"applied"`  | Its prediction is visible.                                                                     |
+| `"dropped"`  | Its last replay failed; `entry.predictionError` says why. It is pending but not shown locally. |
+| `"none"`     | It was never predicted here: its visibility is `"confirmed"`, or a parent replica predicts it. |
+
+A UI can mark `"dropped"` entries as "Not reflected locally".

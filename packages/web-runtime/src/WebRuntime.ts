@@ -6,6 +6,7 @@ import { makeMemoryEncryptionKeyring, MemoryBlobBytesStore } from "@party-stack/
 import { Runtime, RuntimeError, RuntimePartition, Runtimes } from "@party-stack/runtime";
 import { Effect, Layer } from "effect";
 import { createWebBrowserAuthentication } from "./createWebBrowserAuthentication.js";
+import { createWebGeolocation } from "./createWebGeolocation.js";
 import { makeNavigatorNetworkConnectivity } from "./NavigatorNetworkConnectivity.js";
 import { OPFSBlobBytesStore } from "./OPFSBlobBytesStore.js";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
@@ -114,6 +115,7 @@ export const make = Effect.fn("WebRuntime.make")(function* (options: WebRuntimeO
                   ? undefined
                   : yield* makeMemoryEncryptionKeyring(),
         browserAuthentication: typeof window !== "undefined" ? createWebBrowserAuthentication() : undefined,
+        geolocation: createWebGeolocation(),
     };
     return yield* Runtime.make(adapter);
 });
@@ -124,6 +126,7 @@ export const layer = (options: WebRuntimeOptions = {}) => Layer.effect(Runtime, 
 export const webRuntime = (options: WebRuntimeOptions = {}) =>
     Runtimes.layer(layer(options), {
         browserAuthentication: typeof window !== "undefined" ? createWebBrowserAuthentication() : undefined,
+        geolocation: createWebGeolocation(),
     });
 
 function deleteDatabase(name: string): Promise<void> {

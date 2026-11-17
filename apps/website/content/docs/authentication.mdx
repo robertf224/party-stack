@@ -160,7 +160,11 @@ export function ProfileSwitcher({
 }
 ```
 
-The popup opens from the click handler. The credential owner performs the token
+The popup opens from the click handler. Some browsers and embedded views block it;
+the sign-in then fails with a `BrowserAuthenticationError` whose reason is
+`PopupBlocked` (the `cause` of the returned error). Retry with
+`browserPresentation: "redirect"`, and complete it on your callback route with
+`oauth.complete(url)`. The credential owner performs the token
 exchange and saves encrypted credentials. These authentication commands execute
 directly through ordinary Connect actions, outside the replica outbox.
 

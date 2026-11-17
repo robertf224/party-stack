@@ -264,7 +264,7 @@ export const actionExpressions = (options: {
                 return yield* failure("EXISTS is not supported in action expressions yet.", "NotImplemented");
             default: {
                 const nodes =
-                    e.kind === "not"
+                    e.kind === "not" || e.kind === "length"
                         ? [e.value.expression]
                         : "expressions" in e.value
                           ? e.value.expressions

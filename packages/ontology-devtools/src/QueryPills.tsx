@@ -27,6 +27,7 @@ export function predicateText(predicate: Predicate, object?: ObjectTypeDef): str
               ? "All rows"
               : "No rows";
     if (predicate.op === "not") return `NOT (${predicateText(predicate.predicate, object)})`;
+    if (predicate.op === "empty") return `${operandText(predicate.left, object)} is empty`;
     if (predicate.op === "in")
         return `${operandText(predicate.left, object)} in [${predicate.values.map((value) => operandText(value)).join(", ")}]`;
     if (

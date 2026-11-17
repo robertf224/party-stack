@@ -151,6 +151,9 @@ This shorthand uses the physical predicate AST. For computations and hierarchica
 correlation, pass a full QueryDocument instead. Locale collations are not exposed. Null and
 undefined use explicit two-valued comparisons (`eq(field, null)` and
 `eq(field, undefined)`); SQL's implicit three-valued null logic is not exposed.
+Comparing a field with null or undefined checks presence, so it accepts any declared
+field, including lists and structs. An empty list is present; `isEmpty(field)` matches
+a present list with no elements. It is evaluated on rows, never from an index.
 
 Orders support multiple fields, asc/desc, offset/limit, and exclusive keyset cursors
 containing every sort value plus the row key. Use `cursorOf(row, query)` to form one.

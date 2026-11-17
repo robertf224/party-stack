@@ -9,7 +9,7 @@ import {
 import { certain, uncertain, resolveLookupReference } from "@party-stack/ontology-spec/utils";
 import { isRelatedFromForeignKeySource, resolveRelatedLink } from "@party-stack/ontology-spec/utils";
 import { Effect, Schema } from "effect";
-import { field, and, eq, ne, not, or, inArray, contains, like, ilike } from "../model.js";
+import { field, and, eq, ne, not, or, inArray, contains, isEmpty, like, ilike } from "../model.js";
 import { validateField } from "../ontology/fields.js";
 import { withObjectSources } from "../ontology/sources.js";
 import { batchCorrelation } from "./batch.js";
@@ -287,7 +287,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 return yield* fail("Non-deterministic expressions require an action execution context.");
             default: {
                 const nodes =
-                    e.kind === "not"
+                    e.kind === "not" || e.kind === "length"
                         ? [e.value.expression]
                         : "expressions" in e.value
                           ? e.value.expressions
@@ -338,7 +338,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             return { exact: false };
         const operand = Effect.fnUntraced(function* (
             node: Expression,
-            multiEntry = false
+            mode: boolean | "presence" | "list" = false
         ): Effect.fn.Return<Operand | { unknown: true }, E> {
             if (
                 node.kind === "getAt" &&
@@ -349,10 +349,11 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 const object = reader.ir.objectTypes.find((t) => t.name === from.source.objectType);
                 const path = field(...node.value.path);
                 // Logical equality also accepts lists/structs; physical scans
-                // accept scalar fields (or scalar lists for CONTAINS) only.
+                // accept scalar fields (or scalar lists for CONTAINS) only. Comparing
+                // any field with a missing value is a presence check, which they support.
                 if (object) {
                     try {
-                        validateField(reader.ir, { name: object.name, definition: object }, path, multiEntry);
+                        validateField(reader.ir, { name: object.name, definition: object }, path, mode);
                     } catch {
                         return { unknown: true };
                     }
@@ -368,7 +369,36 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 return { unknown: true };
             }
         });
-        const a = yield* operand(e.value.left, e.kind === "contains");
+        const missing = (node: Expression) =>
+            node.kind === "literal" && (node.value as { readonly value?: unknown }).value == null;
+        const presence = (other: Expression) =>
+            (e.kind === "eq" || e.kind === "ne") && missing(other) ? ("presence" as const) : false;
+        // `length(list)` compared with 0 or 1 tests for no elements, counting a missing list
+        // as empty. Other uses of `length` have no exact object predicate.
+        if (e.value.left.kind === "length" || ("right" in e.value && e.value.right.kind === "length")) {
+            const flipped = { eq: "eq", ne: "ne", lt: "gt", lte: "gte", gt: "lt", gte: "lte" } as const;
+            if (!(e.kind in flipped)) return { exact: false };
+            const kind = e.kind as keyof typeof flipped;
+            const [size, bound, op] =
+                e.value.left.kind === "length"
+                    ? [e.value.left, e.value.right, kind]
+                    : [e.value.right, e.value.left, flipped[kind]];
+            const n =
+                bound.kind === "literal" ? (bound.value as { readonly value?: unknown }).value : undefined;
+            if (size.kind !== "length" || typeof n !== "number") return { exact: false };
+            const empty =
+                (op === "eq" && n === 0) || (op === "lt" && n === 1) || (op === "lte" && n === 0)
+                    ? true
+                    : (op === "gt" && n === 0) || (op === "gte" && n === 1) || (op === "ne" && n === 0)
+                      ? false
+                      : undefined;
+            if (empty === undefined) return { exact: false };
+            const list = yield* operand(size.value.expression, "list");
+            if (!list || typeof list !== "object" || !("_tag" in list)) return { exact: false };
+            const none = or(eq(list, undefined), isEmpty(list));
+            return { where: empty ? none : not(none), exact: true };
+        }
+        const a = yield* operand(e.value.left, e.kind === "contains" || presence(e.value.right));
         if (a && typeof a === "object" && "unknown" in a) return { exact: false };
         if (e.kind === "in") {
             const b = yield* evaluate(e.value.right, locals);
@@ -380,7 +410,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             }
             return { where: inArray(a as Operand, b.value as Scalar[]), exact: true };
         }
-        const b = yield* operand(e.value.right);
+        const b = yield* operand(e.value.right, presence(e.value.left));
         if (b && typeof b === "object" && "unknown" in b) return { exact: false };
         if (e.kind === "eq" || e.kind === "ne")
             return {

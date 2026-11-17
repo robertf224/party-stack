@@ -596,3 +596,71 @@ it("a repeated login refreshes one connection while trusted ownership properties
     expect(third.id).not.toBe(first.id);
     expect(await run(f.store.load("OAuthConnection", {}))).toHaveLength(2);
 });
+
+describe("native OAuth redirects", () => {
+    const registered = "com.example.app://auth/callback";
+    const configure = async (f: Awaited<ReturnType<typeof fixture>>, redirectUrl?: string) => {
+        const application = (await run(f.store.get("OAuthApplication", "application")))!;
+        await run(f.store.put("OAuthApplication", { ...application, redirectUrl }));
+    };
+    const start = (f: Awaited<ReturnType<typeof fixture>>, redirectUrl: string) =>
+        run(
+            Effect.result(
+                f.connect.begin({ applicationId: "application", principalId: "principal", redirectUrl })
+            )
+        );
+    const finish = (f: Awaited<ReturnType<typeof fixture>>, callbackUrl: string) =>
+        run(Effect.result(f.connect.complete({ principalId: "principal", callbackUrl })));
+
+    it("completes PKCE through the application's registered custom-scheme callback", async () => {
+        const f = await fixture();
+        await configure(f, registered);
+        const started = await start(f, registered);
+        expect(started._tag).toBe("Success");
+        const id = started._tag === "Success" ? started.success.id : "";
+        const completed = await finish(f, `${registered}?state=${id}&code=secret-code`);
+        expect(completed._tag).toBe("Success");
+        expect(f.exchange).toHaveBeenCalledTimes(1);
+        // A completed attempt cannot be exchanged again.
+        expect((await finish(f, `${registered}?state=${id}&code=other`))._tag).toBe("Success");
+        expect(f.exchange).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects custom schemes that the trusted registration does not declare", async () => {
+        const f = await fixture();
+        expect(await start(f, registered)).toMatchObject({ _tag: "Failure" });
+        await configure(f, registered);
+        for (const redirectUrl of [
+            "com.example.other://auth/callback",
+            "javascript://auth/callback",
+            "http://app.example/callback",
+            `${registered}#fragment`,
+        ])
+            expect(await start(f, redirectUrl)).toMatchObject({ _tag: "Failure" });
+        await configure(f, "javascript://auth/callback");
+        expect(await start(f, "javascript://auth/callback")).toMatchObject({ _tag: "Failure" });
+        await configure(f, "https://app.example/connect/callback");
+        expect(await start(f, "https://app.example/connect/callback")).toMatchObject({ _tag: "Success" });
+        expect(await start(f, "http://localhost:3000/callback")).toMatchObject({ _tag: "Failure" });
+    });
+
+    it("matches the callback's scheme, host and path to the accepted redirect", async () => {
+        const f = await fixture();
+        await configure(f, registered);
+        const started = await start(f, registered);
+        const id = started._tag === "Success" ? started.success.id : "";
+        for (const callbackUrl of [
+            `com.example.other://auth/callback?state=${id}&code=c`,
+            `com.example.app://other/callback?state=${id}&code=c`,
+            `com.example.app://auth/other?state=${id}&code=c`,
+            `com.example.app://user@auth/callback?state=${id}&code=c`,
+            "not a url",
+        ])
+            expect(await finish(f, callbackUrl)).toMatchObject({
+                _tag: "Failure",
+                failure: { kind: "InvalidAttempt" },
+            });
+        expect(f.exchange).not.toHaveBeenCalled();
+        expect((await finish(f, `${registered}?state=${id}&code=c`))._tag).toBe("Success");
+    });
+});

@@ -125,10 +125,48 @@ export const collectByteBlob = Effect.fnUntraced(function* (
 export const digestBytesSync = (bytes: Uint8Array): string =>
     Array.from(sha256(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
 
+/** A platform SHA-256 over complete bytes, such as Expo Crypto's native digest. */
+export type NativeSha256 = (bytes: Uint8Array<ArrayBuffer>) => Promise<ArrayBuffer | Uint8Array>;
+let nativeSha256: NativeSha256 | undefined;
+/** Bound native one-shot hashing; larger or longer inputs keep streaming JavaScript hashing. */
+const nativeDigestLimit = 8 * 1024 * 1024;
+/** Install a platform digest. Portable JavaScript SHA-256 is far slower on mobile
+ * engines (hundreds of milliseconds per MiB on Hermes). Platform runtimes call
+ * this from their polyfill; omit it to restore the portable implementation.
+ */
+export const configureNativeSha256 = (digest: NativeSha256 | undefined) => {
+    nativeSha256 = digest;
+};
+const hex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+
 export const digestBytes = Effect.fnUntraced(function* (input: ByteInput) {
-    const hash = sha256.create();
-    yield* Stream.runForEach(byteChunks(input), (chunk) => Effect.sync(() => hash.update(chunk)));
-    return Array.from(hash.digest(), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const native = nativeSha256;
+    const source = byteSource(input);
+    let hash = !native || (source.size ?? 0) > nativeDigestLimit ? sha256.create() : undefined;
+    let parts: Uint8Array[] = [];
+    let size = 0;
+    yield* Stream.runForEach(byteChunks(source), (chunk) =>
+        Effect.sync(() => {
+            if (hash) return hash.update(chunk);
+            size += chunk.length;
+            if (size <= nativeDigestLimit) return parts.push(chunk);
+            // An unknown-size stream exceeded the bound: continue incrementally.
+            hash = sha256.create();
+            for (const part of parts) hash.update(part);
+            parts = [];
+            hash.update(chunk);
+        })
+    );
+    if (hash) return hex(hash.digest());
+    if (!native) return hex(sha256.create().digest());
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const part of parts) {
+        bytes.set(part, offset);
+        offset += part.length;
+    }
+    const digest = yield* Effect.tryPromise(() => native(bytes));
+    return hex(new Uint8Array(digest));
 });
 
 /** Portable fallback until a byte driver/provider exposes native range reads. */

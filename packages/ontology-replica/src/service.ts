@@ -21,7 +21,7 @@ import type { PinOptions, PinStatus } from "./pins.js";
 import type { ObjectCachePolicy, ObjectCacheSweepOptions } from "./policies.js";
 import type { ReplicaStatus } from "./status.js";
 import type { ReplicaRowsBatch } from "./visible.js";
-import type { ConnectionMonitor } from "@party-stack/connect";
+import type { ConnectionLifecycle, ConnectionMonitor } from "@party-stack/connect";
 import type {
     ActionReceipt,
     ValidationReport,
@@ -54,6 +54,13 @@ export interface ReplicaConfiguration {
         readonly failureStrategy?: "pause" | "discard-all";
         /** Completed results only. Pending intent never expires. Default seven days. */
         readonly resultRetentionMs?: number;
+        /** Where optimistic actions are predicted. `local` (default) runs the action here
+         * on enqueue and on every rebase. `source` is only valid with a protocol source:
+         * this replica neither resolves nor predicts its actions; it stores and forwards
+         * them with their requested visibility, and the source resolves parameter defaults,
+         * predicts against its own data, and replicates the result back. Use it for
+         * embedded children that hold only the rows they display. */
+        readonly prediction?: "local" | "source";
     };
     /** Only used when this replica serves speculative children. */
     readonly clientSessions?: ClientPolicy;
@@ -79,7 +86,10 @@ export type ReplicaOptions = ReplicaConfiguration & {
     readonly encryptionKeyring?: EncryptionKeyringService;
     readonly network?: NetworkConnectivity;
     readonly capacity?: ResourceCapacity;
-    readonly authentication?: ConnectionMonitor;
+    /** The connection this replica syncs through. Pass Connect's ConnectionLifecycle
+     * (ConnectionAccess.authentication) so a watch the source rejects can renew its
+     * credential; a plain monitor only waits for the connection to change. */
+    readonly authentication?: ConnectionMonitor | ConnectionLifecycle;
 } & (
         | { readonly backend: OntologyBackendService; readonly source?: never }
         | { readonly source: OntologySource; readonly backend?: OntologyBackendService }
@@ -179,6 +189,10 @@ export interface ReplicaService extends ReplicaReads {
     };
     /** Explicit bounded checkpoint, including existing pending actions in one-shot mode. */
     readonly syncOnce: Effect.Effect<void, BackendError>;
+    /** syncOnce that first marks demanded data stale, so it is reloaded even when a
+     * realtime watch reports it current. For user-initiated refresh (pull to refresh);
+     * it costs a reload of every demanded subset. */
+    readonly revalidate: Effect.Effect<void, BackendError>;
     readonly collectGarbage: (options?: ObjectCacheSweepOptions) => Effect.Effect<number, BackendError>;
 }
 /** Pin operations may be delegated to the device's persistent replica owner. */
@@ -368,7 +382,11 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         connection: options.authentication,
         clients: options.clientSessions,
         resultRetentionMs: options.outbox?.resultRetentionMs,
-        outbox: { ...options.outbox?.retryPolicy, failureStrategy: options.outbox?.failureStrategy },
+        outbox: {
+            ...options.outbox?.retryPolicy,
+            failureStrategy: options.outbox?.failureStrategy,
+            prediction: options.outbox?.prediction,
+        },
         execute: (tx, request, settings) =>
             executeAction({
                 ir: options.ir,
@@ -528,6 +546,14 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
             })
         );
     });
+    const checkpoint = engine.syncOnce.pipe(
+        Effect.andThen(pin.refresh),
+        Effect.andThen(
+            Effect.suspend(() =>
+                pinManagerOpened ? Effect.flatMap(pinManager, (manager) => manager.refresh) : Effect.void
+            )
+        )
+    );
     const service: ReplicaService & { readonly [kernel]: KernelService } = {
         [kernel]: engine,
         ...reads(false),
@@ -666,14 +692,8 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                 Stream.mapEffect(() => status)
             ),
         },
-        syncOnce: engine.syncOnce.pipe(
-            Effect.andThen(pin.refresh),
-            Effect.andThen(
-                Effect.suspend(() =>
-                    pinManagerOpened ? Effect.flatMap(pinManager, (manager) => manager.refresh) : Effect.void
-                )
-            )
-        ),
+        syncOnce: checkpoint,
+        revalidate: Effect.andThen(engine.markDemandedStale, checkpoint),
         collectGarbage: engine.collectGarbage,
     } satisfies ReplicaService & { readonly [kernel]: KernelService };
     return service;

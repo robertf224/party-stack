@@ -34,6 +34,13 @@ export interface PendingAction {
     readonly failure?: BackendError["kind"];
     readonly touchedTypes: readonly string[];
     readonly submission?: { readonly clientId: string; readonly sequence: number };
+    /** Whether the local prediction is reflected in visible state. `dropped` means the
+     * last replay failed: the action is still pending and sent, but not reflected locally.
+     * `none` means it was never predicted here (confirmed visibility or a source prediction).
+     * Absent on entries stored before this field existed; treat as `optimistic ? "applied" : "none"`. */
+    readonly prediction?: "applied" | "dropped" | "none";
+    readonly predictionFailure?: BackendError["kind"];
+    readonly predictionMessage?: string;
 }
 
 /** Consistent logical state. Selected views limit membership, while authorization
@@ -187,6 +194,9 @@ export const PendingActionSchema = Schema.Struct({
     submission: Schema.optional(
         Schema.Struct({ clientId: Schema.NonEmptyString, sequence: PositiveCounter })
     ),
+    prediction: Schema.optional(Schema.Literals(["applied", "dropped", "none"])),
+    predictionFailure: Schema.optional(BackendErrorKindSchema),
+    predictionMessage: Schema.optional(Schema.String),
 });
 export const CompiledSubsetSchema = Schema.Struct({
     objectType: Schema.NonEmptyString,

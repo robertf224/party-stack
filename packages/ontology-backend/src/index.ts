@@ -219,10 +219,23 @@ export interface BackendEncryptedValues {
         value: Encrypted<unknown>
     ) => Effect.Effect<import("./encrypted.js").DecryptedValue, BackendError>;
 }
+/** One object a watch reports, in the watched subset's object type.
+ * - `put`: the object is now in the subset with this complete value.
+ * - `exit`: the object left the subset. It may have changed or been deleted; the
+ *   replica reads it back by primary key to tell which.
+ * - `delete`: the object no longer exists anywhere.
+ */
+export type SubsetWatchChange =
+    | { readonly kind: "put"; readonly key: Key; readonly value: Record<string, unknown> }
+    | { readonly kind: "exit"; readonly key: Key }
+    | { readonly kind: "delete"; readonly key: Key };
 /** A reset requests repair after starting/restarting a watch; it does not
  * assert that data changed. Ordinary void hints always invalidate coverage.
+ * `changes` describes exactly what changed, so the replica can apply it without
+ * reloading the subset. Report only what is certain: a `put` must carry every
+ * property; anything less precise must be an invalidation hint instead.
  */
-export type SubsetWatchEvent = void | "reset";
+export type SubsetWatchEvent = void | "reset" | { readonly changes: readonly SubsetWatchChange[] };
 
 export interface OntologyBackendService {
     readonly name: string;

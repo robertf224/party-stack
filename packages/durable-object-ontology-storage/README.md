@@ -18,27 +18,32 @@ The root export provides:
 For example, inside a scoped Effect with Alchemy's RuntimeContext available:
 
 ```ts
-const bytes =
-    yield *
-    makeR2Bytes({
-        bucket, // Alchemy ReadWriteBucketClient
-        installationId: state.id.toString(),
-        ontologyId: "primary",
-    });
-const storage =
-    yield *
-    makeDurableObjectOntologyStorage({
-        storage: state.storage,
+import { makeDurableObjectOntologyStorage, makeR2Bytes } from "@party-stack/durable-object-ontology-storage";
+import { makeStorageOntologyBackend } from "@party-stack/ontology";
+import { Effect } from "effect";
+import type { DurableObjectSQLiteStorage } from "@party-stack/durable-object-ontology-storage";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { ReadWriteBucketClient } from "alchemy/Cloudflare/R2/ReadWriteBucket";
+
+export const openPrimaryBackend = Effect.fn("Project.openPrimaryBackend")(function* (options: {
+    readonly ir: OntologyIR;
+    readonly bucket: ReadWriteBucketClient;
+    readonly storage: DurableObjectSQLiteStorage; // state.storage
+    readonly installationId: string; // state.id.toString()
+}) {
+    const { ir, bucket, installationId } = options;
+    const bytes = yield* makeR2Bytes({ bucket, installationId, ontologyId: "primary" });
+    const storage = yield* makeDurableObjectOntologyStorage({
+        storage: options.storage,
         ontologyId: "primary",
         bytes,
     });
-const backend =
-    yield *
-    makeStorageOntologyBackend({
+    return yield* makeStorageOntologyBackend({
         ir,
         namespace: "primary",
         ...storage,
     });
+});
 ```
 
 Supply another `BlobBytes` service to use another byte store. The SQL and R2

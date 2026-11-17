@@ -24,9 +24,21 @@ encryption keys; a persistent browser runtime must opt into persistent key stora
 `ConnectManager.layer(options)` provides the same service through an Effect Layer.
 
 ```ts
-const connect =
-    yield *
-    makeConnectManager({
+import { makeConnectManager } from "@party-stack/connect";
+import { makeFoundryBackend, makeFoundryServiceConnector } from "@party-stack/foundry-ontology";
+import { Effect } from "effect";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+
+// Requires Runtime and Scope.
+export const openFoundryBackend = Effect.fn("App.openFoundryBackend")(function* (options: {
+    readonly clientId: string;
+    readonly redirectUrl: string;
+    readonly connectionId: string;
+    readonly ontologyId: string;
+    readonly ir: OntologyIR;
+}) {
+    const { clientId, redirectUrl, connectionId, ontologyId, ir } = options;
+    const connect = yield* makeConnectManager({
         services: [
             {
                 connector: makeFoundryServiceConnector(),
@@ -47,23 +59,33 @@ const connect =
             },
         ],
     });
-
-const access = yield * connect.connections.acquire({ objectType: "OAuthConnection", id: connectionId });
-const backend =
-    yield *
-    makeFoundryBackend({
+    const access = yield* connect.connections.acquire({ objectType: "OAuthConnection", id: connectionId });
+    return yield* makeFoundryBackend({
         baseUrl: access.serviceInstance.instanceUrl,
         ontologyId,
         ir,
         context: { userId: access.userId },
         egress: access.egress,
     });
+});
 ```
 
 The manager holds scoped authenticated I/O, watches credential changes and
 releases sockets/requests when their owner closes. Each outgoing request uses the
 current credential. A response using old credentials cannot pause a newer login.
 It does not persist a second connection inventory.
+
+OAuth access tokens are renewed a minute before they expire. When a service still
+rejects one (a connector reports it as `Unauthenticated`, for example through
+`withHttpAuthenticationErrors`), Connect renews it once, however many requests were
+rejected, and sends a request without a body again. A request with a body fails with
+a retryable error after the renewal, for the outbox or sync to retry. If the
+credential cannot be renewed, the connection moves to `needs-auth`. Connectors never
+refresh credentials themselves.
+
+Pass `access.authentication` to the replica that syncs the connection. Besides the
+connection state, it can renew a credential that a source rejects after egress has
+returned, such as a websocket closed when its token expires.
 
 Only an instance URL and each OAuth application's client configuration are required.
 Instance IDs default to a stable service + canonical URL key; application IDs default
@@ -150,12 +172,17 @@ so `server.forget(name)` works after credentials expire.
 For a private SharedWorker, `connectDeviceRoute(manager)` returns its route binding:
 
 ```ts
-const server =
-    yield *
-    makeOntologyServer({
+import { ConnectManager, connectDeviceRoute } from "@party-stack/connect";
+import { makeOntologyServer } from "@party-stack/ontology-server";
+import { Effect } from "effect";
+
+export const openDeviceServer = Effect.gen(function* () {
+    const manager = yield* ConnectManager;
+    return yield* makeOntologyServer({
         enableRealtime: true,
         routes: { connect: connectDeviceRoute(manager) },
     });
+});
 ```
 
 This convenience uses `connectPublicOntologyIR`, the device-local inventory policy.

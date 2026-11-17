@@ -73,7 +73,8 @@ export const serveOntologyWorker = Effect.fn("OntologyServer.serveWorker")(funct
                 Effect.flatMap(Deferred.await(ready), (server) => server.invalidate(target)),
             forget: (target) => Effect.flatMap(Deferred.await(ready), (server) => server.forget(target)),
             partitions: Effect.flatMap(Deferred.await(ready), (server) => server.partitions),
-            syncOnce: (target) => Effect.flatMap(Deferred.await(ready), (server) => server.syncOnce(target)),
+            syncOnce: (target, settings) =>
+                Effect.flatMap(Deferred.await(ready), (server) => server.syncOnce(target, settings)),
         };
     } else if ("_tag" in options) router = options;
     return yield* RpcServer.make(OntologyRpcs).pipe(

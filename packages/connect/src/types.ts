@@ -38,3 +38,16 @@ export interface ConnectionMonitor {
     /** Includes the current state, followed by connection lifecycle changes. */
     readonly changes: Stream.Stream<ConnectionState>;
 }
+
+/** What a replica that owns this connection's sync needs beyond the read-only monitor
+ * apps show: renewing a credential that was rejected after egress returned, such as
+ * a websocket the provider closes when its token expires. */
+export interface ConnectionLifecycle extends ConnectionMonitor {
+    /** Changes whenever the saved credential changes, including a renewal. */
+    readonly credentialVersion: number;
+    /** Renew the credential that was current at `version`. Does nothing when a newer
+     * credential already replaced it. A renewal publishes a new active state; a
+     * credential that cannot be renewed moves the connection to `needs-auth`. Fails
+     * only for a retryable problem, such as the provider being unreachable. */
+    readonly refresh: (version: number) => Effect.Effect<void, BackendError>;
+}

@@ -252,6 +252,12 @@ export function analyzeQueryDocument(
             case "not":
                 expect(child(e.value.expression, "expression"), "boolean", path);
                 return boolean;
+            case "length": {
+                const value = resolve(child(e.value.expression, "expression"));
+                if (!["list", "string", "unknown"].includes(value.kind))
+                    issue("LENGTH requires a list or string operand.", path);
+                return o.integer({});
+            }
             case "and":
             case "or":
                 e.value.expressions.forEach((v, i) =>

@@ -107,6 +107,61 @@ const guardUrl = (value: string) =>
         catch: () => connectError("Configuration", "OAuth URLs require HTTPS (or HTTP on localhost)."),
     });
 
+// Schemes that can execute, embed or read local content are never redirect targets.
+const unsafeRedirectSchemes = new Set([
+    "about:",
+    "blob:",
+    "data:",
+    "file:",
+    "filesystem:",
+    "ftp:",
+    "javascript:",
+    "vbscript:",
+    "ws:",
+    "wss:",
+]);
+const nativeRedirect = (url: URL) =>
+    /^[a-z][a-z0-9+.-]*:$/.test(url.protocol) &&
+    url.protocol !== "http:" &&
+    url.protocol !== "https:" &&
+    !unsafeRedirectSchemes.has(url.protocol) &&
+    !url.username &&
+    !url.password &&
+    !url.port &&
+    !url.hash;
+/** Network redirects keep the HTTPS policy. A native application may instead
+ * receive its callback at a custom scheme, but only at the exact redirect its
+ * trusted OAuth application registration declares; callers cannot introduce one.
+ */
+const guardRedirectUrl = (value: string, registered: string | undefined) =>
+    Effect.try({
+        try: () => {
+            const url = new URL(value);
+            if (
+                url.protocol === "https:" ||
+                (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
+            )
+                return url;
+            if (registered !== undefined && value === registered && nativeRedirect(url)) return url;
+            throw new Error();
+        },
+        catch: () =>
+            connectError(
+                "Configuration",
+                "OAuth redirect URLs require HTTPS, HTTP on localhost, or the application's registered native redirect."
+            ),
+    });
+/** Callback URLs are parsed before the attempt is known; its accepted redirect
+ * then decides the exact scheme, host and path. URL.origin is "null" for custom
+ * schemes, so compare those parts explicitly.
+ */
+const sameRedirectTarget = (expected: URL, callback: URL) =>
+    expected.protocol === callback.protocol &&
+    expected.host === callback.host &&
+    expected.pathname === callback.pathname &&
+    expected.username === callback.username &&
+    expected.password === callback.password;
+
 /** One credential authority, usable by both device and HTTP entry points. */
 export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effect<OAuthAuthorityService> =>
     Effect.sync(() => {
@@ -280,9 +335,9 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                 return connection;
             }),
             begin: Effect.fn("Connect.begin")(function* (input: BeginAuthorization) {
-                yield* guardUrl(input.redirectUrl);
                 if (input.returnUrl) yield* guardUrl(input.returnUrl);
                 const { application, oauth } = yield* configured(input.applicationId);
+                yield* guardRedirectUrl(input.redirectUrl, application.redirectUrl);
                 if (application.redirectUrl && input.redirectUrl !== application.redirectUrl)
                     return yield* connectError(
                         "Forbidden",
@@ -336,7 +391,10 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                 callbackUrl: string;
                 principalId?: string;
             }) {
-                const callback = yield* guardUrl(input.callbackUrl);
+                const callback = yield* Effect.try({
+                    try: () => new URL(input.callbackUrl),
+                    catch: () => connectError("InvalidAttempt", "Authorization callback URL is invalid."),
+                });
                 const id = callback.searchParams.get("state");
                 if (!id)
                     return yield* connectError("InvalidAttempt", "Authorization attempt is unavailable.");
@@ -353,7 +411,7 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                                 "Authorization attempt is unavailable."
                             );
                         const expected = new URL(current.redirectUrl);
-                        if (expected.origin !== callback.origin || expected.pathname !== callback.pathname)
+                        if (!sameRedirectTarget(expected, callback))
                             return yield* connectError(
                                 "InvalidAttempt",
                                 "Authorization callback URL does not match."

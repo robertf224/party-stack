@@ -40,6 +40,7 @@ export const queryExpressionVariants = [
     ].map((name) => ({ name, type: ref("BinaryExpression") })),
     ...["and", "or", "concat", "coalesce"].map((name) => ({ name, type: ref("VariadicExpression") })),
     { name: "not", type: ref("NotExpression") },
+    { name: "length", type: ref("LengthExpression") },
     { name: "case", type: ref("CaseExpression") },
     { name: "exists", type: ref("ExistsExpression") },
 ];
@@ -56,6 +57,11 @@ export const queryTypes: NamedTypeDef[] = [
     struct("NotExpression", "Negates a boolean expression, preserving evaluation uncertainty.", [
         field("expression", ref("Expression")),
     ]),
+    struct(
+        "LengthExpression",
+        "The number of elements in a list or UTF-16 code units in a string; a missing value has length 0.",
+        [field("expression", ref("Expression"))]
+    ),
     struct("CaseBranch", "A condition and its scalar result; branches are tested in order.", [
         field("condition", ref("Expression")),
         field("result", ref("Expression")),

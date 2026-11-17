@@ -20,7 +20,7 @@ function encodedValidator(query: Query): void {
         else {
             operand(value.left);
             if (value.op === "in") for (const member of value.values) scalarKey(member);
-            else operand(value.right);
+            else if (value.op !== "empty") operand(value.right);
         }
     };
     if (query.where) predicate(query.where);

@@ -86,7 +86,7 @@ For a custom role, provide the DO SQLite client to the shared SQL tables and
 byte stores, then acquire a cache in that runtime. Inside your Durable Object's
 owned Effect Scope:
 
-```ts
+```ts title="src/cached-proxy.ts"
 import { sqlLayer } from "@party-stack/durable-object-ontology-storage";
 import { makeReplica } from "@party-stack/ontology-replica";
 import { makeOntologyServer } from "@party-stack/ontology-server";
@@ -96,33 +96,36 @@ import { make as makeTables } from "@party-stack/sql-ontology-storage/tables";
 import { makeBytes } from "@party-stack/sql-ontology-storage/sqlite";
 import { Effect } from "effect";
 import { SqlClient } from "effect/sql";
+import { authenticateRequest } from "./authentication";
+import { ir } from "./ontology";
+import type { DurableObjectSQLiteStorage } from "@party-stack/durable-object-ontology-storage";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
 
-const runtime =
-    yield *
-    Effect.gen(function* () {
+// Call with the Durable Object's `state.storage`; the returned handler serves its requests.
+export const makeCachedProxy = Effect.fn("Project.makeCachedProxy")(function* (
+    storage: DurableObjectSQLiteStorage,
+    upstreamBackend: OntologyBackendService
+) {
+    const runtime = yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         return yield* Runtime.make({
             tables: yield* makeTables(),
             blobBytes: yield* makeBytes(sql),
         });
     }).pipe(
-        Effect.provide(sqlLayer(state.storage)),
+        Effect.provide(sqlLayer(storage)),
         Effect.provideService(RuntimePartition, {
             owner: "project",
             namespace: "project-cache",
         })
     );
-const cache =
-    yield *
-    makeReplica({
+    const cache = yield* makeReplica({
         ir,
         backend: upstreamBackend,
         live: false,
         cache: { objects: false },
     }).pipe(Effect.provideService(Runtime, runtime));
-const server =
-    yield *
-    makeOntologyServer({
+    const server = yield* makeOntologyServer({
         enableRealtime: true,
         kind: "cached-proxy",
         cache,
@@ -130,7 +133,8 @@ const server =
         ir,
         authenticate: authenticateRequest,
     });
-const handler = yield * makeOntologyHttpHandler(server);
+    return yield* makeOntologyHttpHandler(server);
+});
 ```
 
 Here `upstreamBackend` is an acquired adapter, such as a Foundry backend. This is

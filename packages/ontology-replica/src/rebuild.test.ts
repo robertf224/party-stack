@@ -229,7 +229,11 @@ test("a durable rebuild marker resumes without repeating a committed reset or de
                     bootstrap: replacement,
                     live: false,
                 });
-                expect(yield* runtime.tables.get(table("outbox"), "pending")).toEqual(pending);
+                // Opening replays the pending intent, which records its prediction status.
+                expect(yield* runtime.tables.get(table("outbox"), "pending")).toEqual({
+                    ...pending,
+                    prediction: "none",
+                });
                 expect(yield* reopened.replica.confirmed.get("Item", "new")).toEqual({
                     id: "new",
                     count: "after-reset",

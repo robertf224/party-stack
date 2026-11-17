@@ -25,7 +25,8 @@ function independent(expression: Expression, binding: string): boolean {
     if (expression.kind === "getAt") return independent(expression.value.source, binding);
     if (expression.kind === "and" || expression.kind === "or")
         return expression.value.expressions.every((value) => independent(value, binding));
-    if (expression.kind === "not") return independent(expression.value.expression, binding);
+    if (expression.kind === "not" || expression.kind === "length")
+        return independent(expression.value.expression, binding);
     if ("left" in expression.value && "right" in expression.value)
         return independent(expression.value.left, binding) && independent(expression.value.right, binding);
     return false;

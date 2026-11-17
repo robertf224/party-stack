@@ -123,9 +123,22 @@ stream**. Acquisition must register and buffer notifications before it completes
 then the replica can read a snapshot without missing a change in between.
 
 Emit a hint when the subset might have changed. On reconnect, emit `"reset"` or
-fail the stream so a fresh snapshot is acquired. Release subscriptions when the
+fail the stream so a fresh snapshot is acquired. When the source says exactly what
+changed, emit `{ changes }` instead, and the replica applies it without reloading:
+
+- `{ kind: "put", key, value }`: the object is now in the subset; `value` must be
+  the complete row, as a snapshot would return it.
+- `{ kind: "exit", key }`: the object left the subset. It may have changed or been
+  deleted; the replica reads it back by primary key to find out.
+- `{ kind: "delete", key }`: the object no longer exists.
+
+Report only what is certain; emit a plain hint for anything else. Release subscriptions when the
 Effect Scope closes. If the API has no watch, recommend polling through
 `refresh: () => ({ pollIntervalMs: 30_000 })`; the replica owns scheduling.
+
+When the source rejects the credential, fail with `Unauthenticated`, including on a
+watch whose stream is already open. The replica asks the connection to renew the
+credential and reopens the watch; Connect renews and retries HTTP requests itself.
 
 For a durable source journal, implement `changes.pull` and optionally
 `changes.watch`. A journal cursor must agree with the snapshot it accompanies.

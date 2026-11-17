@@ -35,7 +35,7 @@ describe("createWebBrowserAuthentication", () => {
         );
         expect(result).toMatchObject({
             _tag: "Failure",
-            failure: { reason: "Platform", message: "The authentication popup was blocked." },
+            failure: { reason: "PopupBlocked", message: "The authentication popup was blocked." },
         });
         expect(redirect).not.toHaveBeenCalled();
     });

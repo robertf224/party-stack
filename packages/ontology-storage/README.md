@@ -39,7 +39,14 @@ Use the `sql-ontology-storage` or `indexeddb-ontology-storage` layer for persist
 When definitions arrive at runtime, omit `schemas` to derive codecs from the IR:
 
 ```ts
-const model = yield * makeStorageModel({ namespace: "my-app", ir });
+import { makeStorageModel } from "@party-stack/ontology-storage";
+import { Effect } from "effect";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+
+// `ir` arrives at runtime, for example from a server's Describe.
+export const openModel = Effect.fn("App.openModel")(function* (ir: OntologyIR) {
+    return yield* makeStorageModel({ namespace: "my-app", ir });
+});
 ```
 
 Runtime-derived codecs use the same portable/Effect value conversion as generated
@@ -78,6 +85,8 @@ computed fields, conditional selections and pagination:
 ```ts
 import { o } from "@party-stack/ontology-spec";
 import { eq, field, input, selectField, sub } from "@party-stack/ontology-spec/query";
+import { OntologyStorage } from "@party-stack/ontology-storage";
+import { Effect } from "effect";
 
 const document = {
     inputs: [{ name: "projectId", displayName: "Project", type: o.string({}) }],
@@ -90,8 +99,12 @@ const document = {
         }),
     ],
 };
-const result = yield * storage.query(document, { inputs: { projectId: "project-1" } });
-// result.tasks contains the selected projections.
+export const projectTasks = Effect.gen(function* () {
+    const storage = yield* OntologyStorage;
+    const result = yield* storage.query(document, { inputs: { projectId: "project-1" } });
+    // result.tasks contains the selected projections.
+    return result;
+});
 ```
 
 OntologyStorage supplies object definitions, relationships and source bindings.
@@ -137,14 +150,25 @@ still lasts for the full build; this is not an online or resumable migration.
 ## Transactions and schema identity
 
 ```ts
-const storage = yield * OntologyStorage;
-yield *
-    storage.transaction((tx) =>
+import { OntologyStorage } from "@party-stack/ontology-storage";
+import { Effect } from "effect";
+import type { Task, User } from "./generated/effect.js";
+import type { StorageModel } from "@party-stack/ontology-storage";
+
+// `model` is the same model the OntologyStorage layer was built from.
+export const saveAssignment = Effect.fn("App.saveAssignment")(function* (
+    model: StorageModel,
+    user: User,
+    task: Task
+) {
+    const storage = yield* OntologyStorage;
+    yield* storage.transaction((tx) =>
         Effect.gen(function* () {
             yield* tx.put(model.objects.User, user);
             yield* tx.put(model.objects.Task, task);
         })
     );
+});
 ```
 
 Both callback transactions and `effect.pipe(storage.withTransaction)` share the

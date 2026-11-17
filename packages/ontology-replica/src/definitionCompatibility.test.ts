@@ -1,5 +1,6 @@
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o } from "@party-stack/ontology-spec";
+import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Exit, Scope } from "effect";
@@ -95,6 +96,44 @@ test("cosmetic definition updates preserve rows, coverage, pin retention and que
                 const preserved = yield* makeReplica({ ...options, ir: definition("Newest") });
                 expect((yield* preserved.pending).map((entry) => entry.invocation.id)).toEqual(["offline"]);
                 expect((yield* preserved.loadSubset("Item"))[0]?.value.count).toBe(2);
+            })
+        )
+    );
+});
+
+test("reopened replicas keep the full definition signature that app storage migrations compare", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const ir = definition("Persisted");
+                const tables = yield* Memory.make();
+                const backend = yield* makeOwnedBackend({
+                    ir,
+                    namespace: "persisted-source",
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                const options: ReplicaOptions = {
+                    ir,
+                    tables,
+                    namespace: "persisted-cache",
+                    backend,
+                    startSync: false,
+                    execute: () => Effect.void,
+                };
+                const head = Table.make<{ signature: string }>({
+                    name: JSON.stringify(["replica", "persisted-cache", "position"]),
+                });
+                // Applications such as Notes migrate this head by comparing it with
+                // ontologyDefinitionSignature before the replica opens.
+                for (let launch = 0; launch < 3; launch++) {
+                    const scope = yield* Scope.fork(yield* Effect.scope);
+                    yield* Scope.provide(makeReplica(options), scope);
+                    yield* Scope.close(scope, Exit.void);
+                    expect((yield* tables.get(head, "head"))!.signature).toBe(
+                        ontologyDefinitionSignature(ir)
+                    );
+                }
             })
         )
     );

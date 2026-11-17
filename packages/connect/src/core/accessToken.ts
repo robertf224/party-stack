@@ -4,6 +4,8 @@ import * as q from "@party-stack/ontology-spec/query";
 import { Clock, Effect, Schema } from "effect";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 
+/** Renew an access token this long before it expires. */
+export const accessTokenRenewalWindowMs = 60_000;
 const State = Schema.Struct({
     status: Schema.Literals(["active", "needs-auth", "inactive"]),
     accessToken: Schema.optional(EncryptedValueSchema),
@@ -61,10 +63,12 @@ export const connectionAccessToken = Effect.fn("Connect.accessToken")(function* 
     let current = yield* read();
     const now = yield* Clock.currentTimeMillis;
     // An expired refresh token does not invalidate an otherwise usable access token.
+    // Renew a minute early so a token is not sent moments before it expires.
     if (
         !current.accessToken ||
         current.status === "inactive" ||
-        (current.accessTokenExpiresAt && current.accessTokenExpiresAt.epochMilliseconds <= now + 5_000)
+        (current.accessTokenExpiresAt &&
+            current.accessTokenExpiresAt.epochMilliseconds <= now + accessTokenRenewalWindowMs)
     ) {
         yield* backend.applyAction({
             id: crypto.randomUUID(),

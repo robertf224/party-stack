@@ -55,9 +55,10 @@ export function projectStateFailures(
     };
 }
 export const projectActionFailure = (
-    entry: ReplicaStateSnapshot["pending"][number],
+    action: ReplicaStateSnapshot["pending"][number],
     options: ErrorProjectionOptions
 ) => {
+    const entry = projectPredictionFailure(action, options);
     if (!entry.failure) return entry;
     const error = projectBackendError(
         new BackendError({
@@ -72,6 +73,23 @@ export const projectActionFailure = (
         errorContext(options, entry.invocation.name)
     );
     return { ...entry, failure: error.kind, failureMessage: error.message, failureIssues: error.issues };
+};
+const projectPredictionFailure = (
+    entry: ReplicaStateSnapshot["pending"][number],
+    options: ErrorProjectionOptions
+): ReplicaStateSnapshot["pending"][number] => {
+    if (!entry.predictionFailure) return entry;
+    const error = projectBackendError(
+        new BackendError({
+            operation: "replayAction",
+            kind: entry.predictionFailure,
+            message: entry.predictionMessage ?? "The local prediction failed.",
+            retryable: false,
+        }),
+        options.errors,
+        errorContext(options, entry.invocation.name)
+    );
+    return { ...entry, predictionFailure: error.kind, predictionMessage: error.message };
 };
 export class OntologyErrorProjection extends RpcMiddleware.Service<OntologyErrorProjection>()(
     "@party-stack/ontology-server/ErrorProjection",

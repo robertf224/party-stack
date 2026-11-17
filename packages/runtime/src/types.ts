@@ -1,5 +1,6 @@
 import type { BrowserAuthenticationError } from "./BrowserAuthenticationError.js";
 import type { ResourceCapacity } from "./capacity.js";
+import type { Geolocation } from "./Geolocation.js";
 import type { RuntimeError } from "./Runtime.js";
 import type { OntologyStorageError } from "@party-stack/ontology-storage";
 import type { BlobBytesService } from "@party-stack/ontology-storage/blobs";
@@ -32,6 +33,8 @@ export interface RuntimeOptions {
     blobBytes: BlobBytesService;
     connectivity?: NetworkConnectivity;
     browserAuthentication?: BrowserAuthentication;
+    /** Device location, where the platform provides it. */
+    geolocation?: Geolocation;
     encryptionKeyring?: EncryptionKeyringService;
     /** Acquired by the platform layer in its scope, including explicit memory tables. */
     tables: TablesService;

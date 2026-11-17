@@ -4,30 +4,57 @@
 descriptor. It adds no cache or subscription. `.include` uses TanStack DB 1.0's native
 `include` to put a reactive child collection in the query result.
 
+A component exports the fragment it needs next to itself:
+
 ```tsx
+// src/IssueCard.tsx
 import { defineFragment, type FragmentRef } from "@party-stack/db-fragments";
 import { useFragment } from "@party-stack/db-fragments/react";
-import { useLiveSuspenseQuery } from "@tanstack/react-db";
 import { objects } from "./ontology/generated/collections";
 
-const card = defineFragment(objects.Issue, (issue) => ({
+export const issueCard = defineFragment(objects.Issue, (issue) => ({
     title: issue.title,
     status: issue.status,
 }));
 
-function Issues() {
-    const { data } = useLiveSuspenseQuery((q) =>
-        q.from({ issue: objects.Issue }).select(({ issue }) => ({
-            id: issue.id,
-            card: card.include(issue),
-        }))
+export function IssueCard({ issue }: { issue: FragmentRef<typeof issueCard> }) {
+    const { data } = useFragment(issue);
+    // Undefined once the issue is deleted.
+    if (!data) return null;
+    return (
+        <article>
+            <h2>{data.title}</h2>
+            <p>{data.status}</p>
+        </article>
     );
-    return data.map((issue) => <Card key={issue.id} issue={issue.card} />);
 }
+```
 
-function Card({ issue }: { issue: FragmentRef<typeof card> }) {
-    const { data: value } = useFragment(issue);
-    return value ? <h2>{value.title}</h2> : null;
+A parent anywhere above it chooses which issues to show, includes each card's
+fragment in its own query, and passes the reference down:
+
+```tsx
+// src/IssueList.tsx
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { IssueCard, issueCard } from "./IssueCard";
+import { objects } from "./ontology/generated/collections";
+
+export function IssueList() {
+    const { data } = useLiveSuspenseQuery((q) =>
+        q
+            .from({ issue: objects.Issue })
+            .orderBy(({ issue }) => issue.title)
+            .select(({ issue }) => ({ id: issue.id, card: issueCard.include(issue) }))
+    );
+    return (
+        <ul>
+            {data.map((row) => (
+                <li key={row.id}>
+                    <IssueCard issue={row.card} />
+                </li>
+            ))}
+        </ul>
+    );
 }
 ```
 
@@ -145,19 +172,24 @@ Define a reusable list over its item collection. The parent supplies membership;
 the list owns filtering, ordering and the row fragments it needs.
 
 ```tsx
-const noteList = defineListFragment(objects.Note, (notes, { query = "", limit = 50 }) =>
+// src/NoteList.tsx
+import { defineListFragment, type ListFragmentRef } from "@party-stack/db-fragments";
+import { useListFragment } from "@party-stack/db-fragments/react";
+import { ilike } from "@tanstack/db";
+import { NoteCard, noteCard } from "./NoteCard";
+import { objects } from "./ontology/generated/collections";
+
+export const noteList = defineListFragment(objects.Note, (notes, { query = "", limit = 50 }) =>
     notes
         .where(({ row }) => ilike(row.title, `%${query}%`))
         .orderBy(({ row }) => row.favorite, "desc")
         .orderBy(({ row }) => row.updatedAt, "desc")
+        .orderBy(({ row }) => row.id, "asc")
         .limit(limit)
         .select(({ row }) => ({ id: row.id, card: noteCard.include(row) }))
 );
 
-// In the parent's selection callback:
-notes: noteList.include(objects.Notebook.links.notes(folder), { query, limit });
-
-function NoteList({ notes }: { notes: ListFragmentRef<typeof noteList> }) {
+export function NoteList({ notes }: { notes: ListFragmentRef<typeof noteList> }) {
     const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useListFragment(notes);
     return (
         <>
@@ -171,6 +203,35 @@ function NoteList({ notes }: { notes: ListFragmentRef<typeof noteList> }) {
             )}
         </>
     );
+}
+```
+
+The parent includes the list through a link and passes the reference down:
+
+```tsx
+import { eq } from "@tanstack/db";
+// src/Folder.tsx
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { NoteList, noteList } from "./NoteList";
+import { objects } from "./ontology/generated/collections";
+
+export function Folder({ id, search }: { id: string; search: string }) {
+    const { data } = useLiveSuspenseQuery((q) =>
+        q
+            .from({ folder: objects.Notebook })
+            .where(({ folder }) => eq(folder.id, id))
+            .select(({ folder }) => ({
+                name: folder.name,
+                notes: noteList.include(objects.Notebook.links.notes(folder), { query: search }),
+            }))
+    );
+    const folder = data[0];
+    return folder ? (
+        <section>
+            <h1>{folder.name}</h1>
+            <NoteList notes={folder.notes} />
+        </section>
+    ) : null;
 }
 ```
 

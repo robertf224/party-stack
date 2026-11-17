@@ -38,6 +38,23 @@ function restriction(predicate: Predicate, binding: string): { expression?: Expr
             }),
             exact: true,
         };
+    // A present list with no elements.
+    if (predicate.op === "empty")
+        return {
+            expression: o.Expression.and({
+                expressions: [
+                    o.Expression.ne({
+                        left: operand(predicate.left),
+                        right: o.Expression.literal({ value: undefined }),
+                    }),
+                    o.Expression.eq({
+                        left: o.Expression.length({ expression: operand(predicate.left) }),
+                        right: o.Expression.literal({ value: 0 }),
+                    }),
+                ],
+            }),
+            exact: true,
+        };
     if (["eq", "ne", "contains", "like", "ilike"].includes(predicate.op))
         return {
             expression: o.Expression[predicate.op as "eq" | "ne" | "contains" | "like" | "ilike"]({

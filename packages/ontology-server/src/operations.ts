@@ -445,11 +445,10 @@ export const ontologyOperationHandlers = <R>(
             Effect.gen(function* () {
                 yield* authorize({ operation: "ResolveActionParameters", ...request }, context.headers);
                 yield* options.ready ?? Effect.void;
-                if (options.backend) {
-                    if (!options.backend.resolveActionParameters)
-                        return yield* missing("ResolveActionParameters");
+                // Describe advertises resolution for either implementation. A managed
+                // replica resolves from its IR when the provider has no resolver.
+                if (options.backend?.resolveActionParameters)
                     return yield* options.backend.resolveActionParameters(request.name, request.parameters);
-                }
                 if (!options.replica) return yield* missing("ResolveActionParameters");
                 return yield* options.replica.actions.resolveParameters(request.name, request.parameters);
             }),

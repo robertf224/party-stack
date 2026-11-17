@@ -138,6 +138,10 @@ export function matches(value: unknown, predicate?: Predicate): boolean {
             const left = resolveOperand(value, predicate.left);
             return predicate.values.some((candidate) => compareScalar(left, candidate) === 0);
         }
+        case "empty": {
+            const list = readField(value, predicate.left);
+            return Array.isArray(list) && list.length === 0;
+        }
         case "contains": {
             const array = readField(value, predicate.left);
             const needle = scalarKey(resolveOperand(value, predicate.right));
@@ -153,10 +157,13 @@ export function matches(value: unknown, predicate?: Predicate): boolean {
             );
         }
         default: {
-            const compared = compareScalar(
-                resolveOperand(value, predicate.left),
-                resolveOperand(value, predicate.right)
-            );
+            const left = resolveOperand(value, predicate.left);
+            const right = resolveOperand(value, predicate.right);
+            // A missing value is equal only to the same missing value. Checking presence
+            // never orders the other side, so it also applies to lists and structs.
+            if ((predicate.op === "eq" || predicate.op === "ne") && (left == null || right == null))
+                return (left === right) === (predicate.op === "eq");
+            const compared = compareScalar(left, right);
             switch (predicate.op) {
                 case "eq":
                     return compared === 0;
@@ -201,7 +208,7 @@ export function validateQuery(query: Query): void {
         if (predicate.op === "and" || predicate.op === "or") {
             for (const child of predicate.predicates) validatePredicate(child);
         } else if (predicate.op === "not") validatePredicate(predicate.predicate);
-        else {
+        else if (predicate.op !== "empty") {
             validateOperand(predicate.left);
             if (predicate.op === "in") for (const value of predicate.values) validateScalar(value);
             else validateOperand(predicate.right);
@@ -267,6 +274,7 @@ export function indexedComparison(predicate: Predicate):
         predicate.op === "not" ||
         predicate.op === "in" ||
         predicate.op === "contains" ||
+        predicate.op === "empty" ||
         predicate.op === "like" ||
         predicate.op === "ilike"
     )

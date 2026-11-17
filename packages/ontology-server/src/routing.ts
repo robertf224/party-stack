@@ -135,7 +135,12 @@ export interface OntologyServer<R = never> extends ErrorProjectionOptions {
     readonly forget: (ontology: string) => Effect.Effect<void, BackendError>;
     readonly partitions: Effect.Effect<readonly StoredReplicaPartition[], BackendError>;
     /** Run a bounded native checkpoint through the route's existing replica owner. */
-    readonly syncOnce: (ontology: string) => Effect.Effect<{ readonly pin?: PinStatus }, BackendError, R>;
+    /** Checkpoint one ontology. `revalidate` reloads demanded data even when a realtime
+     * watch reports it current; use it for user-initiated refresh. */
+    readonly syncOnce: (
+        ontology: string,
+        options?: { readonly revalidate?: boolean }
+    ) => Effect.Effect<{ readonly pin?: PinStatus }, BackendError, R>;
     readonly bind: (
         ontology: string,
         request?: Request
@@ -540,7 +545,7 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
         partitions: Option.isSome(runtimes)
             ? Effect.flatMap(getCatalog, (catalog) => catalog.partitions)
             : Effect.succeed([]),
-        syncOnce: (ontology) =>
+        syncOnce: (ontology, settings) =>
             Effect.scoped(
                 Effect.gen(function* () {
                     const bound: OntologyRpcServerOptions<R> = (yield* bind(ontology)).options;
@@ -551,7 +556,7 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                             retryable: false,
                             message: "Only replica routes support native synchronization checkpoints.",
                         });
-                    yield* bound.replica.syncOnce;
+                    yield* settings?.revalidate ? bound.replica.revalidate : bound.replica.syncOnce;
                     return { pin: yield* bound.replica.demand.pinStatus };
                 })
             ),

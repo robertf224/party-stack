@@ -184,9 +184,9 @@ Offline query retention should be persistent ownership of the same demand, not
 another query language or replication engine. API candidate (not implemented):
 
 ```ts
-yield * replica.demand.acquire(queryOrSubset); // released with its Effect scope
-yield * replica.demand.setPin(queryDocument, { inputs, attachments: "all" });
-yield * replica.demand.clearPin();
+yield* replica.demand.acquire(queryOrSubset); // released with its Effect scope
+yield* replica.demand.setPin(queryDocument, { inputs, attachments: "all" });
+yield* replica.demand.clearPin();
 // setPin replaces the partition's one persisted demand document; clearPin removes it.
 ```
 
