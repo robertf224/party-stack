@@ -1,5 +1,13 @@
 # @party-stack/indexeddb-ontology-storage
 
+## 0.2.3
+
+### Patch Changes
+
+- Updated dependencies [bba940a]
+- Updated dependencies [400f04c]
+    - @party-stack/ontology-storage@0.3.0
+
 ## 0.2.2
 
 ### Patch Changes

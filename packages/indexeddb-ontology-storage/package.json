@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/indexeddb-ontology-storage",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "files": [
         "lib"
     ],

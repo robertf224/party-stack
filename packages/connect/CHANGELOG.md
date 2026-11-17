@@ -1,5 +1,15 @@
 # @party-stack/connections
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [bba940a]
+- Updated dependencies [400f04c]
+    - @party-stack/ontology-storage@0.3.0
+    - @party-stack/ontology-backend@0.3.0
+    - @party-stack/runtime@0.6.1
+
 ## 0.3.0
 
 ### Minor Changes

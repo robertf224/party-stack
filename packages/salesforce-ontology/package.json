@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/salesforce-ontology",
-    "version": "0.5.3",
+    "version": "0.6.0",
     "files": [
         "lib"
     ],
