@@ -81,9 +81,17 @@ test("actual TanStack subscription identities attribute shared queries to each i
                 const graph = queryDemandGraph(query);
                 expect(graph).toHaveLength(1);
                 expect(graph[0]?.query?.where).toEqual({
-                    op: "eq",
-                    left: { _tag: "Field", path: ["id"] },
-                    right: "one",
+                    kind: "eq",
+                    value: {
+                        left: {
+                            kind: "getAt",
+                            value: {
+                                source: { kind: "localReference", value: { name: "row" } },
+                                path: ["id"],
+                            },
+                        },
+                        right: { kind: "literal", value: { value: "one" } },
+                    },
                 });
                 const before = acquisitions;
                 expect(demandOwners(graph[0]!, [source]).map((owner) => owner.id)).toEqual([

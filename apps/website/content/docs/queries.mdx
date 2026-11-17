@@ -80,10 +80,13 @@ function UnlabeledIssues() {
 ```
 
 Missing-value checks work on any property, including lists and structs, and
-narrow what is fetched. An empty list is a value, not a missing one: to find lists
-with no elements, missing or empty, compare `length(issue.issueLabels)` with 0.
-Sources such as Foundry answer that exactly. Other length comparisons are evaluated
-locally after the rest of the filter is fetched.
+narrow what is fetched. An empty list is a value, not a missing one. To find lists
+with no elements, compare `length(issue.issueLabels)` with 0: a missing list has
+length 0, so this matches missing and empty lists, and `gt(length(...), 0)` matches
+lists with elements. Length comparisons on lists and strings narrow what is fetched
+too, and sources such as Foundry answer the emptiness checks exactly. Don't compare
+a list with `[]` using `eq`: TanStack DB compares arrays by identity, so it never
+matches.
 
 ## Join local collections
 

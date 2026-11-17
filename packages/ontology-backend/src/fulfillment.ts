@@ -1,5 +1,5 @@
-import { evaluateQuery } from "@party-stack/ontology-storage";
-import { Table, isField } from "@party-stack/ontology-storage/tables";
+import { evaluateQuery, filterOperand, inValues } from "@party-stack/ontology-storage";
+import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Redacted, Schema } from "effect";
 import { BackendError } from "./errors.js";
 import { compileObjectSubset } from "./subset.js";
@@ -8,7 +8,7 @@ import type { BackendSnapshot } from "./index.js";
 import type { CompiledSubset } from "./subset.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
-import type { Predicate, Query } from "@party-stack/ontology-storage";
+import type { Filter, Query } from "@party-stack/ontology-storage";
 
 const codec = Table.make<unknown>({ name: "subset-fulfillment" });
 const same = (left: unknown, right: unknown) => codec.encode(left) === codec.encode(right);
@@ -16,22 +16,32 @@ const windowed = (query: Query) =>
     query.limit !== undefined || Boolean(query.offset) || query.after !== undefined;
 
 /** Sound, deliberately small implication rules for declared coverage; no data-dependent inference. */
-function implies(request: Predicate | undefined, fulfilled: Predicate | undefined): boolean {
+function implies(request: Filter | undefined, fulfilled: Filter | undefined): boolean {
     if (!fulfilled) return true;
     if (!request) return false;
     if (same(request, fulfilled)) return true;
-    if (request.op === "or") return request.predicates.every((child) => implies(child, fulfilled));
-    if (fulfilled.op === "and") return fulfilled.predicates.every((child) => implies(request, child));
-    if (request.op === "and" && request.predicates.some((child) => implies(child, fulfilled))) return true;
-    if (fulfilled.op === "or" && fulfilled.predicates.some((child) => implies(request, child))) return true;
-    if (fulfilled.op === "in") {
-        if (request.op === "in" && same(request.left, fulfilled.left))
-            return request.values.every((value) => fulfilled.values.some((other) => same(value, other)));
-        if (request.op === "eq") {
-            const field = isField(request.left) ? request.left : request.right;
-            const value = field === request.left ? request.right : request.left;
-            if (isField(field) && !isField(value) && same(field, fulfilled.left))
-                return fulfilled.values.some((other) => same(value, other));
+    if (request.kind === "or") return request.value.expressions.every((child) => implies(child, fulfilled));
+    if (fulfilled.kind === "and")
+        return fulfilled.value.expressions.every((child) => implies(request, child));
+    if (request.kind === "and" && request.value.expressions.some((child) => implies(child, fulfilled)))
+        return true;
+    if (fulfilled.kind === "or" && fulfilled.value.expressions.some((child) => implies(request, child)))
+        return true;
+    if (fulfilled.kind === "in") {
+        const allowed = inValues(fulfilled);
+        if (request.kind === "in" && same(request.value.left, fulfilled.value.left))
+            return inValues(request).every((value) => allowed.some((other) => same(value, other)));
+        if (request.kind === "eq") {
+            const left = filterOperand(request.value.left),
+                right = filterOperand(request.value.right);
+            const [field, value] =
+                left?.kind === "field" ? [request.value.left, right] : [request.value.right, left];
+            if (
+                filterOperand(field)?.kind === "field" &&
+                value?.kind === "literal" &&
+                same(field, fulfilled.value.left)
+            )
+                return allowed.some((other) => same(value.value, other));
         }
     }
     return false;

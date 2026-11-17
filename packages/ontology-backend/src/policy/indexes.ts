@@ -1,5 +1,5 @@
 import { resolveQuerySource } from "@party-stack/ontology-spec/query";
-import { indexesForQuery, field } from "@party-stack/ontology-storage";
+import { indexesForQuery, field, contains, eq } from "@party-stack/ontology-storage";
 import type { Expression, OntologyIR, Query, QuerySelection, TypeDef } from "@party-stack/ontology-spec";
 import type { ObjectQuerySource } from "@party-stack/ontology-spec/query";
 import type { Index } from "@party-stack/ontology-storage";
@@ -34,11 +34,8 @@ export function policyIndexes(ir: OntologyIR): { objectType: string; index: Inde
         if (!object || !property) return;
         const type = unwrap(property.type);
         if (elements ? type.kind !== "list" || !scalar(type.value.elementType) : !scalar(type)) return;
-        const query = {
-            where: elements
-                ? { op: "contains" as const, left: field(property.name), right: undefined }
-                : { op: "eq" as const, left: field(property.name), right: undefined },
-        };
+        // Any present literal names the same index; only the field matters.
+        const query = { where: (elements ? contains : eq)(field(property.name), 0) };
         for (const index of indexesForQuery(query, new Set(object.properties.map((p) => p.name))))
             indexes.set(JSON.stringify([object.name, index.name]), { objectType: object.name, index });
     };

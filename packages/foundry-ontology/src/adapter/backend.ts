@@ -3,7 +3,7 @@ import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import { QuerySchema } from "@party-stack/ontology-storage";
-import { isField } from "@party-stack/ontology-storage/tables";
+import { fieldValues } from "@party-stack/ontology-storage/tables";
 import { Deferred, Effect, Queue, Schema, Stream, Redacted } from "effect";
 import { searchFoundryObjects } from "./foundryObjectSearch.js";
 import { analyzeSubsetFilter, arrayProperties, subsetFilter } from "./subsetFilter.js";
@@ -291,19 +291,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                     retryable: false,
                 });
             const predicate = subset.query?.where;
-            const candidates =
-                predicate?.op === "in" &&
-                isField(predicate.left) &&
-                predicate.left.path.length === 1 &&
-                predicate.left.path[0] === definition.primaryKey
-                    ? predicate.values
-                    : predicate?.op === "eq" &&
-                        isField(predicate.left) &&
-                        predicate.left.path.length === 1 &&
-                        predicate.left.path[0] === definition.primaryKey &&
-                        !isField(predicate.right)
-                      ? [predicate.right]
-                      : undefined;
+            const candidates = fieldValues(predicate, [definition.primaryKey]);
             const keys = candidates?.every(Schema.is(KeySchema))
                 ? (candidates as readonly (string | number)[])
                 : undefined;

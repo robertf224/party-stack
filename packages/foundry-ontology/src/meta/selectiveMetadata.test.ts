@@ -6,7 +6,7 @@ import { Effect } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { makeFoundryMetadataBackend } from "./backend.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
-import type { Predicate, Query } from "@party-stack/ontology-storage";
+import type { Filter, Query } from "@party-stack/ontology-storage";
 
 vi.mock("@osdk/foundry.ontologies", async (importOriginal) => {
     const original = await importOriginal<typeof import("@osdk/foundry.ontologies")>();
@@ -393,7 +393,7 @@ describe("native selective Foundry metadata", () => {
         for (const [type, where] of [
             ["ValueType", eq(field("name"), "Email")],
             ["LinkType", eq(field("source", "objectType"), "Post")],
-        ] satisfies [string, Predicate][]) {
+        ] satisfies [string, Filter][]) {
             const result = await Effect.runPromise(
                 Effect.result(
                     makeFoundryMetadataBackend({ client }).loadSubset(objectSubset(type, { where }))

@@ -1,9 +1,14 @@
 import { resolveType } from "@party-stack/ontology-spec/utils";
-import { isField } from "@party-stack/ontology-storage/tables";
+import {
+    filterOperand,
+    inValues,
+    lengthComparison,
+    lengthEmptiness,
+} from "@party-stack/ontology-storage/tables";
 import type { PropertyIdentifier, SearchJsonQueryV2 } from "@osdk/foundry.ontologies";
 import type { SourceQueryPlan } from "@party-stack/ontology-backend";
 import type { ObjectTypeDef, OntologyIR, TypeDef } from "@party-stack/ontology-spec";
-import type { Field, Predicate, Scalar } from "@party-stack/ontology-storage";
+import type { Field, Filter, FilterOperand, Scalar } from "@party-stack/ontology-storage";
 
 /** A Foundry filter, and whether it returns exactly the matching rows rather than a superset. */
 interface Translation {
@@ -45,14 +50,19 @@ const propertyIdentifier = (field: Field): PropertyIdentifier | undefined =>
           : undefined;
 const isNull = (name: string, value: boolean): SearchJsonQueryV2 => ({ type: "isNull", field: name, value });
 
-/** `left == undefined` with the field on either side. */
-const missing = (predicate: Predicate): Field | undefined => {
-    if (predicate.op !== "eq") return;
-    const [field, other] = isField(predicate.left)
-        ? [predicate.left, predicate.right]
-        : [predicate.right, predicate.left];
-    return isField(field) && !isField(other) && other === undefined ? field : undefined;
+/** `field == undefined` with the field on either side. */
+const missing = (filter: Filter): Field | undefined => {
+    if (filter.kind !== "eq") return;
+    const left = filterOperand(filter.value.left);
+    const right = filterOperand(filter.value.right);
+    const [field, other] = left?.kind === "field" ? [left, right] : [right, left];
+    return field?.kind === "field" && other?.kind === "literal" && other.value === undefined
+        ? field.field
+        : undefined;
 };
+/** A present scalar literal that Foundry can compare against. */
+const sendable = (operand: FilterOperand | undefined): operand is { kind: "literal"; value: Scalar } =>
+    operand?.kind === "literal" && operand.value != null && typeof operand.value !== "bigint";
 
 /** Foundry matches `wildcard` against each lowercased token of a string: `*` cannot lead,
  * and a pattern cannot span spaces or punctuation. A LIKE pattern that starts with a word
@@ -77,83 +87,82 @@ function likeFilter(field: Field, pattern: string, insensitive: boolean): Transl
  * - `not` is a plain complement that includes null, as storage's is. It is sent only over an
  *   exact filter, since negating a superset would drop rows.
  * - `isNull` is exact for scalars. On arrays it is also true for an empty array, so it
- *   answers "missing or empty" exactly, and either alone as a superset.
+ *   answers `length(array) == 0` (missing or empty) exactly, and a missing check alone as a
+ *   superset. Other array lengths and every string length stay local.
  */
 function translate(
-    predicate: Predicate,
+    filter: Filter,
     arrays: ArrayProperties,
-    recurse: (predicate: Predicate) => Translation | undefined
+    recurse: (filter: Filter) => Translation | undefined
 ): Translation | undefined {
-    if (predicate.op === "or") {
-        // Missing or empty, the lowering of `length(list) == 0`.
-        const fields = predicate.predicates.map((child) =>
-            child.op === "empty" ? child.left : missing(child)
-        );
-        const name = fields[0] && property(fields[0]);
-        if (
-            predicate.predicates.length === 2 &&
-            name !== undefined &&
-            arrays.has(name) &&
-            fields.every((field) => field && property(field) === name) &&
-            predicate.predicates.some((child) => child.op === "empty")
-        )
-            return { query: isNull(name, true), exact: true };
-    }
-    if (predicate.op === "and" || predicate.op === "or") {
-        const children = predicate.predicates.map(recurse);
-        if (predicate.op === "or" && children.some((child) => !child)) return;
+    if (filter.kind === "and" || filter.kind === "or") {
+        const children = filter.value.expressions.map(recurse);
+        if (filter.kind === "or" && children.some((child) => !child)) return;
         const sent = children.filter((child): child is Translation => child !== undefined);
         if (!sent.length) return;
         return {
-            query: { type: predicate.op, value: sent.map((child) => child.query) },
+            query: { type: filter.kind, value: sent.map((child) => child.query) },
             exact: sent.length === children.length && sent.every((child) => child.exact),
         };
     }
-    if (predicate.op === "not" || predicate.op === "ne") {
-        const inner = recurse(
-            predicate.op === "not" ? predicate.predicate : { ...predicate, op: "eq" as const }
-        );
+    if (filter.kind === "not" || filter.kind === "ne") {
+        const inner = recurse(filter.kind === "not" ? filter.value.expression : { ...filter, kind: "eq" });
         return inner?.exact ? { query: { type: "not", value: inner.query }, exact: true } : undefined;
     }
-    if (predicate.op === "empty") {
-        const name = property(predicate.left);
-        // A required array is never missing, so `isNull` is exactly "empty".
-        return name && arrays.has(name) ? { query: isNull(name, true), exact: arrays.get(name)! } : undefined;
+    // `length(array)` against a bound that only distinguishes empty from nonempty. Foundry's
+    // `isNull` is true for a missing or empty array, which is exactly a length of 0.
+    const counted = lengthComparison(filter);
+    if (counted) {
+        const name = property(counted.field);
+        const empty = lengthEmptiness(counted.op, counted.bound);
+        // String lengths stay local.
+        if (!name || !arrays.has(name) || empty === undefined) return;
+        return {
+            query: empty ? isNull(name, true) : { type: "not", value: isNull(name, true) },
+            exact: true,
+        };
     }
-    const absent = missing(predicate);
+    const absent = missing(filter);
     if (absent) {
         const name = property(absent);
         if (!name) return;
         return { query: isNull(name, true), exact: !arrays.has(name) };
     }
-    if (predicate.op === "like" || predicate.op === "ilike") {
-        if (!isField(predicate.left) || typeof predicate.right !== "string") return;
-        return likeFilter(predicate.left, predicate.right, predicate.op === "ilike");
+    if (!("left" in filter.value)) return;
+    const left = filterOperand(filter.value.left);
+    const right = filterOperand(filter.value.right);
+    if (filter.kind === "like" || filter.kind === "ilike") {
+        if (left?.kind !== "field" || right?.kind !== "literal" || typeof right.value !== "string") return;
+        return likeFilter(left.field, right.value, filter.kind === "ilike");
     }
-    if (predicate.op === "contains") {
-        const name = property(predicate.left);
-        if (
-            !name ||
-            isField(predicate.right) ||
-            predicate.right == null ||
-            typeof predicate.right === "bigint"
-        )
-            return;
-        return { query: { type: "contains", field: name, value: scalar(predicate.right) }, exact: true };
+    if (filter.kind === "contains") {
+        const name = left?.kind === "field" ? property(left.field) : undefined;
+        if (!name || !sendable(right)) return;
+        return { query: { type: "contains", field: name, value: scalar(right.value) }, exact: true };
     }
-    if (predicate.op === "in") {
-        const name = isField(predicate.left) ? property(predicate.left) : undefined;
-        if (!name || predicate.values.some((value) => value == null || typeof value === "bigint")) return;
-        return { query: { type: "in", field: name, value: predicate.values.map(scalar) }, exact: true };
+    if (filter.kind === "in") {
+        const name = left?.kind === "field" ? property(left.field) : undefined;
+        const values = inValues(filter);
+        if (!name || values.some((value) => value == null || typeof value === "bigint")) return;
+        return {
+            query: { type: "in", field: name, value: values.map((value) => scalar(value as Scalar)) },
+            exact: true,
+        };
     }
-    let { left, right, op } = predicate;
-    if (isField(right) && !isField(left)) {
-        [left, right] = [right, left];
-        op = ({ eq: "eq", gt: "lt", gte: "lte", lt: "gt", lte: "gte" } as const)[op];
-    }
-    const name = isField(left) ? property(left) : undefined;
-    if (!name || arrays.has(name) || isField(right) || right == null || typeof right === "bigint") return;
-    const query: SearchJsonQueryV2 = { type: op, field: name, value: scalar(right) };
+    if (
+        filter.kind !== "eq" &&
+        filter.kind !== "lt" &&
+        filter.kind !== "lte" &&
+        filter.kind !== "gt" &&
+        filter.kind !== "gte"
+    )
+        return;
+    const flipped = { eq: "eq", gt: "lt", gte: "lte", lt: "gt", lte: "gte" } as const;
+    const [field, value, op] =
+        left?.kind === "field" ? [left, right, filter.kind] : [right, left, flipped[filter.kind]];
+    const name = field?.kind === "field" ? property(field.field) : undefined;
+    if (!name || arrays.has(name) || !sendable(value)) return;
+    const query: SearchJsonQueryV2 = { type: op, field: name, value: scalar(value.value) };
     // Storage orders a missing value before every other value; Foundry's ranges exclude null.
     return {
         query: op === "lt" || op === "lte" ? { type: "or", value: [query, isNull(name, true)] } : query,
@@ -162,34 +171,34 @@ function translate(
 }
 
 export const subsetFilter = (
-    predicate: Predicate | undefined,
+    filter: Filter | undefined,
     arrays: ArrayProperties = new Map()
 ): SearchJsonQueryV2 | undefined => {
-    const recurse = (child: Predicate): Translation | undefined => translate(child, arrays, recurse);
-    return predicate ? recurse(predicate)?.query : undefined;
+    const recurse = (child: Filter): Translation | undefined => translate(child, arrays, recurse);
+    return filter ? recurse(filter)?.query : undefined;
 };
 
 /** Report effective placement, including supported OR branches that could not safely be sent. */
-export function analyzeSubsetFilter(predicate: Predicate | undefined, arrays: ArrayProperties = new Map()) {
-    const translated = new Map<Predicate, Translation | undefined>();
-    const visit = (predicate: Predicate): Translation | undefined => {
+export function analyzeSubsetFilter(predicate: Filter | undefined, arrays: ArrayProperties = new Map()) {
+    const translated = new Map<Filter, Translation | undefined>();
+    const visit = (predicate: Filter): Translation | undefined => {
         const result = translate(predicate, arrays, visit);
         translated.set(predicate, result);
         return result;
     };
     const query = predicate ? visit(predicate)?.query : undefined;
     const predicates: SourceQueryPlan["predicates"][number][] = [];
-    const report = (predicate: Predicate, path: readonly number[], allowed: boolean, exact = false): void => {
+    const report = (predicate: Filter, path: readonly number[], allowed: boolean, exact = false): void => {
         const result = allowed ? translated.get(predicate) : undefined;
         // Everything under an exact filter is answered by Foundry, including terms
         // translated together rather than one by one.
         const whole = exact || result?.exact === true;
-        if (predicate.op === "and" || predicate.op === "or")
-            predicate.predicates.forEach((child, index) =>
+        if (predicate.kind === "and" || predicate.kind === "or")
+            predicate.value.expressions.forEach((child, index) =>
                 report(child, [...path, index], result !== undefined, whole)
             );
-        else if (predicate.op === "not")
-            report(predicate.predicate, [...path, 0], result !== undefined, whole);
+        else if (predicate.kind === "not")
+            report(predicate.value.expression, [...path, 0], result !== undefined, whole);
         else
             predicates.push({
                 path,

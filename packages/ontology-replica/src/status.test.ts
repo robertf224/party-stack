@@ -373,7 +373,10 @@ test("inspection streams do not acquire demand, and record live loads, failures,
                 yield* Scope.close(demandScope, Exit.void);
                 expect((yield* replica.status).demands).toEqual([]);
                 expect(updates.length).toBeGreaterThan(1);
-                expect(JSON.stringify((yield* replica.status).loads)).not.toContain('"value"');
+                // Load records count rows; they never carry row payloads.
+                const loads = (yield* replica.status).loads;
+                expect(loads.every((load) => !("rows" in load) || typeof load.rows === "number")).toBe(true);
+                expect(JSON.stringify(loads)).not.toContain('"key"');
             })
         )
     );
@@ -490,7 +493,7 @@ test.each([true, false])(
                     yield* replica.syncOnce;
                     expect(requests).not.toContainEqual(point.query.where);
                     expect(
-                        (yield* replica.status).demands.find((d) => d.query?.where?.op === "eq")
+                        (yield* replica.status).demands.find((d) => d.query?.where?.kind === "eq")
                     ).toMatchObject({
                         coveredBy: broad,
                         coverageProof: { reason: "primary-key", maintainedBy: "watch" },

@@ -32,8 +32,11 @@ and limits. A bounded fetch never certifies that the whole object type is loaded
 
 Equality, `in`, array `contains`, ranges and missing-value checks are sent as
 exact Foundry filters, and so is a negation of an exact filter, with Foundry's `not`.
-Foundry's `isNull` is also true for an empty array, so on arrays it answers "missing
-or empty" (`length(list) == 0`) exactly, and either alone as a broader candidate.
+Foundry's `isNull` is also true for an empty array, which is exactly a length of 0
+(a missing list has length 0). So `length(list) == 0`, and the equivalent `< 1` or
+`<= 0`, is sent as `isNull`, and `> 0` or `>= 1` as its negation, both exact. A
+missing-value check alone on an array is sent as `isNull`, a broader candidate. Other
+array lengths and every string length are evaluated locally.
 Foundry's `wildcard` matches single lowercased tokens and rejects a leading `*`, so
 a `like`/`ilike` pattern that starts with a word is sent as that word's prefix, a
 broader candidate; patterns starting with a wildcard or punctuation stay local. A

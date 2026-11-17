@@ -7,7 +7,7 @@ import type { ObjectTypeDef } from "@party-stack/ontology";
 export { operandText, nullOrderLabel, OperandToken, QuerySubject } from "./QueryTokens.js";
 type Query = NonNullable<Demand["query"]>;
 type Predicate = NonNullable<Query["where"]>;
-const operators = {
+const operators: Record<string, string> = {
     eq: "=",
     ne: "≠",
     lt: "<",
@@ -19,23 +19,34 @@ const operators = {
     contains: "contains",
 };
 
+/** A row field, a field's length or a literal of a compiled storage filter. */
+function operand(expression: Predicate, object?: ObjectTypeDef): string {
+    if (expression.kind === "literal") return operandText(expression.value.value);
+    if (expression.kind === "getAt")
+        return operandText({ _tag: "Field", path: expression.value.path }, object);
+    if (expression.kind === "length") return `length(${operand(expression.value.expression, object)})`;
+    return expression.kind;
+}
+
 export function predicateText(predicate: Predicate, object?: ObjectTypeDef): string {
-    if (predicate.op === "and" || predicate.op === "or")
-        return predicate.predicates.length
-            ? `(${predicate.predicates.map((item) => predicateText(item, object)).join(predicate.op === "and" ? " AND " : " OR ")})`
-            : predicate.op === "and"
+    if (predicate.kind === "and" || predicate.kind === "or")
+        return predicate.value.expressions.length
+            ? `(${predicate.value.expressions.map((item) => predicateText(item, object)).join(predicate.kind === "and" ? " AND " : " OR ")})`
+            : predicate.kind === "and"
               ? "All rows"
               : "No rows";
-    if (predicate.op === "not") return `NOT (${predicateText(predicate.predicate, object)})`;
-    if (predicate.op === "empty") return `${operandText(predicate.left, object)} is empty`;
-    if (predicate.op === "in")
-        return `${operandText(predicate.left, object)} in [${predicate.values.map((value) => operandText(value)).join(", ")}]`;
+    if (predicate.kind === "not") return `NOT (${predicateText(predicate.value.expression, object)})`;
+    if (!("left" in predicate.value)) return operand(predicate, object);
+    const { left, right } = predicate.value;
+    if (predicate.kind === "in" && right.kind === "literal" && Array.isArray(right.value.value))
+        return `${operand(left, object)} in [${right.value.value.map((value) => operandText(value)).join(", ")}]`;
     if (
-        (predicate.op === "eq" || predicate.op === "ne") &&
-        (predicate.right === null || predicate.right === undefined)
+        (predicate.kind === "eq" || predicate.kind === "ne") &&
+        right.kind === "literal" &&
+        right.value.value == null
     )
-        return `${operandText(predicate.left, object)} is${predicate.op === "ne" ? " not" : ""} ${operandText(predicate.right)}`;
-    return `${operandText(predicate.left, object)} ${operators[predicate.op]} ${operandText(predicate.right, object)}`;
+        return `${operand(left, object)} is${predicate.kind === "ne" ? " not" : ""} ${operand(right)}`;
+    return `${operand(left, object)} ${operators[predicate.kind] ?? predicate.kind} ${operand(right, object)}`;
 }
 
 /** Compiled demand is a compact view of the same portable query renderer. */

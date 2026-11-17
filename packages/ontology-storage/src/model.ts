@@ -1,4 +1,5 @@
 import { decodeValue, encodeValue } from "./storage/values.js";
+import type { Expression } from "@party-stack/ontology-spec";
 
 export type Key = string | number;
 export type Scalar =
@@ -15,7 +16,6 @@ export interface Field {
     readonly _tag: "Field";
     readonly path: readonly string[];
 }
-export type Operand = Field | Scalar;
 export interface Row<A> {
     readonly key: Key;
     readonly value: A;
@@ -27,20 +27,19 @@ export interface Index {
     /** Index each scalar array element once per row. */
     readonly multiEntry?: boolean;
 }
-export type Predicate =
-    | {
-          readonly op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte";
-          readonly left: Operand;
-          readonly right: Operand;
-      }
-    | { readonly op: "in"; readonly left: Operand; readonly values: readonly Scalar[] }
-    | { readonly op: "contains"; readonly left: Field; readonly right: Operand }
-    /** The list field is present and has no elements. */
-    | { readonly op: "empty"; readonly left: Field }
-    | { readonly op: "like" | "ilike"; readonly left: Operand; readonly right: string | Field }
-    | { readonly op: "and"; readonly predicates: readonly Predicate[] }
-    | { readonly op: "or"; readonly predicates: readonly Predicate[] }
-    | { readonly op: "not"; readonly predicate: Predicate };
+/** The local binding through which storage filters read the current row. */
+export const rowBinding = "row";
+/** A storage filter: a spec expression from the storage subset, over the single
+ * `rowBinding` row. Fields are `getAt` paths of that binding; other operands are
+ * literals or `length` of a field. Supported operators are eq/ne/lt/lte/gt/gte,
+ * in (with a literal list), contains, like/ilike, and/or/not.
+ *
+ * Storage semantics differ from general query evaluation in two documented ways:
+ * a missing value is `undefined` and compares two-valued (it equals only another
+ * missing value), and ordered comparisons use the total cross-type value order. */
+export type Filter = Expression;
+/** A builder operand: a field reference, a scalar literal or a filter expression. */
+export type Operand = Field | Scalar | Expression;
 export interface Order {
     readonly field: Field;
     readonly direction?: "asc" | "desc";
@@ -52,7 +51,7 @@ export interface Cursor {
     readonly key: Key;
 }
 export interface Query {
-    readonly where?: Predicate;
+    readonly where?: Filter;
     readonly orderBy?: readonly Order[];
     readonly limit?: number;
     readonly offset?: number;
@@ -93,27 +92,53 @@ export const Table = {
 export { OntologyStorageError } from "./errors.js";
 export type { OntologyStorageErrorReason } from "./errors.js";
 export const field = (...path: string[]): Field => ({ _tag: "Field", path });
-export const eq = (left: Operand, right: Operand): Predicate => ({ op: "eq", left, right });
-export const ne = (left: Operand, right: Operand): Predicate => ({ op: "ne", left, right });
-export const lt = (left: Operand, right: Operand): Predicate => ({ op: "lt", left, right });
-export const lte = (left: Operand, right: Operand): Predicate => ({ op: "lte", left, right });
-export const gt = (left: Operand, right: Operand): Predicate => ({ op: "gt", left, right });
-export const gte = (left: Operand, right: Operand): Predicate => ({ op: "gte", left, right });
-export const inArray = (left: Operand, values: readonly Scalar[]): Predicate => ({ op: "in", left, values });
-export const contains = (array: Field, value: Operand): Predicate => ({
-    op: "contains",
-    left: array,
-    right: value,
+/** The filter expression that reads a field of the current row. */
+export const fieldExpression = (field: Field): Expression => ({
+    kind: "getAt",
+    value: { source: { kind: "localReference", value: { name: rowBinding } }, path: [...field.path] },
 });
-export const like = (left: Operand, right: string | Field): Predicate => ({ op: "like", left, right });
-export const ilike = (left: Operand, right: string | Field): Predicate => ({ op: "ilike", left, right });
-export const isNull = (operand: Operand): Predicate => eq(operand, null);
-export const isUndefined = (operand: Operand): Predicate => eq(operand, undefined);
-/** The list field is present and has no elements; a missing list is `isUndefined`. */
-export const isEmpty = (list: Field): Predicate => ({ op: "empty", left: list });
-export const and = (...predicates: Predicate[]): Predicate => ({ op: "and", predicates });
-export const or = (...predicates: Predicate[]): Predicate => ({ op: "or", predicates });
-export const not = (predicate: Predicate): Predicate => ({ op: "not", predicate });
+const literal = (value: unknown): Expression => ({ kind: "literal", value: { value } });
+const isExpression = (value: unknown): value is Expression =>
+    value !== null &&
+    typeof value === "object" &&
+    Object.getPrototypeOf(value) === Object.prototype &&
+    typeof Reflect.get(value, "kind") === "string" &&
+    Object.hasOwn(value, "value");
+/** Fields read the row, expressions pass through and every other value is a literal. */
+export const operand = (value: Operand): Expression =>
+    value !== null && typeof value === "object" && Reflect.get(value, "_tag") === "Field"
+        ? fieldExpression(value as Field)
+        : isExpression(value)
+          ? value
+          : literal(value);
+const binary =
+    (kind: "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "contains" | "like" | "ilike") =>
+    (left: Operand, right: Operand): Filter =>
+        ({ kind, value: { left: operand(left), right: operand(right) } }) as Filter;
+export const eq = binary("eq");
+export const ne = binary("ne");
+export const lt = binary("lt");
+export const lte = binary("lte");
+export const gt = binary("gt");
+export const gte = binary("gte");
+export const inArray = (left: Operand, values: readonly Scalar[]): Filter => ({
+    kind: "in",
+    value: { left: operand(left), right: literal([...values]) },
+});
+export const contains: (array: Field, value: Operand) => Filter = binary("contains");
+export const like: (left: Operand, right: string | Field) => Filter = binary("like");
+export const ilike: (left: Operand, right: string | Field) => Filter = binary("ilike");
+export const isNull = (value: Operand): Filter => eq(value, null);
+export const isUndefined = (value: Operand): Filter => eq(value, undefined);
+/** Element count of a list field, or UTF-16 length of a string field. A missing value
+ * has length 0, so `eq(length(field("tags")), 0)` matches missing and empty lists. */
+export const length = (value: Field): Expression => ({
+    kind: "length",
+    value: { expression: fieldExpression(value) },
+});
+export const and = (...expressions: Filter[]): Filter => ({ kind: "and", value: { expressions } });
+export const or = (...expressions: Filter[]): Filter => ({ kind: "or", value: { expressions } });
+export const not = (expression: Filter): Filter => ({ kind: "not", value: { expression } });
 /** Optional namespace for callers who prefer it. */
 export const where = {
     eq,
@@ -124,7 +149,7 @@ export const where = {
     gte,
     in: inArray,
     contains,
-    isEmpty,
+    length,
     like,
     ilike,
     isNull,

@@ -1,54 +1,58 @@
 import { Effect } from "effect";
 import { sameField, scalarKey, caseInsensitiveIndex, indexedComparison } from "../query/evaluate.js";
-import { isField } from "../query/schema.js";
+import { filterOperand, inValues } from "../query/filter.js";
 import type { DriverTransaction, Range, StoredIndex } from "../driver/index.js";
-import type { Predicate, OntologyStorageError } from "../model.js";
+import type { Filter, OntologyStorageError } from "../model.js";
 
-/** Candidate plans are supersets; the complete predicate is always evaluated on hydrated rows. */
+/** Candidate plans are supersets; the complete filter is always evaluated on hydrated rows.
+ * Only scalar operands are planned: a field's length is evaluated on rows. */
 export type Plan =
     | { readonly kind: "none" }
     | { readonly kind: "lookup"; readonly index: string; readonly ranges: readonly Range[] }
     | { readonly kind: "and" | "or"; readonly children: readonly Plan[] };
 export const INDEX_BATCH_SIZE = 128;
-export function selectPlan(indexes: readonly StoredIndex[], predicate?: Predicate): Plan | undefined {
-    if (!predicate || predicate.op === "not") return undefined;
-    if (predicate.op === "and" || predicate.op === "or") {
-        const children = predicate.predicates.map((p) => selectPlan(indexes, p));
-        if (predicate.op === "or" && children.some((p) => p === undefined)) return undefined;
-        if (predicate.op === "and" && children.some((p) => p?.kind === "none")) return { kind: "none" };
+export function selectPlan(indexes: readonly StoredIndex[], filter?: Filter): Plan | undefined {
+    if (!filter || filter.kind === "not") return undefined;
+    if (filter.kind === "and" || filter.kind === "or") {
+        const children = filter.value.expressions.map((p) => selectPlan(indexes, p));
+        if (filter.kind === "or" && children.some((p) => p === undefined)) return undefined;
+        if (filter.kind === "and" && children.some((p) => p?.kind === "none")) return { kind: "none" };
         const available = children.filter((p): p is Plan => p !== undefined && p.kind !== "none");
-        if (!available.length) return predicate.op === "or" ? { kind: "none" } : undefined;
+        if (!available.length) return filter.kind === "or" ? { kind: "none" } : undefined;
         if (available.length === 1) return available[0];
-        return { kind: predicate.op, children: available };
+        return { kind: filter.kind, children: available };
     }
-    const comparison = indexedComparison(predicate);
+    if (!("left" in filter.value)) return undefined;
+    const comparison = indexedComparison(filter);
+    const left = filterOperand(filter.value.left);
+    const right = filterOperand(filter.value.right);
     const reference =
         comparison?.field ??
-        ((predicate.op === "contains" ||
-            predicate.op === "in" ||
-            predicate.op === "like" ||
-            predicate.op === "ilike") &&
-        isField(predicate.left)
-            ? predicate.left
+        ((filter.kind === "contains" ||
+            filter.kind === "in" ||
+            filter.kind === "like" ||
+            filter.kind === "ilike") &&
+        left?.kind === "field"
+            ? left.field
             : undefined);
     if (!reference || comparison?.op === "ne") return undefined;
     const index = indexes.find(
-        (i) => sameField(i.field, reference) && !!i.multiEntry === (predicate.op === "contains")
+        (i) => sameField(i.field, reference) && !!i.multiEntry === (filter.kind === "contains")
     );
     if (!index) return undefined;
     let ranges: Range[];
-    if (predicate.op === "contains") {
-        if (isField(predicate.right)) return undefined;
-        const value = scalarKey(predicate.right);
+    if (filter.kind === "contains") {
+        if (right?.kind !== "literal") return undefined;
+        const value = scalarKey(right.value);
         ranges = [{ lower: value, upper: value }];
-    } else if (predicate.op === "in") {
-        ranges = [...new Set(predicate.values.map(scalarKey))].map((value) => ({
+    } else if (filter.kind === "in") {
+        ranges = [...new Set(inValues(filter).map(scalarKey))].map((value) => ({
             lower: value,
             upper: value,
         }));
-    } else if (predicate.op === "like" || predicate.op === "ilike") {
-        if (typeof predicate.right !== "string") return undefined;
-        const pattern = predicate.op === "ilike" ? predicate.right.toLowerCase() : predicate.right;
+    } else if (filter.kind === "like" || filter.kind === "ilike") {
+        if (right?.kind !== "literal" || typeof right.value !== "string") return undefined;
+        const pattern = filter.kind === "ilike" ? right.value.toLowerCase() : right.value;
         const wildcard = pattern.search(/[%_]/);
         if (wildcard === 0) return undefined;
         const lower = scalarKey(wildcard < 0 ? pattern : pattern.slice(0, wildcard));
@@ -67,7 +71,7 @@ export function selectPlan(indexes: readonly StoredIndex[], predicate?: Predicat
     return ranges.length
         ? {
               kind: "lookup",
-              index: predicate.op === "ilike" ? caseInsensitiveIndex(index.name) : index.name,
+              index: filter.kind === "ilike" ? caseInsensitiveIndex(index.name) : index.name,
               ranges,
           }
         : { kind: "none" };

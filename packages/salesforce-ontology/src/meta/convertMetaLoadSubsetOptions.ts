@@ -1,4 +1,5 @@
-import { isField } from "@party-stack/ontology-storage/tables";
+import { fieldValues, filterOperand } from "@party-stack/ontology-storage/tables";
+import type { Filter, Query } from "@party-stack/ontology-storage";
 
 export type MetaNameQuery =
     | { type: "getBatch"; names: string[] }
@@ -24,42 +25,36 @@ export function matchesMetaNameQuery(
 }
 
 /** Native storage query candidate selection; the caller rechecks the entire predicate. */
-export function convertStorageMetaNameQuery(
-    query?: import("@party-stack/ontology-storage").Query
-): MetaNameQuery {
-    const visit = (predicate?: import("@party-stack/ontology-storage").Predicate): MetaNameQuery => {
+export function convertStorageMetaNameQuery(query?: Query): MetaNameQuery {
+    const visit = (predicate?: Filter): MetaNameQuery => {
         if (!predicate) return { type: "list" };
-        if (predicate.op === "eq") {
-            const field = isField(predicate.left) ? predicate.left : predicate.right;
-            const value = field === predicate.left ? predicate.right : predicate.left;
-            if (isField(field) && field.path.join(".") === "name" && typeof value === "string")
-                return { type: "getBatch", names: [value] };
+        const names = fieldValues(predicate, ["name"]);
+        if (names?.every((value) => typeof value === "string"))
+            return { type: "getBatch", names: [...names] as string[] };
+        if (predicate.kind === "like" || predicate.kind === "ilike") {
+            const left = filterOperand(predicate.value.left);
+            const right = filterOperand(predicate.value.right);
+            if (
+                left?.kind === "field" &&
+                left.field.path.join(".") === "name" &&
+                right?.kind === "literal" &&
+                typeof right.value === "string"
+            )
+                return {
+                    type: "search",
+                    field: "name",
+                    pattern: right.value,
+                    caseInsensitive: predicate.kind === "ilike",
+                };
         }
-        if (
-            predicate.op === "in" &&
-            isField(predicate.left) &&
-            predicate.left.path.join(".") === "name" &&
-            predicate.values.every((value) => typeof value === "string")
-        )
-            return { type: "getBatch", names: [...predicate.values] as string[] };
-        if (
-            (predicate.op === "like" || predicate.op === "ilike") &&
-            isField(predicate.left) &&
-            predicate.left.path.join(".") === "name" &&
-            typeof predicate.right === "string"
-        )
-            return {
-                type: "search",
-                field: "name",
-                pattern: predicate.right,
-                caseInsensitive: predicate.op === "ilike",
-            };
-        if (predicate.op === "and")
+        if (predicate.kind === "and")
             return (
-                predicate.predicates.map(visit).find((child) => child.type === "getBatch") ?? { type: "list" }
+                predicate.value.expressions.map(visit).find((child) => child.type === "getBatch") ?? {
+                    type: "list",
+                }
             );
-        if (predicate.op === "or") {
-            const children = predicate.predicates.map(visit);
+        if (predicate.kind === "or") {
+            const children = predicate.value.expressions.map(visit);
             if (children.every((child) => child.type === "getBatch"))
                 return { type: "getBatch", names: [...new Set(children.flatMap((child) => child.names))] };
         }

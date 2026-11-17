@@ -1,6 +1,8 @@
 import { Temporal } from "temporal-polyfill";
-import { isField, validateQueryShape } from "./schema.js";
-import type { Cursor, Field, Key, Operand, Predicate, Query, Row, Scalar } from "../model.js";
+import { filterOperand, inValues } from "./filter.js";
+import { validateQueryShape } from "./schema.js";
+import type { Cursor, Field, Filter, Key, Query, Row, Scalar } from "../model.js";
+import type { Expression } from "@party-stack/ontology-spec";
 
 // ASCII encodings give IDB and SQL binary collations exactly the same ordering.
 const textKey = (value: string): string => {
@@ -116,35 +118,55 @@ export function matchLike(value: unknown, pattern: string, insensitive: boolean)
     return p === search.length;
 }
 export const caseInsensitiveIndex = (name: string): string => `\0${name}`;
-export function matches(value: unknown, predicate?: Predicate): boolean {
-    if (!predicate) return true;
-    switch (predicate.op) {
+function readPath(value: unknown, path: readonly string[]): unknown {
+    for (const part of path) {
+        if (value === null || typeof value !== "object" || !Object.hasOwn(value, part)) return undefined;
+        value = Reflect.get(value, part);
+    }
+    return value;
+}
+/** Value of a validated filter operand: a row field, a literal or a field's length. */
+function operandValue(row: unknown, expression: Expression): unknown {
+    switch (expression.kind) {
+        case "getAt":
+            return readPath(row, expression.value.path);
+        case "literal":
+            return expression.value.value;
+        case "length": {
+            // TanStack DB also counts a missing (or non-list) value as empty.
+            const value = operandValue(row, expression.value.expression);
+            return typeof value === "string" || Array.isArray(value) ? value.length : 0;
+        }
+        default:
+            throw new Error(`Storage filters do not support ${expression.kind} operands.`);
+    }
+}
+export function matches(value: unknown, filter?: Filter): boolean {
+    if (!filter) return true;
+    switch (filter.kind) {
         case "and":
-            return predicate.predicates.every((p) => matches(value, p));
+            return filter.value.expressions.every((p) => matches(value, p));
         case "or":
-            return predicate.predicates.some((p) => matches(value, p));
+            return filter.value.expressions.some((p) => matches(value, p));
         case "not":
-            return !matches(value, predicate.predicate);
+            return !matches(value, filter.value.expression);
         case "like":
         case "ilike": {
-            const pattern = resolveOperand(value, predicate.right);
+            const pattern = operandValue(value, filter.value.right);
             return (
                 typeof pattern === "string" &&
-                matchLike(resolveOperand(value, predicate.left), pattern, predicate.op === "ilike")
+                matchLike(operandValue(value, filter.value.left), pattern, filter.kind === "ilike")
             );
         }
         case "in": {
-            if (predicate.values.length === 0) return false;
-            const left = resolveOperand(value, predicate.left);
-            return predicate.values.some((candidate) => compareScalar(left, candidate) === 0);
-        }
-        case "empty": {
-            const list = readField(value, predicate.left);
-            return Array.isArray(list) && list.length === 0;
+            const values = inValues(filter);
+            if (values.length === 0) return false;
+            const left = operandValue(value, filter.value.left);
+            return values.some((candidate) => compareScalar(left, candidate) === 0);
         }
         case "contains": {
-            const array = readField(value, predicate.left);
-            const needle = scalarKey(resolveOperand(value, predicate.right));
+            const array = operandValue(value, filter.value.left);
+            const needle = scalarKey(operandValue(value, filter.value.right));
             return (
                 Array.isArray(array) &&
                 array.some((item) => {
@@ -156,15 +178,20 @@ export function matches(value: unknown, predicate?: Predicate): boolean {
                 })
             );
         }
-        default: {
-            const left = resolveOperand(value, predicate.left);
-            const right = resolveOperand(value, predicate.right);
+        case "eq":
+        case "ne":
+        case "lt":
+        case "lte":
+        case "gt":
+        case "gte": {
+            const left = operandValue(value, filter.value.left);
+            const right = operandValue(value, filter.value.right);
             // A missing value is equal only to the same missing value. Checking presence
             // never orders the other side, so it also applies to lists and structs.
-            if ((predicate.op === "eq" || predicate.op === "ne") && (left == null || right == null))
-                return (left === right) === (predicate.op === "eq");
+            if ((filter.kind === "eq" || filter.kind === "ne") && (left == null || right == null))
+                return (left === right) === (filter.kind === "eq");
             const compared = compareScalar(left, right);
-            switch (predicate.op) {
+            switch (filter.kind) {
                 case "eq":
                     return compared === 0;
                 case "ne":
@@ -179,6 +206,8 @@ export function matches(value: unknown, predicate?: Predicate): boolean {
                     return compared >= 0;
             }
         }
+        default:
+            throw new Error(`Storage filters do not support ${filter.kind} expressions.`);
     }
 }
 // Validation needs the scalar domain, not its allocated physical index key.
@@ -199,22 +228,59 @@ function validateScalar(value: unknown): void {
     }
 }
 
+/** Admit only the storage subset of spec expressions, with scalar literals. */
+export function validateFilter(filter: unknown, depth = 0): asserts filter is Filter {
+    if (depth > 256) throw new Error("Storage filter is nested too deeply.");
+    const node = filter as { readonly kind?: unknown; readonly value?: Record<string, unknown> } | null;
+    if (node === null || typeof node !== "object" || node.value === null || typeof node.value !== "object")
+        throw new Error("Storage filters must be expressions.");
+    const value = (operand: unknown, allowed: "scalar" | "field" | "string" = "scalar") => {
+        const resolved = filterOperand(operand);
+        if (!resolved) throw new Error("Storage filter operands are row fields, literals or field lengths.");
+        if (allowed === "field" && resolved.kind !== "field")
+            throw new Error("Storage membership tests a list field.");
+        if (resolved.kind !== "literal") return;
+        if (allowed === "string" && typeof resolved.value !== "string")
+            throw new Error("LIKE patterns are strings or fields.");
+        validateScalar(resolved.value);
+    };
+    switch (node.kind) {
+        case "and":
+        case "or":
+            if (!Array.isArray(node.value.expressions)) throw new Error("Expected filter operands.");
+            for (const child of node.value.expressions) validateFilter(child, depth + 1);
+            return;
+        case "not":
+            return validateFilter(node.value.expression, depth + 1);
+        case "eq":
+        case "ne":
+        case "lt":
+        case "lte":
+        case "gt":
+        case "gte":
+            value(node.value.left);
+            return value(node.value.right);
+        case "in": {
+            value(node.value.left);
+            const list = filterOperand(node.value.right);
+            if (list?.kind !== "literal" || !Array.isArray(list.value))
+                throw new Error("Storage membership requires a literal list.");
+            return list.value.forEach(validateScalar);
+        }
+        case "contains":
+            value(node.value.left, "field");
+            return value(node.value.right);
+        case "like":
+        case "ilike":
+            value(node.value.left);
+            return value(node.value.right, "string");
+        default:
+            throw new Error(`Storage filters do not support ${String(node.kind)} expressions.`);
+    }
+}
 export function validateQuery(query: Query): void {
     validateQueryShape(query);
-    const validateOperand = (operand: Operand) => {
-        if (!isField(operand)) validateScalar(operand);
-    };
-    const validatePredicate = (predicate: Predicate): void => {
-        if (predicate.op === "and" || predicate.op === "or") {
-            for (const child of predicate.predicates) validatePredicate(child);
-        } else if (predicate.op === "not") validatePredicate(predicate.predicate);
-        else if (predicate.op !== "empty") {
-            validateOperand(predicate.left);
-            if (predicate.op === "in") for (const value of predicate.values) validateScalar(value);
-            else validateOperand(predicate.right);
-        }
-    };
-    if (query.where) validatePredicate(query.where);
+    if (query.where !== undefined) validateFilter(query.where);
     if (query.after) {
         const key = query.after.key;
         if (typeof key !== "string" && typeof key !== "number")
@@ -257,33 +323,23 @@ export function applyQuery<A>(rows: readonly Row<A>[], query: Query = {}): Row<A
         .slice(query.offset ?? 0, query.limit === undefined ? undefined : (query.offset ?? 0) + query.limit);
 }
 
-export const resolveOperand = (value: unknown, operand: Operand): unknown =>
-    isField(operand) ? readField(value, operand) : operand;
-
 /** Normalize only a field/literal comparison for candidate lookup; never reinterpret literals. */
-export function indexedComparison(predicate: Predicate):
+export function indexedComparison(filter: Filter):
     | {
           readonly op: "eq" | "ne" | "lt" | "lte" | "gt" | "gte";
           readonly field: Field;
           readonly value: Scalar;
       }
     | undefined {
-    if (
-        predicate.op === "and" ||
-        predicate.op === "or" ||
-        predicate.op === "not" ||
-        predicate.op === "in" ||
-        predicate.op === "contains" ||
-        predicate.op === "empty" ||
-        predicate.op === "like" ||
-        predicate.op === "ilike"
-    )
-        return undefined;
-    if (isField(predicate.left) && !isField(predicate.right))
-        return { op: predicate.op, field: predicate.left, value: predicate.right };
-    if (isField(predicate.right) && !isField(predicate.left)) {
+    if (!["eq", "ne", "lt", "lte", "gt", "gte"].includes(filter.kind)) return undefined;
+    const comparison = filter as Extract<Filter, { kind: "eq" | "ne" | "lt" | "lte" | "gt" | "gte" }>;
+    const left = filterOperand(comparison.value.left);
+    const right = filterOperand(comparison.value.right);
+    if (left?.kind === "field" && right?.kind === "literal")
+        return { op: comparison.kind, field: left.field, value: right.value as Scalar };
+    if (right?.kind === "field" && left?.kind === "literal") {
         const reversed = { eq: "eq", ne: "ne", lt: "gt", lte: "gte", gt: "lt", gte: "lte" } as const;
-        return { op: reversed[predicate.op], field: predicate.right, value: predicate.left };
+        return { op: reversed[comparison.kind], field: right.field, value: left.value as Scalar };
     }
     return undefined;
 }

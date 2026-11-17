@@ -2,7 +2,7 @@ import { BackendError, BackendErrorKindSchema } from "@party-stack/ontology-back
 import { o } from "@party-stack/ontology-spec";
 import { QueryDocumentSchema } from "@party-stack/ontology-spec/effect";
 import { digestBytesSync } from "@party-stack/ontology-storage/blobs";
-import { Table } from "@party-stack/ontology-storage/tables";
+import { Table, eq, field } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema } from "effect";
 import type { ActionMutatorRegistry } from "@party-stack/ontology-backend/actions";
 import type { OntologyIR, QueryDocument, TypeDef } from "@party-stack/ontology-spec";
@@ -116,7 +116,7 @@ export const pinMutators = {
         const removed = new Set(change.remove);
         if (change.clearName !== undefined)
             for (const row of yield* tx.loadSubset("Pin", {
-                where: { op: "eq", left: { _tag: "Field", path: ["name"] }, right: change.clearName },
+                where: eq(field("name"), change.clearName),
             }))
                 removed.add(String(row.key));
         for (const id of removed) yield* tx.delete("Pin", id);

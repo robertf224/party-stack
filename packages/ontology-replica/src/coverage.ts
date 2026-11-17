@@ -1,4 +1,4 @@
-import { isField } from "@party-stack/ontology-storage/tables";
+import { filterOperand } from "@party-stack/ontology-storage/tables";
 import type { Key, Query } from "@party-stack/ontology-storage";
 
 /** Ordering alone does not restrict which rows a complete snapshot contains. */
@@ -8,15 +8,14 @@ export function isWholeCollection(query: Query | undefined): boolean {
 
 /** The initial overlap optimization deliberately recognizes only an exact primary-key lookup. */
 export function primaryKeyLookup(query: Query | undefined, primaryKey: string): Key | undefined {
-    if (!query?.where || query.where.op !== "eq" || query.after || query.offset || query.limit === 0)
+    if (!query?.where || query.where.kind !== "eq" || query.after || query.offset || query.limit === 0)
         return undefined;
-    const { left, right } = query.where;
-    const key =
-        isField(left) && left.path.length === 1 && left.path[0] === primaryKey
-            ? right
-            : isField(right) && right.path.length === 1 && right.path[0] === primaryKey
-              ? left
-              : undefined;
+    const left = filterOperand(query.where.value.left);
+    const right = filterOperand(query.where.value.right);
+    const isKey = (operand: typeof left) =>
+        operand?.kind === "field" && operand.field.path.length === 1 && operand.field.path[0] === primaryKey;
+    const other = isKey(left) ? right : isKey(right) ? left : undefined;
+    const key = other?.kind === "literal" ? other.value : undefined;
     return typeof key === "string" || (typeof key === "number" && Number.isFinite(key)) ? key : undefined;
 }
 

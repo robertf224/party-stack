@@ -13,7 +13,7 @@ import type {
     ObjectType as MetaObjectType,
     ValueType as MetaValueType,
 } from "@party-stack/ontology-spec/meta";
-import type { Predicate } from "@party-stack/ontology-storage";
+import type { Filter } from "@party-stack/ontology-storage";
 
 const missing = Schema.is(Schema.Struct({ statusCode: Schema.Literal(404) }));
 async function ignoreMissing<A>(load: () => Promise<A>): Promise<A | undefined> {
@@ -27,7 +27,7 @@ async function ignoreMissing<A>(load: () => Promise<A>): Promise<A | undefined> 
 
 export async function loadFoundryMetaObjectTypes(
     client: OntologyClient,
-    predicate?: Predicate
+    predicate?: Filter
 ): Promise<MetaObjectType[]> {
     const lookup = planMetaLookup(predicate, { id: "id", name: "name" });
     let objectTypes: ObjectTypeV2[];
@@ -72,7 +72,7 @@ export async function loadFoundryMetaObjectTypes(
 
 export async function loadFoundryMetaLinkTypes(
     client: OntologyClient,
-    predicate?: Predicate
+    predicate?: Filter
 ): Promise<MetaLinkType[]> {
     const lookup = planMetaLookup(predicate, {
         "source.objectType": "objectType",
@@ -161,7 +161,7 @@ export async function loadFoundryMetaLinkTypes(
 
 export async function loadFoundryMetaValueTypes(
     client: OntologyClient,
-    predicate?: Predicate
+    predicate?: Filter
 ): Promise<MetaValueType[]> {
     const lookup = planMetaLookup(predicate, { name: "name" });
     const types = lookup

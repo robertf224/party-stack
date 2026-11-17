@@ -36,6 +36,8 @@ import {
     field,
     eq,
     inArray,
+    inValues,
+    not,
     indexesForQuery,
     lte,
     OntologyStorageError,
@@ -119,7 +121,7 @@ import type {
     ReplicaStateSnapshot,
 } from "@party-stack/ontology-backend/protocol";
 import type { OntologyIR } from "@party-stack/ontology-spec";
-import type { Cursor, Index, Key, Query, Row, Predicate } from "@party-stack/ontology-storage";
+import type { Cursor, Filter, Index, Key, Query, Row, Scalar } from "@party-stack/ontology-storage";
 import type { Overlay, Override } from "@party-stack/ontology-storage/overlay";
 import type { ReadTransaction, TablesService, Transaction } from "@party-stack/ontology-storage/tables";
 
@@ -415,19 +417,20 @@ const canonicalSubset = (subset: CompiledSubset): CompiledSubset => {
     const defined = (value: object) =>
         Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined));
     const query = defined(subset.query ?? {});
-    const predicate = (value: Predicate): Predicate => {
-        if (value.op === "in") {
+    // Membership lists are sets: order and duplicates do not change the subset.
+    const predicate = (value: Filter): Filter => {
+        if (value.kind === "in") {
             const codec = Table.make<unknown>({ name: "subset-values" });
-            return {
-                ...value,
-                values: [...new Map(value.values.map((item) => [codec.encode(item), item]))]
+            return inArray(
+                value.value.left,
+                [...new Map(inValues(value).map((item) => [codec.encode(item), item as Scalar]))]
                     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-                    .map(([, item]) => item),
-            };
+                    .map(([, item]) => item)
+            );
         }
-        if (value.op === "and" || value.op === "or")
-            return { ...value, predicates: value.predicates.map(predicate) };
-        if (value.op === "not") return { ...value, predicate: predicate(value.predicate) };
+        if (value.kind === "and" || value.kind === "or")
+            return { kind: value.kind, value: { expressions: value.value.expressions.map(predicate) } };
+        if (value.kind === "not") return not(predicate(value.value.expression));
         return value;
     };
     if (subset.query?.where) query.where = predicate(subset.query.where);
@@ -1313,6 +1316,20 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     name: "objectType",
                     field: field("subset", "objectType"),
                 });
+                // Filters persisted by an older storage format no longer validate. Drop
+                // them so coverage checks and retention never evaluate an unreadable query.
+                const readable = (subset: CompiledSubset) => {
+                    try {
+                        evaluateQuery([], subset.query ?? {});
+                        return true;
+                    } catch {
+                        return false;
+                    }
+                };
+                for (const row of yield* tx.query(coverage))
+                    if (!readable(row.value.subset)) yield* tx.delete(coverage, row.key);
+                for (const row of yield* tx.query(actionQueries))
+                    if (!readable(row.value.subset)) yield* tx.delete(actionQueries, row.key);
                 for (const [type, v] of views) {
                     yield* tx.ensureIndex(v.base, {
                         name: "primaryKey",

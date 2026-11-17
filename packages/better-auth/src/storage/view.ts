@@ -10,14 +10,13 @@ import {
 } from "@party-stack/ontology-spec";
 import {
     field,
+    mapFilterFields,
     type Query,
-    type Predicate,
-    type Operand,
     type Field,
     type Index,
     type Row,
 } from "@party-stack/ontology-storage";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import { fieldType, type AuthRow } from "./model.js";
 import type { OwnedReadTransaction, OwnedStorageTransaction } from "@party-stack/ontology-backend/owned";
 import type { getAuthTables } from "better-auth/db";
@@ -40,9 +39,6 @@ export interface AuthTransaction {
     readonly delete: (object: AuthObject, key: string) => Effect.Effect<void, unknown>;
     readonly ensureIndex: (object: AuthObject, index: Index) => Effect.Effect<void, unknown>;
 }
-const isField = Schema.is(
-    Schema.Struct({ _tag: Schema.Literal("Field"), path: Schema.Array(Schema.String) })
-);
 
 function compatible(ir: OntologyIR, actual: TypeDef, expected: TypeDef, seen = new Set<string>()): boolean {
     if (expected.kind === "unknown") return true;
@@ -170,36 +166,6 @@ export function compileAuthViews(
                     store: view.source.name,
                 };
             };
-            const remap = (operand: Operand, path: (path: readonly string[]) => string[]): Operand =>
-                isField(operand) ? field(...path(operand.path)) : operand;
-            const predicate = (value: Predicate, path: (path: readonly string[]) => string[]): Predicate => {
-                switch (value.op) {
-                    case "and":
-                    case "or":
-                        return { ...value, predicates: value.predicates.map((p) => predicate(p, path)) };
-                    case "not":
-                        return { ...value, predicate: predicate(value.predicate, path) };
-                    case "in":
-                        return { ...value, left: remap(value.left, path) };
-                    case "empty":
-                        return { ...value, left: field(...path(value.left.path)) };
-                    case "contains":
-                        return {
-                            ...value,
-                            left: field(...path(value.left.path)),
-                            right: remap(value.right, path),
-                        };
-                    case "like":
-                    case "ilike":
-                        return {
-                            ...value,
-                            left: remap(value.left, path),
-                            right: isField(value.right) ? field(...path(value.right.path)) : value.right,
-                        };
-                    default:
-                        return { ...value, left: remap(value.left, path), right: remap(value.right, path) };
-                }
-            };
             const attempt = <A>(work: () => A) => Effect.try({ try: work, catch: (cause) => cause });
             return {
                 get: Effect.fnUntraced(function* (object, key) {
@@ -211,7 +177,7 @@ export function compileAuthViews(
                     const view = yield* attempt(() => viewFor(object));
                     const rewritten = yield* attempt(() => ({
                         ...query,
-                        where: query.where ? predicate(query.where, view.path) : undefined,
+                        where: query.where ? mapFilterFields(query.where, view.path) : undefined,
                         orderBy: query.orderBy?.map((order) => ({
                             ...order,
                             field: field(...view.path(order.field.path)),

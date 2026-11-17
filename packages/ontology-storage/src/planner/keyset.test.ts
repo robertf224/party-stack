@@ -190,7 +190,7 @@ test("OR branches and multi-value ranges keep their complete implicit-key order"
                 const f = fixture(values);
                 const actual = yield* f.read({ where, after: { key: "note-00049", values: [] }, limit: 13 });
                 const included =
-                    where.op === "or"
+                    where.kind === "or"
                         ? (value: Note) => value.favorite || value.n > 270
                         : (value: Note) => [2, 50, 150, 300].includes(value.n);
                 const oracle = values

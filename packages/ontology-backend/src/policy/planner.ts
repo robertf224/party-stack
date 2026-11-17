@@ -1,69 +1,40 @@
 import { o } from "@party-stack/ontology-spec";
+import { filterOperand, isComparison, rebindFilter } from "@party-stack/ontology-storage";
 import type { Expression, QueryDocument, QuerySelection } from "@party-stack/ontology-spec";
-import type { Operand, Predicate, Query as Scan } from "@party-stack/ontology-storage";
+import type { Filter, Query as Scan } from "@party-stack/ontology-storage";
 
-/** Physical scans currently have total scalar ordering, whereas logical ordered
- * comparisons require compatible, present operands. Until that boundary is
- * unified, only translate predicates with identical semantics in both models.
+/** Physical scans order every value, whereas logical ordered comparisons require
+ * compatible, present operands. Keep only filter terms with identical semantics in
+ * both models: ordered comparisons qualify only between lengths and numbers.
  */
-function restriction(predicate: Predicate, binding: string): { expression?: Expression; exact: boolean } {
-    const operand = (value: Operand): Expression =>
-        value !== null && typeof value === "object" && "_tag" in value && value._tag === "Field"
-            ? o.Expression.getAt({
-                  source: o.Expression.localReference({ name: binding }),
-                  path: [...value.path],
-              })
-            : o.Expression.literal({ value });
-    if (predicate.op === "and" || predicate.op === "or") {
-        const children = predicate.predicates.map((p) => restriction(p, binding));
-        if (predicate.op === "or" && children.some((p) => !p.exact)) return { exact: false };
+function restriction(filter: Filter): { expression?: Filter; exact: boolean } {
+    if (filter.kind === "and" || filter.kind === "or") {
+        const children = filter.value.expressions.map(restriction);
+        if (filter.kind === "or" && children.some((p) => !p.exact)) return { exact: false };
         return {
-            expression: o.Expression[predicate.op]({
+            expression: o.Expression[filter.kind]({
                 expressions: children.flatMap((p) => (p.expression ? [p.expression] : [])),
             }),
             exact: children.every((p) => p.exact),
         };
     }
-    if (predicate.op === "not") {
-        const child = restriction(predicate.predicate, binding);
+    if (filter.kind === "not") {
+        const child = restriction(filter.value.expression);
         return child.exact && child.expression
             ? { expression: o.Expression.not({ expression: child.expression }), exact: true }
             : { exact: false };
     }
-    if (predicate.op === "in")
-        return {
-            expression: o.Expression.in({
-                left: operand(predicate.left),
-                right: o.Expression.literal({ value: predicate.values }),
-            }),
-            exact: true,
-        };
-    // A present list with no elements.
-    if (predicate.op === "empty")
-        return {
-            expression: o.Expression.and({
-                expressions: [
-                    o.Expression.ne({
-                        left: operand(predicate.left),
-                        right: o.Expression.literal({ value: undefined }),
-                    }),
-                    o.Expression.eq({
-                        left: o.Expression.length({ expression: operand(predicate.left) }),
-                        right: o.Expression.literal({ value: 0 }),
-                    }),
-                ],
-            }),
-            exact: true,
-        };
-    if (["eq", "ne", "contains", "like", "ilike"].includes(predicate.op))
-        return {
-            expression: o.Expression[predicate.op as "eq" | "ne" | "contains" | "like" | "ilike"]({
-                left: operand(predicate.left),
-                right: operand(predicate.right),
-            }),
-            exact: true,
-        };
-    return { exact: false };
+    if (isComparison(filter) && filter.kind !== "eq" && filter.kind !== "ne") {
+        const counted = [filter.value.left, filter.value.right].every((e) => {
+            const operand = filterOperand(e);
+            return (
+                operand?.kind === "length" ||
+                (operand?.kind === "literal" && typeof operand.value === "number")
+            );
+        });
+        return counted ? { expression: filter, exact: true } : { exact: false };
+    }
+    return { expression: filter, exact: true };
 }
 
 /** One independently narrowed path per grant site. Narrowing an ancestor of the
@@ -109,9 +80,9 @@ export function authorizationPlans(document: QueryDocument, objectType: string, 
             if (query.from.source.ontology) return [];
             const result: QuerySelection[][] = [];
             if (query.from.source.objectType === objectType) {
-                const where =
+                const restricted =
                     scan.where && !query.page && item.value.cardinality !== "one"
-                        ? restriction(scan.where, query.from.binding).expression
+                        ? restriction(scan.where).expression
                         : undefined;
                 result.push([
                     {
@@ -120,10 +91,15 @@ export function authorizationPlans(document: QueryDocument, objectType: string, 
                             ...item.value,
                             query: {
                                 ...query,
-                                where: where
+                                where: restricted
                                     ? query.where
-                                        ? o.Expression.and({ expressions: [query.where, where] })
-                                        : where
+                                        ? o.Expression.and({
+                                              expressions: [
+                                                  query.where,
+                                                  rebindFilter(restricted, query.from.binding),
+                                              ],
+                                          })
+                                        : rebindFilter(restricted, query.from.binding)
                                     : query.where,
                             },
                         },

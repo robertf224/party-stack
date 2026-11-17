@@ -4,7 +4,7 @@ import {
     selectedProperty,
     validateQueryDocument,
 } from "@party-stack/ontology-spec/query";
-import { field as ref, eq, evaluateQuery } from "@party-stack/ontology-storage";
+import { field as ref, eq, evaluateQuery, filterField } from "@party-stack/ontology-storage";
 import { Effect } from "effect";
 import { BackendError } from "../index.js";
 import { queryExecutor } from "../query.js";
@@ -74,12 +74,15 @@ export function policyProperties(ir: OntologyIR) {
 }
 function filterFields(query: Scan): Set<string> {
     const result = new Set<string>();
+    // Every row field a filter reads, including inside `length`; literals read none.
     const visit = (value: unknown): void => {
         if (!value || typeof value !== "object") return;
-        if ("_tag" in value && value._tag === "Field" && "path" in value && Array.isArray(value.path)) {
-            result.add(value.path[0]);
+        const read = filterField(value);
+        if (read) {
+            result.add(read.path[0]!);
             return;
         }
+        if ("kind" in value && value.kind === "literal") return;
         Object.values(value).forEach((v) => (Array.isArray(v) ? v.forEach(visit) : visit(v)));
     };
     visit(query.where);

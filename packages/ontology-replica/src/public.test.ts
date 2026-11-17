@@ -310,7 +310,10 @@ test("native parameter resolution acquires narrow demand for a cold object looku
                     count: 7,
                 });
                 expect(loads).toHaveLength(1);
-                expect(loads[0]?.query?.where).toMatchObject({ op: "eq", right: "one" });
+                expect(loads[0]?.query?.where).toMatchObject({
+                    kind: "eq",
+                    value: { right: { kind: "literal", value: { value: "one" } } },
+                });
                 expect(yield* replica.get("Item", "two")).toBeUndefined();
             })
         )

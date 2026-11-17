@@ -23,13 +23,28 @@ export {
     ilike,
     isNull,
     isUndefined,
-    isEmpty,
+    length,
+    operand,
+    fieldExpression,
+    rowBinding,
     and,
     or,
     not,
 } from "./model.js";
-export type { Key, Scalar, Operand, Field, Index, Predicate, Order, Cursor, Query, Row } from "./model.js";
+export type { Key, Scalar, Operand, Field, Index, Filter, Order, Cursor, Query, Row } from "./model.js";
 export { cursorOf } from "./query/evaluate.js";
+export {
+    fieldValues,
+    filterField,
+    filterOperand,
+    inValues,
+    isComparison,
+    lengthComparison,
+    lengthEmptiness,
+    mapFilterFields,
+    rebindFilter,
+} from "./query/filter.js";
+export type { FilterOperand, ComparisonKind } from "./query/filter.js";
 export { QuerySchema } from "./query/codec.js";
 export { indexesForQuery } from "./query/indexes.js";
 export {

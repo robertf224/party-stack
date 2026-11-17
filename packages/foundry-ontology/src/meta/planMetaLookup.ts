@@ -1,5 +1,5 @@
-import { isField } from "@party-stack/ontology-storage/tables";
-import type { Operand, Predicate } from "@party-stack/ontology-storage";
+import { filterOperand, inValues } from "@party-stack/ontology-storage/tables";
+import type { Filter, FilterOperand } from "@party-stack/ontology-storage";
 
 export interface MetaLookup {
     readonly field: string;
@@ -10,33 +10,43 @@ export interface MetaLookup {
  * AND can use one bounded branch. OR must cover every branch with the same lookup.
  */
 export function planMetaLookup(
-    predicate: Predicate | undefined,
+    predicate: Filter | undefined,
     fields: Readonly<Record<string, string>>
 ): MetaLookup | undefined {
     if (!predicate) return;
-    const lookup = (operand: Operand, values: readonly string[]): MetaLookup | undefined => {
-        if (!isField(operand)) return;
-        const path = operand.path.join(".");
+    const lookup = (
+        operand: FilterOperand | undefined,
+        values: readonly string[]
+    ): MetaLookup | undefined => {
+        if (operand?.kind !== "field") return;
+        const path = operand.field.path.join(".");
         if (!Object.hasOwn(fields, path)) return;
         return { field: fields[path]!, values: [...new Set(values)] };
     };
-    switch (predicate.op) {
-        case "eq":
-            if (typeof predicate.right === "string") return lookup(predicate.left, [predicate.right]);
-            if (typeof predicate.left === "string") return lookup(predicate.right, [predicate.left]);
+    switch (predicate.kind) {
+        case "eq": {
+            const left = filterOperand(predicate.value.left);
+            const right = filterOperand(predicate.value.right);
+            if (right?.kind === "literal" && typeof right.value === "string")
+                return lookup(left, [right.value]);
+            if (left?.kind === "literal" && typeof left.value === "string")
+                return lookup(right, [left.value]);
             return;
-        case "in":
-            if (predicate.values.every((value): value is string => typeof value === "string"))
-                return lookup(predicate.left, predicate.values);
+        }
+        case "in": {
+            const values = inValues(predicate);
+            if (values.every((value): value is string => typeof value === "string"))
+                return lookup(filterOperand(predicate.value.left), values);
             return;
+        }
         case "and": {
-            const bounded = predicate.predicates
+            const bounded = predicate.value.expressions
                 .map((child) => planMetaLookup(child, fields))
                 .filter((child) => child !== undefined);
             return bounded.find((child) => child.values.length === 0) ?? bounded[0];
         }
         case "or": {
-            const children = predicate.predicates.map((child) => planMetaLookup(child, fields));
+            const children = predicate.value.expressions.map((child) => planMetaLookup(child, fields));
             const first = children[0];
             if (!first || children.some((child) => child?.field !== first.field)) return;
             return {
