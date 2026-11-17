@@ -172,11 +172,16 @@ add explicit presence guards to keep query semantics.
 `length(field("tags"))` counts a list's elements or a string's UTF-16 code units. A
 missing value has length 0, as in TanStack DB, so `eq(length(field("tags")), 0)`
 matches a missing or empty list; `gt(length(field("tags")), 0)` matches a list with
-elements. Lists are never compared structurally. Only scalar operands use indexes or
-bind as SQL parameters: the IndexedDB and memory planners evaluate `length` on rows,
-and SQL storage compiles a length compared against an emptiness bound (`= 0`, `< 1`,
-`> 0`, `>= 1`, ...) from the field's multi-entry projection when one exists. Other
-length comparisons are evaluated on rows.
+elements. Lists are never compared structurally.
+
+A list's missing-value and `length` checks use a size index,
+`{ name: "tags:size", field: field("tags"), size: true }`. It keys each row once by its
+list's element count, and a missing list by the missing value itself (null as null), so
+one index answers `isUndefined(list)`, `ne(list, undefined)` and every `length`
+comparison, in memory, IndexedDB and SQL. A multi-entry index can't: it records no
+element for a missing or empty list. Without a size index, SQL storage still compiles
+a length compared against an emptiness bound (`= 0`, `< 1`, `> 0`, `>= 1`, ...) from the
+field's multi-entry projection, and other length checks are evaluated on rows.
 
 Orders support multiple fields, asc/desc, offset/limit, and exclusive keyset cursors
 containing every sort value plus the row key. Use `cursorOf(row, query)` to form one.

@@ -3579,12 +3579,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             try: () => {
                 evaluateQuery([], subset.query ?? {});
                 const definition = definitions.get(subset.objectType)!;
-                const properties = new Set(definition.properties.map((property) => property.name));
                 const codec = Table.make<CompiledSubset>({ name: "subset-copy" });
                 return {
                     // Initialization already installed the unique scalar PK
                     // index. Automatic query indexes need no duplicate copy.
-                    indexes: indexesForQuery(subset.query ?? {}, properties).filter(
+                    indexes: indexesForQuery(subset.query ?? {}, options.ir, definition).filter(
                         (index) =>
                             index.multiEntry ||
                             index.field.path.length !== 1 ||

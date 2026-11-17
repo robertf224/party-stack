@@ -23,7 +23,6 @@ import {
     mapFilterFields,
     rebindFilter,
 } from "./filter.js";
-import { indexesForQuery } from "./indexes.js";
 
 const rows: { key: string; value: { tags?: string[]; title?: string } }[] = [
     { key: "missing", value: {} },
@@ -108,24 +107,4 @@ test("filters move between bindings and lenses without changing their operators"
     expect(mapFilterFields(filter, (path) => ["source", ...path])).toEqual(
         and(eq(field("source", "a"), 1), gt(length(field("source", "tags")), 0))
     );
-});
-
-test("lazy indexes skip presence checks and lengths, which no scalar index can answer", () => {
-    const properties = new Set(["tags", "title", "rank"]);
-    expect(
-        indexesForQuery(
-            {
-                where: and(
-                    eq(field("tags"), undefined),
-                    ne(null, field("title")),
-                    gt(length(field("tags")), 0),
-                    eq(field("rank"), 1)
-                ),
-            },
-            properties
-        ).map((index) => index.name)
-    ).toEqual(['query:scalar:["rank"]']);
-    expect(indexesForQuery({ where: contains(field("tags"), "a") }, properties)).toEqual([
-        { name: 'query:elements:["tags"]', field: field("tags"), multiEntry: true },
-    ]);
 });

@@ -26,6 +26,11 @@ export interface Index {
     readonly unique?: boolean;
     /** Index each scalar array element once per row. */
     readonly multiEntry?: boolean;
+    /** Index each row once by its list's element count. A missing list keys as undefined
+     * (and null as null), so one index answers missing-value checks and every `length`
+     * comparison on a list, which a multi-entry index cannot: it records no element for
+     * a missing or empty list. */
+    readonly size?: boolean;
 }
 /** The local binding through which storage filters read the current row. */
 export const rowBinding = "row";

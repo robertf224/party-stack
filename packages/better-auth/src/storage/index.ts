@@ -147,7 +147,8 @@ export const makeBetterAuthStorage = Effect.fn("BetterAuth.storage")(function* (
                                 });
                         for (const index of indexesForQuery(
                             query ?? {},
-                            new Set(object.definition.properties.map((field) => field.name))
+                            options.storage.ir,
+                            object.definition
                         ))
                             yield* tx.ensureIndex(object, index);
                     });

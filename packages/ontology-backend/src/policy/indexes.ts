@@ -34,9 +34,10 @@ export function policyIndexes(ir: OntologyIR): { objectType: string; index: Inde
         if (!object || !property) return;
         const type = unwrap(property.type);
         if (elements ? type.kind !== "list" || !scalar(type.value.elementType) : !scalar(type)) return;
-        // Any present literal names the same index; only the field matters.
-        const query = { where: (elements ? contains : eq)(field(property.name), 0) };
-        for (const index of indexesForQuery(query, new Set(object.properties.map((p) => p.name))))
+        // Only the field matters: a scalar property's missing-value check still names its
+        // scalar index, and a scalar list's membership its element index.
+        const query = { where: (elements ? contains : eq)(field(property.name), undefined) };
+        for (const index of indexesForQuery(query, ir, object))
             indexes.set(JSON.stringify([object.name, index.name]), { objectType: object.name, index });
     };
     function expression(e: Expression, scope: Map<string, string>) {

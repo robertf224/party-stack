@@ -10,6 +10,7 @@ export const IndexSchema = Schema.Struct({
     field: FieldSchema,
     unique: Schema.optional(Schema.Boolean),
     multiEntry: Schema.optional(Schema.Boolean),
+    size: Schema.optional(Schema.Boolean),
 });
 // Shape validation whitelists ordering tokens; `validateFilter` whitelists every
 // filter operator and operand before the planner or a SQL compiler sees it.

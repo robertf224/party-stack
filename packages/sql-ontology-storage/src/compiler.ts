@@ -2,6 +2,9 @@ import {
     keyCode,
     scalarKey,
     caseInsensitiveIndex,
+    fieldIndex,
+    sizeRanges,
+    type Range,
     type StoredIndex,
 } from "@party-stack/ontology-storage/driver";
 import {
@@ -73,7 +76,7 @@ export function compileQuery(dialect: Dialect, indexes: readonly StoredIndex[], 
     const expression = (field: Field, insensitive = false): string | undefined => {
         const index = indexes.find(
             (i) =>
-                !i.multiEntry &&
+                fieldIndex(i) &&
                 i.field.path.length === field.path.length &&
                 i.field.path.every((part, n) => part === field.path[n])
         );
@@ -84,8 +87,27 @@ export function compileQuery(dialect: Dialect, indexes: readonly StoredIndex[], 
     const sameField = (a: Field, b: Field) =>
         a.path.length === b.path.length && a.path.every((part, n) => part === b.path[n]);
     const arrayIndex = (field: Field) => indexes.find((i) => i.multiEntry && sameField(i.field, field));
-    // A multi-entry projection is the set of distinct element codes; a missing list projects
-    // to no entries. It answers emptiness exactly, never the length of a list with duplicates.
+    const sizeIndex = (field: Field) => indexes.find((i) => i.size && sameField(i.field, field));
+    /** Size index keys within any of the ranges. */
+    const sizeCondition = (field: Field, ranges: readonly Range[] | undefined): Fragment | undefined => {
+        const index = sizeIndex(field);
+        if (!index || !ranges) return undefined;
+        const expr = indexExpression(dialect, index.name);
+        const terms = ranges.map((range) => {
+            const bounds = [
+                ...(range.lower === undefined
+                    ? []
+                    : [`${expr} ${range.lowerOpen ? ">" : ">="} ${bind(range.lower)}`]),
+                ...(range.upper === undefined
+                    ? []
+                    : [`${expr} ${range.upperOpen ? "<" : "<="} ${bind(range.upper)}`]),
+            ];
+            return bounds.length ? `(${bounds.join(" AND ")})` : "1=1";
+        });
+        return { sql: terms.length ? `(${terms.join(" OR ")})` : "1=0", complete: true };
+    };
+    // Without a size index, a multi-entry projection can still answer emptiness. It holds the
+    // distinct element codes and no entry for a missing list, so never other lengths.
     const lengthExpression = (field: Field): string | undefined => {
         const index = arrayIndex(field);
         if (!index) return undefined;
@@ -187,10 +209,33 @@ export function compileQuery(dialect: Dialect, indexes: readonly StoredIndex[], 
         // A length compiles only as an emptiness test of a multi-entry projection.
         const counted = lengthComparison(p);
         if (counted) {
+            const sized = sizeCondition(counted.field, sizeRanges(counted.op, counted.bound));
+            if (sized) return sized;
             const empty = lengthEmptiness(counted.op, counted.bound);
             const length = lengthExpression(counted.field);
             if (empty === undefined || !length) return unsupported();
             return { sql: `${length} ${empty ? "=" : ">"} 0`, complete: true };
+        }
+        // A list has no field index; its size index keys a missing list as the missing value.
+        const [checked, other] = left.kind === "field" ? [left, right] : [right, left];
+        if (
+            (p.kind === "eq" || p.kind === "ne") &&
+            checked.kind === "field" &&
+            other.kind === "literal" &&
+            other.value == null &&
+            !expression(checked.field)
+        ) {
+            const key = scalarKey(other.value);
+            const sized = sizeCondition(
+                checked.field,
+                p.kind === "eq"
+                    ? [{ lower: key, upper: key }]
+                    : [
+                          { upper: key, upperOpen: true },
+                          { lower: key, lowerOpen: true },
+                      ]
+            );
+            if (sized) return sized;
         }
         const a = operand(left);
         if (!a) return unsupported();
@@ -267,7 +312,7 @@ export function compileGroupedQuery(
     if (query.after) return;
     const index = indexes.find(
         (index) =>
-            !index.multiEntry &&
+            fieldIndex(index) &&
             index.field.path.length === partition.path.length &&
             index.field.path.every((part, i) => part === partition.path[i])
     );

@@ -4,6 +4,7 @@ import { OntologyStorageError, type Key, type Query, type Row, type ReadTable } 
 import {
     applyQuery,
     decodeKey,
+    fieldIndex,
     keyCode,
     matches,
     sameField,
@@ -212,7 +213,7 @@ const indexedCompositeWindow = Effect.fnUntraced(function* <A>(
     )
         return undefined;
     const ordered = orders.map((order) =>
-        indexes.find((index) => !index.multiEntry && sameField(index.field, order.field))
+        indexes.find((index) => fieldIndex(index) && sameField(index.field, order.field))
     );
     if (ordered.some((index) => !index)) return undefined;
     const columns = yield* Effect.forEach(

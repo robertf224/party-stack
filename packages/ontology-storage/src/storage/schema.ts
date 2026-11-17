@@ -6,6 +6,7 @@ export const StoredIndexSchema = Schema.Struct({
     field: FieldSchema,
     unique: Schema.optional(Schema.Boolean),
     multiEntry: Schema.optional(Schema.Boolean),
+    size: Schema.optional(Schema.Boolean),
     table: Schema.String,
     version: Schema.Int,
 });

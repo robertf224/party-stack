@@ -768,7 +768,8 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                     if (object)
                         for (const index of indexesForQuery(
                             subset.query ?? {},
-                            new Set(object.definition.properties.map((property) => property.name))
+                            options.ir,
+                            object.definition
                         ))
                             yield* storage.ensureIndex(object, index);
                     return yield* storage.read((native) =>

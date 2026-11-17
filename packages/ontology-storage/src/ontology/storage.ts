@@ -268,7 +268,9 @@ export function makeOntologyStorage(
             }, mutation),
             ensureIndex: Effect.fnUntraced(function* <A>(object: ObjectStore<A>, index: Index) {
                 const definition = yield* store(object);
-                yield* checkQuery(() => validateField(compiled.ir, object, index.field, index.multiEntry));
+                yield* checkQuery(() =>
+                    validateField(compiled.ir, object, index.field, index.size ? "list" : index.multiEntry)
+                );
                 yield* guard;
                 yield* tx.ensureIndex(definition.table, index);
             }, mutation),

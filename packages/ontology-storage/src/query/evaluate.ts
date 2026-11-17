@@ -1,7 +1,7 @@
 import { Temporal } from "temporal-polyfill";
 import { filterOperand, inValues } from "./filter.js";
 import { validateQueryShape } from "./schema.js";
-import type { Cursor, Field, Filter, Key, Query, Row, Scalar } from "../model.js";
+import type { Cursor, Field, Filter, Index, Key, Query, Row, Scalar } from "../model.js";
 import type { Expression } from "@party-stack/ontology-spec";
 
 // ASCII encodings give IDB and SQL binary collations exactly the same ordering.
@@ -72,6 +72,17 @@ export function readField(value: unknown, path: Field): unknown {
     }
     return value;
 }
+/** A row's key in a list size index: its element count, or the missing value itself.
+ * Any other present value counts as 0, as it does for `length`. */
+export const sizeKey = (value: unknown): unknown =>
+    value === undefined || value === null
+        ? value
+        : Array.isArray(value) || typeof value === "string"
+          ? value.length
+          : 0;
+/** An index keyed by one field's own scalar value, which orders and ranges over that field. */
+export const fieldIndex = (index: Pick<Index, "multiEntry" | "size">): boolean =>
+    !index.multiEntry && !index.size;
 export const sameField = (a: Field, b: Field): boolean =>
     a.path.length === b.path.length && a.path.every((part, i) => part === b.path[i]);
 export const compareScalar = (a: unknown, b: unknown): number => {

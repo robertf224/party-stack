@@ -72,9 +72,15 @@ values preserve their precision. Integer keys remain signed 32-bit numbers.
 `inArray(field("status"), ["open", "closed"])` tests a scalar against a literal
 list. An array index uses `{ name: "labels", field: field("labels"), multiEntry: true }`.
 It stores each distinct element once per row and updates atomically with the row.
-Unique array-element indexes are not supported. Owned backends and replicas lazily
-ensure query indexes for declared top-level fields; dynamic paths do not create
-unbounded index definitions from query input.
+Unique array-element indexes are not supported. A size index,
+`{ name: "labels:size", field: field("labels"), size: true }`, keys each row by its
+list's length (a missing list by the missing value) and answers the list's
+missing-value and `length` checks. Owned backends and replicas lazily
+ensure query indexes for declared top-level fields, fitted to each property's type: a
+scalar index for a scalar (missing-value checks included), an element index for
+`contains`, and a size index for a list's missing-value and `length` checks. No scalar
+index is requested for a list or struct. Dynamic paths do not create unbounded index
+definitions from query input.
 
 ## Full queries
 
