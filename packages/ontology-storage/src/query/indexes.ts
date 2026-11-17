@@ -12,6 +12,8 @@ export function indexesForQuery(query: Query, properties: ReadonlySet<string>): 
     const visit = (p: Predicate): void => {
         if (p.op === "and" || p.op === "or") return p.predicates.forEach(visit);
         if (p.op === "not") return visit(p.predicate);
+        // No index records an empty list.
+        if (p.op === "empty") return;
         if (isField(p.left)) add(p.left, p.op === "contains");
         if ("right" in p && isField(p.right)) add(p.right);
     };

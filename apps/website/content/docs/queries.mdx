@@ -51,6 +51,39 @@ syncing upstream data. `cachedObjects` only observes whatever is already local.
 Background refresh failures do not hide retained data. Inspect them in devtools;
 query-level cached/fresh status is not yet exposed by the React hooks.
 
+## Missing values
+
+An optional property without a value is `undefined` in every row, whatever the
+source stores. Filter on it with `isUndefined`; `isNull` never matches a stored
+object.
+
+```tsx
+import { and, isUndefined, not } from "@tanstack/db";
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { objects } from "./ontology/generated/collections";
+
+function UnlabeledIssues() {
+    const { data: issues } = useLiveSuspenseQuery({
+        query: (q) =>
+            q
+                .from({ issue: objects.Issue })
+                .where(({ issue }) => and(isUndefined(issue.issueLabels), not(isUndefined(issue.assignee)))),
+    });
+    return (
+        <ul>
+            {issues.map((issue) => (
+                <li key={issue.id}>{issue.title}</li>
+            ))}
+        </ul>
+    );
+}
+```
+
+Missing-value checks work on any property, including lists and structs, and
+narrow what is fetched. An empty list is a value, not a missing one: to find lists
+with no elements, missing or empty, compare `length(issue.issueLabels)` with 0.
+Sources such as Foundry answer that exactly.
+
 ## Join local collections
 
 Inside a component, join `Issue.projectId` to `Project.id`:

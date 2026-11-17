@@ -35,6 +35,8 @@ export type Predicate =
       }
     | { readonly op: "in"; readonly left: Operand; readonly values: readonly Scalar[] }
     | { readonly op: "contains"; readonly left: Field; readonly right: Operand }
+    /** The list field is present and has no elements. */
+    | { readonly op: "empty"; readonly left: Field }
     | { readonly op: "like" | "ilike"; readonly left: Operand; readonly right: string | Field }
     | { readonly op: "and"; readonly predicates: readonly Predicate[] }
     | { readonly op: "or"; readonly predicates: readonly Predicate[] }
@@ -107,6 +109,8 @@ export const like = (left: Operand, right: string | Field): Predicate => ({ op: 
 export const ilike = (left: Operand, right: string | Field): Predicate => ({ op: "ilike", left, right });
 export const isNull = (operand: Operand): Predicate => eq(operand, null);
 export const isUndefined = (operand: Operand): Predicate => eq(operand, undefined);
+/** The list field is present and has no elements; a missing list is `isUndefined`. */
+export const isEmpty = (list: Field): Predicate => ({ op: "empty", left: list });
 export const and = (...predicates: Predicate[]): Predicate => ({ op: "and", predicates });
 export const or = (...predicates: Predicate[]): Predicate => ({ op: "or", predicates });
 export const not = (predicate: Predicate): Predicate => ({ op: "not", predicate });
@@ -120,6 +124,7 @@ export const where = {
     gte,
     in: inArray,
     contains,
+    isEmpty,
     like,
     ilike,
     isNull,

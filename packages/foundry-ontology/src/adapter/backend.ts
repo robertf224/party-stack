@@ -6,7 +6,7 @@ import { QuerySchema } from "@party-stack/ontology-storage";
 import { isField } from "@party-stack/ontology-storage/tables";
 import { Deferred, Effect, Queue, Schema, Stream, Redacted } from "effect";
 import { searchFoundryObjects } from "./foundryObjectSearch.js";
-import { analyzeSubsetFilter, subsetFilter } from "./subsetFilter.js";
+import { analyzeSubsetFilter, arrayProperties, subsetFilter } from "./subsetFilter.js";
 import type { Actions } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { ObjectSetSubscriptionMessage, WatcherError } from "@party-stack/foundry-object-set-watcher";
@@ -307,7 +307,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
             const keys = candidates?.every(Schema.is(KeySchema))
                 ? (candidates as readonly (string | number)[])
                 : undefined;
-            const plan = analyzeSubsetFilter(predicate);
+            const plan = analyzeSubsetFilter(predicate, arrayProperties(options.ir, definition));
             const pushed = keys
                 ? { type: "in" as const, field: definition.primaryKey, value: [...new Set(keys)] }
                 : plan.query;
@@ -418,10 +418,13 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                       ? undefined
                       : Effect.gen(function* () {
                             const subset = yield* compileObjectSubset(options.ir, request, options.context);
-                            const filter = subsetFilter(subset.query?.where);
                             const definition = options.ir.objectTypes.find(
                                 (type) => type.name === subset.objectType
                             )!;
+                            const filter = subsetFilter(
+                                subset.query?.where,
+                                arrayProperties(options.ir, definition)
+                            );
                             return yield* acquireWatch(
                                 watcher.subscribe(
                                     filter

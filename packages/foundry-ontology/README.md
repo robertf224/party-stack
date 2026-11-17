@@ -30,6 +30,15 @@ The backend narrows provider requests where it can prove they include every
 matching row. The shared query engine then applies residual predicates, ordering,
 and limits. A bounded fetch never certifies that the whole object type is loaded.
 
+Equality, `in`, array `contains`, ranges and missing-value checks are sent as
+exact Foundry filters, and so is a negation of an exact filter, with Foundry's `not`.
+Foundry's `isNull` is also true for an empty array, so on arrays it answers "missing
+or empty" (`length(list) == 0`) exactly, and either alone as a broader candidate.
+Foundry's `wildcard` matches single lowercased tokens and rejects a leading `*`, so
+a `like`/`ilike` pattern that starts with a word is sent as that word's prefix, a
+broader candidate; patterns starting with a wildcard or punctuation stay local. A
+`like` without wildcards is exact equality.
+
 `refetchInterval` supplies a recommended polling interval, in milliseconds. The
 replica schedules polling; the adapter does not run a separate timer. `false`
 disables the recommendation, and omission defaults to no polling. An explicit

@@ -4,12 +4,15 @@ import type { Field, Predicate, Query } from "../model.js";
 import type { ObjectStore } from "./model.js";
 import type { OntologyIR, TypeDef } from "@party-stack/ontology-spec";
 
+/** `true` validates a scalar-array field for `contains`; `"presence"` accepts any declared
+ * field, for comparing it with a missing value; `"list"` accepts any list field. */
 export function validateField(
     ir: OntologyIR,
     object: Pick<ObjectStore<unknown>, "name" | "definition">,
     field: Field,
-    multiEntry = false
+    mode: boolean | "presence" | "list" = false
 ): void {
+    const multiEntry = mode === true;
     const visit = (
         type: TypeDef,
         path: readonly string[],
@@ -31,6 +34,8 @@ export function validateField(
             if (seen.has(reference)) throw new TypeError("Circular object reference primary key.");
             return visit(key.type, path, new Set([...seen, reference]), list);
         }
+        if (!path.length && mode === "presence") return true;
+        if (!path.length && mode === "list") return type.kind === "list";
         if (!path.length && list)
             return type.kind === "list" && visit(type.value.elementType, [], seen, false);
         if (!path.length)
@@ -85,7 +90,7 @@ export function validateField(
         !visit({ kind: "struct", value: { fields: object.definition.properties } }, field.path)
     )
         throw new TypeError(
-            `Expected a declared ${multiEntry ? "scalar-array" : "scalar"} field on ${object.name}: ${JSON.stringify(field.path)}.`
+            `Expected a declared ${mode === "presence" ? "" : mode === "list" ? "list " : multiEntry ? "scalar-array " : "scalar "}field on ${object.name}: ${JSON.stringify(field.path)}.`
         );
 }
 export function validateObjectQuery(ir: OntologyIR, object: ObjectStore<unknown>, query: Query): void {
@@ -93,8 +98,14 @@ export function validateObjectQuery(ir: OntologyIR, object: ObjectStore<unknown>
     const predicate = (value: Predicate): void => {
         if (value.op === "and" || value.op === "or") return value.predicates.forEach(predicate);
         if (value.op === "not") return predicate(value.predicate);
-        if (isField(value.left)) validateField(ir, object, value.left, value.op === "contains");
-        if ("right" in value && isField(value.right)) validateField(ir, object, value.right);
+        if (value.op === "empty") return validateField(ir, object, value.left, "list");
+        // Comparing with a missing value checks presence, so any declared field qualifies.
+        const presence = (other: unknown) =>
+            (value.op === "eq" || value.op === "ne") && other == null ? ("presence" as const) : false;
+        const right = "right" in value ? value.right : undefined;
+        if (isField(value.left))
+            validateField(ir, object, value.left, value.op === "contains" || presence(right));
+        if (isField(right)) validateField(ir, object, right, presence(value.left));
     };
     if (query.where) predicate(query.where);
     query.orderBy?.forEach((order) => validateField(ir, object, order.field));

@@ -116,7 +116,7 @@ test("boolean ordered boundaries lower to valid Query IR with exact TanStack nul
                 expect(evaluateQuery(data, compiled.query).map((row) => row.key)).toEqual(
                     data
                         .filter((row) => compileSingleRowExpression(expression)(row.value) === true)
-                        .map((row) => row.key)
+                        .map((row) => String(row.key))
                 );
             }
         }
@@ -145,7 +145,7 @@ test("reverse IN pushes scalar-array membership through OR and preserves three-v
             evaluateQuery(
                 data.map((value) => ({ key: value.id, value })),
                 subset
-            ).map((row) => row.key)
+            ).map((row) => String(row.key))
         ).toEqual(
             data
                 .filter((value) => compileSingleRowExpression(expression)(value) === true)
@@ -218,7 +218,9 @@ test("positive equality needs no missing-value guard, but NOT and optional field
         );
     }
     expect(
-        evaluateQuery(rows, storageSubset({ where: fn("not", equal) }, ir, "Note")).map((row) => row.key)
+        evaluateQuery(rows, storageSubset({ where: fn("not", equal) }, ir, "Note")).map((row) =>
+            String(row.key)
+        )
     ).toEqual(["b", "c"]);
 });
 
@@ -734,4 +736,72 @@ test("collection cleanup awaits a subset release already detached from its paren
             })
         )
     );
+});
+
+test("missing-value checks push down exactly for list, struct and scalar fields", async () => {
+    // Missing, empty and non-empty lists stay distinct, as TanStack evaluates them locally.
+    const rows: { key: string; value: Record<string, unknown> }[] = [
+        { key: "missing", value: { id: "missing" } },
+        { key: "empty", value: { id: "empty", tags: [], nested: { value: 1 }, title: "t" } },
+        { key: "tagged", value: { id: "tagged", tags: ["a"] } },
+    ];
+    for (const property of ["tags", "nested", "title"])
+        for (const check of ["isUndefined", "isNull"]) {
+            const presence = fn(check, ref(property));
+            for (const expression of [presence, fn("not", presence)]) {
+                const analysis = analyzeOntologySubset({ where: expression }, ir, "Note");
+                expect(analysis.exact).toBe(true);
+                const compiled = await Effect.runPromise(
+                    compileObjectSubset(ir, ontologySubset({ where: expression }, ir, "Note"))
+                );
+                expect(
+                    evaluateQuery(rows, compiled.query)
+                        .map((row) => String(row.key))
+                        .sort((a, b) => a.localeCompare(b))
+                ).toEqual(
+                    rows
+                        .filter((row) => compileSingleRowExpression(expression)(row.value) === true)
+                        .map((row) => String(row.key))
+                        .sort((a, b) => a.localeCompare(b))
+                );
+            }
+        }
+});
+
+test("empty-list checks through length push down exactly, counting a missing list as empty", async () => {
+    const rows: { key: string; value: Record<string, unknown> }[] = [
+        { key: "missing", value: { id: "missing" } },
+        { key: "empty", value: { id: "empty", tags: [] } },
+        { key: "tagged", value: { id: "tagged", tags: ["a"] } },
+        { key: "two", value: { id: "two", tags: ["a", "b"] } },
+    ];
+    const length = fn("length", ref("tags"));
+    const checks = [
+        fn("eq", length, new IR.Value(0)),
+        fn("eq", new IR.Value(0), length),
+        fn("lt", length, new IR.Value(1)),
+        fn("lte", length, new IR.Value(0)),
+        fn("gt", length, new IR.Value(0)),
+        fn("gte", length, new IR.Value(1)),
+        fn("gt", new IR.Value(1), length),
+    ];
+    for (const check of checks)
+        for (const expression of [check, fn("not", check)]) {
+            expect(analyzeOntologySubset({ where: expression }, ir, "Note").exact).toBe(true);
+            const compiled = await Effect.runPromise(
+                compileObjectSubset(ir, ontologySubset({ where: expression }, ir, "Note"))
+            );
+            expect(
+                evaluateQuery(rows, compiled.query)
+                    .map((row) => String(row.key))
+                    .sort((a, b) => a.localeCompare(b))
+            ).toEqual(
+                rows
+                    .filter((row) => compileSingleRowExpression(expression)(row.value) === true)
+                    .map((row) => String(row.key))
+                    .sort((a, b) => a.localeCompare(b))
+            );
+        }
+    // Other lengths have no exact object predicate.
+    expect(analyzeOntologySubset({ where: fn("eq", length, new IR.Value(2)) }, ir, "Note").exact).toBe(false);
 });

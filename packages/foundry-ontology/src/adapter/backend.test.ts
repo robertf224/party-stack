@@ -309,7 +309,7 @@ test("HTTP reads and watches use the same conservative subset filter while windo
                 const subset = {
                     objectType: "Issue",
                     query: {
-                        where: and(eq(field("project"), "one"), like(field("title"), "%hello%")),
+                        where: and(eq(field("project"), "one"), like(field("title"), "hello%")),
                         orderBy: [{ field: field("rank") }],
                         limit: 1,
                     },
@@ -325,9 +325,9 @@ test("HTTP reads and watches use the same conservative subset filter while windo
                     value: [
                         { type: "eq", field: "project", value: "one" },
                         {
-                            type: "containsAllTermsInOrder",
+                            type: "wildcard",
                             propertyIdentifier: { type: "property", apiName: "title" },
-                            value: "hello",
+                            value: "hello*",
                         },
                     ],
                 };

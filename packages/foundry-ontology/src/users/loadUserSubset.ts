@@ -57,7 +57,7 @@ function select(predicate: Predicate, lens: Lens, path: number[] = []): Selectio
             return { ...first, paths: children.flatMap((child) => child!.paths) };
         return;
     }
-    if (predicate.op === "not") return;
+    if (predicate.op === "not" || predicate.op === "empty") return;
     const left =
         predicate.op === "eq" && !isField(predicate.left) && isField(predicate.right)
             ? predicate.right
