@@ -46,6 +46,7 @@ vi.mock("expo-crypto", () => ({
     digestStringAsync: (_algorithm: string, value: string) =>
         Promise.resolve(createHash("sha256").update(value).digest("hex")),
 }));
+vi.mock("expo-location", () => ({ Accuracy: { Balanced: 3, High: 4 } }));
 vi.mock("expo-sqlite", () => ({ openDatabaseAsync: state.open, deleteDatabaseAsync: state.delete }));
 vi.mock("./ExpoNetworkConnectivity.js", () => ({
     makeExpoNetworkConnectivity: () =>
@@ -216,6 +217,9 @@ it("public memory runtime retains native capabilities without acquiring persiste
                 expect(first).toBe(same);
                 expect(yield* first.connectivity.online).toBe(true);
                 expect(first.browserAuthentication).toBeDefined();
+                // Device location is a native capability too, shared by every partition.
+                expect(runtimes.geolocation).toBeDefined();
+                expect(first.geolocation).toBeDefined();
                 expect(first.encryptionKeyring).toBeDefined();
                 const active = yield* first.encryptionKeyring!.active;
                 expect((yield* first.encryptionKeyring!.active).id).toBe(active.id);

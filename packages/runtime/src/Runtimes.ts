@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, LayerMap, Schema } from "effect";
 import { Runtime } from "./Runtime.js";
 import { RuntimePartition, RuntimePartitionSchema } from "./RuntimePartition.js";
+import type { Geolocation } from "./Geolocation.js";
 import type { RuntimeService } from "./Runtime.js";
 import type { RuntimeAcquisitionError } from "./types.js";
 import type { BrowserAuthentication } from "./types.js";
@@ -16,6 +17,7 @@ export class Runtimes extends Context.Service<
     Runtimes,
     {
         readonly browserAuthentication?: BrowserAuthentication;
+        readonly geolocation?: Geolocation;
         readonly acquire: (
             partition: RuntimePartition["Service"]
         ) => Effect.Effect<RuntimeService, RuntimeAcquisitionError, Scope.Scope>;
@@ -23,7 +25,10 @@ export class Runtimes extends Context.Service<
 >()("@party-stack/runtime/Runtimes") {
     static readonly layer = (
         platform: RuntimeLayer,
-        options: { readonly browserAuthentication?: BrowserAuthentication } = {}
+        options: {
+            readonly browserAuthentication?: BrowserAuthentication;
+            readonly geolocation?: Geolocation;
+        } = {}
     ) =>
         Layer.effect(
             Runtimes,
@@ -36,6 +41,7 @@ export class Runtimes extends Context.Service<
                 );
                 return Runtimes.of({
                     browserAuthentication: options.browserAuthentication,
+                    geolocation: options.geolocation,
                     acquire: Effect.fnUntraced(function* (partition) {
                         const context = yield* partitions.contextEffect(encode(partition));
                         return Context.get(context, Runtime);

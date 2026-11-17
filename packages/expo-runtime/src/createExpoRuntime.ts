@@ -12,11 +12,13 @@ import { CryptoDigestAlgorithm, digest } from "expo-crypto";
 import { Paths } from "expo-file-system";
 import { deleteDatabaseAsync, openDatabaseAsync } from "expo-sqlite";
 import { createExpoBrowserAuthentication } from "./createExpoBrowserAuthentication.js";
+import { createExpoGeolocation } from "./createExpoGeolocation.js";
 import { nativeKeyCodec } from "./encryptionKeys.js";
 import { ExpoFileSystemBlobBytesStore } from "./ExpoFileSystemBlobBytesStore.js";
 import { makeKeyMaterialStore } from "./ExpoKeyMaterialStore.js";
 import { makeExpoNetworkConnectivity } from "./ExpoNetworkConnectivity.js";
 import { hashStorageName } from "./hashStorageName.js";
+import type { Geolocation } from "@party-stack/runtime";
 import type { SQLiteBindValue } from "expo-sqlite";
 
 // Content digests use the platform SHA-256; portable JavaScript hashing costs
@@ -26,7 +28,14 @@ configureNativeSha256((bytes) => digest(CryptoDigestAlgorithm.SHA256, bytes));
 export interface ExpoRuntimeOptions {
     /** Persistent SQLite/filesystem storage by default; memory keeps native platform capabilities. */
     readonly storage?: "persistent" | "memory";
+    /** Device location through expo-location by default. Permission is requested on
+     * first use; add expo-location's config plugin for the platform purpose strings.
+     * Pass `false` for none. */
+    readonly geolocation?: Geolocation | false;
 }
+
+const geolocationOf = (options: ExpoRuntimeOptions) =>
+    options.geolocation === false ? undefined : (options.geolocation ?? createExpoGeolocation());
 
 export const make = Effect.fn("ExpoRuntime.make")(function* (options: ExpoRuntimeOptions = {}) {
     const { owner, namespace } = yield* RuntimePartition;
@@ -49,6 +58,7 @@ export const make = Effect.fn("ExpoRuntime.make")(function* (options: ExpoRuntim
             blobBytes: new MemoryBlobBytesStore(),
             encryptionKeyring: yield* makeKeyMaterialStoreKeyring(secrets, nativeKeyCodec),
             browserAuthentication: createExpoBrowserAuthentication(),
+            geolocation: geolocationOf(options),
             connectivity,
             capacity: { memory: Effect.succeed(undefined), storage: Effect.succeed(undefined) },
         });
@@ -109,6 +119,7 @@ export const make = Effect.fn("ExpoRuntime.make")(function* (options: ExpoRuntim
             }),
         },
         browserAuthentication: createExpoBrowserAuthentication(),
+        geolocation: geolocationOf(options),
         encryptionKeyring,
         connectivity,
 
@@ -133,4 +144,7 @@ export const make = Effect.fn("ExpoRuntime.make")(function* (options: ExpoRuntim
 });
 export const layer = (options: ExpoRuntimeOptions = {}) => Layer.effect(Runtime, make(options));
 export const expoRuntime = (options: ExpoRuntimeOptions = {}) =>
-    Runtimes.layer(layer(options), { browserAuthentication: createExpoBrowserAuthentication() });
+    Runtimes.layer(layer(options), {
+        browserAuthentication: createExpoBrowserAuthentication(),
+        geolocation: geolocationOf(options),
+    });

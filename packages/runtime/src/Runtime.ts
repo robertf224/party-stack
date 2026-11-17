@@ -2,6 +2,7 @@ import { Context, Effect, Schema } from "effect";
 import { alwaysOnlineConnectivity } from "./NetworkConnectivity.js";
 import { RuntimePartition } from "./RuntimePartition.js";
 import type { ResourceCapacity } from "./capacity.js";
+import type { Geolocation } from "./Geolocation.js";
 import type { RuntimeOptions, BrowserAuthentication, NetworkConnectivity } from "./types.js";
 import type { BlobBytesService } from "@party-stack/ontology-storage/blobs";
 import type { EncryptionKeyringService } from "@party-stack/ontology-storage/encrypted";
@@ -18,6 +19,8 @@ export interface RuntimeService {
     readonly owner: string;
     readonly namespace: string;
     readonly browserAuthentication?: BrowserAuthentication;
+    /** Device location; absent where the platform has none (for example Node). */
+    readonly geolocation?: Geolocation;
     readonly destroy: Effect.Effect<void, RuntimeError>;
     readonly tables: TablesService;
     readonly encryptionKeyring?: EncryptionKeyringService;
@@ -33,6 +36,7 @@ export class Runtime extends Context.Service<Runtime, RuntimeService>()("@party-
             ...partition,
             capacity: adapter.capacity,
             browserAuthentication: adapter.browserAuthentication,
+            geolocation: adapter.geolocation,
             destroy: adapter.destroy ?? Effect.void,
             tables: adapter.tables,
             encryptionKeyring: adapter.encryptionKeyring,

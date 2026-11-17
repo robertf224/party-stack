@@ -69,6 +69,20 @@ description is preserved. WebBrowser's default plugin adds no configuration, so
 it is not included; the experimental Android launcher activity stays disabled.
 Your application still supplies its OAuth redirect scheme/URL.
 
+The plugin also composes expo-location's plugin for foreground location only: it adds
+the iOS "when in use" purpose string (keeping yours, or pass
+`{ "locationPermission": "…" }`) and never requests background location. Pass
+`{ "locationPermission": false }` for an app that never reads location.
+
+## Device location
+
+`Runtime.geolocation` (and `Runtimes.geolocation`) reads the device location through
+expo-location. Permission is requested the first time it is used. Failures are a
+`GeolocationError` whose `reason` is `PermissionDenied`, `PositionUnavailable` or
+`Timeout`; without a fresh fix it falls back to one at most five minutes old. Pass
+`geolocation: false` to `expoRuntime` to leave it out. The web runtime provides the
+same service over `navigator.geolocation`.
+
 If you maintain custom Android backup rules, include equivalent SecureStore
 exclusions yourself, then configure:
 
