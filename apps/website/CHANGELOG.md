@@ -1,5 +1,14 @@
 # @party-stack/website
 
+## 0.0.6
+
+### Patch Changes
+
+- @party-stack/ontology@0.23.1
+- @party-stack/web-runtime@0.5.3
+- @party-stack/ontology-devtools@0.8.1
+- @party-stack/ontology-react@0.2.5
+
 ## 0.0.5
 
 ### Patch Changes

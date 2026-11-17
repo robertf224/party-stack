@@ -1,5 +1,11 @@
 # @party-stack/durable-object-ontology-storage
 
+## 0.4.5
+
+### Patch Changes
+
+- @party-stack/ontology-server@0.11.5
+
 ## 0.4.4
 
 ### Patch Changes

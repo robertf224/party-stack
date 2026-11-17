@@ -1,5 +1,11 @@
 # @party-stack/ontology-react
 
+## 0.2.5
+
+### Patch Changes
+
+- @party-stack/ontology@0.23.1
+
 ## 0.2.4
 
 ### Patch Changes
