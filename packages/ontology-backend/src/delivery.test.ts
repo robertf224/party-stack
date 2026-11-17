@@ -1048,6 +1048,88 @@ test("a later duplicate replaces its patch across capture pages", async () => {
     );
 });
 
+test("a record larger than the frame budget is delivered alone in its own frame", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const deliveries = yield* makeDeliveryManager({ tables, namespace: "large-record" });
+                const row = (key: number, text: string): DeliveryRecord => ({
+                    kind: "base",
+                    objectType: "Row",
+                    key,
+                    value: { id: key, text },
+                });
+                // Metadata such as an action type with many parameters can outgrow a frame.
+                const large = row(1, "x".repeat(4096));
+                const subscription = yield* deliveries.open({
+                    binding: "source",
+                    identity: "large",
+                    policy: { frameBytes: 2048 },
+                    changes: Effect.succeed(Stream.never),
+                    capture: (_tx, emit) =>
+                        Effect.gen(function* () {
+                            yield* emit(row(0, "small"));
+                            yield* emit(large);
+                            yield* emit(row(2, "small"));
+                            return metadata;
+                        }),
+                });
+                const frames = yield* subscription.frames.pipe(
+                    Stream.takeUntil((frame) => frame.end),
+                    Stream.runCollect
+                );
+                expect(frames.flatMap((frame) => frame.changes)).toEqual([
+                    { kind: "put", record: row(0, "small") },
+                    { kind: "put", record: large },
+                    { kind: "put", record: row(2, "small") },
+                ]);
+                const holdsLarge = (frame: DeliveryFrame) =>
+                    frame.changes.some(
+                        (change) =>
+                            change.kind === "put" && change.record.kind === "base" && change.record.key === 1
+                    );
+                expect(frames.find(holdsLarge)?.changes).toHaveLength(1);
+                yield* subscription.acknowledge(frames.at(-1)!);
+            })
+        )
+    );
+});
+
+test("a record beyond the whole delivery budget still fails the delivery", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const deliveries = yield* makeDeliveryManager({ tables, namespace: "oversized-record" });
+                const subscription = yield* deliveries.open({
+                    binding: "source",
+                    identity: "oversized",
+                    policy: { frameBytes: 2048, maxBytes: 4096 },
+                    changes: Effect.succeed(Stream.never),
+                    capture: (_tx, emit) =>
+                        Effect.gen(function* () {
+                            yield* emit({
+                                kind: "base",
+                                objectType: "Row",
+                                key: 1,
+                                value: { id: 1, text: "x".repeat(8192) },
+                            });
+                            return metadata;
+                        }),
+                });
+                const result = yield* Effect.result(
+                    subscription.frames.pipe(
+                        Stream.takeUntil((frame) => frame.end),
+                        Stream.runCollect
+                    )
+                );
+                expect(result).toMatchObject({ _tag: "Failure", failure: { kind: "RateLimited" } });
+            })
+        )
+    );
+});
+
 test("snapshot and patch delivery perform no per-record persistent buffer IO", async () => {
     await Effect.runPromise(
         Effect.scoped(
