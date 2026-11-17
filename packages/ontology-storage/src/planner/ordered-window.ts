@@ -4,6 +4,7 @@ import {
     afterCursor,
     compareRows,
     decodeKey,
+    fieldIndex,
     keyCode,
     matches,
     sameField,
@@ -84,7 +85,7 @@ export const scalarWindow = Effect.fnUntraced(function* <A>(
     if (query.orderBy?.length !== 1 || query.limit === undefined) return undefined;
     const order = query.orderBy[0]!,
         limit = query.limit;
-    const index = indexes.find((index) => !index.multiEntry && sameField(index.field, order.field));
+    const index = indexes.find((index) => fieldIndex(index) && sameField(index.field, order.field));
     if (!index) return undefined;
     const bounds = orderedRange(plan, index.name);
     if (plan && !bounds && (yield* estimatePlan(raw, table.name, plan)) <= INDEX_BATCH_SIZE) return undefined;
@@ -223,12 +224,12 @@ export const orderedWindow = Effect.fnUntraced(function* <A>(
         return undefined;
     const limit = query.limit;
     const first = orders[0]!;
-    const index = indexes.find((index) => !index.multiEntry && sameField(index.field, first.field));
+    const index = indexes.find((index) => fieldIndex(index) && sameField(index.field, first.field));
     if (!index) return undefined;
     if (plan && (yield* estimatePlan(raw, table.name, plan)) <= INDEX_BATCH_SIZE) return undefined;
     const segments = yield* attempt(() => scanSegments(first, query, orderedRange(plan, index.name)));
     const indexedOrder = orders.every((order) =>
-        indexes.some((index) => !index.multiEntry && sameField(index.field, order.field))
+        indexes.some((index) => fieldIndex(index) && sameField(index.field, order.field))
     );
     if (indexedOrder) {
         for (const segment of segments) {

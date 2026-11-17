@@ -2,25 +2,29 @@ import { assert, it } from "@effect/vitest";
 import { Arbitrary, Effect, Schema } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { expect, test } from "vitest";
+import { and, contains, eq, gte, inArray, like, lt, not, or, type Filter, type Scalar } from "../model.js";
 import { keyCode, scalarKey, validateQuery } from "./evaluate.js";
-import { isField, validateQueryShape } from "./schema.js";
-import type { Operand, Predicate, Query } from "../model.js";
+import { filterOperand, inValues } from "./filter.js";
+import { validateQueryShape } from "./schema.js";
+import type { Query } from "../model.js";
+import type { Expression } from "@party-stack/ontology-spec";
 
 // Original validator: encoding is an independent acceptance/error oracle for
 // the validation-only primitive fast path, including traversal/error order.
 function encodedValidator(query: Query): void {
     validateQueryShape(query);
-    const operand = (value: Operand) => {
-        if (!isField(value)) scalarKey(value);
+    const operand = (value: Expression) => {
+        const resolved = filterOperand(value);
+        if (resolved?.kind === "literal") scalarKey(resolved.value);
     };
-    const predicate = (value: Predicate): void => {
-        if (value.op === "and" || value.op === "or") {
-            for (const child of value.predicates) predicate(child);
-        } else if (value.op === "not") predicate(value.predicate);
-        else {
-            operand(value.left);
-            if (value.op === "in") for (const member of value.values) scalarKey(member);
-            else if (value.op !== "empty") operand(value.right);
+    const predicate = (value: Filter): void => {
+        if (value.kind === "and" || value.kind === "or") {
+            for (const child of value.value.expressions) predicate(child);
+        } else if (value.kind === "not") predicate(value.value.expression);
+        else if ("left" in value.value) {
+            operand(value.value.left);
+            if (value.kind === "in") for (const member of inValues(value)) scalarKey(member);
+            else operand(value.value.right);
         }
     };
     if (query.where) predicate(query.where);
@@ -54,24 +58,13 @@ function comparable(run: () => void) {
 const field = { _tag: "Field", path: ["value"] } as const;
 function positions(value: unknown): unknown[] {
     return [
-        { where: { op: "eq", left: field, right: value } },
-        { where: { op: "lt", left: value, right: field } },
-        { where: { op: "in", left: field, values: ["valid", value] } },
-        { where: { op: "in", left: value, values: [] } },
-        { where: { op: "contains", left: field, right: value } },
-        { where: { op: "like", left: value, right: "%" } },
-        {
-            where: {
-                op: "and",
-                predicates: [
-                    { op: "eq", left: field, right: "valid" },
-                    {
-                        op: "not",
-                        predicate: { op: "or", predicates: [{ op: "gte", left: value, right: field }] },
-                    },
-                ],
-            },
-        },
+        { where: eq(field, value as Scalar) },
+        { where: lt(value as Scalar, field) },
+        { where: inArray(field, ["valid", value] as Scalar[]) },
+        { where: inArray(value as Scalar, []) },
+        { where: contains(field, value as Scalar) },
+        { where: like(value as Scalar, "%") },
+        { where: and(eq(field, "valid"), not(or(gte(value as Scalar, field)))) },
         { orderBy: [{ field }], after: { key: "row", values: [value] } },
         { after: { key: value, values: [] } },
     ];
@@ -141,13 +134,45 @@ test("window errors, malformed shapes and invalid cursor key restrictions retain
         { after: { key: NaN, values: [] } },
         { after: { key: Infinity, values: [] } },
         { orderBy: [{ field, direction: "invalid" }] },
-        { where: { op: "invalid", left: field, right: "value" } },
-        { where: { op: "in", left: field, values: [NaN] }, limit: -1 },
+        { where: inArray(field, [NaN]), limit: -1 },
     ];
     for (const query of queries) {
         assertOracle(query);
         expect(comparable(() => validateQuery(query as Query)).accepted).toBe(false);
     }
+});
+
+test("filters outside the storage subset are rejected before planning", () => {
+    const row = (...path: string[]) => ({
+        kind: "getAt",
+        value: { source: { kind: "localReference", value: { name: "row" } }, path },
+    });
+    for (const where of [
+        { kind: "invalid", value: { left: row("value"), right: { kind: "literal", value: { value: 1 } } } },
+        {
+            kind: "eq",
+            value: { left: row("value"), right: { kind: "inputReference", value: { name: "x" } } },
+        },
+        {
+            kind: "eq",
+            value: {
+                left: {
+                    kind: "getAt",
+                    value: { source: { kind: "localReference", value: { name: "o" } }, path: ["value"] },
+                },
+                right: { kind: "literal", value: { value: 1 } },
+            },
+        },
+        { kind: "in", value: { left: row("value"), right: row("values") } },
+        {
+            kind: "contains",
+            value: { left: { kind: "literal", value: { value: [1] } }, right: row("value") },
+        },
+        { kind: "like", value: { left: row("value"), right: { kind: "literal", value: { value: 1 } } } },
+        { kind: "length", value: { expression: row("value") } },
+        { kind: "literal", value: { value: true } },
+    ])
+        expect(() => validateQuery({ where } as unknown as Query)).toThrow();
 });
 
 test("rich-value validation still propagates the original codec exception", () => {
@@ -157,7 +182,7 @@ test("rich-value validation still propagates the original codec exception", () =
             throw failure;
         },
     };
-    const query = { where: { op: "eq", left: field, right: value } } as unknown as Query;
+    const query = { where: eq(field, value as unknown as Scalar) } as Query;
     expect(outcome(() => validateQuery(query)).error).toBe(failure);
     expect(outcome(() => encodedValidator(query)).error).toBe(failure);
 });
@@ -218,14 +243,13 @@ it.effect.prop(
             for (const value of values) for (const query of positions(value)) assertOracle(query);
             for (const op of ["and", "or"] as const)
                 assertOracle({
-                    where: {
-                        op,
-                        predicates: values.map((value, index) =>
+                    where: (op === "and" ? and : or)(
+                        ...values.map((value, index) =>
                             index % 2
-                                ? { op: "not", predicate: { op: "eq", left: field, right: value } }
-                                : { op: "in", left: value, values: [...values].reverse() }
-                        ),
-                    },
+                                ? not(eq(field, value as Scalar))
+                                : inArray(value as Scalar, [...values].reverse() as Scalar[])
+                        )
+                    ),
                     orderBy: values.map(() => ({ field })),
                     after: { key: inputs[0]?.text ?? "", values },
                 });

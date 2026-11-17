@@ -3,7 +3,7 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend, type OwnedTransaction } from "@party-stack/ontology-backend/owned";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
-import { eq, field, inArray } from "@party-stack/ontology-storage";
+import { eq, field, fieldExpression, inArray, inValues } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect, Exit, Scope, Stream, Deferred, Fiber, Schema, PubSub } from "effect";
 import { TestClock } from "effect/testing";
@@ -120,8 +120,11 @@ test("pinned rows request bounded key batches without duplicate per-row selectio
                 expect(demands).toHaveLength(2);
                 const batches = demands.map((demand) => {
                     const predicate = demand.query?.where;
-                    expect(predicate).toMatchObject({ op: "in", left: field("id") });
-                    return predicate?.op === "in" ? predicate.values : [];
+                    expect(predicate).toMatchObject({
+                        kind: "in",
+                        value: { left: fieldExpression(field("id")) },
+                    });
+                    return predicate?.kind === "in" ? inValues(predicate) : [];
                 });
                 expect(batches.map((batch) => batch.length).sort((a, b) => a - b)).toEqual([2, 128]);
                 expect(batches.flat().sort((a, b) => String(a).localeCompare(String(b)))).toEqual(

@@ -1,10 +1,5 @@
 import { ObjectTypeIcon } from "./OntologyIcons.js";
-import type { Demand } from "./diagnostics.js";
 import type { ObjectTypeDef } from "@party-stack/ontology";
-
-type Query = NonNullable<Demand["query"]>;
-type Predicate = NonNullable<Query["where"]>;
-export type QueryOperand = Extract<Predicate, { left: unknown }>["left"];
 
 export function operandText(value: unknown, object?: ObjectTypeDef): string {
     if (value === undefined) return "undefined";

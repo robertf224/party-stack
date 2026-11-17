@@ -10,34 +10,12 @@ export const IndexSchema = Schema.Struct({
     field: FieldSchema,
     unique: Schema.optional(Schema.Boolean),
     multiEntry: Schema.optional(Schema.Boolean),
+    size: Schema.optional(Schema.Boolean),
 });
-// Shape validation whitelists every SQL operator and ordering token before compilation.
-// Scalar semantics are checked separately; rich values use the same codec as indexes.
-const PredicateShape = Schema.Union([
-    Schema.Struct({
-        op: Schema.Literals(["eq", "ne", "lt", "lte", "gt", "gte"]),
-        left: Schema.Unknown,
-        right: Schema.Unknown,
-    }),
-    Schema.Struct({ op: Schema.Literal("in"), left: Schema.Unknown, values: Schema.Array(Schema.Unknown) }),
-    Schema.Struct({ op: Schema.Literal("contains"), left: FieldSchema, right: Schema.Unknown }),
-    Schema.Struct({ op: Schema.Literal("empty"), left: FieldSchema }),
-    Schema.Struct({
-        op: Schema.Literals(["like", "ilike"]),
-        left: Schema.Unknown,
-        right: Schema.Union([Schema.String, FieldSchema]),
-    }),
-    Schema.Struct({
-        op: Schema.Literals(["and", "or"]),
-        predicates: Schema.Array(Schema.suspend((): Schema.Codec<unknown> => PredicateShape)),
-    }),
-    Schema.Struct({
-        op: Schema.Literal("not"),
-        predicate: Schema.suspend((): Schema.Codec<unknown> => PredicateShape),
-    }),
-]);
+// Shape validation whitelists ordering tokens; `validateFilter` whitelists every
+// filter operator and operand before the planner or a SQL compiler sees it.
 export const QueryShape = Schema.Struct({
-    where: Schema.optional(PredicateShape),
+    where: Schema.optional(Schema.Unknown),
     orderBy: Schema.optional(
         Schema.Array(
             Schema.Struct({

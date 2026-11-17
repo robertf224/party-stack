@@ -301,7 +301,7 @@ test("literal arrays and records retain undefined, null and bigint values", () =
 
 test("subset adaptation preserves absence, nullish values, zero limits and cursor keys", () => {
     const converted = subsetQuery("Note", {
-        where: { op: "eq", left: { _tag: "Field", path: ["missing"] }, right: undefined },
+        where: { kind: "eq", value: { left: field("row", "missing"), right: literal(undefined) } },
         limit: 0,
         offset: 0,
         after: { key: 0, values: [null] },

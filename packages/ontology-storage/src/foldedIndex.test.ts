@@ -3,7 +3,7 @@ import { Effect, Stream } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { expect } from "vitest";
 import { make as makeMemory } from "./memory/tables.js";
-import { Table, field, ilike, not, or, eq, type Predicate, type Scalar } from "./model.js";
+import { Table, field, ilike, not, or, eq, type Filter, type Scalar } from "./model.js";
 import { caseInsensitiveIndex, keyCode, scalarKey } from "./query/evaluate.js";
 import { makeTables } from "./tables.js";
 import type { DriverTransaction, Entry, StoredIndex, StoredRow } from "./driver/index.js";
@@ -165,7 +165,7 @@ it.effect("sparse folded indexes preserve mixed-value prefix, negation and wildc
         const matches = (value: Scalar) => typeof value === "string" && value.toLowerCase().startsWith("al");
         const expected = (predicate: (value: Scalar) => boolean) =>
             values.flatMap((value, key) => (predicate(value) ? [key] : []));
-        const keys = (where: Predicate) =>
+        const keys = (where: Filter) =>
             tables.query(table, { where }).pipe(Effect.map((rows) => rows.map((row) => row.key)));
         expect(yield* keys(ilike(field("value"), "AL%"))).toEqual(expected(matches));
         expect(yield* keys(not(ilike(field("value"), "AL%")))).toEqual(expected((value) => !matches(value)));

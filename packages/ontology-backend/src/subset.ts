@@ -1,12 +1,12 @@
 import { QueryDocumentSchema } from "@party-stack/ontology-spec/effect";
 import * as q from "@party-stack/ontology-spec/query";
-import { QuerySchema } from "@party-stack/ontology-storage";
+import { QuerySchema, fieldExpression, rebindFilter } from "@party-stack/ontology-storage";
 import { Effect, Predicate as EffectPredicate, Schema } from "effect";
 import { BackendError } from "./errors.js";
 import { queryExecutor } from "./query.js";
 import type { OntologyIR, Expression } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
-import type { Operand, Predicate, Query, Field } from "@party-stack/ontology-storage";
+import type { Query } from "@party-stack/ontology-storage";
 
 export interface CompiledSubset {
     readonly objectType: string;
@@ -14,47 +14,30 @@ export interface CompiledSubset {
 }
 export { ObjectSubsetSchema, ObjectSelectionSchema } from "./subsetSchema.js";
 
-/** Infrastructure adapter for existing physical provider/transaction readers. */
-export const objectSubset = (objectType: string, scan: Query = {}, binding = "row"): ObjectSubset => {
-    const operand = (v: Operand): Expression =>
-        v && typeof v === "object" && "_tag" in v && v._tag === "Field"
-            ? q.field(binding, ...(v as Field).path)
-            : q.literal(v);
-    const predicate = (p: Predicate): Expression => {
-        if (p.op === "and" || p.op === "or") return q[p.op](...p.predicates.map(predicate));
-        if (p.op === "not") return q.not(predicate(p.predicate));
-        if (p.op === "in") return q.inArray(operand(p.left), q.literal([...p.values]));
-        // A present list with no elements.
-        if (p.op === "empty")
-            return q.and(
-                q.ne(operand(p.left), q.literal(undefined)),
-                q.eq(q.length(operand(p.left)), q.literal(0))
-            );
-        return q[p.op](operand(p.left), operand(p.right));
-    };
-    return {
-        from: { source: { objectType }, binding },
-        ...(scan.where ? { where: predicate(scan.where) } : {}),
-        ...(scan.orderBy
-            ? {
-                  orderBy: scan.orderBy.map((o) => ({
-                      expression: operand(o.field),
-                      direction: o.direction,
-                      nulls: o.nulls,
-                  })),
-              }
-            : {}),
-        ...(scan.limit !== undefined || scan.offset !== undefined || scan.after !== undefined
-            ? {
-                  page: {
-                      limit: scan.limit,
-                      offset: scan.offset,
-                      after: scan.after ? { values: [...scan.after.values], key: scan.after.key } : undefined,
-                  },
-              }
-            : {}),
-    };
-};
+/** Wrap a storage query as a source-bound subset. Storage filters are spec expressions
+ * over the storage row binding, so only the binding name changes. */
+export const objectSubset = (objectType: string, scan: Query = {}, binding = "row"): ObjectSubset => ({
+    from: { source: { objectType }, binding },
+    ...(scan.where ? { where: rebindFilter(scan.where, binding) } : {}),
+    ...(scan.orderBy
+        ? {
+              orderBy: scan.orderBy.map((o) => ({
+                  expression: rebindFilter(fieldExpression(o.field), binding),
+                  direction: o.direction,
+                  nulls: o.nulls,
+              })),
+          }
+        : {}),
+    ...(scan.limit !== undefined || scan.offset !== undefined || scan.after !== undefined
+        ? {
+              page: {
+                  limit: scan.limit,
+                  offset: scan.offset,
+                  after: scan.after ? { values: [...scan.after.values], key: scan.after.key } : undefined,
+              },
+          }
+        : {}),
+});
 /** Lower a source-bound spec subset at the engine/provider boundary, never at the public demand API. */
 export const compileObjectSubset = Effect.fnUntraced(function* (
     ir: OntologyIR,

@@ -92,7 +92,7 @@ test("bounded snapshot repair protects later optimistic windows from stale rows 
                     "a",
                     "b",
                 ]);
-                expect(requests.some((request) => request.where?.op === "in")).toBe(true);
+                expect(requests.some((request) => request.where?.kind === "in")).toBe(true);
 
                 yield* replica.enqueue({ id: "remove-a", name: "remove", parameters: { id: "a" } });
                 const expected = source.filter((row) => row.key !== "a");
@@ -149,7 +149,7 @@ test("identity repairs preserve unchanged cache ages without losing changed, ins
                         loadSubset: (request) =>
                             Effect.gen(function* () {
                                 const subset = yield* compileObjectSubset(ir, request);
-                                if (evictDuringRepair && subset.query?.where?.op === "in") {
+                                if (evictDuringRepair && subset.query?.where?.kind === "in") {
                                     evictDuringRepair = false;
                                     // A concurrent collector can remove a candidate after
                                     // enumeration but before its identity repair is installed.

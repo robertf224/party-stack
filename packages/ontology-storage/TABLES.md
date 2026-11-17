@@ -129,31 +129,59 @@ an explicit correlated subquery here. See the [storage README](./README.md#full-
 
 ## Single-table queries and indexes
 
-Standalone helpers provide `eq`/`ne`, `lt`/`lte`/`gt`/`gte`, `inArray`,
-`like`, `ilike`, `isNull`/`isUndefined`, and `and`/`or`/`not`. The optional `where`
-namespace exposes the same helpers (`where.in` for membership). Field paths are
-tagged references (`field("address", "city")`), so dots in names are unambiguous.
-`field("status")` produces `{ _tag: "Field", path: ["status"] }`. Scalars are
-always literals in either position: `eq("status", "active")` compares two literals;
-`eq("active", field("status"))` and `eq(field("status"), "active")` read the field.
-Field-to-field comparisons such as `lt(field("used"), field("budget"))` are also
-supported. LIKE/ILIKE can read a pattern from a field; these dynamic patterns use
+A `where` filter is an ontology-spec `Expression` from a small validated subset,
+over a single row binding named `row` (exported as `rowBinding`). Storage keeps no
+separate predicate syntax: a compiled object subset passes its filter through after
+normalization, and a filter can be embedded back into a spec subset by renaming the
+binding (`rebindFilter`). The subset is:
+
+- operands: row fields (`getAt` paths of `row`), literals, and `length` of a row field;
+- comparisons: `eq`/`ne`, `lt`/`lte`/`gt`/`gte`, `in` with a literal list,
+  `contains`, `like`/`ilike` with a literal or field pattern;
+- `and`/`or`/`not`. `and()` matches every row and `or()` matches none.
+
+Anything else, such as inputs, arithmetic or nested queries, is rejected before
+planning. Standalone helpers build these nodes: `eq`/`ne`, `lt`/`lte`/`gt`/`gte`,
+`inArray`, `contains`, `length`, `like`, `ilike`, `isNull`/`isUndefined`, and
+`and`/`or`/`not`. The optional `where` namespace exposes the same helpers (`where.in`
+for membership). Field paths are tagged references (`field("address", "city")`), so
+dots in names are unambiguous; helpers turn them into `getAt` expressions of `row`.
+Scalars are always literals in either position: `eq("status", "active")` compares two
+literals; `eq("active", field("status"))` and `eq(field("status"), "active")` read the
+field. Field-to-field comparisons such as `lt(field("used"), field("budget"))` are
+also supported. LIKE/ILIKE can read a pattern from a field; these dynamic patterns use
 residual evaluation. `inArray` accepts a reference or literal on the left and a
-literal scalar array on the right. No arbitrary JavaScript or SQL expressions are
-accepted. The public `prefix` predicate has been removed: use `like(field, "abc%")`.
-Literal `%`/`_` cannot be escaped in this wildcard syntax.
+literal scalar array on the right. The public `prefix` predicate has been removed:
+use `like(field, "abc%")`. Literal `%`/`_` cannot be escaped in this wildcard syntax.
 
 `like` uses `%` for any sequence and `_` for one UTF-16 code unit. `ilike` uses
 JavaScript lowercase normalization on both the value and pattern, matching
 TanStack's evaluator. Backslashes and regexp punctuation are literal characters;
 there is no additional escape syntax. Missing/non-string fields do not match.
-This shorthand uses the physical predicate AST. For computations and hierarchical
-correlation, pass a full QueryDocument instead. Locale collations are not exposed. Null and
-undefined use explicit two-valued comparisons (`eq(field, null)` and
-`eq(field, undefined)`); SQL's implicit three-valued null logic is not exposed.
+For computations and hierarchical correlation, pass a full QueryDocument instead.
+Locale collations are not exposed.
+
+Storage evaluates filters with two documented differences from general query
+evaluation. Null and undefined use explicit two-valued comparisons (`eq(field, null)`
+and `eq(field, undefined)`); SQL's implicit three-valued null logic is not exposed.
 Comparing a field with null or undefined checks presence, so it accepts any declared
-field, including lists and structs. An empty list is present; `isEmpty(field)` matches
-a present list with no elements. It is evaluated on rows, never from an index.
+field, including lists and structs. Ordered comparisons use the total type order
+below rather than requiring compatible, present operands; compiled object subsets
+add explicit presence guards to keep query semantics.
+
+`length(field("tags"))` counts a list's elements or a string's UTF-16 code units. A
+missing value has length 0, as in TanStack DB, so `eq(length(field("tags")), 0)`
+matches a missing or empty list; `gt(length(field("tags")), 0)` matches a list with
+elements. Lists are never compared structurally.
+
+A list's missing-value and `length` checks use a size index,
+`{ name: "tags:size", field: field("tags"), size: true }`. It keys each row once by its
+list's element count, and a missing list by the missing value itself (null as null), so
+one index answers `isUndefined(list)`, `ne(list, undefined)` and every `length`
+comparison, in memory, IndexedDB and SQL. A multi-entry index can't: it records no
+element for a missing or empty list. Without a size index, SQL storage still compiles
+a length compared against an emptiness bound (`= 0`, `< 1`, `> 0`, `>= 1`, ...) from the
+field's multi-entry projection, and other length checks are evaluated on rows.
 
 Orders support multiple fields, asc/desc, offset/limit, and exclusive keyset cursors
 containing every sort value plus the row key. Use `cursorOf(row, query)` to form one.

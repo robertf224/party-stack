@@ -1,54 +1,77 @@
 import { Effect } from "effect";
-import { sameField, scalarKey, caseInsensitiveIndex, indexedComparison } from "../query/evaluate.js";
-import { isField } from "../query/schema.js";
+import {
+    sameField,
+    scalarKey,
+    caseInsensitiveIndex,
+    fieldIndex,
+    indexedComparison,
+} from "../query/evaluate.js";
+import { filterOperand, inValues, isComparison, lengthComparison } from "../query/filter.js";
 import type { DriverTransaction, Range, StoredIndex } from "../driver/index.js";
-import type { Predicate, OntologyStorageError } from "../model.js";
+import type { Field, Filter, OntologyStorageError } from "../model.js";
+import type { ComparisonKind } from "../query/filter.js";
 
-/** Candidate plans are supersets; the complete predicate is always evaluated on hydrated rows. */
+/** Candidate plans are supersets; the complete filter is always evaluated on hydrated rows.
+ * Scalar operands use field indexes; a list's missing-value and `length` checks use its
+ * size index. Anything else is evaluated on rows. */
 export type Plan =
     | { readonly kind: "none" }
     | { readonly kind: "lookup"; readonly index: string; readonly ranges: readonly Range[] }
     | { readonly kind: "and" | "or"; readonly children: readonly Plan[] };
 export const INDEX_BATCH_SIZE = 128;
-export function selectPlan(indexes: readonly StoredIndex[], predicate?: Predicate): Plan | undefined {
-    if (!predicate || predicate.op === "not") return undefined;
-    if (predicate.op === "and" || predicate.op === "or") {
-        const children = predicate.predicates.map((p) => selectPlan(indexes, p));
-        if (predicate.op === "or" && children.some((p) => p === undefined)) return undefined;
-        if (predicate.op === "and" && children.some((p) => p?.kind === "none")) return { kind: "none" };
-        const available = children.filter((p): p is Plan => p !== undefined && p.kind !== "none");
-        if (!available.length) return predicate.op === "or" ? { kind: "none" } : undefined;
-        if (available.length === 1) return available[0];
-        return { kind: predicate.op, children: available };
+// Storage comparisons are two-valued over a total order, so negating one flips its operator.
+const negated = { eq: "ne", ne: "eq", lt: "gte", lte: "gt", gt: "lte", gte: "lt" } as const;
+export function selectPlan(indexes: readonly StoredIndex[], filter?: Filter): Plan | undefined {
+    if (!filter) return undefined;
+    if (filter.kind === "not") {
+        const inner = filter.value.expression;
+        return isComparison(inner)
+            ? selectPlan(indexes, { kind: negated[inner.kind], value: inner.value } as Filter)
+            : undefined;
     }
-    const comparison = indexedComparison(predicate);
+    if (filter.kind === "and" || filter.kind === "or") {
+        const children = filter.value.expressions.map((p) => selectPlan(indexes, p));
+        if (filter.kind === "or" && children.some((p) => p === undefined)) return undefined;
+        if (filter.kind === "and" && children.some((p) => p?.kind === "none")) return { kind: "none" };
+        const available = children.filter((p): p is Plan => p !== undefined && p.kind !== "none");
+        if (!available.length) return filter.kind === "or" ? { kind: "none" } : undefined;
+        if (available.length === 1) return available[0];
+        return { kind: filter.kind, children: available };
+    }
+    return fieldLookup(indexes, filter) ?? sizeLookup(indexes, filter);
+}
+function fieldLookup(indexes: readonly StoredIndex[], filter: Filter): Plan | undefined {
+    if (!("left" in filter.value)) return undefined;
+    const comparison = indexedComparison(filter);
+    const left = filterOperand(filter.value.left);
+    const right = filterOperand(filter.value.right);
     const reference =
         comparison?.field ??
-        ((predicate.op === "contains" ||
-            predicate.op === "in" ||
-            predicate.op === "like" ||
-            predicate.op === "ilike") &&
-        isField(predicate.left)
-            ? predicate.left
+        ((filter.kind === "contains" ||
+            filter.kind === "in" ||
+            filter.kind === "like" ||
+            filter.kind === "ilike") &&
+        left?.kind === "field"
+            ? left.field
             : undefined);
     if (!reference || comparison?.op === "ne") return undefined;
     const index = indexes.find(
-        (i) => sameField(i.field, reference) && !!i.multiEntry === (predicate.op === "contains")
+        (i) => sameField(i.field, reference) && (filter.kind === "contains" ? !!i.multiEntry : fieldIndex(i))
     );
     if (!index) return undefined;
     let ranges: Range[];
-    if (predicate.op === "contains") {
-        if (isField(predicate.right)) return undefined;
-        const value = scalarKey(predicate.right);
+    if (filter.kind === "contains") {
+        if (right?.kind !== "literal") return undefined;
+        const value = scalarKey(right.value);
         ranges = [{ lower: value, upper: value }];
-    } else if (predicate.op === "in") {
-        ranges = [...new Set(predicate.values.map(scalarKey))].map((value) => ({
+    } else if (filter.kind === "in") {
+        ranges = [...new Set(inValues(filter).map(scalarKey))].map((value) => ({
             lower: value,
             upper: value,
         }));
-    } else if (predicate.op === "like" || predicate.op === "ilike") {
-        if (typeof predicate.right !== "string") return undefined;
-        const pattern = predicate.op === "ilike" ? predicate.right.toLowerCase() : predicate.right;
+    } else if (filter.kind === "like" || filter.kind === "ilike") {
+        if (right?.kind !== "literal" || typeof right.value !== "string") return undefined;
+        const pattern = filter.kind === "ilike" ? right.value.toLowerCase() : right.value;
         const wildcard = pattern.search(/[%_]/);
         if (wildcard === 0) return undefined;
         const lower = scalarKey(wildcard < 0 ? pattern : pattern.slice(0, wildcard));
@@ -67,10 +90,72 @@ export function selectPlan(indexes: readonly StoredIndex[], predicate?: Predicat
     return ranges.length
         ? {
               kind: "lookup",
-              index: predicate.op === "ilike" ? caseInsensitiveIndex(index.name) : index.name,
+              index: filter.kind === "ilike" ? caseInsensitiveIndex(index.name) : index.name,
               ranges,
           }
         : { kind: "none" };
+}
+// Size index keys: undefined, then null, then finite numbers (every number key starts with "3").
+const missingKeys: Range = { lower: scalarKey(undefined), upper: scalarKey(null) };
+const numberKeys = { lower: "3", upper: "4", upperOpen: true } as const;
+/** Size-index ranges for `length(list) <op> n`. A missing or null list has length 0. */
+export function sizeRanges(op: ComparisonKind, n: unknown): Range[] | undefined {
+    if (typeof n !== "number" || !Number.isFinite(n)) return undefined;
+    const key = scalarKey(n);
+    const below: Range = { lower: numberKeys.lower, upper: key, upperOpen: true };
+    const above: Range = { lower: key, lowerOpen: true, upper: numberKeys.upper, upperOpen: true };
+    const numeric: Range[] =
+        op === "eq"
+            ? [{ lower: key, upper: key }]
+            : op === "ne"
+              ? [below, above]
+              : op === "lt"
+                ? [below]
+                : op === "lte"
+                  ? [{ ...below, upperOpen: false }]
+                  : op === "gt"
+                    ? [above]
+                    : [{ ...above, lowerOpen: false }];
+    const zero =
+        op === "eq"
+            ? n === 0
+            : op === "ne"
+              ? n !== 0
+              : op === "lt"
+                ? 0 < n
+                : op === "lte"
+                  ? 0 <= n
+                  : op === "gt"
+                    ? 0 > n
+                    : 0 >= n;
+    return zero ? [missingKeys, ...numeric] : numeric;
+}
+/** A list's missing-value check or `length` comparison, answered by its size index. */
+function sizeLookup(indexes: readonly StoredIndex[], filter: Filter): Plan | undefined {
+    const sizeIndex = (field: Field) => indexes.find((i) => i.size && sameField(i.field, field));
+    const counted = lengthComparison(filter);
+    if (counted) {
+        const index = sizeIndex(counted.field);
+        const ranges = index && sizeRanges(counted.op, counted.bound);
+        return index && ranges ? { kind: "lookup", index: index.name, ranges } : undefined;
+    }
+    const comparison = indexedComparison(filter);
+    if (!comparison || comparison.value != null || (comparison.op !== "eq" && comparison.op !== "ne"))
+        return undefined;
+    const index = sizeIndex(comparison.field);
+    if (!index) return undefined;
+    const key = scalarKey(comparison.value);
+    return {
+        kind: "lookup",
+        index: index.name,
+        ranges:
+            comparison.op === "eq"
+                ? [{ lower: key, upper: key }]
+                : [
+                      { upper: key, upperOpen: true },
+                      { lower: key, lowerOpen: true },
+                  ],
+    };
 }
 /** Combine same-index conjunctive bounds before scanning an ordered page. */
 export function orderedRange(plan: Plan | undefined, index: string): Range | undefined {

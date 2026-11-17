@@ -2,13 +2,20 @@ import {
     keyCode,
     scalarKey,
     caseInsensitiveIndex,
+    fieldIndex,
+    sizeRanges,
+    type Range,
     type StoredIndex,
 } from "@party-stack/ontology-storage/driver";
 import {
-    isField,
+    filterOperand,
+    inValues,
+    isComparison,
+    lengthComparison,
+    lengthEmptiness,
     type Field,
-    type Operand,
-    type Predicate,
+    type Filter,
+    type FilterOperand,
     type Query,
 } from "@party-stack/ontology-storage/tables";
 
@@ -69,7 +76,7 @@ export function compileQuery(dialect: Dialect, indexes: readonly StoredIndex[], 
     const expression = (field: Field, insensitive = false): string | undefined => {
         const index = indexes.find(
             (i) =>
-                !i.multiEntry &&
+                fieldIndex(i) &&
                 i.field.path.length === field.path.length &&
                 i.field.path.every((part, n) => part === field.path[n])
         );
@@ -77,44 +84,78 @@ export function compileQuery(dialect: Dialect, indexes: readonly StoredIndex[], 
             ? indexExpression(dialect, insensitive ? caseInsensitiveIndex(index.name) : index.name)
             : undefined;
     };
-    const predicate = (p: Predicate): Fragment => {
+    const sameField = (a: Field, b: Field) =>
+        a.path.length === b.path.length && a.path.every((part, n) => part === b.path[n]);
+    const arrayIndex = (field: Field) => indexes.find((i) => i.multiEntry && sameField(i.field, field));
+    const sizeIndex = (field: Field) => indexes.find((i) => i.size && sameField(i.field, field));
+    /** Size index keys within any of the ranges. */
+    const sizeCondition = (field: Field, ranges: readonly Range[] | undefined): Fragment | undefined => {
+        const index = sizeIndex(field);
+        if (!index || !ranges) return undefined;
+        const expr = indexExpression(dialect, index.name);
+        const terms = ranges.map((range) => {
+            const bounds = [
+                ...(range.lower === undefined
+                    ? []
+                    : [`${expr} ${range.lowerOpen ? ">" : ">="} ${bind(range.lower)}`]),
+                ...(range.upper === undefined
+                    ? []
+                    : [`${expr} ${range.upperOpen ? "<" : "<="} ${bind(range.upper)}`]),
+            ];
+            return bounds.length ? `(${bounds.join(" AND ")})` : "1=1";
+        });
+        return { sql: terms.length ? `(${terms.join(" OR ")})` : "1=0", complete: true };
+    };
+    // Without a size index, a multi-entry projection can still answer emptiness. It holds the
+    // distinct element codes and no entry for a missing list, so never other lengths.
+    const lengthExpression = (field: Field): string | undefined => {
+        const index = arrayIndex(field);
+        if (!index) return undefined;
+        return dialect === "pg"
+            ? `jsonb_array_length(${arrayIndexExpression(dialect, index.name)})`
+            : `COALESCE(json_array_length(projection, '$.${projectionKey(index.name)}'), 0)`;
+    };
+    const predicate = (p: Filter): Fragment => {
         const checkpoint = params.length;
         const unsupported = (): Fragment => {
             params.length = checkpoint;
             return unknown;
         };
-        if (p.op === "and" || p.op === "or") {
-            const children = p.predicates.map(predicate);
-            if (p.op === "or" && children.some((c) => c.sql === undefined)) return unsupported();
+        if (p.kind === "and" || p.kind === "or") {
+            const children = p.value.expressions.map(predicate);
+            if (p.kind === "or" && children.some((c) => c.sql === undefined)) return unsupported();
             const available = children.flatMap((c) => (c.sql === undefined ? [] : [c.sql]));
             return {
                 sql: available.length
-                    ? `(${available.join(p.op === "and" ? " AND " : " OR ")})`
-                    : p.op === "and"
+                    ? `(${available.join(p.kind === "and" ? " AND " : " OR ")})`
+                    : p.kind === "and"
                       ? "1=1"
                       : "1=0",
                 complete: children.every((c) => c.complete),
             };
         }
-        if (p.op === "not") {
-            const child = predicate(p.predicate);
+        if (p.kind === "not") {
+            const child = predicate(p.value.expression);
             return child.complete && child.sql !== undefined
                 ? { sql: `(NOT ${child.sql})`, complete: true }
                 : unsupported();
         }
-        // Multi-entry projections conflate missing and empty lists; evaluate it on rows.
-        if (p.op === "empty") return unsupported();
-        const operand = (value: Operand): string | undefined =>
-            isField(value) ? expression(value) : bind(scalarKey(value));
-        if (p.op === "contains") {
-            const index = indexes.find(
-                (i) =>
-                    i.multiEntry &&
-                    i.field.path.length === p.left.path.length &&
-                    i.field.path.every((part, n) => part === p.left.path[n])
-            );
+        if (!("left" in p.value)) return unsupported();
+        const left = filterOperand(p.value.left);
+        const right = filterOperand(p.value.right);
+        if (!left || !right) return unsupported();
+        // Only scalar operands bind; a length compiles only as an emptiness test.
+        const operand = (value: FilterOperand): string | undefined =>
+            value.kind === "field"
+                ? expression(value.field)
+                : value.kind === "literal"
+                  ? bind(scalarKey(value.value))
+                  : undefined;
+        if (p.kind === "contains") {
+            if (left.kind !== "field") return unsupported();
+            const index = arrayIndex(left.field);
             if (!index) return unsupported();
-            const needle = operand(p.right);
+            const needle = operand(right);
             if (!needle) return unsupported();
             const array = arrayIndexExpression(dialect, index.name);
             return {
@@ -125,12 +166,13 @@ export function compileQuery(dialect: Dialect, indexes: readonly StoredIndex[], 
                 complete: true,
             };
         }
-        if (p.op === "like" || p.op === "ilike") {
+        if (p.kind === "like" || p.kind === "ilike") {
             // Dynamic patterns and literal-left LIKE need exact residual evaluation.
-            if (!isField(p.left) || typeof p.right !== "string") return unsupported();
-            const expr = expression(p.left, p.op === "ilike");
+            if (left.kind !== "field" || right.kind !== "literal" || typeof right.value !== "string")
+                return unsupported();
+            const expr = expression(left.field, p.kind === "ilike");
             if (!expr) return unsupported();
-            const pattern = p.op === "ilike" ? p.right.toLowerCase() : p.right;
+            const pattern = p.kind === "ilike" ? right.value.toLowerCase() : right.value;
             const wildcard = pattern.search(/[%_]/);
             if (wildcard < 0) return { sql: `${expr} = ${bind(scalarKey(pattern))}`, complete: true };
             const lower = scalarKey(pattern.slice(0, wildcard));
@@ -152,22 +194,55 @@ export function compileQuery(dialect: Dialect, indexes: readonly StoredIndex[], 
                 complete: false,
             };
         }
-        if (p.op === "in" && p.values.length === 0) return { sql: "1=0", complete: true };
-        const left = operand(p.left);
-        if (!left) return unsupported();
-        if (p.op === "in") {
-            if (p.values.length > 400) return unsupported();
+        if (p.kind === "in") {
+            const values = inValues(p);
+            if (values.length === 0) return { sql: "1=0", complete: true };
+            if (values.length > 400) return unsupported();
+            const target = operand(left);
+            if (!target) return unsupported();
             return {
-                sql: p.values.length
-                    ? `${left} IN (${[...new Set(p.values.map(scalarKey))].map(bind).join(",")})`
-                    : "1=0",
+                sql: `${target} IN (${[...new Set(values.map(scalarKey))].map(bind).join(",")})`,
                 complete: true,
             };
         }
-        const right = operand(p.right);
-        if (!right) return unsupported();
+        if (!isComparison(p)) return unsupported();
+        // A length compiles only as an emptiness test of a multi-entry projection.
+        const counted = lengthComparison(p);
+        if (counted) {
+            const sized = sizeCondition(counted.field, sizeRanges(counted.op, counted.bound));
+            if (sized) return sized;
+            const empty = lengthEmptiness(counted.op, counted.bound);
+            const length = lengthExpression(counted.field);
+            if (empty === undefined || !length) return unsupported();
+            return { sql: `${length} ${empty ? "=" : ">"} 0`, complete: true };
+        }
+        // A list has no field index; its size index keys a missing list as the missing value.
+        const [checked, other] = left.kind === "field" ? [left, right] : [right, left];
+        if (
+            (p.kind === "eq" || p.kind === "ne") &&
+            checked.kind === "field" &&
+            other.kind === "literal" &&
+            other.value == null &&
+            !expression(checked.field)
+        ) {
+            const key = scalarKey(other.value);
+            const sized = sizeCondition(
+                checked.field,
+                p.kind === "eq"
+                    ? [{ lower: key, upper: key }]
+                    : [
+                          { upper: key, upperOpen: true },
+                          { lower: key, lowerOpen: true },
+                      ]
+            );
+            if (sized) return sized;
+        }
+        const a = operand(left);
+        if (!a) return unsupported();
+        const b = operand(right);
+        if (!b) return unsupported();
         const operators = { eq: "=", ne: "<>", lt: "<", lte: "<=", gt: ">", gte: ">=" };
-        return { sql: `${left} ${operators[p.op]} ${right}`, complete: true };
+        return { sql: `${a} ${operators[p.kind]} ${b}`, complete: true };
     };
     const where = query.where ? predicate(query.where) : { sql: "1=1", complete: true };
     const ordering = (query.orderBy ?? []).flatMap<{
@@ -237,7 +312,7 @@ export function compileGroupedQuery(
     if (query.after) return;
     const index = indexes.find(
         (index) =>
-            !index.multiEntry &&
+            fieldIndex(index) &&
             index.field.path.length === partition.path.length &&
             index.field.path.every((part, i) => part === partition.path[i])
     );

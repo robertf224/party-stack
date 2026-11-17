@@ -396,7 +396,9 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
                                                 }
                                                 for (const variant of index.multiEntry
                                                     ? []
-                                                    : [index.name, caseInsensitiveIndex(index.name)]) {
+                                                    : index.size
+                                                      ? [index.name]
+                                                      : [index.name, caseInsensitiveIndex(index.name)]) {
                                                     const name = `${prefix.slice(0, 20)}_i_${crypto.randomUUID().replaceAll("-", "")}`;
                                                     const expr = indexExpression(dialect, variant);
                                                     const unique = index.unique && variant === index.name;

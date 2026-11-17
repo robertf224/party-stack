@@ -6,8 +6,8 @@ import {
     gt,
     gte,
     inArray,
-    isEmpty,
     ilike,
+    length,
     like,
     lt,
     lte,
@@ -128,30 +128,46 @@ test("missing-value checks use Foundry's isNull, which is also true for an empty
     expect(subsetFilter(eq(field("rank"), null), arrays)).toBeUndefined();
     expect(subsetFilter(eq(field("nested", "value"), undefined), arrays)).toBeUndefined();
 
-    // On arrays, missing and empty are told apart only locally.
+    // On arrays, a missing check alone is a superset: isNull is also true for [].
     const missingTags = { type: "isNull", field: "tags", value: true };
     expect(subsetFilter(eq(field("tags"), undefined), arrays)).toEqual(missingTags);
-    expect(subsetFilter(isEmpty(field("tags")), arrays)).toEqual(missingTags);
-    expect(analyzeSubsetFilter(isEmpty(field("tags")), arrays).predicates).toEqual([
+    expect(analyzeSubsetFilter(eq(field("tags"), undefined), arrays).predicates).toEqual([
         { path: [], execution: "candidate" },
     ]);
     expect(subsetFilter(not(eq(field("tags"), undefined)), arrays)).toBeUndefined();
-    expect(subsetFilter(not(isEmpty(field("tags"))), arrays)).toBeUndefined();
+});
 
-    // Missing or empty, the lowering of `length(tags) == 0`, is exactly `isNull`.
-    const none = or(eq(field("tags"), undefined), isEmpty(field("tags")));
-    expect(subsetFilter(none, arrays)).toEqual(missingTags);
-    expect(subsetFilter(not(none), arrays)).toEqual({ type: "not", value: missingTags });
-    expect(analyzeSubsetFilter(and(not(none), eq(field("rank"), 1)), arrays).predicates).toEqual([
-        { path: [0, 0, 0], execution: "source" },
-        { path: [0, 0, 1], execution: "source" },
+test("array length compared with an emptiness bound is exactly Foundry's isNull", () => {
+    const arrays = new Map([
+        ["tags", false],
+        ["required", true],
+    ]);
+    const tags = length(field("tags"));
+    const none = { type: "isNull", field: "tags", value: true };
+    const some = { type: "not", value: none };
+    // A missing list has length 0, and Foundry's isNull is true for a missing or empty array.
+    for (const empty of [eq(tags, 0), eq(0, tags), lt(tags, 1), lte(tags, 0), gt(1, tags), not(gt(tags, 0))])
+        expect(subsetFilter(empty, arrays)).toEqual(
+            empty.kind === "not" ? { type: "not", value: some } : none
+        );
+    for (const nonempty of [gt(tags, 0), gte(tags, 1), ne(tags, 0), lt(0, tags), not(eq(tags, 0))])
+        expect(subsetFilter(nonempty, arrays)).toEqual(
+            nonempty.kind === "not" ? { type: "not", value: none } : some
+        );
+    expect(subsetFilter(eq(length(field("required")), 0), arrays)).toEqual({
+        type: "isNull",
+        field: "required",
+        value: true,
+    });
+    expect(analyzeSubsetFilter(and(gt(tags, 0), eq(field("rank"), 1)), arrays).predicates).toEqual([
+        { path: [0], execution: "source" },
         { path: [1], execution: "source" },
     ]);
-    // A required array is never missing.
-    expect(subsetFilter(not(isEmpty(field("required"))), arrays)).toEqual({
-        type: "not",
-        value: { type: "isNull", field: "required", value: true },
-    });
+    // Other lengths, and every string length, stay local.
+    for (const local of [eq(tags, 2), gt(tags, 1), lte(tags, 3), eq(length(field("title")), 0)]) {
+        expect(subsetFilter(local, arrays)).toBeUndefined();
+        expect(analyzeSubsetFilter(local, arrays).predicates).toEqual([{ path: [], execution: "adapter" }]);
+    }
 });
 
 test("negations of exact filters are sent as Foundry's not, which is a plain complement like storage's", () => {

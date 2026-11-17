@@ -14,7 +14,10 @@ export {
     ilike,
     isNull,
     isUndefined,
-    isEmpty,
+    length,
+    operand,
+    fieldExpression,
+    rowBinding,
     and,
     or,
     not,
@@ -28,7 +31,7 @@ export type {
     Field,
     Row,
     Index,
-    Predicate,
+    Filter,
     Order,
     Cursor,
     Query,
@@ -60,5 +63,17 @@ export {
 } from "./errors.js";
 
 export { isField } from "./query/schema.js";
+export {
+    fieldValues,
+    filterField,
+    filterOperand,
+    inValues,
+    isComparison,
+    lengthComparison,
+    lengthEmptiness,
+    mapFilterFields,
+    rebindFilter,
+} from "./query/filter.js";
+export type { FilterOperand, ComparisonKind } from "./query/filter.js";
 
 export { tableUsage } from "./usage.js";

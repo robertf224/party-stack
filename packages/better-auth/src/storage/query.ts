@@ -13,7 +13,7 @@ import {
     lte,
     not,
     or,
-    type Predicate,
+    type Filter,
     type Scalar,
 } from "@party-stack/ontology-storage";
 import { encodeAuthValue, type AuthRow, type AuthSchema } from "./model.js";
@@ -21,7 +21,7 @@ import type { CustomAdapter } from "better-auth/adapters";
 
 type Clause = Parameters<CustomAdapter["findOne"]>[0]["where"][number];
 export interface AuthQuery {
-    readonly where?: Predicate;
+    readonly where?: Filter;
     readonly residual: boolean;
     readonly matches: (row: AuthRow) => boolean;
 }
@@ -40,13 +40,13 @@ export function authQuery(schema: AuthSchema, model: string, clauses: readonly C
         const insensitive = mode === "insensitive";
         const wildcard = (value: string) => value.includes("%") || value.includes("_");
         const textEquals = (value: string) => (insensitive ? ilike(key, value) : eq(key, value));
-        const equal = (value: unknown): Predicate =>
+        const equal = (value: unknown): Filter =>
             value === null
                 ? eq(key, undefined)
                 : typeof value === "string"
                   ? textEquals(value)
                   : eq(key, scalar(value));
-        let predicate: Predicate | undefined;
+        let predicate: Filter | undefined;
         let residual = false;
         let matches: ((row: AuthRow) => boolean) | undefined;
         if (operator === "in" || operator === "not_in") {

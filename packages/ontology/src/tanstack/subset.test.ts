@@ -1,6 +1,15 @@
 import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import * as oq from "@party-stack/ontology-spec/query";
-import { evaluateQuery, eq as storageEq, field, isEmpty, or } from "@party-stack/ontology-storage";
+import {
+    and as storageAnd,
+    contains as storageContains,
+    evaluateQuery,
+    eq as storageEq,
+    field,
+    length as storageLength,
+    like as storageLike,
+    ne as storageNe,
+} from "@party-stack/ontology-storage";
 import { IR, compileSingleRowExpression, createLiveQueryCollection, queryOnce, eq, gte } from "@tanstack/db";
 import { Deferred, Effect, PubSub, Stream, Fiber } from "effect";
 import { Temporal } from "temporal-polyfill";
@@ -153,11 +162,9 @@ test("reverse IN pushes scalar-array membership through OR and preserves three-v
                 .map((value) => value.id)
         );
     }
-    expect(storageSubset({ where: membership }, ir, "Note").where).toEqual({
-        op: "contains",
-        left: field("tags"),
-        right: "urgent",
-    });
+    expect(storageSubset({ where: membership }, ir, "Note").where).toEqual(
+        storageContains(field("tags"), "urgent")
+    );
 });
 
 test("pushdown preserves TanStack three-valued comparisons through NOT, AND, OR and IN", () => {
@@ -194,13 +201,9 @@ test("pushdown preserves TanStack three-valued comparisons through NOT, AND, OR 
 });
 
 test("optional ontology fields need only an undefined guard", () => {
-    expect(storageSubset({ where: fn("like", ref("title"), val("A%")) }, ir, "Note").where).toEqual({
-        op: "and",
-        predicates: [
-            { op: "ne", left: field("title"), right: undefined },
-            { op: "like", left: field("title"), right: "A%" },
-        ],
-    });
+    expect(storageSubset({ where: fn("like", ref("title"), val("A%")) }, ir, "Note").where).toEqual(
+        storageAnd(storageNe(field("title"), undefined), storageLike(field("title"), "A%"))
+    );
 });
 
 test("positive equality needs no missing-value guard, but NOT and optional field equality preserve UNKNOWN", () => {
@@ -768,45 +771,54 @@ test("missing-value checks push down exactly for list, struct and scalar fields"
         }
 });
 
-test("empty-list checks through length push down exactly, counting a missing list as empty", async () => {
+test("length comparisons push down exactly as spec length, counting a missing value as 0", async () => {
+    // Lists and strings, including missing, empty and duplicate elements.
     const rows: { key: string; value: Record<string, unknown> }[] = [
         { key: "missing", value: { id: "missing" } },
-        { key: "empty", value: { id: "empty", tags: [] } },
-        { key: "tagged", value: { id: "tagged", tags: ["a"] } },
-        { key: "two", value: { id: "two", tags: ["a", "b"] } },
+        { key: "empty", value: { id: "empty", tags: [], title: "" } },
+        { key: "one", value: { id: "one", tags: ["a"], title: "a" } },
+        { key: "two", value: { id: "two", tags: ["a", "a"], title: "ab" } },
+        { key: "three", value: { id: "three", tags: ["a", "b", "c"], title: "abc" } },
     ];
-    const length = fn("length", ref("tags"));
-    const checks = [
-        fn("eq", length, new IR.Value(0)),
-        fn("eq", new IR.Value(0), length),
-        fn("lt", length, new IR.Value(1)),
-        fn("lte", length, new IR.Value(0)),
-        fn("gt", length, new IR.Value(0)),
-        fn("gte", length, new IR.Value(1)),
-        fn("gt", new IR.Value(1), length),
-    ];
-    for (const check of checks)
-        for (const expression of [check, fn("not", check)]) {
-            expect(analyzeOntologySubset({ where: expression }, ir, "Note").exact).toBe(true);
-            const compiled = await Effect.runPromise(
-                compileObjectSubset(ir, ontologySubset({ where: expression }, ir, "Note"))
-            );
-            expect(
-                evaluateQuery(rows, compiled.query)
-                    .map((row) => String(row.key))
-                    .sort((a, b) => a.localeCompare(b))
-            ).toEqual(
-                rows
-                    .filter((row) => compileSingleRowExpression(expression)(row.value) === true)
-                    .map((row) => String(row.key))
-                    .sort((a, b) => a.localeCompare(b))
-            );
-        }
-    // Other lengths have no exact object predicate.
-    expect(analyzeOntologySubset({ where: fn("eq", length, new IR.Value(2)) }, ir, "Note").exact).toBe(false);
+    const keys = (selected: readonly { key: unknown }[]) =>
+        selected.map((row) => String(row.key)).sort((a, b) => a.localeCompare(b));
+    for (const property of ["tags", "title"]) {
+        const length = fn("length", ref(property));
+        for (const op of ["eq", "lt", "lte", "gt", "gte"])
+            for (const bound of [-1, 0, 0.5, 1, 2, 3])
+                for (const check of [fn(op, length, val(bound)), fn(op, val(bound), length)])
+                    for (const expression of [
+                        check,
+                        fn("not", check),
+                        fn("in", length, val([0, bound])),
+                        fn("and", check, fn("eq", ref("id"), val("two"))),
+                    ]) {
+                        const expected = keys(
+                            rows.filter((row) => compileSingleRowExpression(expression)(row.value) === true)
+                        );
+                        const analysis = analyzeOntologySubset({ where: expression }, ir, "Note");
+                        expect(analysis.exact).toBe(true);
+                        expect(
+                            keys(evaluateQuery(rows, storageSubset({ where: expression }, ir, "Note")))
+                        ).toEqual(expected);
+                        const compiled = await Effect.runPromise(
+                            compileObjectSubset(ir, ontologySubset({ where: expression }, ir, "Note"))
+                        );
+                        expect(keys(evaluateQuery(rows, compiled.query))).toEqual(expected);
+                    }
+    }
+    // The storage filter carries the spec length; nothing relies on structural list equality.
+    expect(storageSubset({ where: fn("eq", fn("length", ref("tags")), val(0)) }, ir, "Note").where).toEqual(
+        storageEq(storageLength(field("tags")), 0)
+    );
+    // TanStack compares arrays by identity, so `eq(list, [])` is never true; it is not pushed down.
+    expect(analyzeOntologySubset({ where: fn("eq", ref("tags"), val([])) }, ir, "Note").exact).toBe(false);
+    // Length of a struct or of a literal is not a declared list or string field.
+    for (const unsupported of [fn("length", ref("nested")), fn("length", val(["a"]))])
+        expect(analyzeOntologySubset({ where: fn("eq", unsupported, val(0)) }, ir, "Note").exact).toBe(false);
 });
 
-test("spec length lowers to storage only as an emptiness check, and isEmpty round-trips", async () => {
+test("spec length lowers to storage length for any bound, and storage filters round-trip", async () => {
     const tags = oq.field("row", "tags");
     const subset = (where: Parameters<typeof oq.not>[0]): ObjectSubset => ({
         from: { source: { objectType: "Note" }, binding: "row" },
@@ -816,31 +828,30 @@ test("spec length lowers to storage only as an emptiness check, and isEmpty roun
         Effect.runPromise(Effect.result(compileObjectSubset(ir, subset(where))));
     const tagged = await compile(oq.eq(oq.length(tags), oq.literal(0)));
     expect(tagged._tag === "Success" && tagged.success.query?.where).toEqual(
-        or(storageEq(field("tags"), undefined), isEmpty(field("tags")))
+        storageEq(storageLength(field("tags")), 0)
     );
     for (const where of [
         oq.gt(oq.length(tags), oq.literal(0)),
-        oq.gte(oq.length(tags), oq.literal(1)),
-        oq.ne(oq.length(tags), oq.literal(0)),
-        oq.lt(oq.literal(0), oq.length(tags)),
-    ])
-        expect((await compile(where))._tag).toBe("Success");
-    // Spec list equality and other lengths need query-result demand.
-    for (const where of [
-        oq.eq(tags, oq.literal([])),
         oq.eq(oq.length(tags), oq.literal(2)),
-        oq.gt(oq.length(tags), oq.literal(1)),
+        oq.lt(oq.literal(1), oq.length(tags)),
         oq.eq(oq.length(oq.field("row", "title")), oq.literal(0)),
     ])
+        expect((await compile(where))._tag).toBe("Success");
+    // Lists are never compared structurally, and a struct has no length.
+    for (const where of [
+        oq.eq(tags, oq.literal([])),
+        oq.eq(oq.length(oq.field("row", "nested")), oq.literal(0)),
+    ])
         expect((await compile(where))._tag).toBe("Failure");
-    // Storage's isEmpty converts back to spec as a present list of length 0.
-    const rows: { key: string; value: Record<string, unknown> }[] = [
-        { key: "missing", value: { id: "missing" } },
-        { key: "empty", value: { id: "empty", tags: [] } },
-        { key: "tagged", value: { id: "tagged", tags: ["a"] } },
-    ];
-    const roundTrip = await Effect.runPromise(
-        compileObjectSubset(ir, objectSubset("Note", { where: isEmpty(field("tags")) }))
+    // A storage filter embeds in a spec subset by renaming its binding, and compiles back unchanged.
+    const filter = storageAnd(
+        storageNe(field("tags"), undefined),
+        storageEq(storageLength(field("tags")), 0)
     );
-    expect(evaluateQuery(rows, roundTrip.query).map((row) => String(row.key))).toEqual(["empty"]);
+    for (const binding of ["row", "note"]) {
+        const roundTrip = await Effect.runPromise(
+            compileObjectSubset(ir, objectSubset("Note", { where: filter }, binding))
+        );
+        expect(roundTrip.query?.where).toEqual(filter);
+    }
 });

@@ -72,7 +72,7 @@ test("snapshot prior-value reads use native keys and distinguish inserts, change
                                             if (
                                                 "name" in table &&
                                                 table.name === baseTable &&
-                                                query?.where?.op === "in"
+                                                query?.where?.kind === "in"
                                             )
                                                 keyIndexQueries++;
                                             return Reflect.apply(target, thisArg, args);

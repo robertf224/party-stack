@@ -1,16 +1,17 @@
 import { validateQuery } from "../query/evaluate.js";
-import { isField } from "../query/schema.js";
-import type { Field, Predicate, Query } from "../model.js";
+import { filterOperand } from "../query/filter.js";
+import type { Field, Filter, Query } from "../model.js";
 import type { ObjectStore } from "./model.js";
 import type { OntologyIR, TypeDef } from "@party-stack/ontology-spec";
 
 /** `true` validates a scalar-array field for `contains`; `"presence"` accepts any declared
- * field, for comparing it with a missing value; `"list"` accepts any list field. */
+ * field, for comparing it with a missing value; `"length"` accepts a list or string field,
+ * and `"list"` a list field, for a size index. */
 export function validateField(
     ir: OntologyIR,
     object: Pick<ObjectStore<unknown>, "name" | "definition">,
     field: Field,
-    mode: boolean | "presence" | "list" = false
+    mode: boolean | "presence" | "length" | "list" = false
 ): void {
     const multiEntry = mode === true;
     const visit = (
@@ -35,6 +36,7 @@ export function validateField(
             return visit(key.type, path, new Set([...seen, reference]), list);
         }
         if (!path.length && mode === "presence") return true;
+        if (!path.length && mode === "length") return type.kind === "list" || type.kind === "string";
         if (!path.length && mode === "list") return type.kind === "list";
         if (!path.length && list)
             return type.kind === "list" && visit(type.value.elementType, [], seen, false);
@@ -90,23 +92,30 @@ export function validateField(
         !visit({ kind: "struct", value: { fields: object.definition.properties } }, field.path)
     )
         throw new TypeError(
-            `Expected a declared ${mode === "presence" ? "" : mode === "list" ? "list " : multiEntry ? "scalar-array " : "scalar "}field on ${object.name}: ${JSON.stringify(field.path)}.`
+            `Expected a declared ${mode === "presence" ? "" : mode === "length" ? "list or string " : mode === "list" ? "list " : multiEntry ? "scalar-array " : "scalar "}field on ${object.name}: ${JSON.stringify(field.path)}.`
         );
 }
 export function validateObjectQuery(ir: OntologyIR, object: ObjectStore<unknown>, query: Query): void {
     validateQuery(query);
-    const predicate = (value: Predicate): void => {
-        if (value.op === "and" || value.op === "or") return value.predicates.forEach(predicate);
-        if (value.op === "not") return predicate(value.predicate);
-        if (value.op === "empty") return validateField(ir, object, value.left, "list");
+    const visit = (value: Filter): void => {
+        if (value.kind === "and" || value.kind === "or") return value.value.expressions.forEach(visit);
+        if (value.kind === "not") return visit(value.value.expression);
+        if (!("left" in value.value)) return;
+        const left = filterOperand(value.value.left);
+        const right = filterOperand(value.value.right);
         // Comparing with a missing value checks presence, so any declared field qualifies.
-        const presence = (other: unknown) =>
-            (value.op === "eq" || value.op === "ne") && other == null ? ("presence" as const) : false;
-        const right = "right" in value ? value.right : undefined;
-        if (isField(value.left))
-            validateField(ir, object, value.left, value.op === "contains" || presence(right));
-        if (isField(right)) validateField(ir, object, right, presence(value.left));
+        const presence = (other: typeof left) =>
+            (value.kind === "eq" || value.kind === "ne") && other?.kind === "literal" && other.value == null
+                ? ("presence" as const)
+                : false;
+        for (const [operand, mode] of [
+            [left, value.kind === "contains" || presence(right)],
+            [right, presence(left)],
+        ] as const) {
+            if (operand?.kind === "field") validateField(ir, object, operand.field, mode);
+            else if (operand?.kind === "length") validateField(ir, object, operand.field, "length");
+        }
     };
-    if (query.where) predicate(query.where);
+    if (query.where) visit(query.where);
     query.orderBy?.forEach((order) => validateField(ir, object, order.field));
 }

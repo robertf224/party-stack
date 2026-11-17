@@ -2,13 +2,7 @@ import * as q from "@party-stack/ontology-spec/query";
 import { IR } from "@tanstack/db";
 import type { Expression, Subset, QueryOrder, OntologyIR } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
-import type { Field } from "@party-stack/ontology-storage";
-import type {
-    Query,
-    Scalar,
-    Predicate as StoragePredicate,
-    Operand as StorageOperand,
-} from "@party-stack/ontology-storage";
+import type { Field, Query } from "@party-stack/ontology-storage";
 const field = (...path: string[]): Expression => q.field("row", ...path);
 const isField = (value: Expression) => value.kind === "getAt";
 import type { LoadSubsetOptions } from "@tanstack/db";
@@ -125,6 +119,16 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
             const resolved = resolve(type, path.slice(1));
             return resolved && { operand: field(...path), ...resolved };
         }
+        // TanStack's length counts a list's elements or a string's UTF-16 units, and gives
+        // any other value, including a missing one, length 0. Spec `length` agrees.
+        if (expression.type === "func" && expression.name === "length" && expression.args.length === 1) {
+            const counted = value(expression.args[0]!);
+            return counted &&
+                isField(counted.operand) &&
+                (counted.family === "string" || "elementFamily" in counted)
+                ? { operand: q.length(counted.operand), family: "number", optional: false }
+                : undefined;
+        }
         if (expression.type !== "val") return undefined;
         const literal: unknown = expression.value;
         if (literal == null) return { operand: q.literal(literal), optional: true };
@@ -154,33 +158,6 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
               ? // Ontology object decoding normalizes optional nulls to undefined.
                 q.ne(v.operand, q.literal(undefined))
               : false;
-    /** `length(list)` compared with 0 or 1, the comparisons sources can answer. TanStack gives
-     * a missing list length 0, as the ontology expression language does. */
-    const listEmptiness = (name: string, args: readonly IR.BasicExpression[]): Truth | undefined => {
-        if (args.length !== 2) return undefined;
-        const flipped = { lt: "gt", lte: "gte", gt: "lt", gte: "lte", eq: "eq" } as const;
-        if (!(name in flipped)) return undefined;
-        const isLength = (arg: IR.BasicExpression | undefined) =>
-            arg?.type === "func" && arg.name === "length" && arg.args.length === 1;
-        const [length, bound, op] = isLength(args[0])
-            ? [args[0], args[1], name as keyof typeof flipped]
-            : [args[1], args[0], flipped[name as keyof typeof flipped]];
-        if (!isLength(length) || bound?.type !== "val" || typeof bound.value !== "number") return undefined;
-        const list = value((length as IR.Func).args[0]!);
-        if (!list || !("elementFamily" in list) || !isField(list.operand)) return undefined;
-        const n = bound.value;
-        const empty =
-            (op === "eq" && n === 0) || (op === "lt" && n === 1) || (op === "lte" && n === 0)
-                ? true
-                : (op === "gt" && n === 0) || (op === "gte" && n === 1)
-                  ? false
-                  : undefined;
-        if (empty === undefined) return undefined;
-        const size = q.length(list.operand);
-        const none = q.eq(size, q.literal(0));
-        const some = q.gt(size, q.literal(0));
-        return empty ? { yes: none, no: some, exact: true } : { yes: some, no: none, exact: true };
-    };
     const truth = (expression: IR.BasicExpression): Truth => {
         if (expression.type === "val" && (typeof expression.value === "boolean" || expression.value == null))
             return {
@@ -218,8 +195,6 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
             const child = truth(args[0]!);
             return { yes: child.no, no: child.yes, exact: child.exact };
         }
-        const emptiness = listEmptiness(name, args);
-        if (emptiness) return emptiness;
         if ((name === "isNull" || name === "isUndefined") && args.length === 1) {
             // A presence check needs only a declared field, so it also covers lists and
             // structs, which have no scalar comparison.
@@ -354,38 +329,19 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
     };
 }
 
-/** Raw Tables/transaction adapter. Only serializes nodes constructed by the analyzer above. */
+/** Raw Tables/transaction adapter. The analyzer's filter is already a storage filter over
+ * the `row` binding; only field ordering and the window change shape. */
 function storageScan(subset: Subset): Query {
-    const operand = (e: Expression): StorageOperand =>
-        e.kind === "getAt"
-            ? { _tag: "Field", path: e.value.path }
-            : ((e as Extract<Expression, { kind: "literal" }>).value.value as Scalar);
-    const predicate = (e: Expression): StoragePredicate => {
-        if (e.kind === "and" || e.kind === "or")
-            return { op: e.kind, predicates: e.value.expressions.map(predicate) };
-        if (e.kind === "not") return { op: "not", predicate: predicate(e.value.expression) };
-        if (e.kind === "in")
-            return {
-                op: "in",
-                left: operand(e.value.left),
-                values: (e.value.right as Extract<Expression, { kind: "literal" }>).value.value as Scalar[],
-            };
-        const binary = e as Extract<
-            Expression,
-            { kind: "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "like" | "ilike" | "contains" }
-        >;
-        return {
-            op: binary.kind,
-            left: operand(binary.value.left),
-            right: operand(binary.value.right),
-        } as StoragePredicate;
-    };
+    const path = (e: Expression): Field => ({
+        _tag: "Field",
+        path: (e as Extract<Expression, { kind: "getAt" }>).value.path,
+    });
     return {
-        where: subset.where ? predicate(subset.where) : undefined,
+        where: subset.where,
         ...(subset.orderBy
             ? {
                   orderBy: subset.orderBy.map((o) => ({
-                      field: operand(o.expression) as Field,
+                      field: path(o.expression),
                       direction: o.direction,
                       nulls: o.nulls,
                   })),

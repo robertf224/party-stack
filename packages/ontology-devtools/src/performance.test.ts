@@ -11,18 +11,41 @@ import { schemaLinkLabel, schemaRelationship } from "./schemaLayout.js";
 import { operationRows, spanSubtree, traceStatus } from "./traceTimeline.js";
 import { groupTraces, traceWaterfall } from "./traceWaterfall.js";
 import type { PerformanceSpan } from "./traceWaterfall.js";
-import type { OntologyIR } from "@party-stack/ontology";
+import type { Expression, OntologyIR } from "@party-stack/ontology";
+
+const rowField = (...path: string[]): Expression => ({
+    kind: "getAt",
+    value: { source: { kind: "localReference", value: { name: "row" } }, path },
+});
+const literal = (value: unknown): Expression => ({ kind: "literal", value: { value } });
+/** A compiled storage filter comparing a row field with a literal. */
+const compare = (kind: "eq" | "like" | "ilike" | "contains", path: string, value: unknown) =>
+    ({ kind, value: { left: rowField(path), right: literal(value) } }) as Expression;
 
 test("subset identity survives storage and transport object-key reordering", () => {
     expect(
         demandId({
             objectType: "Note",
-            query: { where: { op: "eq", left: { _tag: "Field", path: ["id"] }, right: "one" } },
+            query: { where: compare("eq", "id", "one") },
         })
     ).toBe(
         demandId({
             objectType: "Note",
-            query: { where: { right: "one", left: { path: ["id"], _tag: "Field" }, op: "eq" } },
+            query: {
+                where: {
+                    value: {
+                        right: { value: { value: "one" }, kind: "literal" },
+                        left: {
+                            value: {
+                                path: ["id"],
+                                source: { value: { name: "row" }, kind: "localReference" },
+                            },
+                            kind: "getAt",
+                        },
+                    },
+                    kind: "eq",
+                },
+            },
         })
     );
 });
@@ -70,12 +93,9 @@ test("pushdown inspection keeps unsupported intent and local work inside a label
 });
 
 test("provider-independent plans annotate portable predicates and display native syntax as opaque text", () => {
-    const where = {
-        op: "or" as const,
-        predicates: [
-            { op: "ilike" as const, left: { _tag: "Field" as const, path: ["title"] }, right: "urgent%" },
-            { op: "contains" as const, left: { _tag: "Field" as const, path: ["tags"] }, right: "urgent" },
-        ],
+    const where: Expression = {
+        kind: "or",
+        value: { expressions: [compare("ilike", "title", "urgent%"), compare("contains", "tags", "urgent")] },
     };
     const markup = renderToStaticMarkup(
         createElement(QueryPushdown, {
@@ -136,7 +156,7 @@ test("provider-independent plans annotate portable predicates and display native
 
 test("exact source filtering does not imply source pagination or an incomplete tab filter was pushed down", () => {
     const query = {
-        where: { op: "eq" as const, left: { _tag: "Field" as const, path: ["id"] }, right: "one" },
+        where: compare("eq", "id", "one"),
         limit: 2,
     };
     const demand = { objectType: "Note", query, references: 1, watchers: 0, revision: 1, installed: 1 };
@@ -192,7 +212,7 @@ test("coverage reuse is reported only with an engine-provided proof, not inferre
     const demand = {
         objectType: "Issue",
         query: {
-            where: { op: "ilike" as const, left: { _tag: "Field" as const, path: ["title"] }, right: "hi%" },
+            where: compare("ilike", "title", "hi%"),
         },
         references: 1,
         watchers: 0,
@@ -231,7 +251,7 @@ test("coverage reuse is reported only with an engine-provided proof, not inferre
 test("coverage explanations distinguish exact queries, collections, and primary-key hits", () => {
     const demand = {
         objectType: "User",
-        query: { where: { op: "eq" as const, left: { _tag: "Field" as const, path: ["id"] }, right: "one" } },
+        query: { where: compare("eq", "id", "one") },
         references: 1,
         watchers: 1,
         revision: 1,
@@ -330,20 +350,26 @@ test("refreshes retain the previous source plan and row counts in the fixed sour
 });
 
 test("predicate annotation paths survive flattened AND groups and NOT", () => {
-    const eq = (name: string) => ({
-        op: "eq" as const,
-        left: { _tag: "Field" as const, path: [name] },
-        right: true,
-    });
+    const eq = (name: string) => compare("eq", name, true);
     const markup = renderToStaticMarkup(
         createElement(QueryPills, {
             query: {
                 where: {
-                    op: "and",
-                    predicates: [
-                        eq("first"),
-                        { op: "and", predicates: [eq("second"), { op: "not", predicate: eq("third") }] },
-                    ],
+                    kind: "and",
+                    value: {
+                        expressions: [
+                            eq("first"),
+                            {
+                                kind: "and",
+                                value: {
+                                    expressions: [
+                                        eq("second"),
+                                        { kind: "not", value: { expression: eq("third") } },
+                                    ],
+                                },
+                            },
+                        ],
+                    },
                 },
             },
             annotations: [
@@ -480,28 +506,47 @@ test("subscriptions and their requests remain inspectable without expanding nest
 });
 
 test("readable query predicates preserve boolean groups, field references and special values", () => {
-    const status = { _tag: "Field" as const, path: ["status"] };
+    const status = rowField("status");
     expect(
         predicateText({
-            op: "and",
-            predicates: [
-                {
-                    op: "or",
-                    predicates: [
-                        { op: "eq", left: status, right: "Open" },
-                        { op: "ilike", left: status, right: "%wait%" },
-                    ],
-                },
-                { op: "not", predicate: { op: "in", left: status, values: ["Closed", null] } },
-            ],
+            kind: "and",
+            value: {
+                expressions: [
+                    {
+                        kind: "or",
+                        value: {
+                            expressions: [
+                                { kind: "eq", value: { left: status, right: literal("Open") } },
+                                { kind: "ilike", value: { left: status, right: literal("%wait%") } },
+                            ],
+                        },
+                    },
+                    {
+                        kind: "not",
+                        value: {
+                            expression: {
+                                kind: "in",
+                                value: { left: status, right: literal(["Closed", null]) },
+                            },
+                        },
+                    },
+                ],
+            },
         })
     ).toBe(
         '((status = "Open" OR status matches (ignore case) "%wait%") AND NOT (status in ["Closed", null]))'
     );
-    expect(predicateText({ op: "eq", left: status, right: undefined })).toBe("status is undefined");
-    expect(predicateText({ op: "eq", left: status, right: { _tag: "Field", path: ["other"] } })).toBe(
-        "status = other"
+    expect(predicateText({ kind: "eq", value: { left: status, right: literal(undefined) } })).toBe(
+        "status is undefined"
     );
+    const other = rowField("other");
+    expect(predicateText({ kind: "eq", value: { left: status, right: other } })).toBe("status = other");
+    expect(
+        predicateText({
+            kind: "gt",
+            value: { left: { kind: "length", value: { expression: status } }, right: literal(0) },
+        })
+    ).toBe("length(status) > 0");
 });
 
 test("execution contexts describe host role separately from worker placement and local-only topology", () => {
@@ -517,14 +562,10 @@ test("execution contexts describe host role separately from worker placement and
 });
 
 test("query rendering distinguishes nullish values and pattern wildcards without annotating ordinary strings", () => {
-    const field = { _tag: "Field" as const, path: ["title"] };
     const render = (op: "eq" | "like", right: string | null | undefined) =>
         renderToStaticMarkup(
             createElement(QueryPills, {
-                query: {
-                    where:
-                        op === "like" ? { op, left: field, right: right ?? "" } : { op, left: field, right },
-                },
+                query: { where: compare(op, "title", op === "like" ? (right ?? "") : right) },
             })
         );
     expect(render("eq", null)).toContain('class="ps-query-special"');
@@ -544,7 +585,7 @@ test("query rendering distinguishes nullish values and pattern wildcards without
 test("upstream row counts correlate only exact recorded queries, preserving unknown and zero", () => {
     const demand = {
         objectType: "Issue",
-        query: { where: { op: "eq" as const, left: { _tag: "Field" as const, path: ["id"] }, right: "one" } },
+        query: { where: compare("eq", "id", "one") },
     };
     const loads = [
         {

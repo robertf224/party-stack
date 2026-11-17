@@ -4,7 +4,8 @@ import type { Effect, Stream } from "effect";
 export const INDEX_BACKFILL_BATCH_SIZE = 128;
 export { makeTables } from "../tables.js";
 // Encoding and native projection naming are part of the driver storage contract.
-export { scalarKey, keyCode, caseInsensitiveIndex } from "../query/evaluate.js";
+export { scalarKey, keyCode, caseInsensitiveIndex, fieldIndex } from "../query/evaluate.js";
+export { sizeRanges } from "../planner/plan.js";
 export interface StoredRow {
     readonly table: string;
     readonly key: string;

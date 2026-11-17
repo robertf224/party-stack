@@ -2,6 +2,7 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { actionExpressions } from "@party-stack/ontology-backend/actions";
 import { o } from "@party-stack/ontology-spec";
 import { getAtPath } from "@party-stack/ontology-spec/utils";
+import { filterOperand } from "@party-stack/ontology-storage";
 import { eq } from "@tanstack/db";
 import { queryOnce, createCollection, localOnlyCollectionOptions } from "@tanstack/db";
 import { Effect } from "effect";
@@ -12,7 +13,6 @@ import type { ActionRequest } from "@party-stack/ontology-backend";
 import type { OwnedReadTransaction } from "@party-stack/ontology-backend/owned";
 import type { Expression, OntologyIR } from "@party-stack/ontology-spec";
 import type { OntologyObject } from "@party-stack/ontology-spec";
-import type { Field } from "@party-stack/ontology-storage";
 
 type ExpressionReplay = NonNullable<ActionRequest["replay"]>;
 const failure = (cause: unknown) =>
@@ -42,13 +42,9 @@ const reader = (ir: OntologyIR, tx: OntologyReadTx): OwnedReadTransaction => ({
     loadSubset: (name, scan) =>
         Effect.gen(function* () {
             const where = scan?.where;
-            if (
-                where &&
-                (where.op !== "eq" ||
-                    !where.left ||
-                    typeof where.left !== "object" ||
-                    !("_tag" in where.left))
-            )
+            const left = where?.kind === "eq" ? filterOperand(where.value.left) : undefined;
+            const right = where?.kind === "eq" ? filterOperand(where.value.right) : undefined;
+            if (where && (left?.kind !== "field" || right?.kind !== "literal"))
                 return yield* new BackendError({
                     operation: "expression.read",
                     kind: "NotImplemented",
@@ -59,12 +55,9 @@ const reader = (ir: OntologyIR, tx: OntologyReadTx): OwnedReadTransaction => ({
                 tx.query<Record<string, unknown>[]>((query, objects) => {
                     const source = query.from({ object: objects[name]! });
                     const filtered =
-                        where?.op === "eq" &&
-                        where.left &&
-                        typeof where.left === "object" &&
-                        "_tag" in where.left
+                        left?.kind === "field" && right?.kind === "literal"
                             ? source.where(({ object }) =>
-                                  eq(getAtPath(object, (where.left as Field).path), where.right)
+                                  eq(getAtPath(object, left.field.path), right.value)
                               )
                             : source;
                     return scan?.limit === undefined

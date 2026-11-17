@@ -1,6 +1,16 @@
 import * as PgliteClient from "@effect/sql-pglite/PgliteClient";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
-import { Table, and, eq, field, gt, inArray, like, type Query } from "@party-stack/ontology-storage/tables";
+import {
+    Table,
+    and,
+    eq,
+    field,
+    fieldExpression,
+    gt,
+    inArray,
+    like,
+    type Query,
+} from "@party-stack/ontology-storage/tables";
 import { Effect } from "effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import { assert, test } from "vitest";
@@ -66,11 +76,17 @@ const check = Effect.fnUntraced(function* (dialect: Dialect) {
         ),
         2
     );
+    const one = { kind: "literal", value: { value: 1 } };
+    const row = (path: unknown[], name = "row") => ({
+        kind: "getAt",
+        value: { source: { kind: "localReference", value: { name } }, path },
+    });
     for (const malformed of [
-        { where: { op: "eq) OR 1=1 --", left: field("n"), right: 1 } },
+        { where: { kind: "eq) OR 1=1 --", value: { left: fieldExpression(field("n")), right: one } } },
         { orderBy: [{ field: field("n"), direction: "asc; DROP TABLE party_tables_rows; --" }] },
-        { where: { op: "prefix", field: field("n"), value: "x" } },
-        { where: { op: "eq", left: { _tag: "Field", path: [7] }, right: 1 } },
+        { where: { kind: "prefix", value: { left: fieldExpression(field("n")), right: one } } },
+        { where: { kind: "eq", value: { left: row([7]), right: one } } },
+        { where: { kind: "eq", value: { left: row(["n"], "row) OR 1=1 --"), right: one } } },
         { limit: "1; DROP TABLE party_tables_rows" },
     ]) {
         assert.strictEqual(

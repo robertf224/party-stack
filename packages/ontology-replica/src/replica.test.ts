@@ -653,7 +653,7 @@ test("watch-only filtered snapshots repair rows that leave a filter without trea
                 expect(yield* replica.loadSubset("Counter", subset.query)).toEqual([]);
                 expect((yield* replica.get("Counter", "a"))?.count).toBe(2);
                 expect(yield* replica.get("Counter", "b")).toBeUndefined();
-                expect(requests.map((request) => request.query?.where?.op)).toEqual(["eq", "eq", "in"]);
+                expect(requests.map((request) => request.query?.where?.kind)).toEqual(["eq", "eq", "in"]);
                 yield* replica.syncOnce;
                 expect(requests).toHaveLength(3);
             })
@@ -987,7 +987,7 @@ test("one nonretryable subset cannot starve another subset or the outbox", async
                 expect(requests.filter((key) => key === "bad")).toHaveLength(1);
                 expect(
                     (yield* replica.status).demands.find(
-                        (demand) => demand.query?.where?.op === "eq" && demand.loadError
+                        (demand) => demand.query?.where?.kind === "eq" && demand.loadError
                     )?.loadError
                 ).toMatchObject({ kind: "Forbidden", retryable: false });
                 forbidden = false;

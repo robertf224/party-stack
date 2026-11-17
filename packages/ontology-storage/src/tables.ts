@@ -22,6 +22,8 @@ import {
     caseInsensitiveIndex,
     applyQuery,
     decodeKey,
+    fieldIndex,
+    sizeKey,
     keyCode,
     readField,
     sameField,
@@ -181,6 +183,7 @@ const prepareValue = <A>(table: Table<A>, key: Key, value: A) => {
 };
 const indexCodes = (index: StoredIndex, value: unknown) => {
     const fieldValue = readField(value, index.field);
+    if (index.size) return [scalarKey(sizeKey(fieldValue))];
     return index.multiEntry
         ? [...new Set((Array.isArray(fieldValue) ? fieldValue : []).map(scalarKey))]
         : [scalarKey(fieldValue)];
@@ -499,7 +502,7 @@ function transaction(
             for (const value of difference.previousCodes!) {
                 const entry = { table: table.name, index: index.name, key: plan.code, value };
                 result.removedEntries.push(entry);
-                if (!index.multiEntry) result.removedEntries.push(foldedEntry(entry, before, index));
+                if (fieldIndex(index)) result.removedEntries.push(foldedEntry(entry, before, index));
             }
         result.entries.push(...indexed);
         // Only positive string-prefix ILIKE plans read this hidden index.
@@ -509,7 +512,7 @@ function transaction(
         // Native SQL projections still need the placeholder: SQL NULL would
         // change negated text predicates through three-valued logic.
         if (
-            !index.multiEntry &&
+            fieldIndex(index) &&
             (raw.nativeIndexes || typeof readField(plan.canonical, index.field) === "string")
         )
             result.entries.push(foldedEntry(indexed[0]!, plan.canonical, index));
@@ -573,7 +576,7 @@ function transaction(
         if (previous)
             for (const index of changedIndexes) {
                 yield* raw.deleteEntries(table.name, index.name, code);
-                if (!index.multiEntry)
+                if (fieldIndex(index))
                     yield* raw.deleteEntries(table.name, caseInsensitiveIndex(index.name), code);
             }
         for (const entry of entries) yield* raw.putEntry(entry);
@@ -871,12 +874,15 @@ function transaction(
                 return yield* Effect.fail(indexError("Indexes require a name and a nonempty field path"));
             if (index.multiEntry && index.unique)
                 return yield* Effect.fail(indexError("Unique array-element indexes are not supported."));
+            if (index.size && (index.unique || index.multiEntry))
+                return yield* Effect.fail(indexError("A list size index is neither unique nor multi-entry."));
             const existing = (yield* definitions(table)).find((i) => i.name === index.name);
             if (existing) {
                 if (
                     !sameField(existing.field, index.field) ||
                     !!existing.unique !== !!index.unique ||
-                    !!existing.multiEntry !== !!index.multiEntry
+                    !!existing.multiEntry !== !!index.multiEntry ||
+                    !!existing.size !== !!index.size
                 )
                     return yield* Effect.fail(
                         indexError("Index definition changed; choose a new name or migrate explicitly.")
@@ -896,7 +902,7 @@ function transaction(
                         for (const entry of entries) {
                             yield* raw.putEntry(entry);
                             if (
-                                !index.multiEntry &&
+                                fieldIndex(index) &&
                                 (raw.nativeIndexes || typeof readField(value, index.field) === "string")
                             )
                                 yield* raw.putEntry(foldedEntry(entry, value, index));

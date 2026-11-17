@@ -162,7 +162,7 @@ test("write-intent reads preserve increments and predicate coordination prevents
                     tables.transaction((tx) =>
                         Effect.gen(function* () {
                             const active = yield* tx.query(shifts, {
-                                where: { op: "eq", left: field("active"), right: true },
+                                where: eq(field("active"), true),
                             });
                             yield* Effect.sleep("5 millis");
                             if (active.length > 1) yield* tx.put(shifts, id, { active: false });

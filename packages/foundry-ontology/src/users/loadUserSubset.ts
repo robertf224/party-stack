@@ -2,8 +2,13 @@ import { Users, type User } from "@osdk/foundry.admin";
 import { BackendError } from "@party-stack/ontology-backend";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { applyLensToObject, mapTargetPathToSourceWithLens, type Lens } from "@party-stack/ontology-spec";
-import { evaluateQuery, type Predicate, type Query } from "@party-stack/ontology-storage";
-import { isField } from "@party-stack/ontology-storage/tables";
+import {
+    evaluateQuery,
+    filterOperand,
+    inValues,
+    type Filter,
+    type Query,
+} from "@party-stack/ontology-storage";
 import { Schema, Redacted } from "effect";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
 import { chunk } from "../utils/chunk.js";
@@ -37,10 +42,12 @@ type Selection =
     | { type: "search"; term: string; paths: number[][] };
 
 /** Choose only a safe candidate set. Every response is checked against the full query. */
-function select(predicate: Predicate, lens: Lens, path: number[] = []): Selection | undefined {
-    if (predicate.op === "and" || predicate.op === "or") {
-        const children = predicate.predicates.map((child, index) => select(child, lens, [...path, index]));
-        if (predicate.op === "and")
+function select(predicate: Filter, lens: Lens, path: number[] = []): Selection | undefined {
+    if (predicate.kind === "and" || predicate.kind === "or") {
+        const children = predicate.value.expressions.map((child, index) =>
+            select(child, lens, [...path, index])
+        );
+        if (predicate.kind === "and")
             return children.find((child) => child?.type === "getBatch") ?? children.find(Boolean);
         if (children.some((child) => !child)) return;
         if (children.every((child) => child?.type === "getBatch"))
@@ -57,48 +64,50 @@ function select(predicate: Predicate, lens: Lens, path: number[] = []): Selectio
             return { ...first, paths: children.flatMap((child) => child!.paths) };
         return;
     }
-    if (predicate.op === "not" || predicate.op === "empty") return;
-    const left =
-        predicate.op === "eq" && !isField(predicate.left) && isField(predicate.right)
-            ? predicate.right
-            : predicate.left;
-    const right =
-        predicate.op === "eq" && left === predicate.right
-            ? predicate.left
-            : predicate.op !== "in"
-              ? predicate.right
-              : undefined;
-    if (!isField(left)) return;
-    const source = mapTargetPathToSourceWithLens(left.path, lens).join(".");
+    if (
+        predicate.kind !== "eq" &&
+        predicate.kind !== "in" &&
+        predicate.kind !== "like" &&
+        predicate.kind !== "ilike"
+    )
+        return;
+    let left = filterOperand(predicate.value.left);
+    let right = filterOperand(predicate.value.right);
+    if (predicate.kind === "eq" && left?.kind !== "field" && right?.kind === "field")
+        [left, right] = [right, left];
+    if (left?.kind !== "field") return;
+    const value = right?.kind === "literal" ? right.value : undefined;
+    const source = mapTargetPathToSourceWithLens(left.field.path, lens).join(".");
     if (source === "id") {
-        if (predicate.op === "eq" && typeof right === "string")
-            return { type: "getBatch", ids: [right], paths: [path] };
-        if (predicate.op === "in" && predicate.values.every((value) => typeof value === "string"))
-            return { type: "getBatch", ids: [...new Set(predicate.values)], paths: [path] };
+        if (predicate.kind === "eq" && typeof value === "string")
+            return { type: "getBatch", ids: [value], paths: [path] };
+        const values = predicate.kind === "in" ? inValues(predicate) : undefined;
+        if (values?.every((value) => typeof value === "string"))
+            return { type: "getBatch", ids: [...new Set(values)], paths: [path] };
     }
     if (
-        (predicate.op === "like" || predicate.op === "ilike") &&
-        typeof right === "string" &&
+        (predicate.kind === "like" || predicate.kind === "ilike") &&
+        typeof value === "string" &&
         ["username", "givenName", "familyName"].includes(source)
     ) {
         // Admin search is case-insensitive prefix matching across all name fields.
         // Complex patterns must not become a narrower, incorrect search term.
-        const term = right.slice(0, -1);
-        if (right.endsWith("%") && term.length > 0 && !/[%_\\]/.test(term))
+        const term = value.slice(0, -1);
+        if (value.endsWith("%") && term.length > 0 && !/[%_\\]/.test(term))
             return { type: "search", term, paths: [path] };
     }
 }
 
 function placements(
-    predicate: Predicate | undefined,
+    predicate: Filter | undefined,
     selection: Selection | undefined
 ): SourceQueryPlan["predicates"] {
     const selected = new Set(selection?.paths.map((path) => JSON.stringify(path)));
     const result: SourceQueryPlan["predicates"][number][] = [];
-    const visit = (predicate: Predicate, path: number[]) => {
-        if (predicate.op === "and" || predicate.op === "or")
-            predicate.predicates.forEach((child, index) => visit(child, [...path, index]));
-        else if (predicate.op === "not") visit(predicate.predicate, [...path, 0]);
+    const visit = (predicate: Filter, path: number[]) => {
+        if (predicate.kind === "and" || predicate.kind === "or")
+            predicate.value.expressions.forEach((child, index) => visit(child, [...path, index]));
+        else if (predicate.kind === "not") visit(predicate.value.expression, [...path, 0]);
         else
             result.push({
                 path,

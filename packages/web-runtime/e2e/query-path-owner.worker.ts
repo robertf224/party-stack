@@ -6,6 +6,7 @@ import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import { serveOntologyWorker } from "@party-stack/ontology-server/rpc/worker";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
+import { eq, field } from "@party-stack/ontology-storage/tables";
 import { createTraceCapture } from "@party-stack/runtime/tracing";
 import { Cause, Effect, Exit, Fiber, Scope, Tracer } from "effect";
 import { makeReplicaKernel } from "../../ontology-replica/lib/engine.js";
@@ -121,11 +122,7 @@ Effect.runFork(
                           ? Effect.gen(function* () {
                                 const committed = yield* authority.loadSubset(
                                     objectSubset("Note", {
-                                        where: {
-                                            op: "eq",
-                                            left: { _tag: "Field", path: ["id"] },
-                                            right: targetId,
-                                        },
+                                        where: eq(field("id"), targetId),
                                     })
                                 );
                                 return {

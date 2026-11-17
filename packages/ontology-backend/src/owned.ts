@@ -11,7 +11,7 @@ import {
     indexesForQuery,
 } from "@party-stack/ontology-storage";
 import { digestBytes, byteSource } from "@party-stack/ontology-storage/blobs";
-import { Table } from "@party-stack/ontology-storage/tables";
+import { Table, gt } from "@party-stack/ontology-storage/tables";
 import { Clock, Effect, PubSub, Redacted, Schema, Semaphore, Stream } from "effect";
 import { makeDeliveryManager, scanSelectedRows } from "./delivery.js";
 import { maintenanceInterval, scheduleMaintenance } from "./maintenance.js";
@@ -768,7 +768,8 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                     if (object)
                         for (const index of indexesForQuery(
                             subset.query ?? {},
-                            new Set(object.definition.properties.map((property) => property.name))
+                            options.ir,
+                            object.definition
                         ))
                             yield* storage.ensureIndex(object, index);
                     return yield* storage.read((native) =>
@@ -932,11 +933,7 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                                     "Change page limit must be between 1 and 1000."
                                 );
                             const rows = yield* tables.query(journal, {
-                                where: {
-                                    op: "gt",
-                                    left: { _tag: "Field", path: ["revision"] },
-                                    right: after,
-                                },
+                                where: gt(field("revision"), after),
                                 orderBy: [{ field: { _tag: "Field", path: ["revision"] } }],
                                 limit: limit + 1,
                             });

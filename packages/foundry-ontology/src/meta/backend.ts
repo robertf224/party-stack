@@ -7,7 +7,7 @@ import {
 } from "@party-stack/ontology-backend";
 import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import metaOntology from "@party-stack/ontology-spec/meta";
-import { isField } from "@party-stack/ontology-storage/tables";
+import { eq, filterOperand, inValues } from "@party-stack/ontology-storage/tables";
 import { Effect, Redacted, Schema } from "effect";
 import { foundryContext } from "../context.js";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
@@ -26,38 +26,39 @@ import { planMetaLookup } from "./planMetaLookup.js";
 import type { ActionTypeSearchJsonQueryV2 } from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
-import type { Predicate } from "@party-stack/ontology-storage";
+import type { Filter, Scalar } from "@party-stack/ontology-storage";
 
 const failure = (operation: string, cause: unknown) => classifyBackendFailure(operation, cause);
-function actionCandidates(predicate?: Predicate): ActionTypeSearchJsonQueryV2 | undefined {
+function actionCandidates(predicate?: Filter): ActionTypeSearchJsonQueryV2 | undefined {
     if (!predicate) return;
-    if (predicate.op === "and" || predicate.op === "or") {
-        const children = predicate.predicates.map(actionCandidates);
-        if (predicate.op === "or" && children.some((child) => child === undefined)) return;
+    if (predicate.kind === "and" || predicate.kind === "or") {
+        const children = predicate.value.expressions.map(actionCandidates);
+        if (predicate.kind === "or" && children.some((child) => child === undefined)) return;
         const supported = children.filter((child) => child !== undefined);
         return supported.length === 1
             ? supported[0]
             : supported.length
-              ? { type: predicate.op, value: supported }
+              ? { type: predicate.kind, value: supported }
               : undefined;
     }
-    if (predicate.op === "in") {
-        const children = predicate.values.map((value) =>
-            actionCandidates({ op: "eq", left: predicate.left, right: value })
-        );
+    if (predicate.kind === "in") {
+        const left = predicate.value.left;
+        const children = inValues(predicate).map((value) => actionCandidates(eq(left, value as Scalar)));
         if (children.every((child) => child !== undefined)) return { type: "or", value: children };
         return;
     }
-    if (predicate.op !== "eq" && predicate.op !== "like" && predicate.op !== "ilike") return;
-    const ref = isField(predicate.left) ? predicate.left : predicate.right;
-    const value = ref === predicate.left ? predicate.right : predicate.left;
-    if (!isField(ref) || typeof value !== "string") return;
-    const field = ref.path.join(".");
-    if (predicate.op === "eq" && field === "id") return { type: "actionTypeRid", value };
+    if (predicate.kind !== "eq" && predicate.kind !== "like" && predicate.kind !== "ilike") return;
+    const left = filterOperand(predicate.value.left);
+    const right = filterOperand(predicate.value.right);
+    const [ref, other] = left?.kind === "field" ? [left, right] : [right, left];
+    if (ref?.kind !== "field" || other?.kind !== "literal" || typeof other.value !== "string") return;
+    const value = other.value;
+    const field = ref.field.path.join(".");
+    if (predicate.kind === "eq" && field === "id") return { type: "actionTypeRid", value };
     if (field !== "name" && field !== "displayName") return;
     const type = field === "name" ? ("actionTypeApiName" as const) : ("actionTypeDisplayName" as const);
     const convert = (value: string) => (field === "name" ? toFoundryActionTypeName(value) : value);
-    if (predicate.op === "eq") return { type, value: { type: "exact", value: convert(value) } };
+    if (predicate.kind === "eq") return { type, value: { type: "exact", value: convert(value) } };
     if (value.includes("_") || value.includes("\\")) return;
     const children: ActionTypeSearchJsonQueryV2[] = value
         .split("%")

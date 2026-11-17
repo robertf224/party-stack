@@ -18,7 +18,7 @@ import {
     sub,
     caseExpression,
 } from "@party-stack/ontology-spec/query";
-import { evaluateQuery } from "@party-stack/ontology-storage";
+import { evaluateQuery, field as scanField, fieldExpression, inValues } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect, Schema } from "effect";
 import { describe, expect } from "vitest";
@@ -388,14 +388,21 @@ describe("finite hierarchical queries", () => {
         expect(calls).toHaveLength(1);
         expect(calls[0]?.query).toMatchObject({
             where: {
-                op: "and",
-                predicates: expect.arrayContaining([
-                    {
-                        op: "in",
-                        left: { _tag: "Field", path: ["projectId"] },
-                        values: expect.arrayContaining(parentRows.map((row) => row.id)),
-                    },
-                ]),
+                kind: "and",
+                value: {
+                    expressions: expect.arrayContaining([
+                        {
+                            kind: "in",
+                            value: {
+                                left: fieldExpression(scanField("projectId")),
+                                right: {
+                                    kind: "literal",
+                                    value: { value: expect.arrayContaining(parentRows.map((row) => row.id)) },
+                                },
+                            },
+                        },
+                    ]),
+                },
             },
         });
         expect(reference.calls.filter((call) => call.objectType === "Issue")).toHaveLength(12);
@@ -415,14 +422,14 @@ describe("finite hierarchical queries", () => {
         const children = calls.filter((call) => call.objectType === "Issue");
         expect(children).toHaveLength(3);
         expect(children.map((call) => call.query?.where)).toMatchObject([
-            { predicates: [{ values: expect.any(Array) }] },
-            { predicates: [{ values: expect.any(Array) }] },
-            { predicates: [{ values: expect.any(Array) }] },
+            { kind: "and", value: { expressions: [{ kind: "in" }] } },
+            { kind: "and", value: { expressions: [{ kind: "in" }] } },
+            { kind: "and", value: { expressions: [{ kind: "in" }] } },
         ]);
         expect(
             children.map((call) =>
-                call.query?.where?.op === "and" && call.query.where.predicates[0]?.op === "in"
-                    ? call.query.where.predicates[0].values.length
+                call.query?.where?.kind === "and" && call.query.where.value.expressions[0]?.kind === "in"
+                    ? inValues(call.query.where.value.expressions[0]).length
                     : -1
             )
         ).toEqual([256, 256, 88]);
