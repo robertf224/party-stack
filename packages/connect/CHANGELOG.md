@@ -1,5 +1,60 @@
 # @party-stack/connections
 
+## 0.3.0
+
+### Minor Changes
+
+- 40a3627: Connect renews rejected credentials for every connector. When a request fails as
+  `Unauthenticated`, Connect renews the OAuth token once (shared by concurrent
+  rejections), sends a request without a body again, and fails a request with a body as
+  retryable for its caller to retry. A credential that cannot be renewed moves the
+  connection to `needs-auth`. Access tokens are also renewed a minute before they
+  expire instead of five seconds.
+
+    Breaking: `ServiceConnector.acquire` no longer receives `refreshCredential`;
+    connectors report a rejection as `Unauthenticated` and Connect handles it.
+    Salesforce's connector no longer retries on its own.
+
+    `ConnectionAccess.authentication` is now a `ConnectionLifecycle`: the connection
+    monitor plus `credentialVersion` and `refresh(version)`. Pass it to the replica as
+    before. When a source rejects an open watch as `Unauthenticated`, the replica asks it
+    to renew the credential and reopens the watch once the renewed credential is active.
+
+### Patch Changes
+
+- 403708c: Fix native Expo sign-in, startup responsiveness and replica action helpers.
+
+    - Connect accepts a native app's custom-scheme OAuth redirect when it exactly
+      matches the trusted OAuth application registration. Provider endpoints keep
+      the HTTPS/localhost policy; unsafe schemes and unregistered redirects are
+      rejected. Callbacks now compare scheme, host and path explicitly, since
+      `URL.origin` is `"null"` for custom schemes.
+    - The Expo polyfill runs React Native immediates in short time slices. React
+      Native implements `setImmediate` with microtasks, so Effect fibers never
+      yielded to the event loop and long ontology work starved rendering and timers.
+    - The Expo polyfill adds `AbortSignal.prototype.throwIfAborted` and tags React
+      Native's global `Response` prototype, so Expo fetch responses interoperate with
+      OAuth token handling.
+    - `configureNativeSha256` lets platform runtimes provide SHA-256 for bounded
+      content digests; the Expo runtime uses Expo Crypto.
+    - Managed replica routes resolve action parameters with the replica when the
+      provider backend has no resolver, matching the advertised capability.
+
+- 40a3627: A sign-in popup the browser blocks now fails with `BrowserAuthenticationError` reason
+  `PopupBlocked`, and Connect keeps that error as the `cause` of the sign-in failure, so
+  an app can retry with `browserPresentation: "redirect"`. Issue tracker does this.
+- Updated dependencies [b9eb3bd]
+- Updated dependencies [403708c]
+- Updated dependencies [dfefbac]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+- Updated dependencies [cc43c56]
+- Updated dependencies [40a3627]
+    - @party-stack/ontology-spec@0.3.1
+    - @party-stack/ontology-storage@0.2.2
+    - @party-stack/ontology-backend@0.2.2
+    - @party-stack/runtime@0.6.0
+
 ## 0.2.1
 
 ### Patch Changes

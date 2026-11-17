@@ -1,5 +1,93 @@
 # @party-stack/ontology-replica
 
+## 0.2.3
+
+### Patch Changes
+
+- 40a3627: Connect renews rejected credentials for every connector. When a request fails as
+  `Unauthenticated`, Connect renews the OAuth token once (shared by concurrent
+  rejections), sends a request without a body again, and fails a request with a body as
+  retryable for its caller to retry. A credential that cannot be renewed moves the
+  connection to `needs-auth`. Access tokens are also renewed a minute before they
+  expire instead of five seconds.
+
+    Breaking: `ServiceConnector.acquire` no longer receives `refreshCredential`;
+    connectors report a rejection as `Unauthenticated` and Connect handles it.
+    Salesforce's connector no longer retries on its own.
+
+    `ConnectionAccess.authentication` is now a `ConnectionLifecycle`: the connection
+    monitor plus `credentialVersion` and `refresh(version)`. Pass it to the replica as
+    before. When a source rejects an open watch as `Unauthenticated`, the replica asks it
+    to renew the credential and reopens the watch once the renewed credential is active.
+
+- dfefbac: Speed up opening large definitions, especially on mobile JavaScript engines.
+
+    - Cache definition signatures, definition hashes and compiled Effect codecs per
+      definition object. Opening one route previously recomputed them for the server,
+      replica, policy and every view. Definitions must not be mutated after use.
+    - Decode persisted values with a single-pass validating decoder instead of a
+      recursive Schema union. The accepted version-2 format is unchanged.
+    - Same-runtime local clients share the server's validated description, and
+      serialized clients no longer re-encode and decode a Describe response that the
+      RPC client already decoded. Caller-retained descriptions are still copied.
+    - The replica partition catalog reuses decoded records and skips rewriting an
+      unchanged retained definition when a route reopens.
+
+    A local benchmark opening a 74-object-type, 189-action Foundry definition through
+    `localClient` dropped from about 420 ms to 230 ms for the first view, 437 ms to
+    190 ms after a restart, and 184 ms to 40 ms for an additional view.
+
+- 40a3627: Outbox entries report whether their prediction is reflected locally. `prediction` is
+  `"applied"`, `"dropped"` (the last replay failed; `predictionError` says why, and the
+  action is still pending and sent) or `"none"` (confirmed visibility, or predicted by a
+  parent). Servers project the prediction error like other action errors.
+- 40a3627: A pending action whose local prediction fails when the outbox rebases (for example, newer data changed what it reads) no longer blocks the outbox. Only its prediction is dropped: it stays pending, is still sent, and the source decides its outcome; later actions keep replaying. Failures reported by the source still pause the outbox as before.
+- 40a3627: `outbox.prediction: "source"` makes a child replica forward actions without resolving
+  or predicting them. Its parent resolves parameter defaults, predicts against its own
+  data and replicates the result back, honoring the requested visibility. Use it for an
+  embedded child, such as a form WebView, that holds only the rows it displays.
+- 2f8567b: `syncOnce` fails with a non-retryable `Unauthenticated` error while the replica's
+  connection needs to sign in again or is signed out. Background sync still waits
+  for authentication silently, but an explicit checkpoint (such as pull-to-refresh)
+  no longer reports success after skipping the backend.
+- d5ca58e: Watch supervision backs off with jitter up to five minutes, resets after an
+  acquisition stays open for a minute (not only after a delivered change), records
+  the failure kind and message on `Replica.watchAttempt`, and reports whether each
+  attempt opened and delivered changes.
+- 03f4516: A subset watch that fails before opening or before delivering any change no
+  longer invalidates its object type's coverage or forces a snapshot reload. The
+  demand is marked unmaintained and revalidates by coverage age; successful
+  re-acquisitions still repair the gap. Non-retryable watch failures fall back to
+  the route's configured poll interval, or to age-based revalidation, instead of
+  retrying.
+- 40a3627: `server.syncOnce(target, { revalidate: true })` (and `replica.revalidate`) reloads
+  every demanded subset, including subsets a healthy realtime watch reports as current.
+  Use it for a refresh the user asks for, such as pull to refresh. Rows stay visible
+  while they reload.
+- 40a3627: Watches can report row changes instead of only invalidating. An adapter's watch may
+  emit `{ changes }` with `put` (the complete row), `exit` (left the subset; the replica
+  reads it back by primary key to tell a change from a deletion) and `delete`. The
+  replica applies them without reloading the subset, but holds them while one of its own
+  actions is in flight or awaiting read-back, and reloads instead.
+
+    Foundry watches report object updates as puts (Foundry sends every property with a
+    value) and removals as exits. Reference updates and anything that cannot be decoded
+    remain invalidation hints.
+
+- Updated dependencies [40a3627]
+- Updated dependencies [b9eb3bd]
+- Updated dependencies [403708c]
+- Updated dependencies [dfefbac]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+- Updated dependencies [cc43c56]
+- Updated dependencies [40a3627]
+    - @party-stack/connect@0.3.0
+    - @party-stack/ontology-spec@0.3.1
+    - @party-stack/ontology-storage@0.2.2
+    - @party-stack/ontology-backend@0.2.2
+    - @party-stack/runtime@0.6.0
+
 ## 0.2.2
 
 ### Patch Changes

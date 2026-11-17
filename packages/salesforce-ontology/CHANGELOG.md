@@ -1,5 +1,40 @@
 # @party-stack/salesforce-ontology
 
+## 0.5.3
+
+### Patch Changes
+
+- 40a3627: Connect renews rejected credentials for every connector. When a request fails as
+  `Unauthenticated`, Connect renews the OAuth token once (shared by concurrent
+  rejections), sends a request without a body again, and fails a request with a body as
+  retryable for its caller to retry. A credential that cannot be renewed moves the
+  connection to `needs-auth`. Access tokens are also renewed a minute before they
+  expire instead of five seconds.
+
+    Breaking: `ServiceConnector.acquire` no longer receives `refreshCredential`;
+    connectors report a rejection as `Unauthenticated` and Connect handles it.
+    Salesforce's connector no longer retries on its own.
+
+    `ConnectionAccess.authentication` is now a `ConnectionLifecycle`: the connection
+    monitor plus `credentialVersion` and `refresh(version)`. Pass it to the replica as
+    before. When a source rejects an open watch as `Unauthenticated`, the replica asks it
+    to renew the credential and reopens the watch once the renewed credential is active.
+
+- Updated dependencies [40a3627]
+- Updated dependencies [b9eb3bd]
+- Updated dependencies [403708c]
+- Updated dependencies [dfefbac]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+- Updated dependencies [cc43c56]
+- Updated dependencies [40a3627]
+    - @party-stack/connect@0.3.0
+    - @party-stack/ontology-spec@0.3.1
+    - @party-stack/ontology-storage@0.2.2
+    - @party-stack/ontology@0.22.2
+    - @party-stack/ontology-backend@0.2.2
+    - @party-stack/runtime@0.6.0
+
 ## 0.5.2
 
 ### Patch Changes

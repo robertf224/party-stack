@@ -1,5 +1,31 @@
 # @party-stack/runtime
 
+## 0.6.0
+
+### Minor Changes
+
+- cc43c56: Runtimes can provide device location. `Runtime.geolocation` (and `Runtimes.geolocation`)
+  reads positions with the web API's options and fails with a `GeolocationError` whose
+  `reason` is `PermissionDenied`, `PositionUnavailable` or `Timeout`
+  (`geolocationErrorCode` maps a reason to the web API's numeric code).
+
+    - **web-runtime** provides it over `navigator.geolocation` where available. Unknown
+      error codes fail as `PositionUnavailable` rather than leaving a read pending.
+    - **expo-runtime** provides it through expo-location, now a dependency: permission is
+      requested on first use, and a recent last-known fix is used when no fresh one is
+      available. Pass `geolocation: false` to leave it out. The config plugin adds only the
+      foreground "when in use" purpose string; `locationPermission` replaces or omits it.
+
+### Patch Changes
+
+- 40a3627: A sign-in popup the browser blocks now fails with `BrowserAuthenticationError` reason
+  `PopupBlocked`, and Connect keeps that error as the `cause` of the sign-in failure, so
+  an app can retry with `browserPresentation: "redirect"`. Issue tracker does this.
+- Updated dependencies [b9eb3bd]
+- Updated dependencies [403708c]
+- Updated dependencies [dfefbac]
+    - @party-stack/ontology-storage@0.2.2
+
 ## 0.5.1
 
 ### Patch Changes

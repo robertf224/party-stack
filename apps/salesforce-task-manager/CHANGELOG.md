@@ -1,5 +1,35 @@
 # @party-stack/salesforce-task-manager
 
+## 0.1.22
+
+### Patch Changes
+
+- Updated dependencies [40a3627]
+- Updated dependencies [b9eb3bd]
+- Updated dependencies [403708c]
+- Updated dependencies [dfefbac]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+- Updated dependencies [2f8567b]
+- Updated dependencies [d5ca58e]
+- Updated dependencies [03f4516]
+- Updated dependencies [cc43c56]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+    - @party-stack/connect@0.3.0
+    - @party-stack/salesforce-ontology@0.5.3
+    - @party-stack/ontology-replica@0.2.3
+    - @party-stack/ontology-spec@0.3.1
+    - @party-stack/ontology-server@0.11.3
+    - @party-stack/ontology@0.22.2
+    - @party-stack/ontology-backend@0.2.2
+    - @party-stack/ontology-devtools@0.7.3
+    - @party-stack/runtime@0.6.0
+    - @party-stack/web-runtime@0.5.2
+    - @party-stack/node-runtime@0.4.2
+
 ## 0.1.21
 
 ### Patch Changes

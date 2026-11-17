@@ -1,5 +1,49 @@
 # @party-stack/foundry-ontology
 
+## 0.20.3
+
+### Patch Changes
+
+- 1ba3472: Watch failures now keep Foundry's reported reason in the error message and cause.
+  A rejected object-set subscription fails with a non-retryable `InvalidRequest`,
+  and QoS fails as retryable `RateLimited` with a two-minute `retryAfterMs`, so
+  replicas stop reconnecting to watches that cannot succeed.
+- f875075: Rejected object-set subscriptions are classified by Foundry's error code:
+  `PERMISSION_DENIED` (for example `ApiUsageDenied`) fails as `Forbidden` and
+  `NOT_FOUND` as `NotFound`, both still non-retryable. The error message includes
+  the code, so apps can tell a permission problem apart from an unsupported object set.
+- 40a3627: A subscription Foundry rejects as `UNAUTHORIZED` (an expired access token) fails as `Unauthenticated` instead of a terminal `InvalidRequest`, so replicas renew the credential through the connection and reopen the watch rather than falling back to polling for the rest of the session.
+- b9eb3bd: Missing-value and empty-list checks push down exactly instead of forcing query-result demand. `isUndefined`/`isNull` work on every field type, including lists and structs. The query language gains a `length` expression (lists and strings; a missing value has length 0, as in TanStack DB), and TanStack's `length(list)` passes through to it. Storage accepts `length` only as an emptiness test (`length(list)` compared with 0 or 1), which it lowers to "missing or empty" with a new `isEmpty` predicate; other uses still need query-result demand.
+
+    Foundry filters were checked against the search API and corrected: `like`/`ilike` no longer sends term searches that dropped rows for substrings inside words, or leading wildcards that failed with a server error; a pattern that starts with a word is sent as a token-prefix wildcard. Ranges, `ne` and negations of exact filters are now sent exactly, and on arrays `isNull` answers "missing or empty".
+
+- 40a3627: Watches can report row changes instead of only invalidating. An adapter's watch may
+  emit `{ changes }` with `put` (the complete row), `exit` (left the subset; the replica
+  reads it back by primary key to tell a change from a deletion) and `delete`. The
+  replica applies them without reloading the subset, but holds them while one of its own
+  actions is in flight or awaiting read-back, and reloads instead.
+
+    Foundry watches report object updates as puts (Foundry sends every property with a
+    value) and removals as exits. Reference updates and anything that cannot be decoded
+    remain invalidation hints.
+
+- Updated dependencies [40a3627]
+- Updated dependencies [b9eb3bd]
+- Updated dependencies [403708c]
+- Updated dependencies [dfefbac]
+- Updated dependencies [40a3627]
+- Updated dependencies [40a3627]
+- Updated dependencies [cc43c56]
+- Updated dependencies [40a3627]
+- Updated dependencies [a0edd43]
+    - @party-stack/connect@0.3.0
+    - @party-stack/ontology-spec@0.3.1
+    - @party-stack/ontology-storage@0.2.2
+    - @party-stack/ontology@0.22.2
+    - @party-stack/ontology-backend@0.2.2
+    - @party-stack/runtime@0.6.0
+    - @party-stack/foundry-object-set-watcher@0.6.1
+
 ## 0.20.2
 
 ### Patch Changes
