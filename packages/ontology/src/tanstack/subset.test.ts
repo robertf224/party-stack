@@ -1,6 +1,6 @@
-import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
+import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import * as oq from "@party-stack/ontology-spec/query";
-import { evaluateQuery, eq as storageEq, field } from "@party-stack/ontology-storage";
+import { evaluateQuery, eq as storageEq, field, isEmpty, or } from "@party-stack/ontology-storage";
 import { IR, compileSingleRowExpression, createLiveQueryCollection, queryOnce, eq, gte } from "@tanstack/db";
 import { Deferred, Effect, PubSub, Stream, Fiber } from "effect";
 import { Temporal } from "temporal-polyfill";
@@ -804,4 +804,43 @@ test("empty-list checks through length push down exactly, counting a missing lis
         }
     // Other lengths have no exact object predicate.
     expect(analyzeOntologySubset({ where: fn("eq", length, new IR.Value(2)) }, ir, "Note").exact).toBe(false);
+});
+
+test("spec length lowers to storage only as an emptiness check, and isEmpty round-trips", async () => {
+    const tags = oq.field("row", "tags");
+    const subset = (where: Parameters<typeof oq.not>[0]): ObjectSubset => ({
+        from: { source: { objectType: "Note" }, binding: "row" },
+        where,
+    });
+    const compile = (where: Parameters<typeof oq.not>[0]) =>
+        Effect.runPromise(Effect.result(compileObjectSubset(ir, subset(where))));
+    const tagged = await compile(oq.eq(oq.length(tags), oq.literal(0)));
+    expect(tagged._tag === "Success" && tagged.success.query?.where).toEqual(
+        or(storageEq(field("tags"), undefined), isEmpty(field("tags")))
+    );
+    for (const where of [
+        oq.gt(oq.length(tags), oq.literal(0)),
+        oq.gte(oq.length(tags), oq.literal(1)),
+        oq.ne(oq.length(tags), oq.literal(0)),
+        oq.lt(oq.literal(0), oq.length(tags)),
+    ])
+        expect((await compile(where))._tag).toBe("Success");
+    // Spec list equality and other lengths need query-result demand.
+    for (const where of [
+        oq.eq(tags, oq.literal([])),
+        oq.eq(oq.length(tags), oq.literal(2)),
+        oq.gt(oq.length(tags), oq.literal(1)),
+        oq.eq(oq.length(oq.field("row", "title")), oq.literal(0)),
+    ])
+        expect((await compile(where))._tag).toBe("Failure");
+    // Storage's isEmpty converts back to spec as a present list of length 0.
+    const rows: { key: string; value: Record<string, unknown> }[] = [
+        { key: "missing", value: { id: "missing" } },
+        { key: "empty", value: { id: "empty", tags: [] } },
+        { key: "tagged", value: { id: "tagged", tags: ["a"] } },
+    ];
+    const roundTrip = await Effect.runPromise(
+        compileObjectSubset(ir, objectSubset("Note", { where: isEmpty(field("tags")) }))
+    );
+    expect(evaluateQuery(rows, roundTrip.query).map((row) => String(row.key))).toEqual(["empty"]);
 });

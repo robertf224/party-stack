@@ -233,6 +233,10 @@ export const Expression = {
         kind: "not" as const,
         value,
     }),
+    length: <const Value extends Extract<t.Expression, { kind: "length" }>["value"]>(value: Value) => ({
+        kind: "length" as const,
+        value,
+    }),
     case: <const Value extends Extract<t.Expression, { kind: "case" }>["value"]>(value: Value) => ({
         kind: "case" as const,
         value,

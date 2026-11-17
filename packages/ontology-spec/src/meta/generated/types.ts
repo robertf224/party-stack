@@ -18,6 +18,11 @@ export type NotExpression = {
     expression: Expression;
 };
 
+/** The number of elements in a list or UTF-16 code units in a string; a missing value has length 0. */
+export type LengthExpression = {
+    expression: Expression;
+};
+
 /** A condition and its scalar result; branches are tested in order. */
 export type CaseBranch = {
     condition: Expression;
@@ -619,6 +624,7 @@ export type Expression = v.Union<{
     concat: VariadicExpression;
     coalesce: VariadicExpression;
     not: NotExpression;
+    length: LengthExpression;
     case: CaseExpression;
     exists: ExistsExpression;
 }>;

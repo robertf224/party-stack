@@ -82,7 +82,8 @@ function UnlabeledIssues() {
 Missing-value checks work on any property, including lists and structs, and
 narrow what is fetched. An empty list is a value, not a missing one: to find lists
 with no elements, missing or empty, compare `length(issue.issueLabels)` with 0.
-Sources such as Foundry answer that exactly.
+Sources such as Foundry answer that exactly. Other length comparisons are evaluated
+locally after the rest of the filter is fetched.
 
 ## Join local collections
 

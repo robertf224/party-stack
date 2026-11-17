@@ -89,6 +89,8 @@ export const or = (...expressions: Expression[]): Expression => o.Expression.or(
 export const concat = (...expressions: Expression[]): Expression => o.Expression.concat({ expressions });
 export const coalesce = (...expressions: Expression[]): Expression => o.Expression.coalesce({ expressions });
 export const not = (expression: Expression): Expression => o.Expression.not({ expression });
+/** Elements in a list, or UTF-16 code units in a string; a missing value has length 0. */
+export const length = (expression: Expression): Expression => o.Expression.length({ expression });
 export const caseExpression = (options: CaseExpression): Expression => o.Expression.case(options);
 export const lookup = (reference: Expression): Expression => o.Expression.lookup({ reference });
 /** Existence needs a source and predicate, without a result projection. */

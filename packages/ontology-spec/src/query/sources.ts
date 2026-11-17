@@ -94,6 +94,7 @@ export function resolveQuerySources(
             case "exists":
                 return { ...e, value: { query: query(e.value.query, scope) } };
             case "not":
+            case "length":
                 return { ...e, value: { expression: visit(e.value.expression) } };
             case "case":
                 return {

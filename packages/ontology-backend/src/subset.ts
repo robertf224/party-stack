@@ -24,7 +24,12 @@ export const objectSubset = (objectType: string, scan: Query = {}, binding = "ro
         if (p.op === "and" || p.op === "or") return q[p.op](...p.predicates.map(predicate));
         if (p.op === "not") return q.not(predicate(p.predicate));
         if (p.op === "in") return q.inArray(operand(p.left), q.literal([...p.values]));
-        if (p.op === "empty") return q.eq(operand(p.left), q.literal([]));
+        // A present list with no elements.
+        if (p.op === "empty")
+            return q.and(
+                q.ne(operand(p.left), q.literal(undefined)),
+                q.eq(q.length(operand(p.left)), q.literal(0))
+            );
         return q[p.op](operand(p.left), operand(p.right));
     };
     return {

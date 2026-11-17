@@ -296,9 +296,10 @@ function projectExpression(opts: {
                   }
                 : undefined;
         }
-        case "not": {
+        case "not":
+        case "length": {
             const expression = projectExpression({ ...opts, expression: opts.expression.value.expression });
-            return expression ? { kind: "not", value: { expression } } : undefined;
+            return expression ? { kind: opts.expression.kind, value: { expression } } : undefined;
         }
         case "and":
         case "or":

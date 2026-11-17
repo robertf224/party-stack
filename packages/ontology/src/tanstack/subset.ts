@@ -154,8 +154,8 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
               ? // Ontology object decoding normalizes optional nulls to undefined.
                 q.ne(v.operand, q.literal(undefined))
               : false;
-    /** `length(list)` compared with 0 or 1. TanStack gives a missing list length 0, so
-     * "no elements" means missing or empty, which sources such as Foundry answer exactly. */
+    /** `length(list)` compared with 0 or 1, the comparisons sources can answer. TanStack gives
+     * a missing list length 0, as the ontology expression language does. */
     const listEmptiness = (name: string, args: readonly IR.BasicExpression[]): Truth | undefined => {
         if (args.length !== 2) return undefined;
         const flipped = { lt: "gt", lte: "gte", gt: "lt", gte: "lte", eq: "eq" } as const;
@@ -176,11 +176,10 @@ export function analyzeOntologySubset(subset: LoadSubsetOptions, ir?: OntologyIR
                   ? false
                   : undefined;
         if (empty === undefined) return undefined;
-        const yes = combine("or", [
-            ...(list.optional ? [q.eq(list.operand, q.literal(undefined))] : []),
-            q.eq(list.operand, q.literal([])),
-        ]);
-        return empty ? { yes, no: negate(yes), exact: true } : { yes: negate(yes), no: yes, exact: true };
+        const size = q.length(list.operand);
+        const none = q.eq(size, q.literal(0));
+        const some = q.gt(size, q.literal(0));
+        return empty ? { yes: none, no: some, exact: true } : { yes: some, no: none, exact: true };
     };
     const truth = (expression: IR.BasicExpression): Truth => {
         if (expression.type === "val" && (typeof expression.value === "boolean" || expression.value == null))

@@ -99,6 +99,12 @@ export function evaluateOperator(kind: string, args: readonly Uncertain<unknown>
         a = values[0],
         b = values[1];
     if (kind === "not") return certain(!booleanValue(a));
+    // A missing list or string has no elements, as in TanStack DB.
+    if (kind === "length") {
+        if (a == null) return certain(0);
+        if (Array.isArray(a) || typeof a === "string") return certain(a.length);
+        throw new TypeError("LENGTH requires a list or string.");
+    }
     if (kind === "eq" || kind === "ne") return certain(equalValues(a, b) === (kind === "eq"));
     if (["lt", "lte", "gt", "gte"].includes(kind)) {
         const c = compareValues(a, b);

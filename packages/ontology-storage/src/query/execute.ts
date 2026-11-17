@@ -287,7 +287,7 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
                 return yield* fail("Non-deterministic expressions require an action execution context.");
             default: {
                 const nodes =
-                    e.kind === "not"
+                    e.kind === "not" || e.kind === "length"
                         ? [e.value.expression]
                         : "expressions" in e.value
                           ? e.value.expressions
@@ -373,15 +373,30 @@ export function queryExecutor<E>(options: QueryExecutionOptions<E>) {
             node.kind === "literal" && (node.value as { readonly value?: unknown }).value == null;
         const presence = (other: Expression) =>
             (e.kind === "eq" || e.kind === "ne") && missing(other) ? ("presence" as const) : false;
-        // Equality with an empty list literal tests a list field for no elements.
-        const emptyList = (node: Expression) => {
-            const value = node.kind === "literal" && (node.value as { readonly value?: unknown }).value;
-            return Array.isArray(value) && value.length === 0;
-        };
-        if ((e.kind === "eq" || e.kind === "ne") && (emptyList(e.value.left) || emptyList(e.value.right))) {
-            const list = yield* operand(emptyList(e.value.right) ? e.value.left : e.value.right, "list");
+        // `length(list)` compared with 0 or 1 tests for no elements, counting a missing list
+        // as empty. Other uses of `length` have no exact object predicate.
+        if (e.value.left.kind === "length" || ("right" in e.value && e.value.right.kind === "length")) {
+            const flipped = { eq: "eq", ne: "ne", lt: "gt", lte: "gte", gt: "lt", gte: "lte" } as const;
+            if (!(e.kind in flipped)) return { exact: false };
+            const kind = e.kind as keyof typeof flipped;
+            const [size, bound, op] =
+                e.value.left.kind === "length"
+                    ? [e.value.left, e.value.right, kind]
+                    : [e.value.right, e.value.left, flipped[kind]];
+            const n =
+                bound.kind === "literal" ? (bound.value as { readonly value?: unknown }).value : undefined;
+            if (size.kind !== "length" || typeof n !== "number") return { exact: false };
+            const empty =
+                (op === "eq" && n === 0) || (op === "lt" && n === 1) || (op === "lte" && n === 0)
+                    ? true
+                    : (op === "gt" && n === 0) || (op === "gte" && n === 1) || (op === "ne" && n === 0)
+                      ? false
+                      : undefined;
+            if (empty === undefined) return { exact: false };
+            const list = yield* operand(size.value.expression, "list");
             if (!list || typeof list !== "object" || !("_tag" in list)) return { exact: false };
-            return { where: e.kind === "eq" ? isEmpty(list) : not(isEmpty(list)), exact: true };
+            const none = or(eq(list, undefined), isEmpty(list));
+            return { where: empty ? none : not(none), exact: true };
         }
         const a = yield* operand(e.value.left, e.kind === "contains" || presence(e.value.right));
         if (a && typeof a === "object" && "unknown" in a) return { exact: false };
