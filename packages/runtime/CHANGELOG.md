@@ -1,5 +1,13 @@
 # @party-stack/runtime
 
+## 0.6.1
+
+### Patch Changes
+
+- Updated dependencies [bba940a]
+- Updated dependencies [400f04c]
+    - @party-stack/ontology-storage@0.3.0
+
 ## 0.6.0
 
 ### Minor Changes

@@ -1,5 +1,28 @@
 # @party-stack/ontology-replica
 
+## 0.3.0
+
+### Minor Changes
+
+- 400f04c: **Breaking:** storage filters are now ontology-spec expressions. `Query.where` is a spec `Expression` from a validated subset over the `row` binding (`rowBinding`): row fields (`getAt` paths), literals, `length` of a field, eq/ne/lt/lte/gt/gte, `in` with a literal list, `contains`, `like`/`ilike`, and/or/not. The separate `Predicate` AST (`{ op, left, right }`) and its `Operand` type are removed; use the `Filter` type. The `eq`, `inArray`, `and`, … helpers keep their signatures and now build spec expressions, and `filterOperand`, `filterField`, `inValues`, `rebindFilter` and `mapFilterFields` read or rewrite them. `isEmpty` is removed: use `eq(length(field("tags")), 0)`, which also matches a missing list.
+
+    Spec `length` now lowers to storage `length` for any comparison and bound, on list and string fields, instead of only as an emptiness test rewritten to `isEmpty`. A list with a size index answers every `length` comparison from that index in memory, IndexedDB and SQL storage. Without one, SQL storage compiles an emptiness test (`= 0`, `> 0`, …) from the list's multi-entry projection with `json_array_length`, and memory and IndexedDB storage evaluate `length` on rows; string lengths are always evaluated on rows. Foundry sends `length(array) == 0` (and `< 1`, `<= 0`) as `isNull`, and `> 0` (`>= 1`) as its negation, both exact.
+
+    `compileObjectSubset` now validates and normalizes a subset's filter into the storage subset instead of translating it, and `objectSubset` and policy planning embed storage filters back into spec subsets by renaming the binding. Replicas drop persisted coverage and action-retention records whose filters predate this format when they open.
+
+### Patch Changes
+
+- bba940a: Fix demand failing with "Index values must be queryable scalars" when a filter checks a list property for a missing value (for example `isUndefined(token.allowedFormIds)`). Since 0.2.2, such checks pushed down exactly, and lazy query indexes then requested a scalar index on the list. `indexesForQuery(query, ir, objectType)` now takes the object type and fits each index to the property: a scalar index for a scalar (missing-value checks included), an element index for `contains`, and a size index for a list. It never requests a scalar index for a list or struct.
+
+    New list size indexes (`{ name, field, size: true }`) key each row once by its list's element count, and a missing list by the missing value. One index answers a list's `isUndefined`, `ne(list, undefined)` and every `length` comparison, in memory, IndexedDB and SQL storage, instead of scanning rows. The planner also negates comparisons under `not`, so `not(isUndefined(list))` uses the same index.
+
+- Updated dependencies [bba940a]
+- Updated dependencies [400f04c]
+    - @party-stack/ontology-storage@0.3.0
+    - @party-stack/ontology-backend@0.3.0
+    - @party-stack/connect@0.3.1
+    - @party-stack/runtime@0.6.1
+
 ## 0.2.3
 
 ### Patch Changes

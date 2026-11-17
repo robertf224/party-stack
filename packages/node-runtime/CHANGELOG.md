@@ -1,5 +1,15 @@
 # @party-stack/node-runtime
 
+## 0.4.3
+
+### Patch Changes
+
+- Updated dependencies [bba940a]
+- Updated dependencies [400f04c]
+    - @party-stack/ontology-storage@0.3.0
+    - @party-stack/sql-ontology-storage@0.3.0
+    - @party-stack/runtime@0.6.1
+
 ## 0.4.2
 
 ### Patch Changes
