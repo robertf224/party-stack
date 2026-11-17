@@ -64,8 +64,9 @@ and one coalescing dirty notification, rather than an unbounded update queue.
 Defaults per server namespace are 32 subscriptions, 10,000 selected records,
 16 MiB selected values, 256 KiB frames, 128 records/frame, a 30-second acknowledgment
 wait and a 15-second idle heartbeat. RPC server options expose a `delivery` policy.
-Single records and metadata must fit the frame budget; exceeding capacity fails
-explicitly. Scope cleanup releases records, patches and session metadata.
+Frames batch records up to the frame budget; a single record larger than that is
+sent alone in its own frame, bounded only by the selected-value budget. Metadata
+must fit the frame budget; exceeding capacity fails explicitly. Scope cleanup releases records, patches and session metadata.
 Indexed expiry cleanup on acquisition removes crashed/expired subscriptions.
 
 Acknowledgments are stored in the same namespace, so request-scoped HTTP

@@ -698,12 +698,9 @@ export const makeDeliveryManager = Effect.fnUntraced(function* (options: {
                                                         "InvalidResponse"
                                                     ),
                                             });
+                                            // A record larger than the frame budget is sent alone in
+                                            // its own frame; only the whole delivery budget bounds it.
                                             const encodedBytes = new TextEncoder().encode(encoded);
-                                            if (encodedBytes.length > limits.frameBytes / 2)
-                                                return yield* failure(
-                                                    "A delivery record exceeds the configured frame budget.",
-                                                    "RateLimited"
-                                                );
                                             const previousSize = seen.get(ref);
                                             if (previousSize === undefined) count++;
                                             bytes += encodedBytes.length - (previousSize ?? 0);
