@@ -5,6 +5,7 @@
 "@party-stack/foundry-ontology": patch
 "@party-stack/sql-ontology-storage": patch
 "@party-stack/better-auth": patch
+"@party-stack/ontology-devtools": patch
 ---
 
 Missing-value and empty-list checks push down exactly instead of forcing query-result demand. `isUndefined`/`isNull` work on every field type, including lists and structs, and TanStack's `length(list)` compared with 0 lowers to "missing or `[]`" (storage's new `isEmpty` predicate, the lowering of the spec's `eq(list, [])`).
