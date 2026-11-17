@@ -371,8 +371,12 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
                         else if (!targets.has(objectType) || targets.get(objectType))
                             targets.set(objectType, new Set([...(targets.get(objectType) ?? []), key]));
                     };
-                    if (!result.edits) for (const type of options.ir.objectTypes) add(type.name);
-                    else if (result.edits.type === "largeScaleEdits")
+                    // Edits are always requested, so a response without them made none (an
+                    // action with no logic): nothing to read back. Unrelated changes still reach
+                    // readers through their watches and refreshes.
+                    if (!result.edits) {
+                        /* nothing changed */
+                    } else if (result.edits.type === "largeScaleEdits")
                         for (const type of result.edits.editedObjectTypes) add(type);
                     else
                         for (const edit of result.edits.edits) {

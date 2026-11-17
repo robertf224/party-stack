@@ -224,6 +224,30 @@ test("identity subsets use the shared search path with an IN predicate and propa
     );
 });
 
+test("an action that returns no edits affects nothing, so nothing is read back", async () => {
+    const submitAction = vi.fn<Parameters<typeof makeFoundryBackend>[0]["submitAction"]>().mockResolvedValue({
+        result: { operationId: "op" },
+        attachmentIdMappings: [],
+    });
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* makeFoundryBackend({
+                    client: {} as OntologyClient,
+                    ir,
+                    context: {},
+                    watch: false,
+                    submitAction,
+                    decodeObject: (_type, value) => value,
+                });
+                const receipt = yield* backend.applyAction({ id: "noop", name: "edit", parameters: {} });
+                expect(receipt.affected).toEqual([]);
+                expect(receipt.affectedComplete).toBeUndefined();
+            })
+        )
+    );
+});
+
 test("large-scale action receipts identify a type without pretending to enumerate its rows", async () => {
     const submitAction = vi.fn<Parameters<typeof makeFoundryBackend>[0]["submitAction"]>().mockResolvedValue({
         result: { edits: { type: "largeScaleEdits", editedObjectTypes: ["Issue"] } },
