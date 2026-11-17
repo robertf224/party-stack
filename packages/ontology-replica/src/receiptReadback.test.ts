@@ -30,7 +30,7 @@ const ir: OntologyIR = {
     actionTypes: [{ name: "increment", displayName: "Increment", parameters: [], logic: [] }],
 };
 
-test("partial synthetic receipt identities survive restart and do not hide automation effects", async () => {
+test("partial synthetic receipt identities survive restart and do not hide automation effects from readers", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -96,6 +96,7 @@ test("partial synthetic receipt identities survive restart and do not hide autom
                 };
                 const scope = yield* Scope.make();
                 const first = yield* Scope.provide(makeReplica(options), scope);
+                yield* Scope.provide(first.demand({ objectType: "Counter" }), scope);
                 yield* first.enqueue({ id: "once", name: "increment", parameters: {} });
                 expect((yield* Effect.result(first.syncOnce))._tag).toBe("Failure");
                 expect((yield* first.pending)[0]?.receipt).toEqual(receipt);
@@ -103,10 +104,13 @@ test("partial synthetic receipt identities survive restart and do not hide autom
                 requests.length = 0;
                 available = true;
                 const reopened = yield* makeReplica(options);
+                // A reader of Counters sees the action's unlisted effects; nothing reads Mirrors.
+                yield* reopened.demand({ objectType: "Counter" });
                 yield* reopened.syncOnce;
-                expect(requests).toEqual([{ objectType: "Counter" }, { objectType: "Mirror" }]);
+                expect(requests.length).toBeGreaterThan(0);
+                expect(requests.every((subset) => subset.objectType === "Counter")).toBe(true);
                 expect((yield* reopened.get("Counter", "trigger"))?.count).toBe(7);
-                expect((yield* reopened.get("Mirror", "mirror"))?.count).toBe(99);
+                expect(yield* reopened.get("Mirror", "mirror")).toBeUndefined();
                 expect(yield* reopened.pending).toEqual([]);
                 expect(invocations).toBe(1);
             })
@@ -524,6 +528,68 @@ test("retry attempts advance once per submission, and acceptance never resets or
                 expect(calls).toBe(2);
                 expect((yield* replica.snapshotState).completed[0]?.attempts).toBe(2);
                 expect((yield* replica.snapshotState).completed[0]?.failure).toBeUndefined();
+            })
+        )
+    );
+});
+
+test("an unkeyed receipt reads back only what the replica holds, never whole unread types", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const definition: OntologyIR = {
+                    ...ir,
+                    objectTypes: [ir.objectTypes[0]!, { ...ir.objectTypes[0]!, name: "Huge" }],
+                };
+                const requests: CompiledSubset[] = [];
+                let count = 1;
+                const backend: OntologyBackendService = makeOntologyBackend({
+                    ir: definition,
+                    name: "test",
+                    sourceId: "unkeyed-receipt",
+                    supportsIdempotency: false,
+                    // A provider that returns no edits names every type without keys.
+                    applyAction: (invocation) =>
+                        Effect.sync(() => {
+                            count++;
+                            return {
+                                operationId: invocation.id,
+                                outcome: "committed",
+                                affected: definition.objectTypes.map(({ name }) => ({ objectType: name })),
+                            } satisfies ActionReceipt;
+                        }),
+                    loadSubset: (request) =>
+                        Effect.flatMap(compileObjectSubset(definition, request), (subset) =>
+                            Effect.sync(() => {
+                                requests.push(subset);
+                                const rows =
+                                    subset.objectType === "Counter"
+                                        ? [{ key: "one", value: { id: "one", count } }]
+                                        : [{ key: "big", value: { id: "big", count: 0 } }];
+                                return { rows: evaluateQuery(rows, subset.query), complete: true };
+                            })
+                        ),
+                    queryFunction: () => Effect.void,
+                });
+                const replica = yield* makeReplica({
+                    namespace: "unkeyed-receipt",
+                    ir: definition,
+                    tables,
+                    backend,
+                    startSync: false,
+                    outbox: { retryDelayMs: 0 },
+                    execute: () => Effect.void,
+                });
+                yield* replica.demand({ objectType: "Counter" });
+                yield* replica.syncOnce;
+                requests.length = 0;
+                yield* replica.enqueue({ id: "act", name: "increment", parameters: {} });
+                yield* replica.syncOnce;
+                expect(requests.some((subset) => subset.objectType === "Huge")).toBe(false);
+                expect(requests.some((subset) => subset.objectType === "Counter")).toBe(true);
+                expect((yield* replica.get("Counter", "one"))?.count).toBe(2);
+                expect(yield* replica.pending).toEqual([]);
             })
         )
     );

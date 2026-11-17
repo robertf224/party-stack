@@ -1742,6 +1742,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 return yield* fault("InvalidResponse", "Backend returned a non-advancing change page.");
         }
     });
+    /** The subsets readers currently demand of an object type. */
+    const demandedSubsets = (objectType: string) =>
+        [...demands.values()]
+            .filter((demand) => demand.subset.objectType === objectType)
+            .map((demand) => demand.subset);
     const recoverHistory = Effect.fn("Replica.recoverHistory")(function* () {
         const backend = yield* backendEffect;
         const first = options.ir.objectTypes[0];
@@ -1771,10 +1776,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         const entries = yield* boundary(tables.read(pendingIn));
         for (const entry of entries)
             if (entry.receipt?.outcome === "committed")
-                for (const type of entry.touchedTypes) {
-                    const subset = { objectType: type };
-                    requests.set(subsetKey(subset), subset);
-                }
+                // Demands and resident rows are already requested above; whole types are not.
+                for (const type of entry.touchedTypes)
+                    for (const subset of demandedSubsets(type)) requests.set(subsetKey(subset), subset);
         const writes: Array<Effect.Success<ReturnType<typeof prepareSnapshot>>> = [];
         for (const subset of requests.values())
             writes.push(yield* prepareSnapshot(subset, undefined, true, "refresh"));
@@ -1849,9 +1853,17 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 );
         }
         const writes: Array<Effect.Success<ReturnType<typeof prepareSnapshot>>> = [];
+        // Types the receipt names without keys. A receipt never loads data no reader asked for
+        // (a broad ontology can hold types of hundreds of thousands of objects): these types'
+        // stored coverage is marked stale, so a later demand reloads it, and only the subsets
+        // readers demand right now are read back, so the action's effects show without a gap.
+        const unkeyed: string[] = [];
         for (const [objectType, keys] of targets) {
-            if (!keys) writes.push(yield* prepareSnapshot({ objectType }, undefined, true, "receipt"));
-            else {
+            if (!keys) {
+                unkeyed.push(objectType);
+                for (const subset of demandedSubsets(objectType))
+                    writes.push(yield* prepareSnapshot(subset, undefined, true, "receipt"));
+            } else {
                 const primaryKey = definitions.get(objectType)?.primaryKey;
                 if (!primaryKey)
                     return yield* fault("InvalidResponse", "Receipt named an unknown object type.");
@@ -1869,9 +1881,16 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 }
             }
         }
+        for (const objectType of unkeyed) coverageGenerations.set(objectType, Symbol());
         yield* boundary(
             tables.transaction((tx) =>
                 Effect.gen(function* () {
+                    for (const objectType of unkeyed)
+                        for (const cached of yield* tx.query(coverage, {
+                            where: eq(field("subset", "objectType"), objectType),
+                        }))
+                            if (!cached.value.invalidated)
+                                yield* tx.put(coverage, cached.key, { ...cached.value, invalidated: true });
                     for (const write of writes) yield* write(tx);
                     yield* deletePending(tx, head.invocation.id);
                     yield* tx.put(completed, head.invocation.id, {
