@@ -1,5 +1,11 @@
 # @party-stack/ontology-backend
 
+## 0.3.1
+
+### Patch Changes
+
+- 7f13a4d: Deliver a record larger than the frame budget alone in its own frame instead of failing the whole delivery. A large row, such as action type metadata with many parameters, previously broke delivery for its route and left readers reloading forever.
+
 ## 0.3.0
 
 ### Minor Changes

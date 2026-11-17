@@ -1,5 +1,13 @@
 # @party-stack/better-auth
 
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies [7f13a4d]
+    - @party-stack/ontology-backend@0.3.1
+    - @party-stack/connect@0.3.2
+
 ## 0.5.0
 
 ### Minor Changes

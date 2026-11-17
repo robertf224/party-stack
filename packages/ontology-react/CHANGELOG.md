@@ -1,5 +1,13 @@
 # @party-stack/ontology-react
 
+## 0.2.6
+
+### Patch Changes
+
+- Updated dependencies [7f13a4d]
+    - @party-stack/ontology-backend@0.3.1
+    - @party-stack/ontology@0.23.2
+
 ## 0.2.5
 
 ### Patch Changes
