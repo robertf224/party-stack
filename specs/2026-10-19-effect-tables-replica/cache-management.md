@@ -11,21 +11,17 @@ the same Effect RcMap lease owner: UI queries, protocol children and cached-prox
 requests. There is no second cached-proxy timeout.
 
 ```ts
-const cache =
-    yield *
-    makeReplica({
-        ...replicaOptions,
-        demand: { idleRetentionMs: 60_000, maxSubsets: 128 },
-        objectCacheGc: { minUnusedAgeMs: 10 * 60_000, sweepIntervalMs: 60_000, maxCandidates: 100 },
-    });
-const server =
-    yield *
-    makeOntologyServer({
-        ...serverOptions,
-        kind: "cached-proxy",
-        backend: upstream,
-        cache,
-    });
+const cache = yield* makeReplica({
+    ...replicaOptions,
+    demand: { idleRetentionMs: 60_000, maxSubsets: 128 },
+    objectCacheGc: { minUnusedAgeMs: 10 * 60_000, sweepIntervalMs: 60_000, maxCandidates: 100 },
+});
+const server = yield* makeOntologyServer({
+    ...serverOptions,
+    kind: "cached-proxy",
+    backend: upstream,
+    cache,
+});
 ```
 
 `idleRetentionMs` defaults to zero (immediate release) and `maxSubsets` to 1,024. The cap

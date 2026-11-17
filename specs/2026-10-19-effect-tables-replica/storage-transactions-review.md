@@ -135,13 +135,12 @@ Reproduction:
 
 ```ts
 // Initial Issue one: slug="one", file=old. Issue two already owns slug="two".
-yield *
-    storage.transaction((tx) =>
+yield* storage.transaction((tx) =>
         Effect.result(tx.put(issues, { id: "one", slug: "two", file: { id: "new" } }))
     );
 // Caller caught UniqueConstraint, so the enclosing transaction succeeds.
 // Issue one still references old; its root now retains new instead.
-yield * blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 });
+yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 });
 // The still-referenced old attachment is deleted.
 ```
 
@@ -307,10 +306,10 @@ The initial reproduction was:
 
 ```ts
 // Success: the object transaction establishes both contexts.
-yield * storage.transaction(() => tables.put(metadata, "key", 1));
+yield* storage.transaction(() => tables.put(metadata, "key", 1));
 
 // TransactionError { kind: "Nested" }: object operations try to start a new boundary.
-yield * tables.transaction(() => storage.put(model.objects.Issue, { id: "one" }));
+yield* tables.transaction(() => storage.put(model.objects.Issue, { id: "one" }));
 ```
 
 Both service-call directions now reuse the same physical transaction. The former

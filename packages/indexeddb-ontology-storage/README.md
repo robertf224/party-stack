@@ -4,8 +4,16 @@ Ontology-aware storage using the ported Tables driver. Build a storage model fro
 ontology definitions and generated Effect codecs:
 
 ```ts
-const model = yield * makeStorageModel({ namespace: "my-app", ir, schemas: objectSchemas });
-const storageLayer = IndexedDbStorage.layer(model, { databaseName: "my-app" });
+import * as IndexedDbStorage from "@party-stack/indexeddb-ontology-storage";
+import { makeStorageModel } from "@party-stack/ontology-storage";
+import { Effect } from "effect";
+import { objectSchemas } from "./generated/effect.js";
+import ir from "./ontology.js";
+
+export const makeStorageLayer = Effect.gen(function* () {
+    const model = yield* makeStorageModel({ namespace: "my-app", ir, schemas: objectSchemas });
+    return IndexedDbStorage.layer(model, { databaseName: "my-app" });
+});
 ```
 
 Supply `IndexedDb.layerWindow` from `@effect/platform-browser/IndexedDb` in a

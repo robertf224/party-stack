@@ -451,6 +451,22 @@ rows and attachment bytes; ordinary persistence alone does not download the enti
 ontology. Pins in the memory view reach its persistent parent. See [offline pins](/docs/offline)
 for narrower graphs and status details.
 
+## Pull to refresh
+
+`server.syncOnce(target)` trusts a healthy realtime watch: data it reports as current
+is not reloaded. For a refresh the user asks for, such as pull to refresh, pass
+`{ revalidate: true }` to reload every demanded subset. Rows stay visible meanwhile.
+
+```ts title="src/pull-to-refresh.ts"
+import { Effect } from "effect";
+import { Device } from "./device";
+
+export const pullToRefresh = Effect.fn("App.pullToRefresh")(function* (target: string) {
+    const { server } = yield* Device;
+    yield* server.syncOnce(target, { revalidate: true });
+});
+```
+
 ## Refresh downloads in a background task
 
 Define tasks at module scope; Expo can start JavaScript without mounting React.

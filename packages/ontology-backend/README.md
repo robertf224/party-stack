@@ -51,13 +51,23 @@ registered and buffering, even if the returned stream stays quiet indefinitely.
 Closing the acquisition Scope releases the subscription.
 
 ```ts
-// Inside the caller's Scope; undefined means this subset needs polling.
-const acquire = backend.watchSubset?.(subset);
-if (acquire) {
-    const changes = yield * acquire;
-    const snapshot = yield * backend.loadSubset(subset);
+import { Effect } from "effect";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
+import type { ObjectSubset } from "@party-stack/ontology-spec/query";
+
+// Runs in the caller's Scope, which owns the subscription.
+export const readAndWatch = Effect.fn("App.readAndWatch")(function* (
+    backend: OntologyBackendService,
+    subset: ObjectSubset
+) {
+    // undefined means this subset needs polling.
+    const acquire = backend.watchSubset?.(subset);
+    if (!acquire) return;
+    const changes = yield* acquire;
+    const snapshot = yield* backend.loadSubset(subset);
     // Process the snapshot, then consume changes to refresh it.
-}
+    return { snapshot, changes };
+});
 ```
 
 Changes between acquisition and snapshot consumption remain observable. Merely
@@ -106,9 +116,18 @@ normally remain actions.
 Configuration:
 
 ```ts
-const owned =
-    yield *
-    makeOwnedBackend({
+import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
+import { Tables } from "@party-stack/ontology-storage/tables";
+import { Effect } from "effect";
+import type { OwnedBackendOptions } from "@party-stack/ontology-backend/owned";
+
+// Requires Scope: the backend's maintenance sweep runs in it.
+export const openOwnedBackend = Effect.fn("App.openOwnedBackend")(function* (
+    options: Pick<OwnedBackendOptions, "namespace" | "ir" | "mutators">
+) {
+    const { namespace, ir, mutators } = options;
+    const tables = yield* Tables;
+    return yield* makeOwnedBackend({
         namespace,
         ir,
         tables,
@@ -117,6 +136,7 @@ const owned =
         history: { maxCommits: 10_000, maxAgeMs: 24 * 60 * 60 * 1_000 },
         maintenance: { intervalMs: 60_000 },
     });
+});
 ```
 
 Result retention is measured from completion, independent of journal retention and

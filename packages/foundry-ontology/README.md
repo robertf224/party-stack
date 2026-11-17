@@ -8,15 +8,17 @@ Open a native metadata backend with selected Connect egress:
 
 ```ts
 import { makeFoundryMetadataBackend } from "@party-stack/foundry-ontology";
+import { Effect } from "effect";
+import type { ConnectionAccess } from "@party-stack/connect";
 
-const backend =
-    yield *
-    makeFoundryMetadataBackend({
-        baseUrl,
+export const openMetadataBackend = Effect.fn("App.openMetadataBackend")(function* (access: ConnectionAccess) {
+    return yield* makeFoundryMetadataBackend({
+        baseUrl: access.serviceInstance.instanceUrl,
         ontologyId: "ri.ontology.main.ontology.example",
-        egress,
+        egress: access.egress,
         refetchInterval: 30_000,
     });
+});
 ```
 
 Object-type name and RID filters use Foundry's batch lookup endpoints. Value-type

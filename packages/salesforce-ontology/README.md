@@ -8,10 +8,19 @@ Salesforce service integration, metadata, and ontology backends.
 import { makeConnectManager } from "@party-stack/connect";
 import { makeSalesforceServiceConnector } from "@party-stack/salesforce-ontology";
 import { makeSalesforceBackend } from "@party-stack/salesforce-ontology/connect";
+import { Effect } from "effect";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 
-const connect =
-    yield *
-    makeConnectManager({
+export const openSalesforceBackend = Effect.fn("App.openSalesforceBackend")(function* (options: {
+    readonly loginUrl: string;
+    readonly instanceUrl: string;
+    readonly clientId: string;
+    readonly redirectUrl: string;
+    readonly connectionId: string;
+    readonly generatedOntology: OntologyIR;
+}) {
+    const { loginUrl, instanceUrl, clientId, redirectUrl, connectionId, generatedOntology } = options;
+    const connect = yield* makeConnectManager({
         services: [
             {
                 connector: makeSalesforceServiceConnector({ loginUrl }),
@@ -34,27 +43,24 @@ const connect =
             },
         ],
     });
-const access =
-    yield *
-    connect.connections.acquire({
+    const access = yield* connect.connections.acquire({
         objectType: "OAuthConnection",
         id: connectionId,
     });
-const backend =
-    yield *
-    makeSalesforceBackend({
+    return yield* makeSalesforceBackend({
         instanceUrl: access.serviceInstance.instanceUrl,
         apiVersion: "65.0",
         egress: access.egress,
         ir: generatedOntology,
         context: { user: access.userId },
     });
+});
 ```
 
 `makeConnectManager` requires `Runtime` and `Scope`. It owns the saved connection
 inventory, credential refresh and maintenance. Acquiring a connection creates
-scoped authenticated I/O. Each request reads current credentials; an OAuth 401
-can request one coordinated refresh and retry.
+scoped authenticated I/O. Each request reads current credentials. A 401 is
+reported to Connect, which renews the token once and retries the request.
 
 Mount the public Connect ontology on `makeOntologyServer`, then use
 `createAuthenticationClient(...).oauth(...).signIn()` from a browser event handler.

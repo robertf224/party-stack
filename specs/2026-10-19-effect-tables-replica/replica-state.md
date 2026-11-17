@@ -131,30 +131,26 @@ transport and storage acquisition are omitted.
 
 ```ts
 // Authoritative DO or server: mutate its own database, without an upstream outbox.
-const owned =
-    yield *
-    makeOwnedBackend({
-        namespace: "issues",
-        ir,
-        tables: doTables,
-        mutators,
-    });
-yield * serveOntology({ backend: owned });
+const owned = yield* makeOwnedBackend({
+    namespace: "issues",
+    ir,
+    tables: doTables,
+    mutators,
+});
+yield* serveOntology({ backend: owned });
 
 // Thin DO proxy: use an already constructed provider binding, without a local queue.
-yield * serveOntology({ backend: foundryBackend });
+yield* serveOntology({ backend: foundryBackend });
 
 // Intermediate DO: persist accepted intent and its prediction before forwarding.
-const replica =
-    yield *
-    makeReplica({
-        namespace: "issues",
-        ir,
-        tables: doTables,
-        backend: foundryBackend,
-        execute: optimisticMutator,
-    });
-yield * serveOntology({ source: replicaStateSource(replica) });
+const replica = yield* makeReplica({
+    namespace: "issues",
+    ir,
+    tables: doTables,
+    backend: foundryBackend,
+    execute: optimisticMutator,
+});
+yield* serveOntology({ source: replicaStateSource(replica) });
 ```
 
 These are alternative deployments, not three services sharing a namespace at once.

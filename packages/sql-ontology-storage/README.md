@@ -4,8 +4,16 @@ Ontology-aware storage using the ported Tables driver. Build a storage model fro
 ontology definitions and generated Effect codecs:
 
 ```ts
-const model = yield * makeStorageModel({ namespace: "my-app", ir, schemas: objectSchemas });
-const storageLayer = SqlStorage.layer(model, { prefix: "app_storage" });
+import { makeStorageModel } from "@party-stack/ontology-storage";
+import * as SqlStorage from "@party-stack/sql-ontology-storage";
+import { Effect } from "effect";
+import { objectSchemas } from "./generated/effect.js";
+import ir from "./ontology.js";
+
+export const makeStorageLayer = Effect.gen(function* () {
+    const model = yield* makeStorageModel({ namespace: "my-app", ir, schemas: objectSchemas });
+    return SqlStorage.layer(model, { prefix: "app_storage" });
+});
 ```
 
 Supply an Effect SqlClient layer for SQLite or PostgreSQL. Query/index planning

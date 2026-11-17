@@ -47,6 +47,14 @@ export default defineConfig({
             // https://tanstack.com/router/latest/docs/installation/with-vite#ignoring-the-generated-route-tree-file
             "**/routeTree.gen.ts",
         ],
+        overrides: [
+            {
+                // Design notes quote code fragments, such as a bare `yield*`, that do not parse
+                // as TypeScript on their own. Formatting would rewrite them as `yield *`.
+                files: ["specs/**/*.md"],
+                options: { embeddedLanguageFormatting: "off" },
+            },
+        ],
         sortImports: {
             groups: [
                 "value-builtin",

@@ -74,31 +74,57 @@ this does not request a server-maintained join.
 
 ## Component fragments
 
-Keep each component's selection beside it. `defineFragment` accepts a generated
-collection descriptor. `.include` creates a native TanStack DB `include`, which the
-child reads directly with `useFragment`.
+Keep each component's selection beside it. A component exports a fragment, built
+with `defineFragment` over a generated collection descriptor, and reads it with
+`useFragment`:
 
-```tsx
+```tsx title="src/IssueCard.tsx"
 import { defineFragment, useFragment, type FragmentRef } from "@party-stack/ontology-react";
+import { objects } from "./ontology/generated/collections";
 
-const issueCard = defineFragment(objects.Issue, (issue) => ({
+export const issueCard = defineFragment(objects.Issue, (issue) => ({
     title: issue.title,
     status: issue.status,
 }));
 
-function Issues() {
-    const { data } = useLiveSuspenseQuery((q) =>
-        q.from({ issue: objects.Issue }).select(({ issue }) => ({
-            id: issue.id,
-            card: issueCard.include(issue),
-        }))
+export function IssueCard({ issue }: { issue: FragmentRef<typeof issueCard> }) {
+    const { data } = useFragment(issue);
+    // Undefined once the issue is deleted.
+    if (!data) return null;
+    return (
+        <article>
+            <h2>{data.title}</h2>
+            <p>{data.status}</p>
+        </article>
     );
-    return data.map((row) => <IssueCard key={row.id} issue={row.card} />);
 }
+```
 
-function IssueCard({ issue }: { issue: FragmentRef<typeof issueCard> }) {
-    const { data: value } = useFragment(issue);
-    return value ? <h2>{value.title}</h2> : null;
+A parent in another file chooses which issues to show and includes the card's
+fragment in its own query. `.include` creates a native TanStack DB `include`, and
+the parent passes each reference down:
+
+```tsx title="src/IssueList.tsx"
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { IssueCard, issueCard } from "./IssueCard";
+import { objects } from "./ontology/generated/collections";
+
+export function IssueList() {
+    const { data } = useLiveSuspenseQuery((q) =>
+        q
+            .from({ issue: objects.Issue })
+            .orderBy(({ issue }) => issue.title)
+            .select(({ issue }) => ({ id: issue.id, card: issueCard.include(issue) }))
+    );
+    return (
+        <ul>
+            {data.map((row) => (
+                <li key={row.id}>
+                    <IssueCard issue={row.card} />
+                </li>
+            ))}
+        </ul>
+    );
 }
 ```
 
@@ -154,24 +180,17 @@ the enclosing query's execution and collection demand, with no separate cache.
 
 ### Related lists
 
-This example uses a notebook schema with a `notes` link. Keep each component and
-its exported fragment together; `NoteCard` exports `noteCard` just like the card above:
+This example uses a notebook schema with a `notes` link. As above, each component
+lives in its own file with the fragment it needs. `NoteCard.tsx` exports `noteCard`
+and `NoteCard` like the issue card. The list owns its filters, ordering and pages:
 
-```tsx
+```tsx title="src/NoteList.tsx"
 import { eq } from "@tanstack/db";
-import { useLiveSuspenseQuery } from "@tanstack/react-db";
-import {
-    defineFragment,
-    defineListFragment,
-    useFragment,
-    useListFragment,
-    type FragmentRef,
-    type ListFragmentRef,
-} from "@party-stack/ontology-react";
-import { objects } from "./ontology/generated/collections";
+import { defineListFragment, useListFragment, type ListFragmentRef } from "@party-stack/ontology-react";
 import { NoteCard, noteCard } from "./NoteCard";
+import { objects } from "./ontology/generated/collections";
 
-const noteList = defineListFragment(objects.Note, (notes, { limit = 50 }) =>
+export const noteList = defineListFragment(objects.Note, (notes, { limit = 50 }) =>
     notes
         .where(({ row }) => eq(row.trashed, false))
         .orderBy(({ row }) => row.favorite, "desc")
@@ -181,32 +200,7 @@ const noteList = defineListFragment(objects.Note, (notes, { limit = 50 }) =>
         .select(({ row }) => ({ id: row.id, card: noteCard.include(row) }))
 );
 
-const folderView = defineFragment(objects.Notebook, (folder, { limit = 50 }) => ({
-    name: folder.name,
-    notes: noteList.include(objects.Notebook.links.notes(folder), { limit }),
-}));
-
-function Folder({ id }: { id: string }) {
-    const { data } = useLiveSuspenseQuery((q) =>
-        q
-            .from({ folder: objects.Notebook })
-            .where(({ folder }) => eq(folder.id, id))
-            .select(({ folder }) => ({ view: folderView.include(folder) }))
-    );
-    return data[0] ? <FolderContents folder={data[0].view} /> : null;
-}
-
-function FolderContents({ folder }: { folder: FragmentRef<typeof folderView> }) {
-    const { data } = useFragment(folder);
-    return data ? (
-        <section>
-            <h1>{data.name}</h1>
-            <NoteList notes={data.notes} />
-        </section>
-    ) : null;
-}
-
-function NoteList({ notes }: { notes: ListFragmentRef<typeof noteList> }) {
+export function NoteList({ notes }: { notes: ListFragmentRef<typeof noteList> }) {
     const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useListFragment(notes);
     return (
         <>
@@ -220,6 +214,42 @@ function NoteList({ notes }: { notes: ListFragmentRef<typeof noteList> }) {
             )}
         </>
     );
+}
+```
+
+A folder view is itself a fragment that includes the list through the link, so it
+can be nested further up; the page at the top runs the one live query:
+
+```tsx title="src/Folder.tsx"
+import { eq } from "@tanstack/db";
+import { useLiveSuspenseQuery } from "@tanstack/react-db";
+import { defineFragment, useFragment, type FragmentRef } from "@party-stack/ontology-react";
+import { NoteList, noteList } from "./NoteList";
+import { objects } from "./ontology/generated/collections";
+
+export const folderView = defineFragment(objects.Notebook, (folder, { limit = 50 }) => ({
+    name: folder.name,
+    notes: noteList.include(objects.Notebook.links.notes(folder), { limit }),
+}));
+
+export function FolderContents({ folder }: { folder: FragmentRef<typeof folderView> }) {
+    const { data } = useFragment(folder);
+    return data ? (
+        <section>
+            <h1>{data.name}</h1>
+            <NoteList notes={data.notes} />
+        </section>
+    ) : null;
+}
+
+export function FolderPage({ id }: { id: string }) {
+    const { data } = useLiveSuspenseQuery((q) =>
+        q
+            .from({ folder: objects.Notebook })
+            .where(({ folder }) => eq(folder.id, id))
+            .select(({ folder }) => ({ view: folderView.include(folder) }))
+    );
+    return data[0] ? <FolderContents folder={data[0].view} /> : null;
 }
 ```
 

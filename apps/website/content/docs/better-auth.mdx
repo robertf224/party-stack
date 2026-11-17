@@ -142,9 +142,15 @@ At a fetch-based SDK boundary, acquire a scoped Promise adapter:
 
 ```ts
 import { toWebEgress } from "@party-stack/connect";
+import { Effect } from "effect";
+import type { ConnectionAccess } from "@party-stack/connect";
 
-const web = yield * toWebEgress(access.egress);
-// Supply web.fetch to a fetch-based client, such as FetchHttpClient.Fetch.
+// Runs in the route's Scope, so the adapter lives as long as the acquired connection.
+export const webEgress = Effect.fn("App.webEgress")(function* (access: ConnectionAccess) {
+    const web = yield* toWebEgress(access.egress);
+    // Supply web.fetch to a fetch-based client, such as FetchHttpClient.Fetch.
+    return web;
+});
 ```
 
 The acquiring scope cancels pending calls and rejects new calls after release.

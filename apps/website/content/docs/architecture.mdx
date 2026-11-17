@@ -24,6 +24,17 @@ A replica's visible data is **base state + optimistic overlay**. Its **outbox**
 stores local actions awaiting completion. With an intermediate parent, base state
 can include that parent's predictions; confirmed-only reads exclude predictions.
 
+A child replica normally predicts its own actions. An embedded child that holds only
+the rows it displays (a form in a WebView, say) can set
+`writes.outbox.prediction: "source"`: it then forwards each action as requested,
+and its parent resolves parameter defaults, predicts against its own data, and
+replicates the result back. The requested visibility still applies.
+
+While one of its own actions is in flight, or committed but not yet read back, a
+replica holds its synced base: new snapshots and watch changes wait until the
+action's result is applied, so a change that already includes the action is never
+applied on top of its prediction.
+
 An owned backend commits **object rows + action receipts + change journal** in
 one transaction. A receipt records an action's result. The journal lets replicas
 pull committed changes.
@@ -128,7 +139,9 @@ It stores service instances, OAuth applications, and saved OAuth, API-key, or
 external-session connections. `makeConnectManager` owns their credentials,
 refresh, and maintenance. `connections.acquire(ref)` returns scoped authenticated
 I/O: the service instance, verified user ID, egress, and authentication status.
-A backend adapter uses that egress to access the service.
+A backend adapter uses that egress to access the service. Connect renews OAuth
+tokens shortly before they expire and again when a service rejects one; adapters
+and connectors only report the rejection as `Unauthenticated`.
 
 In a shared-worker app, the components are arranged like this:
 

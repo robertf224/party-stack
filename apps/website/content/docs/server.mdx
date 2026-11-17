@@ -158,13 +158,24 @@ await ontology.actions.createIssue({ title: "My first issue" });
 For a multi-user app, declare an ontology [policy and context type](/docs/authorization),
 then replace `dangerouslyAllowInternalAccess: true` with an authentication hook:
 
-```ts
+```ts title="src/server/ontology-server.ts"
 import { classifyBackendFailure, unauthenticated } from "@party-stack/ontology-backend";
+import { makeStorageBackend } from "@party-stack/ontology-backend/storage";
+import { makeOntologyServer } from "@party-stack/ontology-server/http";
+import { makeStorage } from "@party-stack/sql-ontology-storage/sqlite";
+import { Effect } from "effect";
+import { auth } from "./auth";
+import { ir } from "./ontology";
 
-// Inside the server Layer: the backend remains shared across requests.
-return (
-    yield *
-    makeOntologyServer({
+// Pass this to OntologyHttpServer.layer in place of the program above.
+// The backend remains shared across requests.
+const openServer = Effect.gen(function* () {
+    const storage = yield* makeStorage({
+        namespace: "issues",
+        attachmentBytesRetentionMode: "authoritative",
+    });
+    const backend = yield* makeStorageBackend({ ir, ...storage });
+    return yield* makeOntologyServer({
         enableRealtime: true,
         kind: "owned",
         backend,
@@ -176,8 +187,8 @@ return (
             if (!session) return yield* unauthenticated();
             return { userId: session.user.id };
         }),
-    })
-);
+    });
+});
 ```
 
 Here `auth` is your application's authentication service, such as Better Auth. The
@@ -216,10 +227,23 @@ its own backend, authenticated context and policy.
 
 ```ts
 import { makeOntologyServer } from "@party-stack/ontology-server";
+import { Effect } from "effect";
+import { ir } from "./ontology";
+import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
+import type { OntologyAuthenticate } from "@party-stack/ontology-server";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { Scope } from "effect";
 
-const server =
-    yield *
-    makeOntologyServer({
+export const openServer = Effect.fn("App.openServer")(function* (options: {
+    readonly backend: OntologyBackendService;
+    readonly authenticate: OntologyAuthenticate;
+    readonly formIR: OntologyIR;
+    readonly openFormBackend: (
+        formId: string
+    ) => Effect.Effect<OntologyBackendService, BackendError, Scope.Scope>;
+}) {
+    const { backend, authenticate, formIR, openFormBackend } = options;
+    return yield* makeOntologyServer({
         enableRealtime: true,
         routes: {
             issues: { kind: "owned", backend, ir, authenticate },
@@ -237,6 +261,7 @@ const server =
         },
         idleRetentionMs: 60_000,
     });
+});
 ```
 
 Here `openFormBackend` is your application's scoped backend acquisition. A route
@@ -275,9 +300,15 @@ behave identically. The route determines whether the server requires `Runtimes`.
 A managed route can acquire its parent through an existing ontology client:
 
 ```ts
-const deviceServer =
-    yield *
-    makeOntologyServer({
+import { makeOntologyServer } from "@party-stack/ontology-server";
+import { Effect } from "effect";
+import type { ReplicaUpstream } from "@party-stack/ontology-server";
+
+export const openDeviceServer = Effect.fn("App.openDeviceServer")(function* (
+    upstreamClient: ReplicaUpstream["client"],
+    userId: string
+) {
+    return yield* makeOntologyServer({
         enableRealtime: true,
         routes: {
             "workspaces/:workspaceId": ({ workspaceId }) =>
@@ -293,6 +324,7 @@ const deviceServer =
                 }),
         },
     });
+});
 ```
 
 Here `upstreamClient` is an acquired HTTP, worker, or local client, and `userId`
@@ -343,29 +375,38 @@ Create a handler for each bound server and mount each handler at its own framewo
 route. They can borrow backends owned by the same application Layer:
 
 ```ts
-const issueHandler =
-    yield *
-    makeOntologyHttpHandler(
-        yield *
-            makeOntologyServer({
-                enableRealtime: true,
-                kind: "owned",
-                backend: issuesBackend,
-                authenticate: authenticateIssues,
-            })
+import { makeOntologyHttpHandler, makeOntologyServer } from "@party-stack/ontology-server/http";
+import { Effect } from "effect";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
+import type { OntologyAuthenticate } from "@party-stack/ontology-server/http";
+import type { OntologyIR } from "@party-stack/ontology-spec";
+
+export const openHandlers = Effect.fn("App.openHandlers")(function* (options: {
+    readonly issuesBackend: OntologyBackendService;
+    readonly metadataBackend: OntologyBackendService;
+    readonly metadataIR: OntologyIR;
+    readonly authenticateIssues: OntologyAuthenticate;
+    readonly authenticateMetadata: OntologyAuthenticate;
+}) {
+    const issueHandler = yield* makeOntologyHttpHandler(
+        yield* makeOntologyServer({
+            enableRealtime: true,
+            kind: "owned",
+            backend: options.issuesBackend,
+            authenticate: options.authenticateIssues,
+        })
     );
-const metadataHandler =
-    yield *
-    makeOntologyHttpHandler(
-        yield *
-            makeOntologyServer({
-                enableRealtime: true,
-                kind: "proxy",
-                backend: metadataBackend,
-                ir: metadataIR,
-                authenticate: authenticateMetadata,
-            })
+    const metadataHandler = yield* makeOntologyHttpHandler(
+        yield* makeOntologyServer({
+            enableRealtime: true,
+            kind: "proxy",
+            backend: options.metadataBackend,
+            ir: options.metadataIR,
+            authenticate: options.authenticateMetadata,
+        })
     );
+    return { issueHandler, metadataHandler };
+});
 ```
 
 Mount `issueHandler` at `/api/issues/rpc` and `metadataHandler` at `/api/metadata/rpc`
