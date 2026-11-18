@@ -6,6 +6,8 @@ import type { OntologyBackendService } from "@party-stack/ontology-backend";
 
 /** Renew an access token this long before it expires. */
 export const accessTokenRenewalWindowMs = 60_000;
+/** How long to wait for another caller's in-flight refresh before surfacing Conflict. */
+const accessTokenRefreshWaitMs = 60_000;
 const State = Schema.Struct({
     status: Schema.Literals(["active", "needs-auth", "inactive"]),
     accessToken: Schema.optional(EncryptedValueSchema),
@@ -60,22 +62,43 @@ export const connectionAccessToken = Effect.fn("Connect.accessToken")(function* 
             });
         return row;
     });
+    const needsRefresh = (row: typeof State.Type, now: number) =>
+        // An expired refresh token does not invalidate an otherwise usable access token.
+        // Renew a minute early so a token is not sent moments before it expires.
+        !row.accessToken ||
+        row.status === "inactive" ||
+        (row.accessTokenExpiresAt !== undefined &&
+            row.accessTokenExpiresAt.epochMilliseconds <= now + accessTokenRenewalWindowMs);
     let current = yield* read();
-    const now = yield* Clock.currentTimeMillis;
-    // An expired refresh token does not invalidate an otherwise usable access token.
-    // Renew a minute early so a token is not sent moments before it expires.
-    if (
-        !current.accessToken ||
-        current.status === "inactive" ||
-        (current.accessTokenExpiresAt &&
-            current.accessTokenExpiresAt.epochMilliseconds <= now + accessTokenRenewalWindowMs)
-    ) {
-        yield* backend.applyAction({
-            id: crypto.randomUUID(),
-            name: "refreshConnection",
-            parameters: { connectionId },
-        });
+    const deadline = (yield* Clock.currentTimeMillis) + accessTokenRefreshWaitMs;
+    let delayMs = 25;
+    while (needsRefresh(current, yield* Clock.currentTimeMillis)) {
+        // Concurrent callers race to refresh. The loser gets Conflict while the winner's
+        // operation is in flight; wait for it and re-read instead of failing the request.
+        const refreshed = yield* backend
+            .applyAction({
+                id: crypto.randomUUID(),
+                name: "refreshConnection",
+                parameters: { connectionId },
+            })
+            .pipe(
+                Effect.as(true),
+                Effect.catchIf(
+                    (error) => error.kind === "Conflict",
+                    (error) =>
+                        Effect.gen(function* () {
+                            const now = yield* Clock.currentTimeMillis;
+                            if (now >= deadline) return yield* Effect.fail(error);
+                            yield* Effect.sleep(Math.min(delayMs, deadline - now));
+                            delayMs = Math.min(delayMs * 2, 1_000);
+                            return false;
+                        })
+                )
+            );
         current = yield* read();
+        // A just-issued token is used even if the provider makes it shorter-lived than the
+        // renewal window; refreshing again would only loop.
+        if (refreshed) break;
     }
     if (!current.accessToken)
         return yield* new BackendError({

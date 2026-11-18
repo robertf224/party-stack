@@ -232,3 +232,91 @@ test("application workflows require declared actions and validate parameters and
         )
     );
 });
+
+test("concurrent access-token reads share one in-flight refresh", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const key = yield* Effect.promise(() =>
+                    crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"])
+                );
+                const values = makeEncryptedValues("connect-refresh", {
+                    active: Effect.succeed({ id: "key", key }),
+                    get: () => Effect.succeed(key),
+                });
+                let refreshes = 0;
+                const { backend, store } = yield* makeConnectBackend({
+                    tables,
+                    namespace: "connect-refresh",
+                    values: { ...values, evict: () => Effect.void },
+                    maintenance: false,
+                    oauth: () =>
+                        Effect.succeed({
+                            authorizationUrl: ({ state }) =>
+                                Effect.succeed(`https://auth.example/authorize?state=${state}`),
+                            exchange: () =>
+                                Effect.succeed({
+                                    accessToken: "old-access",
+                                    refreshToken: "refresh",
+                                    userId: "oauth-user",
+                                }),
+                            refresh: () =>
+                                Effect.sync(() => refreshes++).pipe(
+                                    Effect.andThen(Effect.sleep(100)),
+                                    Effect.as({ accessToken: "new-access", userId: "oauth-user" })
+                                ),
+                            clientCredentials: Effect.die("unused"),
+                        }),
+                });
+                yield* store.transaction(
+                    Effect.gen(function* () {
+                        yield* store.put("ServiceInstance", {
+                            id: "serviceInstance",
+                            title: "Example",
+                            service: "example",
+                            instanceUrl: "https://example.com",
+                        });
+                        yield* store.put("OAuthApplication", {
+                            id: "application",
+                            title: "Example",
+                            serviceInstance: "serviceInstance",
+                            flow: "authorization-code",
+                            clientId: "app",
+                        });
+                    })
+                );
+                const { id } = (yield* backend.applyAction({
+                    id: "begin",
+                    name: "beginAuthorization",
+                    parameters: {
+                        applicationId: "application",
+                        principalId: "principal",
+                        redirectUrl: "https://app.example/callback",
+                    },
+                })).result as { id: string };
+                const { connectionId } = (yield* backend.applyAction({
+                    id: "complete",
+                    name: "completeAuthorization",
+                    parameters: {
+                        callbackUrl: `https://app.example/callback?state=${id}&code=code`,
+                        principalId: "principal",
+                    },
+                })).result as { connectionId: string };
+                const connection = (yield* store.get("OAuthConnection", connectionId))!;
+                yield* store.put("OAuthConnection", {
+                    ...connection,
+                    accessTokenExpiresAt: Temporal.Instant.fromEpochMilliseconds(
+                        (yield* Clock.currentTimeMillis) + 1_000
+                    ),
+                });
+                const tokens = yield* Effect.all(
+                    [1, 2, 3].map(() => connectionAccessToken(backend, connectionId)),
+                    { concurrency: "unbounded" }
+                );
+                expect(tokens).toEqual(["new-access", "new-access", "new-access"]);
+                expect(refreshes).toBe(1);
+            })
+        )
+    );
+});
