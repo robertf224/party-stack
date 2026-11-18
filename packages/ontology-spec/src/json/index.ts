@@ -88,6 +88,71 @@ function encryptedHandle(value: unknown): OntologyObject {
     };
 }
 
+/** The one reserved key in `unknown` positions: `{"$type": kind, "value": …}` holds a value JSON can't express. */
+const TYPE_KEY = "$type";
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+    const prototype: unknown = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Encodes a value of any allowed type held in an `unknown` position, losslessly. JSON-native values (strings,
+ * finite numbers, booleans, null, arrays, plain objects) stay as they are. A date or timestamp becomes
+ * `{"$type": "date" | "timestamp", "value": "<ISO 8601>"}`. `$type` is reserved: a plain object that has it
+ * can't be stored in an `unknown` position.
+ */
+export function encodeUnknown(value: unknown): unknown {
+    if (typeof value !== "object" || value === null) return value;
+    const temporal = Reflect.get(value, Symbol.toStringTag) as unknown;
+    if (temporal === "Temporal.Instant") return { [TYPE_KEY]: "timestamp", value: String(value) };
+    if (temporal === "Temporal.PlainDate") return { [TYPE_KEY]: "date", value: String(value) };
+    if (Array.isArray(value)) return value.map(encodeUnknown);
+    // Other objects (class instances) pass through as before.
+    if (!isPlainObject(value)) return value;
+    invariant(!Object.hasOwn(value, TYPE_KEY), `"${TYPE_KEY}" is reserved in unknown values.`);
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, encodeUnknown(entry)]));
+}
+
+/**
+ * Reads a `$type`-tagged scalar. Encoding only writes dates and timestamps this way, but any scalar kind is
+ * accepted, so a value written with its declared type (say an integer) reads back too.
+ */
+function decodeTypedScalar(kind: unknown, value: unknown): unknown {
+    const expect = (type: string) =>
+        invariant(typeof value === type, `Expected a ${type} value for "${String(kind)}".`);
+    switch (kind) {
+        case "timestamp":
+            expect("string");
+            return Temporal.Instant.from(value as string);
+        case "date":
+            expect("string");
+            return Temporal.PlainDate.from(value as string);
+        case "string":
+            expect("string");
+            return value;
+        case "boolean":
+            expect("boolean");
+            return value;
+        case "integer":
+        case "float":
+        case "double":
+            expect("number");
+            return value;
+        default:
+            throw new Error(`Unsupported "${TYPE_KEY}" in an unknown value: ${JSON.stringify(kind)}.`);
+    }
+}
+
+/** Reverses {@link encodeUnknown}. JSON without `$type`, including JSON written before it existed, reads as itself. */
+export function decodeUnknown(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(decodeUnknown);
+    if (!isPlainObject(value)) return value;
+    if (Object.hasOwn(value, TYPE_KEY)) return decodeTypedScalar(value[TYPE_KEY], value.value);
+    return Object.fromEntries(Object.entries(value).map(([name, entry]) => [name, decodeUnknown(entry)]));
+}
+
 function decodeValue(ir: OntologyIR, type: TypeDef, value: unknown, normalizeOptionalNull = false): unknown {
     const resolvedType = resolveType(ir, type);
     if (value === undefined) return undefined;
@@ -109,6 +174,8 @@ function decodeValue(ir: OntologyIR, type: TypeDef, value: unknown, normalizeOpt
             return typeof value === "string" ? Temporal.Instant.from(value) : value;
         case "date":
             return typeof value === "string" ? Temporal.PlainDate.from(value) : value;
+        case "unknown":
+            return decodeUnknown(value);
         case "optional":
             return decodeValue(ir, resolvedType.value.type, value, normalizeOptionalNull);
         case "list":
@@ -160,6 +227,8 @@ function encodeValue(ir: OntologyIR, type: TypeDef, value: unknown): unknown {
                 `Expected ${resolvedType.kind} value.`
             );
             return (value as { toString: () => string }).toString();
+        case "unknown":
+            return encodeUnknown(value);
         case "optional":
             return encodeValue(ir, resolvedType.value.type, value);
         case "list":

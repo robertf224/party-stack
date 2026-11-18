@@ -10,6 +10,7 @@ import {
     context,
     eq,
     field,
+    gt,
     literal,
     selectCase,
     selectField,
@@ -134,6 +135,22 @@ describe("query semantic validation", () => {
 });
 
 describe("partial knowledge and partition identity", () => {
+    it("types Temporal literals as dates and timestamps, so they compare with date and timestamp properties", () => {
+        const ir = definition();
+        ir.objectTypes[0]!.properties.push(property("due", o.timestamp({})), property("start", o.date({})));
+        const dated = (where: Parameters<typeof gt>[1], on: string) => {
+            const d = document();
+            if (d.select[0]?.kind === "sub") d.select[0].value.query.where = gt(field("p", on), where);
+            return validateQueryDocument(ir, d);
+        };
+        expect(dated(literal(Temporal.Instant.from("2026-01-01T00:00:00Z")), "due")).toEqual([]);
+        expect(dated(literal(Temporal.PlainDate.from("2026-01-01")), "start")).toEqual([]);
+        // An ISO string is still text: it needs to be a Temporal value (a tagged literal in JSON).
+        expect(dated(literal("2026-01-01T00:00:00Z"), "due").map((issue) => issue.message)).toContain(
+            "Comparison operands have incompatible types."
+        );
+    });
+
     it("compares Temporal values symmetrically and orders extended/negative date years numerically", () => {
         const instant = Temporal.Instant.from("2026-10-28T00:00:00Z");
         expect(equalValues({}, instant)).toBe(false);
