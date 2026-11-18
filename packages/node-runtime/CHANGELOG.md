@@ -1,5 +1,13 @@
 # @party-stack/node-runtime
 
+## 0.4.4
+
+### Patch Changes
+
+- @party-stack/ontology-storage@0.3.1
+- @party-stack/sql-ontology-storage@0.3.1
+- @party-stack/runtime@0.6.2
+
 ## 0.4.3
 
 ### Patch Changes

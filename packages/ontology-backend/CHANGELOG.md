@@ -1,5 +1,13 @@
 # @party-stack/ontology-backend
 
+## 0.3.2
+
+### Patch Changes
+
+- Updated dependencies [d83db65]
+    - @party-stack/ontology-spec@0.4.0
+    - @party-stack/ontology-storage@0.3.1
+
 ## 0.3.1
 
 ### Patch Changes

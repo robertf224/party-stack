@@ -1,5 +1,11 @@
 # @party-stack/runtime
 
+## 0.6.2
+
+### Patch Changes
+
+- @party-stack/ontology-storage@0.3.1
+
 ## 0.6.1
 
 ### Patch Changes

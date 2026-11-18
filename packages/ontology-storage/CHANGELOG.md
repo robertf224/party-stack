@@ -1,5 +1,12 @@
 # @party-stack/ontology-storage
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [d83db65]
+    - @party-stack/ontology-spec@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes
