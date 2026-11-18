@@ -1,7 +1,7 @@
 import { BackendError, classifyBackendFailure, isUnauthenticatedError } from "@party-stack/ontology-backend";
 import * as q from "@party-stack/ontology-spec/query";
 import { Clock, Context, Effect, Fiber, Queue, RcMap, Schema, Stream, Schedule, Semaphore } from "effect";
-import { connectionAccessToken } from "./core/accessToken.js";
+import { accessTokenNeedsRefresh, connectionAccessToken } from "./core/accessToken.js";
 import { connectBackendError } from "./core/backend.js";
 import { connectError } from "./core/errors.js";
 import { createDefaultConnectionEgressHandlers } from "./createDefaultConnectionEgressHandlers.js";
@@ -139,14 +139,31 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                     message: "Service connector is unavailable.",
                 });
             const sessionVerification = yield* Semaphore.make(1);
+            // One refresh at a time per connection, whether early (the saved token is about
+            // to expire) or after the service rejected it. The credential authority fails a
+            // second concurrent refresh with Conflict rather than queueing it.
+            const renewal = yield* Semaphore.make(1);
             const currentCredential = Effect.fnUntraced(function* (): Effect.fn.Return<string, BackendError> {
                 const current = yield* read(ref.objectType, ref.id);
                 if (!current || current.status === "inactive")
                     return yield* unavailable("The selected connection is disconnected.");
                 if (current.status !== "active")
                     return yield* unavailable("The selected connection requires authentication.");
-                if (ref.objectType === "OAuthConnection")
-                    return yield* connectionAccessToken(backend, ref.id);
+                if (ref.objectType === "OAuthConnection") {
+                    const saved = current as ConnectOntology["objectTypes"]["OAuthConnection"];
+                    if (!accessTokenNeedsRefresh(saved, yield* Clock.currentTimeMillis))
+                        return yield* connectionAccessToken(backend, ref.id);
+                    // Requests queued behind this refresh re-read the saved token and use it.
+                    return yield* renewal.withPermit(
+                        connectionAccessToken(backend, ref.id).pipe(
+                            Effect.tap(() =>
+                                read(ref.objectType, ref.id).pipe(
+                                    Effect.tap((value) => Effect.sync(() => install(value)))
+                                )
+                            )
+                        )
+                    );
+                }
                 const expiresAt = (
                     current as
                         | ConnectOntology["objectTypes"]["ExternalSessionConnection"]
@@ -421,7 +438,6 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                 if (isUnauthenticatedError(error)) yield* markNeedsAuthentication(observed);
                 return yield* error;
             });
-            const renewal = yield* Semaphore.make(1);
             // Renew the credential that was saved at `version`, once: concurrent rejections
             // of the same credential share one renewal, and a newer credential wins.
             // Rejections queued behind a renewal that failed share its failure instead of

@@ -1,6 +1,7 @@
 import { BrowserAuthenticationError, MemoryBlobBytesStore, Runtime } from "@party-stack/runtime";
 import { makeTestRuntime } from "@party-stack/runtime/testing";
 import { Deferred, Effect, Fiber } from "effect";
+import { Temporal } from "temporal-polyfill";
 import { expect, test, vi } from "vite-plus/test";
 import { acquireConfiguredConnection } from "./acquireConfiguredConnection.js";
 import { makeAuthenticationClient } from "./authentication.js";
@@ -353,6 +354,66 @@ test("rejected credentials renew once, retry body-less requests, and never renew
                 expect(access.authentication.state.status).toBe("active");
                 expect(access.authentication.credentialVersion).toBeGreaterThan(version);
                 // A rejection of the replaced credential does not renew the newer one.
+                yield* access.authentication.refresh(version);
+                expect(f.refresh).toHaveBeenCalledOnce();
+            })
+        )
+    );
+});
+
+test("concurrent requests with an expiring credential share one early refresh", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const sent: string[] = [];
+                const f = yield* setup(({ credential }) =>
+                    Effect.succeed({
+                        fetch: (request) =>
+                            Effect.gen(function* () {
+                                sent.push(`${new URL(request.url).pathname} ${yield* credential}`);
+                                return new Response();
+                            }),
+                        createWebSocket: () => Effect.die("unused"),
+                    })
+                );
+                // Inside the renewal window, so the next request refreshes before sending.
+                f.exchange.mockImplementation(() =>
+                    Effect.succeed({
+                        accessToken: "private-access",
+                        accessTokenExpiresAt: Temporal.Now.instant().add({ seconds: 1 }),
+                        refreshToken: "private-refresh",
+                        userId: "alice",
+                    })
+                );
+                const access = yield* acquireConfiguredConnection({
+                    manager: f.manager,
+                    serviceInstanceId: "stack",
+                    oauth,
+                    browserAuthentication: f.browser,
+                });
+                const started = yield* Deferred.make<void>();
+                const reply = yield* Deferred.make<void>();
+                f.refresh.mockImplementation(() =>
+                    Effect.gen(function* () {
+                        yield* Deferred.succeed(started, undefined);
+                        yield* Deferred.await(reply);
+                        return { accessToken: "refreshed-access", userId: "alice" };
+                    })
+                );
+                const version = access.authentication.credentialVersion;
+                const one = yield* access.egress.fetch("https://service.test/one").pipe(Effect.forkScoped);
+                yield* Deferred.await(started);
+                // Let the second request see the stale token and reach its own refresh while the
+                // first is in flight; the authority would fail that refresh with Conflict.
+                const two = yield* access.egress.fetch("https://service.test/two").pipe(Effect.forkScoped);
+                yield* Effect.sleep(50);
+                yield* Deferred.succeed(reply, undefined);
+                expect((yield* Fiber.join(one)).status).toBe(200);
+                expect((yield* Fiber.join(two)).status).toBe(200);
+                expect(f.refresh).toHaveBeenCalledOnce();
+                expect([...sent].sort()).toEqual(["/one refreshed-access", "/two refreshed-access"]);
+                expect(access.authentication.credentialVersion).toBeGreaterThan(version);
+                // A late rejection of the replaced credential does not renew the new one.
                 yield* access.authentication.refresh(version);
                 expect(f.refresh).toHaveBeenCalledOnce();
             })
