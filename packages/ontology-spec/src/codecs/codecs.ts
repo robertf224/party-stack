@@ -86,18 +86,9 @@ export const TemporalTimestamp = Schema.instanceOf(Temporal.Instant, {
 
 const items = (count: number) => `${count} ${count === 1 ? "item" : "items"}`;
 
-/**
- * Inclusive list size bounds. With `required`, an empty list is reported as a
- * missing value rather than a size violation (a required list parameter must
- * have at least one element).
- */
-export function isListSize(
-    size: { readonly min?: number; readonly max?: number } | undefined,
-    options?: { readonly required?: boolean }
-) {
-    const { min, max } = size ?? {};
+/** Inclusive bounds on a list's number of elements. */
+export function isListSize({ min, max }: { readonly min?: number; readonly max?: number }) {
     return Schema.makeFilter<ReadonlyArray<unknown>>((input) => {
-        if (options?.required && input.length === 0) return "A value is required.";
         if ((min === undefined || input.length >= min) && (max === undefined || input.length <= max))
             return true;
         if (min !== undefined && max !== undefined)

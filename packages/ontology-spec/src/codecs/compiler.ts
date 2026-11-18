@@ -97,10 +97,6 @@ function compile(source: OntologyIR): CompiledEffectSchemas {
         }
         return render(type);
     };
-    const list = (type: Extract<TypeDef, { kind: "list" }>, required = false): ValueCodec => {
-        const schema = Schema.mutable(Schema.Array(render(type.value.elementType)));
-        return type.value.size || required ? schema.check(isListSize(type.value.size, { required })) : schema;
-    };
     const render = (type: TypeDef): ValueCodec => {
         switch (type.kind) {
             case "string":
@@ -120,8 +116,10 @@ function compile(source: OntologyIR): CompiledEffectSchemas {
                 return Schema.Struct({ lat: Schema.Finite, lon: Schema.Finite });
             case "unknown":
                 return Schema.Unknown;
-            case "list":
-                return list(type);
+            case "list": {
+                const list = Schema.mutable(Schema.Array(render(type.value.elementType)));
+                return type.value.size ? list.check(isListSize(type.value.size)) : list;
+            }
             case "map": {
                 if (type.value.keyType.kind !== "string")
                     throw new TypeError("Effect schema compilation currently requires string map keys.");
@@ -195,13 +193,11 @@ function compile(source: OntologyIR): CompiledEffectSchemas {
                             Object.fromEntries(
                                 action.parameters.map((parameter) => {
                                     const optional = parameter.type.kind === "optional";
-                                    // An empty list for a required parameter counts as missing.
-                                    const base =
+                                    const base = render(
                                         parameter.type.kind === "optional"
-                                            ? render(parameter.type.value.type)
-                                            : parameter.type.kind === "list"
-                                              ? list(parameter.type, true)
-                                              : render(parameter.type);
+                                            ? parameter.type.value.type
+                                            : parameter.type
+                                    );
                                     return [
                                         parameter.name,
                                         optional

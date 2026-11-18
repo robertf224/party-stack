@@ -280,7 +280,7 @@ describe("action parameter validation issues", () => {
         return Result.isFailure(result) ? schemaValidationIssues(result.failure) : [];
     };
 
-    it("reports list size violations and empty required lists clearly", () => {
+    it("reports list size violations clearly", () => {
         expect(issues({ tags: ["a", "b", "c"], count: 1 })).toEqual([
             expect.objectContaining({
                 message: "Enter between 1 and 2 items.",
@@ -289,7 +289,11 @@ describe("action parameter validation issues", () => {
             }),
         ]);
         expect(issues({ tags: [], count: 1 })).toEqual([
-            expect.objectContaining({ message: "A value is required.", path: ["tags"], code: "required" }),
+            expect.objectContaining({
+                message: "Enter between 1 and 2 items.",
+                path: ["tags"],
+                code: "type",
+            }),
         ]);
         expect(issues({ tags: ["a"], count: 1.5 })).toEqual([
             expect.objectContaining({ message: "Enter a valid value.", path: ["count"], code: "type" }),

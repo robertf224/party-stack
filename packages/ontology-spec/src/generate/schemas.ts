@@ -30,16 +30,6 @@ export function generateEffectSchemas(ir: OntologyIR, opts: GenerateEffectSchema
         return `${name}Schema`;
     };
 
-    const list = (
-        type: Extract<TypeDef, { kind: "list" }>,
-        required: boolean,
-        references: ReadonlySet<string> = new Set()
-    ): string => {
-        const schema = `__Schema.mutable(__Schema.Array(${render(type.value.elementType, references)}))`;
-        if (!type.value.size && !required) return schema;
-        const size = type.value.size ? { min: type.value.size.min, max: type.value.size.max } : undefined;
-        return `${schema}.check(__Values.isListSize(${literal(size)}${required ? ", { required: true }" : ""}))`;
-    };
     const render = (type: TypeDef, references: ReadonlySet<string> = new Set()): string => {
         switch (type.kind) {
             case "string": {
@@ -72,8 +62,13 @@ export function generateEffectSchemas(ir: OntologyIR, opts: GenerateEffectSchema
                 ]);
             case "unknown":
                 return "__Schema.Unknown";
-            case "list":
-                return list(type, false, references);
+            case "list": {
+                const list = `__Schema.mutable(__Schema.Array(${render(type.value.elementType, references)}))`;
+                const size = type.value.size;
+                return size
+                    ? `${list}.check(__Values.isListSize(${literal({ min: size.min, max: size.max })}))`
+                    : list;
+            }
             case "map":
                 if (type.value.keyType.kind !== "string") {
                     throw new Error("Effect schema generation currently requires string map keys.");
@@ -157,13 +152,9 @@ export function generateEffectSchemas(ir: OntologyIR, opts: GenerateEffectSchema
             struct(
                 action.parameters.map((parameter) => {
                     const optional = parameter.type.kind === "optional";
-                    // An empty list for a required parameter counts as missing.
-                    const base =
-                        parameter.type.kind === "optional"
-                            ? render(parameter.type.value.type)
-                            : parameter.type.kind === "list"
-                              ? list(parameter.type, true)
-                              : render(parameter.type);
+                    const base = render(
+                        parameter.type.kind === "optional" ? parameter.type.value.type : parameter.type
+                    );
                     return {
                         name: parameter.name,
                         schema: optional

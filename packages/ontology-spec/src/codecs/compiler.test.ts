@@ -182,7 +182,7 @@ it("shares compiled codecs per definition object", () => {
     expect(compileEffectSchemas(definition())).not.toBe(first);
 });
 
-it("enforces inclusive list sizes and treats an empty required list parameter as missing", () => {
+it("enforces inclusive list sizes", () => {
     const tags = (size?: { min?: number; max?: number }) =>
         o.list({ elementType: o.string({}), ...(size && { size }) });
     const compiled = compileEffectSchemas({
@@ -219,9 +219,11 @@ it("enforces inclusive list sizes and treats an empty required list parameter as
     expect(messages(parameters, { ...base, bounded: ["a", "b", "c", "d"] })).toContain(
         "Enter between 1 and 3 items."
     );
-    expect(messages(parameters, { ...base, bounded: [] })).toContain("A value is required.");
-    expect(messages(parameters, { ...base, unconstrained: [] })).toContain("A value is required.");
-    // Optional lists may be empty or absent; their own bounds still apply when present.
+    expect(messages(parameters, { ...base, bounded: [] })).toContain("Enter between 1 and 3 items.");
+    // A required list without a size may be empty; optional lists may also be absent or null.
+    expect(Schema.decodeUnknownSync(parameters)({ ...base, unconstrained: [] })).toMatchObject({
+        unconstrained: [],
+    });
     expect(Schema.decodeUnknownSync(parameters)({ ...base, optional: [] })).toMatchObject({ optional: [] });
     expect(Schema.decodeUnknownSync(parameters)({ ...base, optional: null })).toMatchObject({
         optional: null,

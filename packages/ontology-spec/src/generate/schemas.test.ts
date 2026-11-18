@@ -246,7 +246,7 @@ describe("Effect schema generation", () => {
         );
     }, 30000);
 
-    it("enforces list sizes and treats empty required list parameters as missing", async () => {
+    it("enforces list sizes", async () => {
         const tags = (size?: { min?: number; max?: number }) =>
             o.list({ elementType: o.string({}), ...(size && { size }) });
         const ir: OntologyIR = {
@@ -278,13 +278,13 @@ describe("Effect schema generation", () => {
             const base = { bounded: ["a"], unconstrained: ["a"] };
             assert.deepEqual(Schema.decodeUnknownSync(s.TagParametersSchema)(base), base);
             fails(s.TagParametersSchema, { ...base, bounded: ["a", "b", "c", "d"] }, "Enter between 1 and 3 items.");
-            fails(s.TagParametersSchema, { ...base, bounded: [] }, "A value is required.");
-            fails(s.TagParametersSchema, { ...base, unconstrained: [] }, "A value is required.");
+            fails(s.TagParametersSchema, { ...base, bounded: [] }, "Enter between 1 and 3 items.");
+            assert.deepEqual(Schema.decodeUnknownSync(s.TagParametersSchema)({ ...base, unconstrained: [] }), { ...base, unconstrained: [] });
             assert.deepEqual(Schema.decodeUnknownSync(s.TagParametersSchema)({ ...base, optional: [] }), { ...base, optional: [] });
             fails(s.TagParametersSchema, { ...base, optional: ["a", "b"] }, "Enter at most 1 item.");
         `
         );
-        expect(generated).toContain("isListSize({ min: 1, max: 3 }, { required: true })");
+        expect(generated).toContain("isListSize({ min: 1, max: 3 })");
     }, 30000);
 
     it("handles the complete self-describing ontology and its mutually recursive types", async () => {
