@@ -1,5 +1,12 @@
 # @party-stack/ontology-devtools
 
+## 0.8.3
+
+### Patch Changes
+
+- Updated dependencies [22939ac]
+    - @party-stack/ontology@0.23.3
+
 ## 0.8.2
 
 ### Patch Changes
