@@ -1,8 +1,8 @@
 import { bulkLoadOntologyEntities } from "@osdk/client.unstable";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
+import { ontologyMetadataContext } from "../utils/ontologyMetadataContext.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
 
-const ONTOLOGY_METADATA_API_PATH = "/ontology-metadata/api";
 const OMS_BULK_LOAD_LIMIT = 100;
 
 type BulkLoadResponse = Awaited<ReturnType<typeof bulkLoadOntologyEntities>>;
@@ -36,12 +36,7 @@ export async function loadActionTypeOmsMetadata(
     actionTypeRids: string[]
 ): Promise<Map<string, ActionTypeOmsMetadata>> {
     const actionTypes = new Map<string, ActionTypeLoadResponse>();
-    const context = {
-        baseUrl: new URL(client.baseUrl).origin,
-        servicePath: ONTOLOGY_METADATA_API_PATH,
-        tokenProvider: client.tokenProvider,
-        fetchFn: client.fetch,
-    };
+    const context = ontologyMetadataContext(client);
 
     for await (const [rid, result] of AsyncIterable.fromBatches(
         actionTypeRids,
