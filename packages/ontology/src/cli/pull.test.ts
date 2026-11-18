@@ -44,6 +44,19 @@ describe("native metadata CLI", () => {
         expect(await readFile(path, "utf8")).toContain("export default");
         expect(closed).toHaveBeenCalledOnce();
     });
+    it("imports the ontology builders from @party-stack/ontology, which consumers depend on", async () => {
+        const path = await destination();
+        await writePulledOntology(
+            configuration(() => {}),
+            path,
+            {
+                runtime: Runtimes.layer(MemoryRuntime.layer),
+            }
+        );
+        const output = await readFile(path, "utf8");
+        expect(output).toContain('import { defineOntology, o } from "@party-stack/ontology";');
+        expect(output).not.toContain("@party-stack/ontology-spec");
+    });
     it("closes backend acquisition when a transform fails", async () => {
         const path = await destination(),
             closed = vi.fn();

@@ -6,6 +6,7 @@ import { makeGenerateCommand } from "@party-stack/ontology-spec/generate";
 import { Console, Effect } from "effect";
 import { CliError, Command } from "effect/cli";
 import {
+    ONTOLOGY_IMPORT_PATH,
     ONTOLOGY_PULL_CONFIG_PATH,
     ONTOLOGY_IR_PATH,
     discoverOntologyPullConfigPath,
@@ -25,7 +26,7 @@ const pull = Command.make("pull", {}, () =>
             const config = await loadOntologyPullConfig(configPath);
             const { nodeRuntime } = await import("@party-stack/node-runtime");
             const path = resolve(process.cwd(), ONTOLOGY_IR_PATH);
-            await writePulledOntology(config, path, { runtime: nodeRuntime() });
+            await writePulledOntology(config, path, { runtime: nodeRuntime() }, ONTOLOGY_IMPORT_PATH);
             return path;
         },
         catch: (cause) => new CliError.UserError({ cause }),
