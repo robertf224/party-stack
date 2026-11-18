@@ -12,6 +12,8 @@ const { loadEnvConfig } = nextEnv;
 
 export const ONTOLOGY_PULL_CONFIG_PATH = "src/ontology/config.ts";
 export const ONTOLOGY_IR_PATH = "src/ontology/ontology.ts";
+/** Consumers depend on `@party-stack/ontology`, which re-exports `defineOntology` and `o` from the spec package. */
+export const ONTOLOGY_IMPORT_PATH = "@party-stack/ontology";
 
 type ConfigModule = Record<string, unknown> & { default?: unknown };
 
@@ -54,7 +56,7 @@ export async function writePulledOntology(
     config: OntologyPullConfig,
     outPath: string,
     context: OntologyPullContext,
-    ontologyImportPath = "@party-stack/ontology-spec"
+    ontologyImportPath = ONTOLOGY_IMPORT_PATH
 ): Promise<void> {
     const ontology = await Effect.runPromise(
         Effect.scoped(
