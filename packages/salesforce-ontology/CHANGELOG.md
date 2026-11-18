@@ -1,5 +1,12 @@
 # @party-stack/salesforce-ontology
 
+## 0.6.3
+
+### Patch Changes
+
+- Updated dependencies [22939ac]
+    - @party-stack/ontology@0.23.3
+
 ## 0.6.2
 
 ### Patch Changes

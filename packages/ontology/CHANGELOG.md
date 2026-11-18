@@ -1,5 +1,11 @@
 # @party-stack/ontology
 
+## 0.23.3
+
+### Patch Changes
+
+- 22939ac: `ontology pull` now writes `import { defineOntology, o } from "@party-stack/ontology"` into `src/ontology/ontology.ts` instead of importing from `@party-stack/ontology-spec`. Packages that depend only on `@party-stack/ontology` could not resolve the old import, so the pulled ontology silently typed as `any`. `writePulledOntology` now defaults its import path to `@party-stack/ontology` as well.
+
 ## 0.23.2
 
 ### Patch Changes
