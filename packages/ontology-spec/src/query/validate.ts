@@ -144,15 +144,24 @@ export function analyzeQueryDocument(
         switch (e.kind) {
             case "literal": {
                 const value = e.value.value;
+                // Dates and timestamps are Temporal values in memory; JSON carries them as tagged literals.
+                const temporal =
+                    typeof value === "object" && value !== null
+                        ? (Reflect.get(value, Symbol.toStringTag) as unknown)
+                        : undefined;
                 return typeof value === "boolean"
                     ? boolean
                     : typeof value === "number"
                       ? o.double({})
                       : typeof value === "string"
                         ? o.string({})
-                        : Array.isArray(value)
-                          ? o.list({ elementType: unknown })
-                          : unknown;
+                        : temporal === "Temporal.Instant"
+                          ? o.timestamp({})
+                          : temporal === "Temporal.PlainDate"
+                            ? o.date({})
+                            : Array.isArray(value)
+                              ? o.list({ elementType: unknown })
+                              : unknown;
             }
             case "inputReference": {
                 const type = inputs.get(e.value.name);

@@ -1,7 +1,7 @@
 import { Temporal } from "temporal-polyfill";
 import { describe, expect, it } from "vitest";
 import { o } from "../ir/generated/builders.js";
-import { decode, encode } from "./index.js";
+import { decode, decodeUnknown, encode, encodeUnknown } from "./index.js";
 import type { OntologyIR } from "../ir/generated/types.js";
 
 it("round-trips Temporal inside portable Results/unions and forwards only encrypted handles", () => {
@@ -256,5 +256,84 @@ describe("ontology JSON codec", () => {
                 value: null,
             })
         ).toBeUndefined();
+    });
+});
+
+describe("unknown values", () => {
+    const roundTrip = (value: unknown) => decodeUnknown(JSON.parse(JSON.stringify(encodeUnknown(value))));
+
+    it("keeps JSON-native values, strings included, as they are", () => {
+        const value = {
+            name: "2026-01-01",
+            n: 1.5,
+            ok: true,
+            none: null,
+            list: [1, "a", { nested: [false] }],
+        };
+        expect(encodeUnknown(value)).toEqual(value);
+        expect(roundTrip(value)).toEqual(value);
+    });
+
+    it("writes dates and timestamps with their type so they come back as Temporal values", () => {
+        const instant = Temporal.Instant.from("2026-01-01T12:30:00Z");
+        const date = Temporal.PlainDate.from("2026-01-01");
+        expect(encodeUnknown({ at: instant, on: [date] })).toEqual({
+            at: { $type: "timestamp", value: "2026-01-01T12:30:00Z" },
+            on: [{ $type: "date", value: "2026-01-01" }],
+        });
+        const back = roundTrip({ at: instant, on: [date] }) as {
+            at: Temporal.Instant;
+            on: [Temporal.PlainDate];
+        };
+        expect(back.at).toBeInstanceOf(Temporal.Instant);
+        expect(back.at.equals(instant)).toBe(true);
+        expect(back.on[0]).toBeInstanceOf(Temporal.PlainDate);
+        expect(back.on[0].equals(date)).toBe(true);
+    });
+
+    it("reads any scalar written with its type, though only dates and timestamps are written that way", () => {
+        expect(decodeUnknown({ $type: "string", value: "x" })).toBe("x");
+        expect(decodeUnknown({ $type: "integer", value: 5 })).toBe(5);
+        expect(decodeUnknown({ $type: "double", value: 1.5 })).toBe(1.5);
+        expect(decodeUnknown({ $type: "boolean", value: false })).toBe(false);
+        expect(() => decodeUnknown({ $type: "integer", value: "5" })).toThrow();
+        expect(() => decodeUnknown({ $type: "list", value: [] })).toThrow();
+    });
+
+    it("reserves $type", () => {
+        expect(() => encodeUnknown({ $type: "mine", other: 1 })).toThrow(/reserved/);
+        expect(() => encodeUnknown([{ nested: { $type: "x" } }])).toThrow(/reserved/);
+    });
+
+    it("reads JSON written before $type as itself", () => {
+        const old = {
+            where: { kind: "gt", value: { right: { kind: "literal", value: { value: "2026-01-01" } } } },
+        };
+        expect(decodeUnknown(old)).toEqual(old);
+    });
+
+    it("round-trips unknown positions through the typed codec", () => {
+        const withUnknown: OntologyIR = {
+            ...ir,
+            types: [
+                ...ir.types,
+                {
+                    name: "Bag",
+                    type: o.struct({
+                        fields: [{ name: "anything", displayName: "Anything", type: o.unknown({}) }],
+                    }),
+                },
+            ],
+        };
+        const target = { kind: "type", name: "Bag" } as const;
+        const at = Temporal.Instant.from("2026-01-01T00:00:00Z");
+        const json = JSON.parse(
+            JSON.stringify(encode({ ir: withUnknown, target, value: { anything: { at } } }))
+        );
+        expect(json).toEqual({ anything: { at: { $type: "timestamp", value: "2026-01-01T00:00:00Z" } } });
+        const back = decode({ ir: withUnknown, target, value: json }) as {
+            anything: { at: Temporal.Instant };
+        };
+        expect(back.anything.at.equals(at)).toBe(true);
     });
 });
