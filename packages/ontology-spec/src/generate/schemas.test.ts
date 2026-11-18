@@ -246,6 +246,47 @@ describe("Effect schema generation", () => {
         );
     }, 30000);
 
+    it("enforces list sizes and treats empty required list parameters as missing", async () => {
+        const tags = (size?: { min?: number; max?: number }) =>
+            o.list({ elementType: o.string({}), ...(size && { size }) });
+        const ir: OntologyIR = {
+            ...empty,
+            types: [{ name: "Pair", type: tags({ min: 2, max: 2 }) }],
+            actionTypes: [
+                {
+                    name: "tag",
+                    displayName: "Tag",
+                    logic: [],
+                    parameters: [
+                        field("bounded", tags({ min: 1, max: 3 })),
+                        field("unconstrained", tags()),
+                        field("optional", o.optional({ type: tags({ max: 1 }) })),
+                    ],
+                },
+            ],
+        };
+        const generated = await checkGenerated(
+            ir,
+            `
+            import assert from "node:assert/strict";
+            import { Schema } from "effect";
+            import * as s from "./effect.js";
+            const fails = (schema: Schema.Codec<any, any>, value: unknown, message: string) =>
+                assert.throws(() => Schema.decodeUnknownSync(schema)(value), (error: unknown) => String(error).includes(message));
+            assert.deepEqual(Schema.decodeUnknownSync(s.PairSchema)(["a", "b"]), ["a", "b"]);
+            fails(s.PairSchema, ["a"], "Enter exactly 2 items.");
+            const base = { bounded: ["a"], unconstrained: ["a"] };
+            assert.deepEqual(Schema.decodeUnknownSync(s.TagParametersSchema)(base), base);
+            fails(s.TagParametersSchema, { ...base, bounded: ["a", "b", "c", "d"] }, "Enter between 1 and 3 items.");
+            fails(s.TagParametersSchema, { ...base, bounded: [] }, "A value is required.");
+            fails(s.TagParametersSchema, { ...base, unconstrained: [] }, "A value is required.");
+            assert.deepEqual(Schema.decodeUnknownSync(s.TagParametersSchema)({ ...base, optional: [] }), { ...base, optional: [] });
+            fails(s.TagParametersSchema, { ...base, optional: ["a", "b"] }, "Enter at most 1 item.");
+        `
+        );
+        expect(generated).toContain("isListSize({ min: 1, max: 3 }, { required: true })");
+    }, 30000);
+
     it("handles the complete self-describing ontology and its mutually recursive types", async () => {
         const schemaPath = fileURLToPath(new URL("../../lib/ir/schema.js", import.meta.url));
         await checkGenerated(

@@ -270,11 +270,13 @@ function convertActionParameterType(
                     kind: "list",
                     value: { elementType: doubleType() },
                 };
-            case "array":
+            case "array": {
+                const size = convertActionParameterArraySize(validation);
                 return {
                     kind: "list",
-                    value: { elementType: convertActionParameterType(type.subType) },
+                    value: { elementType: convertActionParameterType(type.subType), ...(size && { size }) },
                 };
+            }
             case "struct":
                 return {
                     kind: "struct",
@@ -304,6 +306,19 @@ function convertActionParameterType(
     })();
 
     return maybeOptional(baseType, required);
+}
+
+/** Foundry's public `arraySize` bounds are inclusive item counts. */
+function convertActionParameterArraySize(
+    validation?: ActionParameterValidation
+): { min?: number; max?: number } | undefined {
+    const arraySize = validation?.defaultValidation.arraySize;
+    const bound = (value: number | undefined) =>
+        value !== undefined && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+    const min = bound(arraySize?.gte);
+    const max = bound(arraySize?.lte);
+    if (min === undefined && max === undefined) return undefined;
+    return { ...(min !== undefined && { min }), ...(max !== undefined && { max }) };
 }
 
 function convertActionParameterStringConstraint(

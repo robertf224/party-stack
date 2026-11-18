@@ -263,6 +263,41 @@ describe("convertFoundryMetaActionType parameter validation", () => {
         });
     });
 
+    it("converts public arraySize validation to inclusive list size bounds", () => {
+        const list = (required: boolean, arraySize?: { gte?: number; lte?: number }): ActionParameterV2 => ({
+            displayName: "Tags",
+            dataType: { type: "array", subType: { type: "string" } },
+            required,
+            typeClasses: [],
+            ...(arraySize && { validation: { defaultValidation: { arraySize } } }),
+        });
+        const result = convertFoundryMetaActionType(
+            actionType({
+                bounded: list(true, { gte: 1, lte: 3 }),
+                atLeast: list(false, { gte: 2 }),
+                atMost: list(true, { lte: 5 }),
+                unconstrained: list(true),
+                empty: list(true, {}),
+            })
+        );
+        const types = Object.fromEntries(
+            result.parameters.map((parameter) => [parameter.name, parameter.type])
+        );
+        const elementType = { kind: "string", value: {} };
+
+        expect(types).toEqual({
+            bounded: { kind: "list", value: { elementType, size: { min: 1, max: 3 } } },
+            atLeast: {
+                kind: "optional",
+                value: { type: { kind: "list", value: { elementType, size: { min: 2 } } } },
+            },
+            atMost: { kind: "list", value: { elementType, size: { max: 5 } } },
+            unconstrained: { kind: "list", value: { elementType } },
+            empty: { kind: "list", value: { elementType } },
+        });
+        expect(types.unconstrained?.kind === "list" && "size" in types.unconstrained.value).toBe(false);
+    });
+
     it("converts closed one-of string validation to an enum constraint", () => {
         const result = convertFoundryMetaActionType(
             actionType({

@@ -1,12 +1,15 @@
+import { o } from "@party-stack/ontology-spec";
+import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { OntologyStorageError } from "@party-stack/ontology-storage";
 import { BlobStorageError } from "@party-stack/ontology-storage/blobs";
-import { Schema } from "effect";
+import { Result, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import {
     BackendError,
     classifyBackendFailure,
     isUnknownActionOutcome,
     projectBackendError,
+    schemaValidationIssues,
 } from "./errors.js";
 
 describe("normalized failures", () => {
@@ -250,4 +253,46 @@ it("forwarding preserves the original typed error and its cause", () => {
         retryable: true,
     });
     expect(projectBackendError(error, "forward")).toBe(error);
+});
+
+describe("action parameter validation issues", () => {
+    const tags = (size?: { min?: number; max?: number }) =>
+        o.list({ elementType: o.string({}), ...(size && { size }) });
+    const parameters = compileEffectSchemas({
+        types: [],
+        objectTypes: [],
+        linkTypes: [],
+        queryFunctionTypes: [],
+        actionTypes: [
+            {
+                name: "tag",
+                displayName: "Tag",
+                logic: [],
+                parameters: [
+                    { name: "tags", displayName: "Tags", type: tags({ min: 1, max: 2 }) },
+                    { name: "count", displayName: "Count", type: o.integer({}) },
+                ],
+            },
+        ],
+    }).actionParameterSchemas.tag!;
+    const issues = (value: unknown) => {
+        const result = Schema.decodeUnknownResult(parameters)(value);
+        return Result.isFailure(result) ? schemaValidationIssues(result.failure) : [];
+    };
+
+    it("reports list size violations and empty required lists clearly", () => {
+        expect(issues({ tags: ["a", "b", "c"], count: 1 })).toEqual([
+            expect.objectContaining({
+                message: "Enter between 1 and 2 items.",
+                path: ["tags"],
+                code: "type",
+            }),
+        ]);
+        expect(issues({ tags: [], count: 1 })).toEqual([
+            expect.objectContaining({ message: "A value is required.", path: ["tags"], code: "required" }),
+        ]);
+        expect(issues({ tags: ["a"], count: 1.5 })).toEqual([
+            expect.objectContaining({ message: "Enter a valid value.", path: ["count"], code: "type" }),
+        ]);
+    });
 });

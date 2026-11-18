@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { nestedEncryptedIssues } from "../ir/encrypted.js";
 import { ImageMediaTypeOptions } from "../ir/generated/constants.js";
-import { Encrypted, Result, TemporalDate, TemporalTimestamp } from "./codecs.js";
+import { Encrypted, isListSize, Result, TemporalDate, TemporalTimestamp } from "./codecs.js";
 import type { FieldDef, OntologyIR, TypeDef } from "../ir/generated/types.js";
 
 type ValueCodec = Schema.Codec<unknown, unknown>;
@@ -97,6 +97,10 @@ function compile(source: OntologyIR): CompiledEffectSchemas {
         }
         return render(type);
     };
+    const list = (type: Extract<TypeDef, { kind: "list" }>, required = false): ValueCodec => {
+        const schema = Schema.mutable(Schema.Array(render(type.value.elementType)));
+        return type.value.size || required ? schema.check(isListSize(type.value.size, { required })) : schema;
+    };
     const render = (type: TypeDef): ValueCodec => {
         switch (type.kind) {
             case "string":
@@ -117,7 +121,7 @@ function compile(source: OntologyIR): CompiledEffectSchemas {
             case "unknown":
                 return Schema.Unknown;
             case "list":
-                return Schema.mutable(Schema.Array(render(type.value.elementType)));
+                return list(type);
             case "map": {
                 if (type.value.keyType.kind !== "string")
                     throw new TypeError("Effect schema compilation currently requires string map keys.");
@@ -191,11 +195,13 @@ function compile(source: OntologyIR): CompiledEffectSchemas {
                             Object.fromEntries(
                                 action.parameters.map((parameter) => {
                                     const optional = parameter.type.kind === "optional";
-                                    const base = render(
+                                    // An empty list for a required parameter counts as missing.
+                                    const base =
                                         parameter.type.kind === "optional"
-                                            ? parameter.type.value.type
-                                            : parameter.type
-                                    );
+                                            ? render(parameter.type.value.type)
+                                            : parameter.type.kind === "list"
+                                              ? list(parameter.type, true)
+                                              : render(parameter.type);
                                     return [
                                         parameter.name,
                                         optional
