@@ -1,5 +1,13 @@
 # @party-stack/web-runtime
 
+## 0.5.4
+
+### Patch Changes
+
+- @party-stack/ontology-storage@0.3.1
+- @party-stack/indexeddb-ontology-storage@0.2.4
+- @party-stack/runtime@0.6.2
+
 ## 0.5.3
 
 ### Patch Changes

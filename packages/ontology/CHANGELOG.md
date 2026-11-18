@@ -1,5 +1,20 @@
 # @party-stack/ontology
 
+## 0.23.4
+
+### Patch Changes
+
+- Updated dependencies [d83db65]
+    - @party-stack/ontology-spec@0.4.0
+    - @party-stack/connect@0.3.3
+    - @party-stack/ontology-backend@0.3.2
+    - @party-stack/ontology-replica@0.3.3
+    - @party-stack/ontology-server@0.11.7
+    - @party-stack/ontology-storage@0.3.1
+    - @party-stack/sql-ontology-storage@0.3.1
+    - @party-stack/node-runtime@0.4.4
+    - @party-stack/runtime@0.6.2
+
 ## 0.23.3
 
 ### Patch Changes
