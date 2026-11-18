@@ -7,6 +7,13 @@ export interface DemandRefreshPolicy {
     readonly pollIntervalMs?: number | false;
     /** Maximum reuse age without a healthy live feed. Default 60 seconds; Infinity permits a quiet cache. */
     readonly maxCoverageAgeMs?: number;
+    /** Stale-while-revalidate bound for sources without a change journal. A complete
+     * confirmation younger than this is served immediately once it is no longer fresh
+     * (past `maxCoverageAgeMs`, or due after a poll tick or `revalidate()`), and its
+     * proof reports `stale: true` while a background refresh replaces it. Older or
+     * invalidated coverage is never served. Default 0 disables stale serving;
+     * Infinity serves any retained confirmation while revalidating. */
+    readonly maxStaleAgeMs?: number;
 }
 
 export interface DemandPolicy {

@@ -166,6 +166,9 @@ interface Coverage {
     rowKeys?: readonly Key[];
     updatedAt: number;
     invalidated?: boolean;
+    /** Due for revalidation, but not known to have changed. Still servable within
+     * the stale-while-revalidate bound; `invalidated` always takes precedence. */
+    revalidate?: boolean;
 }
 interface Retention {
     objectType: string;
@@ -359,8 +362,9 @@ export interface ReplicaService extends OwnedReadTransaction {
     ) => Effect.Effect<void, BackendError>;
     readonly invalidate: (objectTypes?: readonly string[]) => Effect.Effect<void, BackendError>;
     /** Mark demanded coverage stale, including coverage a healthy watch maintains, so the
-     * next sync reloads it. Rows stay visible meanwhile. A change-feed backend or a
-     * protocol source is already exact after a sync, so this does nothing for them. */
+     * next sync reloads it. Rows stay visible meanwhile. Under `maxStaleAgeMs` the coverage
+     * stays servable within that bound until the reload replaces it. A change-feed backend
+     * or a protocol source is already exact after a sync, so this does nothing for them. */
     readonly markDemandedStale: Effect.Effect<void, BackendError>;
     readonly ensureIndex: (objectType: string, index: Index) => Effect.Effect<void, BackendError>;
     readonly collectGarbage: (options?: ObjectCacheSweepOptions) => Effect.Effect<number, BackendError>;
@@ -473,6 +477,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const maxCoverageAge = options.demand?.refresh?.maxCoverageAgeMs ?? 60_000;
     if (Number.isNaN(maxCoverageAge) || maxCoverageAge < 0)
         return yield* fault("InvalidConfiguration", "Coverage age must be nonnegative or Infinity.");
+    const maxStaleAge = options.demand?.refresh?.maxStaleAgeMs ?? 0;
+    if (Number.isNaN(maxStaleAge) || maxStaleAge < 0)
+        return yield* fault("InvalidConfiguration", "Stale coverage age must be nonnegative or Infinity.");
+    // Age-based revalidation only. A change journal keeps coverage exact instead.
+    const serveStale = maxStaleAge > 0 && !options.source && !options.backend?.changes;
     const maxRetries = options.outbox?.maxRetries ?? 3;
     const retryDelayMs = options.outbox?.retryDelayMs ?? 1_000;
     if (
@@ -763,6 +772,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const events = yield* PubSub.sliding<void>(1);
     const queue = yield* Queue.sliding<void>(1);
     const outboxWake = yield* Queue.sliding<void>(1);
+    const staleWake = yield* Queue.sliding<void>(1);
+    yield* Effect.addFinalizer(() => Queue.shutdown(staleWake).pipe(Effect.asVoid));
     yield* Effect.addFinalizer(() => PubSub.shutdown(events));
     yield* Effect.addFinalizer(() => Queue.shutdown(queue).pipe(Effect.asVoid));
     yield* Effect.addFinalizer(() => Queue.shutdown(outboxWake).pipe(Effect.asVoid));
@@ -791,6 +802,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     // Transient IO fences, bounded by the definition's object types. Durable
     // completeness lives in coverage; these only identify overlapping fetches.
     const coverageGenerations = new Map(options.ir.objectTypes.map((type) => [type.name, Symbol()]));
+    // Explicit revalidation fences in-flight loads without invalidating: a snapshot
+    // fetched before the request installs as due, servable under `maxStaleAgeMs`.
+    const revalidateGenerations = new Map(options.ir.objectTypes.map((type) => [type.name, Symbol()]));
+    const wakeStale = Effect.suspend(() =>
+        closed ? Effect.void : Queue.offer(staleWake, undefined).pipe(Effect.asVoid)
+    );
     const coverageFor = Effect.fnUntraced(function* (tx: ReadTransaction, subset: CompiledSubset) {
         const key = subsetKey(subset);
         const exact = yield* tx.get(coverage, key);
@@ -1403,6 +1420,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         const backend = yield* backendEffect;
         yield* Effect.annotateCurrentSpan("objectType", subset.objectType);
         const generation = coverageGenerations.get(subset.objectType);
+        const revalidation = revalidateGenerations.get(subset.objectType);
         const demandKey = subsetKey(subset);
         const capturedDemand = demands.get(demandKey);
         const demandRevision = capturedDemand?.revision;
@@ -1476,6 +1494,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         const now = yield* Clock.currentTimeMillis;
         return (tx: Transaction) =>
             Effect.gen(function* () {
+                const due = revalidateGenerations.get(subset.objectType) !== revalidation;
+                if (due) yield* wakeStale;
                 let inserted = 0;
                 let updated = 0;
                 let unchanged = 0;
@@ -1583,6 +1603,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                             snapshot.cursor !== (yield* position(tx)).cursor ? snapshot.cursor : undefined,
                         rowKeys: storedRows.map((row) => row.key),
                         updatedAt: now,
+                        ...(due ? { revalidate: true } : {}),
                     });
                 yield* tx.put(coverage, subsetKey(subset), {
                     subset,
@@ -1593,6 +1614,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         snapshot.cursor !== (yield* position(tx)).cursor ? snapshot.cursor : undefined,
                     rowKeys: snapshot.rows.map((row) => row.key),
                     updatedAt: now,
+                    ...(due ? { revalidate: true } : {}),
                 });
                 yield* Effect.annotateCurrentSpan({
                     rows: incoming.length,
@@ -2265,6 +2287,119 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             }
         }
     });
+    type CoverageProof = NonNullable<ReplicaStatus["demands"][number]["coverageProof"]>;
+    // Under `maxStaleAgeMs`, a poll tick or explicit revalidation marks coverage
+    // due without invalidating it or fencing in-flight loads: the rows are not known
+    // to have changed, so they stay servable within the bound while the next pass
+    // reloads them. A refresh that outlasts the poll interval can still install.
+    const markRevalidate = (objectTypes: ReadonlySet<string>, fence = false) =>
+        Effect.sync(() => {
+            if (fence) for (const objectType of objectTypes) revalidateGenerations.set(objectType, Symbol());
+        }).pipe(
+            Effect.andThen(
+                boundary(
+                    tables.transaction((tx) =>
+                        Effect.gen(function* () {
+                            for (const objectType of objectTypes)
+                                for (const cached of yield* tx.query(coverage, {
+                                    where: eq(field("subset", "objectType"), objectType),
+                                }))
+                                    if (!cached.value.invalidated && !cached.value.revalidate)
+                                        yield* tx.put(coverage, cached.key, {
+                                            ...cached.value,
+                                            revalidate: true,
+                                        });
+                        })
+                    )
+                )
+            ),
+            Effect.andThen(wakeStale),
+            Effect.andThen(wakeState),
+            Effect.withSpan("Replica.markRevalidate", { attributes: { objectTypes: [...objectTypes] } })
+        );
+    // One coverage rule for sync passes and gate-free admission. A fresh proof
+    // wins over a stale one; stale proofs exist only under `maxStaleAgeMs`.
+    const coverageProofIn = Effect.fnUntraced(function* (
+        tx: ReadTransaction,
+        backend: OntologyBackendService,
+        now: number,
+        subset: CompiledSubset,
+        records: readonly Row<Coverage>[],
+        cursor?: string
+    ) {
+        const requestedKey = subsetKey(subset);
+        const key = primaryKeyLookup(subset.query, definitions.get(subset.objectType)!.primaryKey);
+        let present: boolean | undefined;
+        let stale: { subset: CompiledSubset; proof: CoverageProof; stale: boolean } | undefined;
+        for (const { key: recordKey, value: record } of records) {
+            if (record.invalidated) continue;
+            const live = demands.get(String(recordKey));
+            const maxAge =
+                options.demand?.refresh?.maxCoverageAgeMs ??
+                backend.refresh?.(objectSubset(record.subset.objectType, record.subset.query))
+                    ?.maxCoverageAgeMs ??
+                60_000;
+            const liveWatch =
+                live &&
+                live.watchers > 0 &&
+                live.pollIntervalMs === undefined &&
+                !live.watchFailure &&
+                live.installed === live.revision;
+            const fresh = backend.changes
+                ? record.snapshotCursor !== undefined && record.barrierCursor === undefined
+                : !record.revalidate && (liveWatch || now - record.updatedAt < maxAge);
+            // Journal coverage is exact or absent; only age-based coverage can be stale.
+            const servable = fresh || (serveStale && now - record.updatedAt < maxStaleAge);
+            if (!servable || (!fresh && stale)) continue;
+            const proof = (reason: CoverageProof["reason"]) => {
+                const maintained: CoverageProof = {
+                    reason,
+                    maintainedBy: backend.changes
+                        ? "journal"
+                        : live?.pollIntervalMs !== undefined
+                          ? "poll"
+                          : liveWatch
+                            ? "watch"
+                            : "snapshot",
+                    pollIntervalMs: backend.changes ? undefined : live?.pollIntervalMs,
+                };
+                return {
+                    subset: record.subset,
+                    stale: !fresh,
+                    proof: fresh ? maintained : { ...maintained, stale: true, confirmedAt: record.updatedAt },
+                };
+            };
+            let found: ReturnType<typeof proof> | undefined;
+            if (record.complete && isWholeCollection(record.subset.query)) found = proof("collection");
+            else if (
+                record.complete &&
+                recordKey === requestedKey &&
+                (!backend.changes || !hasWindow(subset.query) || record.snapshotCursor === cursor)
+            )
+                found = proof("query");
+            else if (
+                record.complete &&
+                coversSubset(subset, record.subset) &&
+                (!hasWindow(record.subset.query) || !backend.changes || record.snapshotCursor === cursor)
+            )
+                found = proof("query");
+            else if (
+                record.complete &&
+                key !== undefined &&
+                primaryKeyLookup(record.subset.query, definitions.get(subset.objectType)!.primaryKey) === key
+            )
+                found = proof("query");
+            else if (key !== undefined && record.rowKeys?.includes(key)) {
+                present ??=
+                    (yield* boundary(tx.get((yield* view(subset.objectType)).base, key))) !== undefined;
+                if (present) found = proof("primary-key");
+            }
+            if (!found) continue;
+            if (fresh) return found;
+            stale = found;
+        }
+        return stale;
+    });
     const sync = Effect.fn("Replica.sync", { root: true })(function* (requested?: ReadonlySet<string>) {
         yield* open;
         if (replicationError?.recovery === "stop")
@@ -2285,75 +2420,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         yield* Effect.annotateCurrentSpan("stage", "reading-position");
         const now = yield* Clock.currentTimeMillis;
 
-        const covered = Effect.fnUntraced(function* (
+        const covered = (
             tx: ReadTransaction,
             subset: CompiledSubset,
             records: readonly Row<Coverage>[],
             cursor?: string
-        ) {
-            const requestedKey = subsetKey(subset);
-            const key = primaryKeyLookup(subset.query, definitions.get(subset.objectType)!.primaryKey);
-            let present: boolean | undefined;
-            for (const { key: recordKey, value: record } of records) {
-                if (record.invalidated) continue;
-                const live = demands.get(String(recordKey));
-                const maxAge =
-                    options.demand?.refresh?.maxCoverageAgeMs ??
-                    backend.refresh?.(objectSubset(record.subset.objectType, record.subset.query))
-                        ?.maxCoverageAgeMs ??
-                    60_000;
-                const liveWatch =
-                    live &&
-                    live.watchers > 0 &&
-                    live.pollIntervalMs === undefined &&
-                    !live.watchFailure &&
-                    live.installed === live.revision;
-                const maintained = backend.changes
-                    ? record.snapshotCursor !== undefined && record.barrierCursor === undefined
-                    : liveWatch || now - record.updatedAt < maxAge;
-                if (!maintained) continue;
-                const proof = (reason: "collection" | "query" | "primary-key") => ({
-                    subset: record.subset,
-                    proof: {
-                        reason,
-                        maintainedBy: backend.changes
-                            ? ("journal" as const)
-                            : live?.pollIntervalMs !== undefined
-                              ? ("poll" as const)
-                              : liveWatch
-                                ? ("watch" as const)
-                                : ("snapshot" as const),
-                        pollIntervalMs: backend.changes ? undefined : live?.pollIntervalMs,
-                    },
-                });
-                if (record.complete && isWholeCollection(record.subset.query)) return proof("collection");
-                if (
-                    record.complete &&
-                    recordKey === requestedKey &&
-                    (!backend.changes || !hasWindow(subset.query) || record.snapshotCursor === cursor)
-                )
-                    return proof("query");
-                if (
-                    record.complete &&
-                    coversSubset(subset, record.subset) &&
-                    (!hasWindow(record.subset.query) || !backend.changes || record.snapshotCursor === cursor)
-                )
-                    return proof("query");
-                if (
-                    record.complete &&
-                    key !== undefined &&
-                    primaryKeyLookup(record.subset.query, definitions.get(subset.objectType)!.primaryKey) ===
-                        key
-                )
-                    return proof("query");
-                if (key !== undefined && record.rowKeys?.includes(key)) {
-                    present ??=
-                        (yield* boundary(tx.get((yield* view(subset.objectType)).base, key))) !== undefined;
-                    if (present) return proof("primary-key");
-                }
-            }
-            return undefined;
-        });
+        ) => coverageProofIn(tx, backend, now, subset, records, cursor);
         type CoverageCheck = {
             demand: NonNullable<ReturnType<typeof demands.get>>;
             generation: symbol | undefined;
@@ -2433,9 +2505,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             coverageChanged ||=
                 demand.installed !== demand.revision ||
                 !demand.coveredBy ||
-                subsetKey(demand.coveredBy) !== subsetKey(covering.subset);
+                subsetKey(demand.coveredBy) !== subsetKey(covering.subset) ||
+                demand.coverageProof?.stale !== covering.proof.stale;
             demand.installed = demand.revision;
-            demand.loadFailure = undefined;
+            // A stale proof keeps a failed revalidation visible in status.
+            if (!covering.stale) demand.loadFailure = undefined;
             demand.coveredBy = covering.subset;
             demand.coverageProof = covering.proof;
         };
@@ -2444,7 +2518,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         // satisfy the next demand of that type without another fetch.
         const pendingLoads = new Map<
             string,
-            Array<{ readonly demand: Demand; readonly relevant: boolean }>
+            Array<{ readonly demand: Demand; readonly relevant: boolean; readonly stale: boolean }>
         >();
         for (const demand of demands.values()) {
             if (deliveryActive) continue;
@@ -2474,30 +2548,36 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             }
             if (!check) continue; // A concurrently acquired demand has its own queued check.
             const cached = check.cached;
+            const stale = check.covering?.stale === true;
             if (check.covering) {
                 applyCoverage(demand, check.covering);
-                continue;
+                if (!stale) continue;
+                // Serve stale coverage now. Its owner revalidates it: the demand that
+                // requested the covering record, or this demand when that lease is gone.
+                const owner = subsetKey(check.covering.subset);
+                if (owner !== key && demands.has(owner)) continue;
+            } else {
+                demand.coveredBy = undefined;
+                demand.coverageProof = undefined;
+                if (
+                    demand.watchers > 0 &&
+                    demand.pollIntervalMs === undefined &&
+                    !demand.watchFailure &&
+                    cached?.complete &&
+                    !cached.invalidated &&
+                    demand.installed === demand.revision
+                )
+                    continue;
             }
-            demand.coveredBy = undefined;
-            demand.coverageProof = undefined;
-            if (
-                demand.watchers > 0 &&
-                demand.pollIntervalMs === undefined &&
-                !demand.watchFailure &&
-                cached?.complete &&
-                !cached.invalidated &&
-                demand.installed === demand.revision
-            )
-                continue;
             // A watch must be registered before a new snapshot starts. The
             // background pass skips opening watches rather than holding the
             // publication gate across network acquisition.
             if (demand.watchReady && !(yield* Deferred.isDone(demand.watchReady))) continue;
             const group = pendingLoads.get(demand.subset.objectType);
-            if (group) group.push({ demand, relevant });
-            else pendingLoads.set(demand.subset.objectType, [{ demand, relevant }]);
+            if (group) group.push({ demand, relevant, stale });
+            else pendingLoads.set(demand.subset.objectType, [{ demand, relevant, stale }]);
         }
-        const loadDemand = Effect.fnUntraced(function* (demand: Demand, relevant: boolean) {
+        const loadDemand = Effect.fnUntraced(function* (demand: Demand, relevant: boolean, stale: boolean) {
             const revision = demand.revision;
             const authenticationAtLoad = authenticationGeneration;
             // Demand refresh belongs to the aggregate lease, not its first UI caller.
@@ -2520,7 +2600,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     if (demand.revision === revision) demand.revision++;
                     yield* wakeState;
                 } else demand.loadFailure = { revision, error: installed.failure };
-                if (relevant) demandFailure ??= installed.failure;
+                // A reader served stale coverage is not failed by a retryable background
+                // revalidation; an explicit full checkpoint still reports it.
+                if (relevant && !(stale && installed.failure.retryable && requested !== undefined))
+                    demandFailure ??= installed.failure;
                 return false;
             }
             if (!installed.success) return false;
@@ -2536,7 +2619,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             pendingLoads.values(),
             Effect.fnUntraced(function* (group) {
                 let loaded = false;
-                for (const { demand, relevant } of group) {
+                for (const { demand, relevant, stale } of group) {
                     const key = subsetKey(demand.subset);
                     if (demands.get(key) !== demand) continue;
                     if (loaded) {
@@ -2544,17 +2627,32 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         if (
                             check?.demand === demand &&
                             check.revision === demand.revision &&
-                            check.covering
+                            check.covering &&
+                            !check.covering.stale
                         ) {
                             applyCoverage(demand, check.covering);
                             continue;
                         }
                     }
-                    loaded = (yield* loadDemand(demand, relevant)) || loaded;
+                    loaded = (yield* loadDemand(demand, relevant, stale)) || loaded;
                 }
             }),
             { concurrency: "unbounded", discard: true }
         );
+        // A revalidation load refreshed its type's checks. Replace stale proofs it
+        // renewed, including demands served through another demand's coverage.
+        for (const [key, demand] of demands) {
+            if (!demand.coverageProof?.stale) continue;
+            const check = checks.get(key);
+            if (
+                check?.demand === demand &&
+                check.revision === demand.revision &&
+                check.generation === coverageGenerations.get(demand.subset.objectType) &&
+                check.covering &&
+                !check.covering.stale
+            )
+                applyCoverage(demand, check.covering);
+        }
         // Snapshot writes notify before this in-memory readiness bookkeeping.
         // A child may have captured those rows with incomplete coverage already;
         // publish the readiness transition even when no additional rows changed.
@@ -3766,6 +3864,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 return;
                             }
                         }
+                        if (serveStale && !watched) {
+                            // A poll tick says only that this demand is due.
+                            yield* markRevalidate(new Set([copy.objectType]));
+                            yield* diagnostics.changed;
+                            return;
+                        }
                         // Fence this watch's old request synchronously. A reset
                         // repairs its own missed events; unrelated healthy watches
                         // retain their proofs and their in-flight type generation.
@@ -3823,6 +3927,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                               yield* diagnostics.changed;
                               for (;;) {
                                   yield* Effect.sleep(configuredInterval);
+                                  if (serveStale) {
+                                      yield* markRevalidate(new Set([copy.objectType])).pipe(
+                                          Effect.catch(service.reportReplicationFailure)
+                                      );
+                                      continue;
+                                  }
                                   demand.revision++;
                                   yield* invalidateCoverage.pipe(
                                       Effect.catch(service.reportReplicationFailure)
@@ -3927,6 +4037,95 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 demand.watchReady !== undefined &&
                 !Deferred.isDoneUnsafe(demand.watchReady)
         );
+    // Admit demands their existing coverage already proves, from one read
+    // transaction and without the publication gate. Loads, refreshes and outbox
+    // dispatch keep the gate; admission installs no rows, it only records a proof
+    // that a sync pass would also accept. A stale proof wakes the state loop, which
+    // revalidates it in the background. Anything unproven takes the gated path.
+    const admitCovered = (subsets: readonly CompiledSubset[]) =>
+        Effect.gen(function* () {
+            // Journal-backed sources keep pull-before-serve; delivery and protocol
+            // children have their own readiness paths.
+            if (!adapter || adapter.changes || options.source || deliveryActive) return false;
+            if (replicationError?.recovery === "stop") return false;
+            const selected: Array<{
+                readonly key: string;
+                readonly demand: NonNullable<ReturnType<typeof demands.get>>;
+                readonly revision: number;
+                readonly generation: symbol | undefined;
+            }> = [];
+            for (const subset of subsets) {
+                const key = subsetKey(subset);
+                const demand = demands.get(key);
+                // Unacquired subsets and terminal failures report through a sync pass.
+                if (
+                    !demand ||
+                    (demand.loadFailure?.revision === demand.revision && !demand.loadFailure.error.retryable)
+                )
+                    return false;
+                // Capture fences before the first asynchronous storage operation.
+                selected.push({
+                    key,
+                    demand,
+                    revision: demand.revision,
+                    generation: coverageGenerations.get(demand.subset.objectType),
+                });
+            }
+            const now = yield* Clock.currentTimeMillis;
+            const proofs = yield* access(
+                tables
+                    .read((tx) =>
+                        Effect.gen(function* () {
+                            const byType = new Map<string, readonly Row<Coverage>[]>();
+                            const found: Array<Effect.Success<ReturnType<typeof coverageProofIn>>> = [];
+                            for (const { demand } of selected) {
+                                const type = demand.subset.objectType;
+                                let records = byType.get(type);
+                                if (!records) {
+                                    records = yield* tx.query(coverage, {
+                                        where: eq(field("subset", "objectType"), type),
+                                    });
+                                    byType.set(type, records);
+                                }
+                                found.push(yield* coverageProofIn(tx, adapter, now, demand.subset, records));
+                            }
+                            return found;
+                        })
+                    )
+                    .pipe(
+                        Effect.withSpan("Replica.admitCovered", { attributes: { demands: selected.length } })
+                    )
+            );
+            let admitted = true;
+            let changed = false;
+            let stale = false;
+            for (const [index, { key, demand, revision, generation }] of selected.entries()) {
+                const covering = proofs[index];
+                if (
+                    !covering ||
+                    demands.get(key) !== demand ||
+                    demand.revision !== revision ||
+                    coverageGenerations.get(demand.subset.objectType) !== generation
+                ) {
+                    admitted = false;
+                    continue;
+                }
+                changed ||=
+                    demand.installed !== demand.revision ||
+                    !demand.coveredBy ||
+                    subsetKey(demand.coveredBy) !== subsetKey(covering.subset) ||
+                    demand.coverageProof?.stale !== covering.proof.stale;
+                demand.installed = demand.revision;
+                if (!covering.stale) demand.loadFailure = undefined;
+                demand.coveredBy = covering.subset;
+                demand.coverageProof = covering.proof;
+                stale ||= covering.stale;
+            }
+            if (stale) yield* wakeState;
+            // Delivery capture and status read these proofs; publish the transition.
+            if (changed) yield* notify;
+            return admitted;
+        });
     // Only a fresh fetch needs the acquisition barrier. Recheck after taking the
     // gate, and wait outside it so a slow subscription cannot block other views
     // or action publication. Cached/offline reads keep their existing behavior.
@@ -3977,7 +4176,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     }
                     yield* service.refreshParent(options.source!);
                 })
-              : syncReady(new Set(subsets.map(subsetKey)));
+              : admitCovered(subsets).pipe(
+                    Effect.flatMap((admitted) =>
+                        admitted ? Effect.void : syncReady(new Set(subsets.map(subsetKey)))
+                    )
+                );
     };
     const visibleRevision = (tx: ReadTransaction) =>
         tx.get(stateHead, "head").pipe(Effect.map((head) => head?.visibleRevision ?? 0));
@@ -5095,6 +5298,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         markDemandedStale: Effect.suspend(() => {
             if (options.source || adapter?.changes) return Effect.void;
             const types = new Set([...demands.values()].map((demand) => demand.subset.objectType));
+            // Unlike a poll tick, an explicit request fences loads already in flight.
+            if (serveStale) return access(markRevalidate(types, true));
             // Fence snapshots already in flight, as a watch invalidation does.
             for (const type of types) coverageGenerations.set(type, Symbol());
             return access(
@@ -5438,6 +5643,46 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 )
             );
     }
+    // Enforce the stale-while-revalidate bound for readers that check only
+    // `invalidated` (delivery capture, hasCoverage): coverage still due at the
+    // bound becomes invalid, even when its revalidation keeps failing.
+    if (serveStale && Number.isFinite(maxStaleAge))
+        yield* Effect.forkScoped(
+            Effect.forever(
+                Effect.gen(function* () {
+                    const now = yield* Clock.currentTimeMillis;
+                    const swept = yield* boundary(
+                        tables.transaction((tx) =>
+                            Effect.gen(function* () {
+                                let next: number | undefined;
+                                let expired = 0;
+                                for (const row of yield* tx.query(coverage)) {
+                                    if (!row.value.revalidate || row.value.invalidated) continue;
+                                    const expiry = row.value.updatedAt + maxStaleAge;
+                                    if (expiry > now) next = Math.min(next ?? expiry, expiry);
+                                    else {
+                                        yield* tx.put(coverage, row.key, { ...row.value, invalidated: true });
+                                        expired++;
+                                    }
+                                }
+                                return { next, expired };
+                            })
+                        )
+                    );
+                    if (swept.expired) yield* notify;
+                    yield* swept.next === undefined
+                        ? Queue.take(staleWake)
+                        : Effect.raceFirst(Queue.take(staleWake), Effect.sleep(swept.next - now));
+                }).pipe(
+                    Effect.catch((error) =>
+                        Effect.logWarning("Replica stale coverage sweep failed", { kind: error.kind }).pipe(
+                            Effect.andThen(Effect.sleep(stateRetryDelayMs))
+                        )
+                    ),
+                    Effect.withSpan("Replica.expireStaleCoverage")
+                )
+            )
+        );
     if (options.startSync !== false)
         yield* Effect.forkScoped(
             Effect.forever(

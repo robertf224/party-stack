@@ -179,6 +179,14 @@ const settings = {
 `maxCoverageAgeMs` controls reuse of quiet, unmaintained data; expiry causes
 revalidation on the next demand. Healthy live watches keep coverage current.
 
+A read that existing coverage already answers resolves right away, even while
+another subset is loading. To also answer from expired coverage while it
+refreshes, set `refresh.maxStaleAgeMs`. A read then gets data confirmed up to
+that long ago immediately, and a background refresh replaces it. The demand's
+`coverageProof` reports `stale: true` until the refresh lands. Coverage older
+than the bound is never served; the read waits for its reload. This applies to
+backends without a change journal.
+
 `maxBytes` triggers collection toward `targetBytes`. Active demand, pins, and
 pending actions protect the data they need. These limits cover cached payloads,
 not the process's total memory or database overhead.
