@@ -54,10 +54,19 @@ function foundry(
     compare: (left: string, right: string) => number = (left, right) =>
         left < right ? -1 : left > right ? 1 : 0
 ) {
+    // Like Foundry: words of the term, minus stopwords, any of them inside a word of the value.
+    const words = (value: string) =>
+        value
+            .toLowerCase()
+            .split(/[^\p{L}\p{N}]+/u)
+            .filter(Boolean);
+    const stopwords = new Set(["a", "at", "in", "on", "to", "the", "and", "or", "of"]);
     const text = (value: string, predicate: { type: string; value: string }) =>
         predicate.type === "exact"
             ? value === predicate.value
-            : value.toLowerCase().includes(predicate.value.toLowerCase());
+            : words(predicate.value)
+                  .filter((word) => !stopwords.has(word))
+                  .some((word) => words(value).some((candidate) => candidate.includes(word)));
     const matches = (value: ActionTypeV2, query?: ActionTypeSearchJsonQueryV2): boolean => {
         if (!query) return true;
         switch (query.type) {
@@ -141,7 +150,7 @@ describe("windowed Foundry action type search", () => {
     const large = Array.from({ length: 5000 }, (_, index) =>
         actionType(`task-${pad(index)}`, `Task ${pad(index)}`)
     );
-    const search = (term: string) => or(ilike(field("name"), term), ilike(field("displayName"), term));
+    const search = (term: string) => or(like(field("name"), term), ilike(field("displayName"), term));
 
     it("loads metadata only for the leading window of a large ontology", async () => {
         foundry(large);
@@ -301,6 +310,52 @@ describe("action type search prefilter", () => {
         expect(
             actionTypeSearchQuery(or(ilike(field("displayName"), "%a%"), ilike(field("name"), "%")))
         ).toBeUndefined();
+    });
+
+    it("keeps terms Foundry cannot cover local", () => {
+        // Foundry drops stopwords, so `contains "at"` matches nothing, though "Create" contains it.
+        expect(actionTypeSearchQuery(ilike(field("displayName"), "%at%"))).toBeUndefined();
+        expect(actionTypeSearchQuery(ilike(field("displayName"), "% to %"))).toBeUndefined();
+        expect(actionTypeSearchQuery(ilike(field("displayName"), "%at%kit%"))).toEqual({
+            type: "actionTypeDisplayName",
+            value: { type: "contains", value: "kit" },
+        });
+        expect(actionTypeSearchQuery(ilike(field("displayName"), "%assets to%"))).toEqual({
+            type: "actionTypeDisplayName",
+            value: { type: "contains", value: "assets to" },
+        });
+        // Case folding loses the word boundaries Foundry's kebab-case API name needs.
+        expect(actionTypeSearchQuery(ilike(field("name"), "%addassets%"))).toBeUndefined();
+        expect(
+            actionTypeSearchQuery(or(ilike(field("name"), "%add%"), ilike(field("displayName"), "%add%")))
+        ).toBeUndefined();
+        expect(actionTypeSearchQuery(like(field("name"), "%addAssets%"))).toEqual({
+            type: "actionTypeApiName",
+            value: { type: "contains", value: "add-assets" },
+        });
+        // camelCase keeps digit boundaries (add-508-assessment is add_508Assessment), so eq round-trips.
+        expect(actionTypeSearchQuery(eq(field("name"), "add_508Assessment"))).toEqual({
+            type: "actionTypeApiName",
+            value: { type: "exact", value: "add-508-assessment" },
+        });
+    });
+
+    it("answers a case-insensitive name search by scanning the ordered window", async () => {
+        const values = [
+            actionType("add-assets-to-kit", "Add Assets To Kit"),
+            actionType("remove-kit", "Remove Kit"),
+            actionType("addassets-legacy", "Legacy import"),
+        ];
+        foundry(values);
+        const query: Query = {
+            where: or(ilike(field("name"), "%addassets%"), ilike(field("displayName"), "%addassets%")),
+            orderBy: [{ field: field("displayName") }],
+            limit: 10,
+        };
+        const result = await load(query);
+        expect(searchRequests()[0]?.where).toBeUndefined();
+        expect(keys(result.snapshot.rows)).toEqual(oracle(values, query));
+        expect(keys(result.snapshot.rows)).toEqual(["addAssetsToKit", "addassetsLegacy"]);
     });
 
     it("finds escaped-pattern matches through the windowed path", async () => {

@@ -18,8 +18,31 @@ import type { Filter, Query, Row, Scalar } from "@party-stack/ontology-storage";
  * are a sound `contains` prefilter. Backslashes split runs too, so they never reach Foundry. */
 const LIKE_SEPARATORS = /[%_\\]/;
 
+/** Lucene's default English stop set. Foundry drops these words from a `contains` term, so a
+ * term made only of them matches nothing, even though `at` is a substring of "Create". */
+const STOPWORDS = new Set(
+    "a an and are as at be but by for if in into is it no not of on or such that the their then there these they this to was will with".split(
+        " "
+    )
+);
+
+/** Foundry splits a `contains` term into words, drops stopwords, and matches a row when any
+ * remaining word appears inside one of its words, ignoring case. A term with at least one
+ * remaining word therefore covers every case-insensitive substring match; other terms are
+ * kept local. Checked against Foundry's API. */
+function containsTerm(term: string): string | undefined {
+    const words = term
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter(Boolean);
+    return words.some((word) => !STOPWORDS.has(word)) ? term : undefined;
+}
+
 /** A superset prefilter for Foundry's action type search; the engine rechecks every row.
- * Assumes Foundry's `contains` matches whenever the term is a case-insensitive substring. */
+ *
+ * `name` is the camelCase form of Foundry's kebab-case API name, and Foundry searches only the
+ * kebab form. A case-sensitive term's capitals mark its word boundaries, so `like` converts
+ * soundly; `ilike` folds them away (`addassets` cannot become `add-assets`) and stays local. */
 export function actionTypeSearchQuery(predicate?: Filter): ActionTypeSearchJsonQueryV2 | undefined {
     if (!predicate) return;
     if (predicate.kind === "and" || predicate.kind === "or") {
@@ -48,12 +71,17 @@ export function actionTypeSearchQuery(predicate?: Filter): ActionTypeSearchJsonQ
     if (predicate.kind === "eq" && field === "id") return { type: "actionTypeRid", value };
     if (field !== "name" && field !== "displayName") return;
     const type = field === "name" ? ("actionTypeApiName" as const) : ("actionTypeDisplayName" as const);
-    const convert = (value: string) => (field === "name" ? toFoundryActionTypeName(value) : value);
-    if (predicate.kind === "eq") return { type, value: { type: "exact", value: convert(value) } };
+    if (predicate.kind === "eq")
+        return {
+            type,
+            value: { type: "exact", value: field === "name" ? toFoundryActionTypeName(value) : value },
+        };
+    if (field === "name" && predicate.kind === "ilike") return;
     const children: ActionTypeSearchJsonQueryV2[] = value
         .split(LIKE_SEPARATORS)
-        .filter(Boolean)
-        .map((term) => ({ type, value: { type: "contains", value: convert(term) } }));
+        .map((term) => containsTerm(field === "name" ? toFoundryActionTypeName(term) : term))
+        .filter((term) => term !== undefined)
+        .map((term) => ({ type, value: { type: "contains", value: term } }));
     return children.length <= 1 ? children[0] : { type: "and", value: children };
 }
 
