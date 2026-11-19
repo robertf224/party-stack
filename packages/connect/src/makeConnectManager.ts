@@ -111,6 +111,9 @@ export const makeConnectManager = Effect.fn("ConnectManager.make")(function* (
             })
         )
         .pipe(Effect.mapError(connectBackendError));
+    // The manager owns this store, so a lease it finds at startup belongs to a process that
+    // stopped mid-refresh. Release it now rather than failing refreshes until it expires.
+    yield* authority.connect.releaseOperations().pipe(Effect.mapError(connectBackendError));
     yield* authority.connect.collectExpired().pipe(Effect.mapError(connectBackendError));
     const connections = yield* makeServiceConnections({
         backend: authority.backend,

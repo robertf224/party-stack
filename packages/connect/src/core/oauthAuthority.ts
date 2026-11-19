@@ -62,6 +62,11 @@ export interface OAuthAuthorityService {
     refresh(connectionId: string): Effect.Effect<OAuthConnectionRecord, ConnectError>;
     disconnect(connectionId: string): Effect.Effect<void, ConnectError>;
     forget(connectionId: string): Effect.Effect<void, ConnectError>;
+    /** Expire every credential-operation lease, so the next refresh or reconnect treats it
+     * as interrupted. Only a store's sole owner may call this, at startup: any lease it finds
+     * was left by a process that stopped mid-operation, not one still running.
+     */
+    releaseOperations(): Effect.Effect<number, ConnectError>;
     /** Indexed, bounded maintenance. Does not delete connection identities. */
     collectExpired(options?: {
         limit?: number;
@@ -241,7 +246,26 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
             const record = yield* store.transaction(
                 Effect.gen(function* () {
                     const current = yield* read(connectionId);
-                    yield* busy(current);
+                    if (current.operationId) {
+                        if (!expired(current.operationExpiresAt, yield* Clock.currentTimeMillis))
+                            return yield* connectError("Busy", "Connection operation is in progress.", true);
+                        // An interrupted refresh may have rotated the refresh token before its
+                        // reply was lost, so never retry it blindly; save that the connection
+                        // needs a sign-in. Client credentials hold no such token: claim and fetch anew.
+                        const application = yield* store.get("OAuthApplication", current.application);
+                        if (application?.flow !== "client-credentials") {
+                            yield* evict(current.refreshToken);
+                            yield* store.put("OAuthConnection", {
+                                ...current,
+                                status: "needs-auth",
+                                refreshToken: undefined,
+                                refreshTokenExpiresAt: undefined,
+                                operationId: undefined,
+                                operationExpiresAt: undefined,
+                            });
+                            return undefined;
+                        }
+                    }
                     if (current.status !== "active")
                         return yield* connectError("NeedsAuthentication", "Reconnect this connection.");
                     const next = {
@@ -253,6 +277,11 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                     return next;
                 })
             );
+            if (!record)
+                return yield* connectError(
+                    "NeedsAuthentication",
+                    "An interrupted credential operation requires reconnection."
+                );
             const request = Effect.gen(function* () {
                 const { application, oauth } = yield* configured(record.application);
                 let tokens: OAuthTokens;
@@ -553,7 +582,9 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                                 "Forbidden",
                                 "Connection belongs to another application."
                             );
-                        if (existing) yield* busy(existing);
+                        // Reconnecting is how a client-credentials connection recovers from an
+                        // interrupted operation, so an expired lease does not block it.
+                        if (existing) yield* busy(existing, true);
                         yield* store.put("OAuthConnection", {
                             ...input.properties,
                             ...existing,
@@ -561,6 +592,8 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                             title: existing?.title ?? application.title,
                             application: application.id,
                             status: "active",
+                            operationId: undefined,
+                            operationExpiresAt: undefined,
                         });
                         const latest = yield* store.get("OAuthApplication", application.id);
                         if (!latest)
@@ -634,6 +667,21 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                     const { oauth } = yield* configured(removed.current.application);
                     if (oauth.revoke) yield* oauth.revoke(Redacted.value(removed.plaintext));
                 }
+            }),
+            releaseOperations: Effect.fn("Connect.releaseOperations")(function* () {
+                return yield* store.transaction(
+                    Effect.gen(function* () {
+                        const held = yield* store.load("OAuthConnection", {
+                            where: ne(field("operationId"), undefined),
+                        });
+                        for (const record of held)
+                            yield* store.put("OAuthConnection", {
+                                ...record,
+                                operationExpiresAt: instant(0),
+                            });
+                        return held.length;
+                    })
+                );
             }),
             collectExpired: Effect.fn("Connect.collectExpired")(function* ({
                 limit = 100,

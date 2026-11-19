@@ -182,6 +182,20 @@ test("one ontology server uses ordinary Connect actions to acquire OAuth and ext
                     `ExternalSessionConnection/${(attached.result as { connectionId: string }).connectionId}`
                 );
                 expect((yield* external.backend.loadSubset(objectSubset("Issue"))).rows).toHaveLength(1);
+                expect(
+                    yield* Effect.result(
+                        connect.backend.applyAction({
+                            id: "refresh",
+                            name: "refreshConnection",
+                            parameters: { connectionId: oauthId },
+                        })
+                    )
+                ).toMatchObject({
+                    // Renewal belongs to the connection manager; the server denies it like any
+                    // other action a client may not run.
+                    _tag: "Failure",
+                    failure: { kind: "NotFound", actionOutcome: "not-committed" },
+                });
                 expect(sent).toContain("private-oauth-token");
                 expect(sent).toContain("valid-session");
                 const inventory = yield* connect.backend.loadSubset(objectSubset("OAuthConnection"));

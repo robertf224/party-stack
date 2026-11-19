@@ -138,7 +138,6 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                     retryable: false,
                     message: "Service connector is unavailable.",
                 });
-            const sessionVerification = yield* Semaphore.make(1);
             const currentCredential = Effect.fnUntraced(function* (
                 renewEarly = true
             ): Effect.fn.Return<string, BackendError> {
@@ -173,72 +172,9 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                 if (ref.objectType === "ExternalSessionConnection") {
                     (yield* CredentialObserver)(credentialVersion(current));
                     if (expiresAt && expiresAt.epochMilliseconds <= (yield* Clock.currentTimeMillis)) {
-                        yield* sessionVerification
-                            .withPermit(
-                                Effect.gen(function* () {
-                                    const selected = yield* options.store.get(
-                                        "ExternalSessionConnection",
-                                        ref.id
-                                    );
-                                    if (
-                                        !selected ||
-                                        selected.status !== "active" ||
-                                        !selected.expiresAt ||
-                                        selected.expiresAt.epochMilliseconds >
-                                            (yield* Clock.currentTimeMillis)
-                                    )
-                                        return;
-                                    if (!service.externalSession)
-                                        return yield* new BackendError({
-                                            operation: "connect.session.verify",
-                                            kind: "InvalidConfiguration",
-                                            retryable: false,
-                                            message: "This service cannot verify an external session.",
-                                        });
-                                    (yield* CredentialObserver)(credentialVersion(selected));
-                                    const verified = yield* Effect.result(
-                                        service.externalSession({
-                                            serviceInstance,
-                                            sessionId: selected.sessionId,
-                                        })
-                                    );
-                                    yield* options.store.transaction(
-                                        Effect.gen(function* () {
-                                            const latest = yield* options.store.get(
-                                                "ExternalSessionConnection",
-                                                ref.id
-                                            );
-                                            if (
-                                                !latest ||
-                                                credentialVersion(latest) !== credentialVersion(selected)
-                                            )
-                                                return;
-                                            if (verified._tag === "Failure") return yield* verified.failure;
-                                            const identity = verified.success;
-                                            if (
-                                                identity.userId !== selected.userId ||
-                                                (identity.expiresAt &&
-                                                    identity.expiresAt.epochMilliseconds <=
-                                                        (yield* Clock.currentTimeMillis))
-                                            )
-                                                return yield* connectError(
-                                                    "NeedsAuthentication",
-                                                    "The selected external session requires authentication."
-                                                );
-                                            yield* options.store.put("ExternalSessionConnection", {
-                                                ...latest,
-                                                title: identity.title ?? latest.title,
-                                                expiresAt: identity.expiresAt,
-                                            });
-                                        })
-                                    );
-                                })
-                            )
-                            .pipe(
-                                Effect.mapError((error) =>
-                                    error instanceof BackendError ? error : connectBackendError(error)
-                                )
-                            );
+                        // Verify through the connection's one renewal: requests that queued for
+                        // the same expired session share its answer instead of each asking again.
+                        yield* renew(credentialGeneration, "expiring");
                         return yield* currentCredential();
                     }
                     return (current as ConnectOntology["objectTypes"]["ExternalSessionConnection"]).sessionId;
@@ -439,6 +375,57 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                 if (isUnauthenticatedError(error)) yield* markNeedsAuthentication(observed);
                 return yield* error;
             });
+            // Check an expired external session with its service. Runs only inside `renew`.
+            const verifyExternalSession: Effect.Effect<void, BackendError> = Effect.gen(function* () {
+                const selected = yield* options.store.get("ExternalSessionConnection", ref.id);
+                if (
+                    !selected ||
+                    selected.status !== "active" ||
+                    !selected.expiresAt ||
+                    selected.expiresAt.epochMilliseconds > (yield* Clock.currentTimeMillis)
+                )
+                    return;
+                if (!service.externalSession)
+                    return yield* new BackendError({
+                        operation: "connect.session.verify",
+                        kind: "InvalidConfiguration",
+                        retryable: false,
+                        message: "This service cannot verify an external session.",
+                    });
+                (yield* CredentialObserver)(credentialVersion(selected));
+                const verified = yield* Effect.result(
+                    service.externalSession({
+                        serviceInstance,
+                        sessionId: selected.sessionId,
+                    })
+                );
+                yield* options.store.transaction(
+                    Effect.gen(function* () {
+                        const latest = yield* options.store.get("ExternalSessionConnection", ref.id);
+                        if (!latest || credentialVersion(latest) !== credentialVersion(selected)) return;
+                        if (verified._tag === "Failure") return yield* verified.failure;
+                        const identity = verified.success;
+                        if (
+                            identity.userId !== selected.userId ||
+                            (identity.expiresAt &&
+                                identity.expiresAt.epochMilliseconds <= (yield* Clock.currentTimeMillis))
+                        )
+                            return yield* connectError(
+                                "NeedsAuthentication",
+                                "The selected external session requires authentication."
+                            );
+                        yield* options.store.put("ExternalSessionConnection", {
+                            ...latest,
+                            title: identity.title ?? latest.title,
+                            expiresAt: identity.expiresAt,
+                        });
+                    })
+                );
+            }).pipe(
+                Effect.mapError((error) =>
+                    error instanceof BackendError ? error : connectBackendError(error)
+                )
+            );
             const renewal = yield* Semaphore.make(1);
             // Renew the credential that was saved at `version`, once: concurrent rejections
             // of the same credential share one renewal, and a newer credential wins.
@@ -446,7 +433,9 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
             // each asking the provider again; a rejection after it tries again.
             let renewals = 0;
             let failedRenewal: { version: number; attempt: number; error: BackendError } | undefined;
-            const renew = (version: number) =>
+            // `expiring` renews ahead of a rejection: an OAuth token about to expire, or an
+            // external session whose saved expiry has passed.
+            const renew = (version: number, reason: "rejected" | "expiring" = "rejected") =>
                 Effect.suspend(() => {
                     const waitingSince = renewals;
                     return renewal.withPermit(
@@ -456,6 +445,18 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                                 return yield* failedRenewal.error;
                             const current = yield* read(ref.objectType, ref.id);
                             if (current?.status !== "active") return;
+                            if (ref.objectType === "ExternalSessionConnection" && reason === "expiring") {
+                                const result = yield* Effect.result(verifyExternalSession);
+                                install(yield* read(ref.objectType, ref.id));
+                                // Whether the service rejected the session or could not check it,
+                                // that is the answer for every request queued on this check.
+                                if (result._tag === "Failure") {
+                                    failedRenewal = { version, attempt: ++renewals, error: result.failure };
+                                    return yield* result.failure;
+                                }
+                                renewals++;
+                                return;
+                            }
                             if (ref.objectType !== "OAuthConnection") {
                                 yield* markNeedsAuthentication(credentialVersion(current));
                                 return;

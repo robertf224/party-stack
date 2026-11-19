@@ -698,6 +698,65 @@ test("an HTTP authentication failure after renewal still updates the renewed sav
     );
 });
 
+test.each(["verified", "Provider"] as const)(
+    "concurrent requests on an expired external session share one %s verification",
+    async (outcome) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const started = yield* Deferred.make<void>();
+                    const reply = yield* Deferred.make<void>();
+                    const expiresAt = Temporal.Instant.fromEpochMilliseconds(
+                        (yield* Clock.currentTimeMillis) + 60_000
+                    );
+                    let verifications = 0;
+                    const send = vi.fn((_session: string) => Effect.succeed(new Response()));
+                    const f = yield* renewableSession(
+                        () =>
+                            Effect.gen(function* () {
+                                verifications++;
+                                yield* Deferred.succeed(started, undefined);
+                                yield* Deferred.await(reply);
+                                if (outcome === "Provider")
+                                    return yield* connectError("Provider", "Verification failed", true);
+                                return { userId: "alice", expiresAt };
+                            }),
+                        send
+                    );
+                    const fetch = f.access.egress
+                        .fetch("https://session.test")
+                        .pipe(Effect.result, Effect.forkScoped);
+                    const first = yield* fetch;
+                    yield* Deferred.await(started);
+                    const rest = yield* Effect.all([fetch, fetch]);
+                    yield* Effect.sleep(50);
+                    yield* Deferred.succeed(reply, undefined);
+                    const results = yield* Effect.forEach([first, ...rest], Fiber.join);
+                    expect(verifications).toBe(1);
+                    if (outcome === "verified") {
+                        expect(results.map((result) => result._tag)).toEqual([
+                            "Success",
+                            "Success",
+                            "Success",
+                        ]);
+                        expect(send).toHaveBeenCalledTimes(3);
+                    } else {
+                        for (const result of results)
+                            expect(result).toMatchObject({
+                                _tag: "Failure",
+                                failure: { kind: "Unavailable" },
+                            });
+                        expect(send).not.toHaveBeenCalled();
+                        // A request after the shared failure checks again.
+                        yield* Effect.result(f.access.egress.fetch("https://session.test"));
+                        expect(verifications).toBe(2);
+                    }
+                })
+            )
+        );
+    }
+);
+
 test.each(["renew", "reconnect", "disconnect", "forget"] as const)(
     "late external session verification cannot overwrite %s",
     async (change) => {

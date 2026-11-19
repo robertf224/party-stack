@@ -1,6 +1,7 @@
 import { MemoryBlobBytesStore, Runtime } from "@party-stack/runtime";
 import { makeTestRuntime } from "@party-stack/runtime/testing";
 import { Effect } from "effect";
+import { Temporal } from "temporal-polyfill";
 import { expect, test } from "vite-plus/test";
 import { makeConnectManager } from "./makeConnectManager.js";
 import type { ConnectServiceConfiguration } from "./makeConnectManager.js";
@@ -183,6 +184,37 @@ test("explicit metadata and empty application scopes override connector defaults
                     title: "Custom app",
                     flow: "client-credentials",
                     scopes: [],
+                });
+            })
+        )
+    );
+});
+
+test("a restarted manager releases a refresh lease its previous process left behind", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const native = yield* runtime;
+                const open = makeConnectManager({ services: [service], startMaintenance: false }).pipe(
+                    Effect.provideService(Runtime, native)
+                );
+                const first = yield* open;
+                yield* first.store.put("OAuthConnection", {
+                    id: "interrupted",
+                    title: "Alice",
+                    application: "app",
+                    userId: "alice",
+                    status: "active",
+                    // Taken by the previous process moments before it stopped.
+                    operationId: "previous-process",
+                    operationExpiresAt: Temporal.Now.instant().add({ seconds: 60 }),
+                });
+                const second = yield* open;
+                const refreshed = yield* Effect.flip(second.connect.refresh("interrupted"));
+                expect(refreshed.kind).toBe("NeedsAuthentication");
+                expect(yield* second.store.get("OAuthConnection", "interrupted")).toMatchObject({
+                    status: "needs-auth",
+                    operationId: undefined,
                 });
             })
         )
