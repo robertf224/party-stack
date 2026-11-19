@@ -250,6 +250,13 @@ describe("Connect authority", () => {
             })
         );
         expect((await run(Effect.flip(f.connect.refresh(connection.id)))).kind).toBe("NeedsAuthentication");
+        // The interruption is saved, so requests stop trying a refresh token that may be spent.
+        expect(await run(f.store.get("OAuthConnection", connection.id))).toMatchObject({
+            status: "needs-auth",
+            refreshToken: undefined,
+            operationId: undefined,
+        });
+        expect(f.refresh).not.toHaveBeenCalled();
         const next = await run(
             f.connect.begin({
                 applicationId: "application",
@@ -322,6 +329,45 @@ describe("Connect authority", () => {
                 })
             )
         ).rejects.toThrow(/interactive/);
+    });
+    it("client-credentials connections recover from an interrupted operation", async () => {
+        const f = await fixture();
+        await run(
+            f.store.put("OAuthApplication", {
+                id: "service",
+                title: "Service",
+                serviceInstance: "serviceInstance",
+                clientId: "service-app",
+                flow: "client-credentials",
+            })
+        );
+        const connection = await run(f.connect.clientCredentials({ applicationId: "service" }));
+        const interrupt = (expiresIn: number) =>
+            run(
+                f.store.put("OAuthConnection", {
+                    ...connection,
+                    operationId: "dead-process",
+                    operationExpiresAt: time(expiresIn),
+                })
+            );
+        // A live lease still blocks, whether refreshing or reconnecting.
+        await interrupt(60_000);
+        expect((await run(Effect.flip(f.connect.refresh(connection.id)))).kind).toBe("Busy");
+        expect((await run(Effect.flip(f.connect.clientCredentials({ applicationId: "service" })))).kind).toBe(
+            "Busy"
+        );
+        // An expired one is claimed: there is no refresh token to protect.
+        await interrupt(-1000);
+        expect(await run(f.connect.refresh(connection.id))).toMatchObject({
+            status: "active",
+            operationId: undefined,
+        });
+        await interrupt(-1000);
+        expect(await run(f.connect.clientCredentials({ applicationId: "service" }))).toMatchObject({
+            id: connection.id,
+            status: "active",
+            operationId: undefined,
+        });
     });
     it("disconnect removes local credentials even when revocation fails", async () => {
         const f = await fixture();

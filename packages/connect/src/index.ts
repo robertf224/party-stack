@@ -30,7 +30,6 @@ export type { ConnectCredentialValues } from "./core/oauthAuthority.js";
 
 export { makeConnectBackend, type ConnectActionHandler } from "./core/backend.js";
 
-export { connectionAccessToken } from "./core/accessToken.js";
 export {
     oauthAuthorizationOntology,
     bindOAuthAuthorizationBackend,

@@ -406,6 +406,61 @@ test("literal routes infer all named and wildcard parameters", async () => {
     );
 });
 
+test("a route that fails to open is opened again by the next request, not served from cache", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* setup("retry");
+                const release = yield* Deferred.make<void>();
+                let opens = 0;
+                const server = yield* makeOntologyServer({
+                    enableRealtime: true,
+                    // The default 60 second retention: a cached failure would outlive the test.
+                    routes: {
+                        "issues/:id": () =>
+                            Effect.gen(function* () {
+                                const attempt = ++opens;
+                                if (attempt === 1) {
+                                    yield* Deferred.await(release);
+                                    return yield* new BackendError({
+                                        operation: "test.open",
+                                        kind: "Unavailable",
+                                        retryable: true,
+                                        message: "Schema load failed.",
+                                    });
+                                }
+                                return {
+                                    kind: "owned" as const,
+                                    backend,
+                                    dangerouslyAllowInternalAccess: true as const,
+                                };
+                            }),
+                    },
+                });
+                // Requests already waiting on the failing open share its failure.
+                const waiting = yield* Effect.all(
+                    [server.bind("issues/one"), server.bind("issues/one")].map((bind) =>
+                        Effect.forkScoped(Effect.result(bind))
+                    )
+                );
+                yield* Effect.yieldNow;
+                yield* Deferred.succeed(release, undefined);
+                for (const fiber of waiting)
+                    expect(yield* Fiber.join(fiber)).toMatchObject({
+                        _tag: "Failure",
+                        failure: { kind: "Unavailable" },
+                    });
+                expect(opens).toBe(1);
+                // The next request opens the route again, and that success is kept.
+                const bound = yield* server.bind("issues/one");
+                expect(yield* bound.options.backend!.query(query)).toEqual({ issues: [{ id: "retry" }] });
+                yield* server.bind("issues/one");
+                expect(opens).toBe(2);
+            })
+        )
+    );
+});
+
 test("inferred route parameters preserve Effect service requirements", async () => {
     class Label extends Context.Service<Label, string>()("routing-test/Label") {}
     const open = makeOntologyServer({

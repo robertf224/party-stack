@@ -6,6 +6,23 @@ import type { OntologyBackendService } from "@party-stack/ontology-backend";
 
 /** Renew an access token this long before it expires. */
 export const accessTokenRenewalWindowMs = 60_000;
+
+/** Whether `connectionAccessToken` would refresh this connection before returning a token.
+ * An expired refresh token does not invalidate an otherwise usable access token.
+ * Renew a minute early so a token is not sent moments before it expires.
+ */
+export const accessTokenNeedsRefresh = (
+    connection: {
+        readonly status: string;
+        readonly accessToken?: unknown;
+        readonly accessTokenExpiresAt?: { readonly epochMilliseconds: number } | undefined;
+    },
+    now: number
+) =>
+    !connection.accessToken ||
+    connection.status === "inactive" ||
+    (connection.accessTokenExpiresAt !== undefined &&
+        connection.accessTokenExpiresAt.epochMilliseconds <= now + accessTokenRenewalWindowMs);
 const State = Schema.Struct({
     status: Schema.Literals(["active", "needs-auth", "inactive"]),
     accessToken: Schema.optional(EncryptedValueSchema),
@@ -13,12 +30,15 @@ const State = Schema.Struct({
 });
 
 /** Egress convenience over ordinary reads, refresh action and property decryption.
+ * Pass `refresh: false` when the caller coordinates renewal itself, as the connection
+ * manager does; the stored token is then returned as is.
  * The supplied backend may be local or remote and must authorize token-property
  * access. This adds no alternate permission path or credential-returning RPC.
  */
 export const connectionAccessToken = Effect.fn("Connect.accessToken")(function* (
     backend: OntologyBackendService,
-    connectionId: string
+    connectionId: string,
+    options: { readonly refresh?: boolean } = {}
 ) {
     if (!backend.encrypted)
         return yield* new BackendError({
@@ -61,15 +81,7 @@ export const connectionAccessToken = Effect.fn("Connect.accessToken")(function* 
         return row;
     });
     let current = yield* read();
-    const now = yield* Clock.currentTimeMillis;
-    // An expired refresh token does not invalidate an otherwise usable access token.
-    // Renew a minute early so a token is not sent moments before it expires.
-    if (
-        !current.accessToken ||
-        current.status === "inactive" ||
-        (current.accessTokenExpiresAt &&
-            current.accessTokenExpiresAt.epochMilliseconds <= now + accessTokenRenewalWindowMs)
-    ) {
+    if (options.refresh !== false && accessTokenNeedsRefresh(current, yield* Clock.currentTimeMillis)) {
         yield* backend.applyAction({
             id: crypto.randomUUID(),
             name: "refreshConnection",

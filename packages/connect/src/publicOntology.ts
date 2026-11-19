@@ -44,15 +44,19 @@ export const connectPublicOntologyIR: OntologyIR = {
         actions: connectOntology.actionTypes.map((action) => ({
             actionType: action.name,
             check:
-                action.name === "beginAuthorization"
-                    ? q.exists({
-                          from: { source: { objectType: "OAuthApplication" }, binding: "app" },
-                          where: q.and(
-                              q.eq(q.field("app", "id"), q.input("applicationId")),
-                              q.eq(q.field("app", "redirectUrl"), q.input("redirectUrl"))
-                          ),
-                      })
-                    : q.literal(true),
+                // The connection manager owns renewal and shares it across requests. A client
+                // refreshing directly would race it and leave its requests failing with Conflict.
+                action.name === "refreshConnection"
+                    ? q.literal(false)
+                    : action.name === "beginAuthorization"
+                      ? q.exists({
+                            from: { source: { objectType: "OAuthApplication" }, binding: "app" },
+                            where: q.and(
+                                q.eq(q.field("app", "id"), q.input("applicationId")),
+                                q.eq(q.field("app", "redirectUrl"), q.input("redirectUrl"))
+                            ),
+                        })
+                      : q.literal(true),
         })),
     },
 };
