@@ -9,6 +9,7 @@ import {
 import { certain, uncertain, type Uncertain } from "@party-stack/ontology-spec";
 import { toFoundryActionTypeName } from "../utils/actionTypeName.js";
 import * as AsyncIterable from "../utils/AsyncIterable.js";
+import { ontologyMetadataContext } from "../utils/ontologyMetadataContext.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type { ValidationIssue } from "@party-stack/ontology-backend";
 import type { Result } from "@party-stack/ontology-spec/values";
@@ -44,22 +45,15 @@ export async function loadFoundrySubmissionCriteria(options: {
         options.client.ontologyRid,
         toFoundryActionTypeName(options.actionTypeName)
     );
-    const response = await bulkLoadOntologyEntities(
-        {
-            ...options.client,
-            servicePath: "ontology-metadata/api",
-        },
-        options.userId,
-        {
-            actionTypes: [{ rid: actionType.rid }],
-            datasourceTypes: [],
-            interfaceTypes: [],
-            linkTypes: [],
-            objectTypes: [],
-            sharedPropertyTypes: [],
-            typeGroups: [],
-        }
-    );
+    const response = await bulkLoadOntologyEntities(ontologyMetadataContext(options.client), options.userId, {
+        actionTypes: [{ rid: actionType.rid }],
+        datasourceTypes: [],
+        interfaceTypes: [],
+        linkTypes: [],
+        objectTypes: [],
+        sharedPropertyTypes: [],
+        typeGroups: [],
+    });
     const loaded = response.actionTypes[0];
     invariant(loaded, `Foundry action type "${options.actionTypeName}" was not returned by metadata.`);
     return Object.values(loaded.actionType.actionTypeLogic.validation.actionTypeLevelValidation.rules).map(

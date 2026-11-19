@@ -600,6 +600,7 @@ describe("Foundry media attachments", () => {
     });
     const mediaBackendOptions = {
         client: {
+            baseUrl: "https://foundry.example/",
             ontologyRid: "ri.ontology.main.1",
         } as OntologyClient,
         ir: {

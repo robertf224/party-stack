@@ -42,7 +42,6 @@ describe("loadActionTypeOmsMetadata", () => {
             {
                 baseUrl: "https://example.com",
                 servicePath: "/ontology-metadata/api",
-                tokenProvider: client.tokenProvider,
                 fetchFn: client.fetch,
             },
             undefined,
