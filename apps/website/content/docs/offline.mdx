@@ -180,7 +180,9 @@ const settings = {
 revalidation on the next demand. Healthy live watches keep coverage current.
 
 A read that existing coverage already answers resolves right away, even while
-another subset is loading. To also answer from expired coverage while it
+another subset is loading. For backends without a change journal, loads also
+fetch concurrently (up to `demand.maxConcurrentLoads`, default 6), so a cold
+read doesn't wait behind a slow refresh, and queued actions are sent meanwhile. To also answer from expired coverage while it
 refreshes, set `refresh.maxStaleAgeMs`. A read then gets data confirmed up to
 that long ago immediately, and a background refresh replaces it. The demand's
 `coverageProof` reports `stale: true` until the refresh lands. Coverage older

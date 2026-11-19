@@ -22,6 +22,8 @@ export interface DemandPolicy {
     readonly idleRetentionMs?: number;
     /** Active plus idle distinct subsets; idle entries are evicted before rejecting new work. */
     readonly maxSubsets?: number;
+    /** Subset fetches in flight at once for backends without a change journal. Default 6. */
+    readonly maxConcurrentLoads?: number;
 }
 
 /** One lease owner for all replica consumers, including cached-proxy requests. */

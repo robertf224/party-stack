@@ -37,22 +37,30 @@ const fixture = Effect.fnUntraced(function* (options: {
     readonly refresh?: DemandRefreshPolicy;
     readonly pollIntervalMs?: number;
     readonly startSync?: boolean;
+    readonly maxConcurrentLoads?: number;
 }) {
     const tables = yield* Memory.make();
     const events: string[] = [];
     let value = 1;
-    let hold: { started: Deferred.Deferred<void>; release: Deferred.Deferred<void> } | undefined;
+    let hold:
+        | { started: Deferred.Deferred<void>; release: Deferred.Deferred<void>; once: boolean }
+        | undefined;
     let applyHold: { started: Deferred.Deferred<void>; release: Deferred.Deferred<void> } | undefined;
-    const holdLoads = Effect.gen(function* () {
-        const next = { started: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
-        hold = next;
-        return {
-            started: Deferred.await(next.started),
-            release: Effect.sync(() => {
-                if (hold === next) hold = undefined;
-            }).pipe(Effect.andThen(Deferred.succeed(next.release, undefined))),
-        };
-    });
+    const holdLoads = (once = false) =>
+        Effect.gen(function* () {
+            const next = {
+                started: yield* Deferred.make<void>(),
+                release: yield* Deferred.make<void>(),
+                once,
+            };
+            hold = next;
+            return {
+                started: Deferred.await(next.started),
+                release: Effect.sync(() => {
+                    if (hold === next) hold = undefined;
+                }).pipe(Effect.andThen(Deferred.succeed(next.release, undefined))),
+            };
+        });
     const holdActions = Effect.gen(function* () {
         const next = { started: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
         applyHold = next;
@@ -67,7 +75,7 @@ const fixture = Effect.fnUntraced(function* (options: {
         tables,
         startSync: options.startSync ?? true,
         objectCacheGc: false,
-        demand: { refresh: options.refresh },
+        demand: { refresh: options.refresh, maxConcurrentLoads: options.maxConcurrentLoads },
         execute: (tx: OwnedTransaction) => tx.put("Item", { id: "one", value: 99 }),
         backend: makeOntologyBackend({
             ir,
@@ -94,6 +102,7 @@ const fixture = Effect.fnUntraced(function* (options: {
                     const subset = yield* compileObjectSubset(ir, request);
                     events.push(`load:${subset.objectType}`);
                     const held = hold;
+                    if (held?.once) hold = undefined;
                     if (held) {
                         yield* Deferred.succeed(held.started, undefined);
                         yield* Deferred.await(held.release);
@@ -143,7 +152,7 @@ const settled = (replica: ReplicaService) =>
 const hasCoverage = (f: Effect.Success<ReturnType<typeof fixture>>, subset: typeof whole) =>
     f.tables.read((tx) => f.replica.hasCoverage(tx, subset));
 
-it.live("a covered demand is admitted while a slow load holds the sync gate", () =>
+it.live("a covered demand is admitted while another load is in flight", () =>
     Effect.scoped(
         Effect.gen(function* () {
             const f = yield* fixture({ startSync: false });
@@ -151,7 +160,7 @@ it.live("a covered demand is admitted while a slow load holds the sync gate", ()
             yield* f.replica.syncSubset(whole);
             // An uncovered demand starts a pass whose load stays in flight.
             yield* f.replica.demand(tags);
-            const held = yield* f.holdLoads;
+            const held = yield* f.holdLoads();
             const slow = yield* Effect.forkScoped(f.replica.syncSubset(tags));
             yield* held.started;
 
@@ -184,7 +193,7 @@ it.effect("stale coverage is served within the bound and revalidated in the back
 
             yield* TestClock.adjust(2_000);
             f.setValue(2);
-            const held = yield* f.holdLoads;
+            const held = yield* f.holdLoads();
             // Both resolve from the expired confirmation without waiting for a load.
             yield* f.replica.syncSubset(whole);
             yield* f.replica.syncSubset(point);
@@ -216,7 +225,7 @@ it.effect("coverage older than the stale bound waits for its reload", () =>
             yield* f.replica.syncSubset(whole);
             yield* TestClock.adjust(10_000);
             f.setValue(3);
-            const held = yield* f.holdLoads;
+            const held = yield* f.holdLoads();
             const read = yield* Effect.forkScoped(f.replica.syncSubset(whole));
             yield* held.started;
             yield* TestClock.adjust(0);
@@ -236,7 +245,7 @@ it.effect("without maxStaleAgeMs expired coverage is never served stale", () =>
             yield* f.replica.demand(whole);
             yield* f.replica.syncSubset(whole);
             yield* TestClock.adjust(2_000);
-            const held = yield* f.holdLoads;
+            const held = yield* f.holdLoads();
             const read = yield* Effect.forkScoped(f.replica.syncSubset(whole));
             yield* held.started;
             yield* TestClock.adjust(0);
@@ -253,7 +262,7 @@ it.effect("a poll tick marks coverage due without hiding it, until the stale bou
             const f = yield* fixture({ pollIntervalMs: 1_000, refresh: { maxStaleAgeMs: 5_000 } });
             yield* f.replica.demand(whole);
             yield* f.replica.syncSubset(whole);
-            const held = yield* f.holdLoads;
+            const held = yield* f.holdLoads();
             yield* TestClock.adjust(1_000);
             // The tick starts a revalidation that outlasts several poll intervals.
             yield* held.started;
@@ -320,7 +329,7 @@ it.live("an explicit revalidation is not satisfied by a load already in flight",
             yield* f.replica.demand(whole);
             yield* f.replica.syncSubset(whole);
             yield* f.replica.markDemandedStale;
-            const held = yield* f.holdLoads;
+            const held = yield* f.holdLoads();
             const refresh = yield* Effect.forkScoped(f.replica.syncOnce);
             yield* held.started;
             // Requested after that fetch began, so its result installs as still due.
@@ -333,6 +342,59 @@ it.live("an explicit revalidation is not satisfied by a load already in flight",
             yield* f.replica.syncOnce;
             expect(f.loads()).toBe(3);
             expect((yield* proofOf(f.replica, whole)).proof?.stale).toBeUndefined();
+        })
+    )
+);
+
+it.live("a cold read is not blocked by a slow refresh of another subset of its type", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            const f = yield* fixture({ startSync: false });
+            const ones = { objectType: "Item", query: { where: eq(field("value"), 1) } };
+            const twos = { objectType: "Item", query: { where: eq(field("value"), 2) } };
+            yield* f.replica.demand(ones);
+            yield* f.replica.syncSubset(ones);
+            yield* f.replica.markDemandedStale;
+            const held = yield* f.holdLoads(true);
+            const refresh = yield* Effect.forkScoped(f.replica.syncOnce);
+            yield* held.started;
+            // Neither subset contains the other, so the new one loads alongside.
+            yield* f.replica.demand(twos);
+            yield* f.replica.syncSubset(twos).pipe(Effect.timeout("1 second"));
+            expect(f.loads()).toBe(3);
+            expect(refresh.pollUnsafe()).toBeUndefined();
+            yield* held.release;
+            yield* Fiber.join(refresh);
+        })
+    )
+);
+
+it.live("an action dispatches and confirms while a refresh is still fetching", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            const f = yield* fixture({});
+            yield* f.replica.demand(whole);
+            yield* f.replica.syncSubset(whole);
+            yield* f.replica.markDemandedStale;
+            const held = yield* f.holdLoads(true);
+            const refresh = yield* Effect.forkScoped(f.replica.syncSubset(whole));
+            yield* held.started;
+            yield* f.replica.enqueue({ id: "write-during-refresh", name: "write", parameters: {} });
+            yield* f.replica.awaitAction("write-during-refresh").pipe(Effect.timeout("1 second"));
+            expect(f.events).toContain("applied");
+            expect(refresh.pollUnsafe()).toBeUndefined();
+            yield* held.release;
+            yield* Fiber.join(refresh);
+            expect(yield* f.replica.get("Item", "one")).toEqual({ id: "one", value: 99 });
+        })
+    )
+);
+
+it.effect("rejects an invalid load concurrency", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            const error = yield* Effect.flip(fixture({ maxConcurrentLoads: 0 }));
+            expect(error.kind).toBe("InvalidConfiguration");
         })
     )
 );

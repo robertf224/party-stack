@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { makeOntologyBackend } from "@party-stack/ontology-backend";
+import { BackendError, makeOntologyBackend } from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, evaluateQuery, field } from "@party-stack/ontology-storage";
@@ -56,28 +56,89 @@ const maxStaleAgeMs = 5_000;
 const pollIntervalMs = 2_000;
 
 const Id = Schema.Literals(ids);
-const Operation = Schema.Union([
-    Schema.Struct({
+const ops = {
+    edit: Schema.Struct({
         kind: Schema.Literal("edit"),
         id: Id,
         value: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 9 })),
         group: Schema.Literals(["a", "b"]),
     }),
-    Schema.Struct({ kind: Schema.Literal("advance"), ms: Schema.Literals([0, 1_200, 3_000, 8_000]) }),
-    Schema.Struct({ kind: Schema.Literal("read"), subset: Schema.Literals(["whole", "groupA", "point"]) }),
+    advance: Schema.Struct({
+        kind: Schema.Literal("advance"),
+        ms: Schema.Literals([0, 1_200, 3_000, 8_000]),
+    }),
+    read: Schema.Struct({
+        kind: Schema.Literal("read"),
+        subset: Schema.Literals(["whole", "groupA", "point"]),
+    }),
     // Later loads or action dispatches block until `release`.
-    Schema.Struct({ kind: Schema.Literal("hold"), what: Schema.Literals(["loads", "actions"]) }),
-    Schema.Struct({ kind: Schema.Literal("release") }),
-    // A sync pass in the background: pull, load and dispatch the outbox.
-    Schema.Struct({ kind: Schema.Literal("pass") }),
-    Schema.Struct({ kind: Schema.Literal("revalidate") }),
-    Schema.Struct({ kind: Schema.Literal("increment"), id: Id }),
-]);
+    hold: Schema.Struct({ kind: Schema.Literal("hold"), what: Schema.Literals(["loads", "actions"]) }),
+    // Held loads resume one at a time: in start order, or newest first.
+    release: Schema.Struct({ kind: Schema.Literal("release"), order: Schema.Literals(["oldest", "newest"]) }),
+    // An explicit checkpoint: load what is due, then dispatch the outbox.
+    pass: Schema.Struct({ kind: Schema.Literal("pass") }),
+    revalidate: Schema.Struct({ kind: Schema.Literal("revalidate") }),
+    increment: Schema.Struct({ kind: Schema.Literal("increment"), id: Id }),
+    // The next receipt's read-back fails, leaving its commit unconfirmed until a later pass.
+    lostReadBack: Schema.Struct({ kind: Schema.Literal("lostReadBack") }),
+};
+const Operation = Schema.Union(Object.values(ops));
+const scenario = <Op extends Schema.Top>(operation: Op, settings: Schema.Struct.Fields) =>
+    Schema.Struct({
+        ...settings,
+        operations: Schema.Array(operation).check(Schema.isMinLength(6), Schema.isMaxLength(24)),
+    });
 const Scenario = Schema.Struct({
     stale: Schema.Boolean,
     poll: Schema.Boolean,
-    operations: Schema.Array(Operation).check(Schema.isMinLength(6), Schema.isMaxLength(24)),
+    // The reference: every load and install under the sync gate.
+    serial: Schema.Boolean,
+    // The background sync loop and outbox worker run alongside explicit passes.
+    background: Schema.Boolean,
+    // "start": a held fetch returns the source as it was when it began, like a slow
+    // response, so overlapping loads finish out of order. Freshness is then judged by
+    // install time, which a slow response legitimately exceeds; those runs check
+    // version order and convergence.
+    capture: Schema.Literals(["end", "start"]),
+    operations: Schema.Array(Operation),
 });
+// Focused generators: each explores one family of interleavings densely.
+const FreshnessScenario = scenario(
+    Schema.Union([ops.edit, ops.advance, ops.read, ops.hold, ops.release, ops.pass, ops.revalidate]),
+    {
+        stale: Schema.Boolean,
+        poll: Schema.Boolean,
+        serial: Schema.Boolean,
+        background: Schema.Literal(false),
+        capture: Schema.Literal("end"),
+    }
+);
+const OrderScenario = scenario(Schema.Union([ops.edit, ops.read, ops.hold, ops.release, ops.revalidate]), {
+    stale: Schema.Boolean,
+    poll: Schema.Literal(false),
+    serial: Schema.Boolean,
+    background: Schema.Literal(false),
+    capture: Schema.Literal("start"),
+});
+const ActionScenario = scenario(
+    Schema.Union([
+        ops.edit,
+        ops.read,
+        ops.hold,
+        ops.release,
+        ops.advance,
+        ops.increment,
+        ops.lostReadBack,
+        ops.pass,
+    ]),
+    {
+        stale: Schema.Boolean,
+        poll: Schema.Literal(false),
+        serial: Schema.Boolean,
+        background: Schema.Boolean,
+        capture: Schema.Literal("end"),
+    }
+);
 
 const run = (scenario: typeof Scenario.Type) =>
     Effect.scoped(
@@ -97,9 +158,15 @@ const run = (scenario: typeof Scenario.Type) =>
             yield* write({ id: "i0", value: 0, group: "a" });
             yield* write({ id: "i1", value: 0, group: "b" });
             const holds = {
-                loads: undefined as Deferred.Deferred<void> | undefined,
+                loads: false,
                 actions: undefined as Deferred.Deferred<void> | undefined,
             };
+            // Each load fetched while loads are held waits for its own release.
+            const heldLoads: Array<Deferred.Deferred<void>> = [];
+            // The source version each committed action produced.
+            const committedAt = new Map<string, number>();
+            let failReadBack = false;
+            let committedSinceFailure = false;
             const backend = makeOntologyBackend({
                 ir,
                 name: "stale-oracle",
@@ -110,22 +177,40 @@ const run = (scenario: typeof Scenario.Type) =>
                 loadSubset: (request) =>
                     Effect.gen(function* () {
                         const subset = yield* compileObjectSubset(ir, request);
-                        if (holds.loads) yield* Deferred.await(holds.loads);
-                        // Read the source when the fetch completes.
-                        return {
-                            complete: true,
-                            rows: evaluateQuery(
+                        // The first primary-key list request after a commit is its read-back.
+                        if (failReadBack && committedSinceFailure && subset.query?.where?.kind === "in") {
+                            failReadBack = false;
+                            return yield* new BackendError({
+                                operation: "loadSubset",
+                                kind: "Unavailable",
+                                message: "Read-back failed.",
+                                retryable: true,
+                            });
+                        }
+                        const read = () =>
+                            evaluateQuery(
                                 [...server.values()].map((row) => ({ key: row.id, value: { ...row } })),
                                 subset.query ?? {}
-                            ),
-                        };
+                            );
+                        const early = scenario.capture === "start" ? read() : undefined;
+                        if (holds.loads) {
+                            const held = yield* Deferred.make<void>();
+                            heldLoads.push(held);
+                            yield* Deferred.await(held);
+                        }
+                        return { complete: true, rows: early ?? read() };
                     }),
                 applyAction: (request) =>
                     Effect.gen(function* () {
-                        if (holds.actions) yield* Deferred.await(holds.actions);
                         const id = String(request.parameters.id);
                         const row = server.get(id);
-                        if (row) yield* write({ ...row, value: row.value + 1 });
+                        if (row) {
+                            yield* write({ ...row, value: row.value + 1 });
+                            committedAt.set(request.id, version);
+                            committedSinceFailure = true;
+                        }
+                        // Committed at the source before the receipt reaches the replica.
+                        if (holds.actions) yield* Deferred.await(holds.actions);
                         return {
                             operationId: request.id,
                             outcome: "committed" as const,
@@ -138,8 +223,9 @@ const run = (scenario: typeof Scenario.Type) =>
                 ir,
                 tables: yield* Memory.make(),
                 backend,
-                startSync: false,
+                startSync: scenario.background,
                 objectCacheGc: false,
+                ...(scenario.serial ? { scheduling: "serial" as const } : {}),
                 demand: { refresh: { maxCoverageAgeMs, maxStaleAgeMs: scenario.stale ? maxStaleAgeMs : 0 } },
                 execute: (tx, action) =>
                     Effect.gen(function* () {
@@ -211,6 +297,19 @@ const run = (scenario: typeof Scenario.Type) =>
                             if (proof?.stale && !scenario.stale)
                                 fail(`${name}: stale proof without maxStaleAgeMs`);
                             const age = proof && !proof.stale ? maxCoverageAgeMs : bound;
+                            // A read can also return uncovered (offline, or while a commit awaits
+                            // confirmation); only a read its demand reports as installed is bounded.
+                            if (!demand || demand.installed !== demand.revision) return;
+                            // Passes step aside for an unsettled action, so such a read returns
+                            // whatever is cached, as before gate-free loading.
+                            if (
+                                (yield* replica.pending).some(
+                                    (entry) =>
+                                        entry.state === "sending" || entry.receipt?.outcome === "committed"
+                                )
+                            )
+                                return;
+                            if (scenario.capture === "start") return;
                             for (const id of ids)
                                 if (!recent(id, subset, rows.get(id), now, age))
                                     fail(
@@ -223,11 +322,21 @@ const run = (scenario: typeof Scenario.Type) =>
             const passes: Array<Fiber.Fiber<unknown>> = [];
             const seen = new Map<string, number>();
             const monotonic = Effect.gen(function* () {
+                const pending = yield* replica.pending;
                 for (const id of ids) {
                     const row = (yield* replica.confirmed.get("Item", id)) as Item | undefined;
                     if (!row) continue;
                     if (row.version < (seen.get(id) ?? 0)) fail(`${id}: version ${row.version} regressed`);
                     seen.set(id, Math.max(row.version, seen.get(id) ?? 0));
+                    // A prediction still applied over a base that already contains its commit
+                    // shows the action twice.
+                    for (const entry of pending)
+                        if (
+                            String(entry.invocation.parameters.id) === id &&
+                            entry.prediction === "applied" &&
+                            (committedAt.get(entry.invocation.id) ?? Infinity) <= row.version
+                        )
+                            fail(`${id}: ${entry.invocation.id} applied twice over version ${row.version}`);
                 }
             });
             // Let forked reads, passes and background fibers run at the current instant.
@@ -237,25 +346,42 @@ const run = (scenario: typeof Scenario.Type) =>
                     yield* Effect.yieldNow;
                 }
             });
-            const release = Effect.gen(function* () {
-                for (const what of ["loads", "actions"] as const) {
-                    const held = holds[what];
-                    holds[what] = undefined;
+            const release = (order: "oldest" | "newest") =>
+                Effect.gen(function* () {
+                    holds.loads = false;
+                    const held = holds.actions;
+                    holds.actions = undefined;
                     if (held) yield* Deferred.succeed(held, undefined);
-                }
-            });
+                    // Let each resumed load install before the next one resumes.
+                    while (heldLoads.length) {
+                        const next = order === "oldest" ? heldLoads.shift()! : heldLoads.pop()!;
+                        yield* Deferred.succeed(next, undefined);
+                        yield* progress;
+                        yield* monotonic;
+                    }
+                });
             let sequence = 0;
+            let obstructed = false;
             for (const operation of scenario.operations) {
                 if (operation.kind === "edit")
                     yield* write({ id: operation.id, value: operation.value, group: operation.group });
                 else if (operation.kind === "advance") yield* TestClock.adjust(operation.ms);
                 else if (operation.kind === "read") yield* read(operation.subset);
-                else if (operation.kind === "hold") holds[operation.what] ??= yield* Deferred.make<void>();
-                else if (operation.kind === "release") yield* release;
-                else if (operation.kind === "pass")
+                else if (operation.kind === "hold") {
+                    if (operation.what === "loads") holds.loads = true;
+                    else holds.actions ??= yield* Deferred.make<void>();
+                } else if (operation.kind === "release") yield* release(operation.order);
+                else if (operation.kind === "pass") {
+                    // An action still sending, or committed but unconfirmed, holds back snapshots.
+                    obstructed = (yield* replica.pending).some(
+                        (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
+                    );
                     passes.push(yield* Effect.forkScoped(Effect.result(replica.syncOnce)));
-                else if (operation.kind === "revalidate") yield* replica.markDemandedStale;
-                else {
+                } else if (operation.kind === "revalidate") yield* replica.markDemandedStale;
+                else if (operation.kind === "lostReadBack") {
+                    failReadBack = true;
+                    committedSinceFailure = false;
+                } else {
                     const known = (yield* replica.get("Item", operation.id)) !== undefined;
                     if (known)
                         yield* replica.enqueue({
@@ -271,20 +397,25 @@ const run = (scenario: typeof Scenario.Type) =>
                     operation.kind === "pass" &&
                     !holds.loads &&
                     !holds.actions &&
-                    passes.every((fiber) => fiber.pollUnsafe() !== undefined)
-                )
+                    passes.every((fiber) => fiber.pollUnsafe() !== undefined) &&
+                    !obstructed
+                ) {
                     for (const demand of (yield* replica.status).demands)
                         if (demand.coverageProof?.stale)
                             fail(`${subsetName(demand)}: still stale after an unobstructed pass`);
+                }
                 if (violation) break;
             }
             // Everything released, every read and pass completes.
-            yield* release;
+            yield* release("oldest");
             yield* progress;
             for (const fiber of [...reads, ...passes]) yield* Fiber.join(fiber);
             yield* monotonic;
             // After a full refresh with nothing held, every demand shows the source.
+            failReadBack = false;
             yield* TestClock.adjust(maxStaleAgeMs * 2);
+            // A read-back that failed earlier is confirmed by the first checkpoint.
+            yield* Effect.result(replica.syncOnce);
             yield* replica.syncOnce;
             yield* replica.syncOnce;
             for (const name of demanded) {
@@ -304,16 +435,30 @@ const run = (scenario: typeof Scenario.Type) =>
                 )
                     fail(`${name}: did not converge`);
             }
-            if (violation) yield* Effect.logWarning("Stale coverage oracle violation", { violation });
-            return violation === undefined;
+            // A typed failure keeps the violated invariant in the shrunk report.
+            if (violation) return yield* Effect.fail(new Error(violation));
+            return true;
         })
     );
 
+const asScenario = (value: unknown) => value as typeof Scenario.Type;
 it.effect.prop(
-    "reads stay within their freshness bound under loads, polls, revalidation and actions",
-    [Scenario],
-    ([scenario]) => run(scenario),
-    { arbitrary: { runs: 200, size: 24, seed: "stale-coverage-oracle-v1" }, timeout: 120_000 }
+    "reads stay within their freshness bound under loads, polls and revalidation",
+    [FreshnessScenario],
+    ([value]) => run(asScenario(value)),
+    { arbitrary: { runs: 200, size: 24, seed: "stale-coverage-freshness-v1" }, timeout: 120_000 }
+);
+it.effect.prop(
+    "a row's confirmed version never regresses when overlapping loads finish out of order",
+    [OrderScenario],
+    ([value]) => run(asScenario(value)),
+    { arbitrary: { runs: 200, size: 24, seed: "stale-coverage-order-v1" }, timeout: 120_000 }
+);
+it.effect.prop(
+    "snapshots never apply an action twice while its commit awaits confirmation",
+    [ActionScenario],
+    ([value]) => run(asScenario(value)),
+    { arbitrary: { runs: 200, size: 24, seed: "stale-coverage-actions-v1" }, timeout: 120_000 }
 );
 
 it.effect("a read during a held refresh of a stale collection is served within the bound", () =>
@@ -321,6 +466,9 @@ it.effect("a read during a held refresh of a stale collection is served within t
         const agreed = yield* run({
             stale: true,
             poll: false,
+            serial: false,
+            background: false,
+            capture: "end",
             operations: [
                 { kind: "read", subset: "whole" },
                 { kind: "advance", ms: 1_200 },
@@ -331,7 +479,75 @@ it.effect("a read during a held refresh of a stale collection is served within t
                 { kind: "read", subset: "groupA" },
                 { kind: "advance", ms: 3_000 },
                 { kind: "read", subset: "whole" },
-                { kind: "release" },
+                { kind: "release", order: "newest" },
+            ],
+        });
+        expect(agreed).toBe(true);
+    })
+);
+
+it.effect("an older fetch that finishes last never replaces a newer row", () =>
+    Effect.gen(function* () {
+        const agreed = yield* run({
+            stale: true,
+            poll: false,
+            serial: false,
+            background: false,
+            capture: "start",
+            // The group's fetch starts first; the whole collection, which does not wait
+            // for it, sees the later edit. Both finish together, in either order.
+            operations: [
+                { kind: "hold", what: "loads" },
+                { kind: "read", subset: "groupA" },
+                { kind: "edit", id: "i0", value: 7, group: "a" },
+                { kind: "read", subset: "whole" },
+                { kind: "release", order: "newest" },
+            ],
+        });
+        expect(agreed).toBe(true);
+    })
+);
+
+it.effect("a load fetched after a commit waits for its receipt before installing", () =>
+    Effect.gen(function* () {
+        const agreed = yield* run({
+            stale: true,
+            poll: false,
+            serial: false,
+            background: false,
+            capture: "end",
+            operations: [
+                { kind: "read", subset: "whole" },
+                { kind: "increment", id: "i0" },
+                { kind: "lostReadBack" },
+                { kind: "pass" },
+                { kind: "advance", ms: 1_200 },
+                { kind: "read", subset: "whole" },
+                { kind: "pass" },
+            ],
+        });
+        expect(agreed).toBe(true);
+    })
+);
+
+it.effect("a load in flight across a commit never installs over its unconfirmed receipt", () =>
+    Effect.gen(function* () {
+        const agreed = yield* run({
+            stale: false,
+            poll: false,
+            serial: false,
+            background: true,
+            capture: "end",
+            // The group's fetch is held while the worker commits an edit to one of its
+            // rows and then loses the receipt's read-back.
+            operations: [
+                { kind: "read", subset: "point" },
+                { kind: "hold", what: "loads" },
+                { kind: "read", subset: "groupA" },
+                { kind: "lostReadBack" },
+                { kind: "increment", id: "i0" },
+                { kind: "release", order: "oldest" },
+                { kind: "advance", ms: 8_000 },
             ],
         });
         expect(agreed).toBe(true);
