@@ -794,6 +794,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     if (!Number.isSafeInteger(maxConcurrentLoads) || maxConcurrentLoads < 1)
         return yield* fault("InvalidConfiguration", "Concurrent loads must be a positive integer.");
     const loadPermits = yield* Semaphore.make(maxConcurrentLoads);
+    // Fetches one load may repeat after mid-fetch invalidation before it completes anyway.
+    const maxLoadRefetches = 2;
     const demands = new Map<
         string,
         {
@@ -2661,10 +2663,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     // loads of subsets that contain it and reuses their result when that proves it.
     type LoadTask = {
         readonly order: number;
-        // The demand revision being fetched; a load restarts when its demand is invalidated.
+        readonly demand: DemandEntry;
+        // The demand revision being fetched; a load refetches when its demand is invalidated.
         revision: number;
-        // A load started before `revalidate()` cannot satisfy it.
-        readonly revalidation: symbol | undefined;
+        // A fetch started before `revalidate()` cannot satisfy it.
+        revalidation: symbol | undefined;
         readonly subset: CompiledSubset;
         readonly done: Deferred.Deferred<void, BackendError>;
         phase: "waiting" | "fetching" | "installing";
@@ -2687,10 +2690,19 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 });
                 if (yield* renewProofs(type, demand)) return;
             }
+            const install = (write: Effect.Success<ReturnType<typeof prepareSnapshot>>) => {
+                task.phase = "installing";
+                return installUnlessUnsettled(write).pipe(
+                    Effect.onExit((exit) =>
+                        Effect.sync(() => write.settle(Exit.isSuccess(exit) && exit.value))
+                    )
+                );
+            };
             let write: Effect.Success<ReturnType<typeof prepareSnapshot>>;
-            for (;;) {
+            for (let refetches = 0; ; refetches++) {
                 task.phase = "fetching";
                 task.revision = demand.revision;
+                task.revalidation = revalidateGenerations.get(type);
                 write = yield* loadPermits.withPermit(
                     prepareSnapshot(
                         demand.subset,
@@ -2699,15 +2711,23 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         demand.installed === 0 ? "demand" : "refresh"
                     )
                 );
-                if (demands.get(key) !== demand || demand.revision === task.revision) break;
-                // Invalidated while fetching: its rows are already known to be outdated.
-                write.settle(false);
-                yield* Effect.annotateCurrentSpan("restarted", true);
+                if (
+                    demands.get(key) !== demand ||
+                    (demand.revision === task.revision &&
+                        revalidateGenerations.get(type) === task.revalidation) ||
+                    refetches === maxLoadRefetches
+                )
+                    break;
+                // Invalidated while fetching. Its rows are still at least as new as the
+                // cache's, and row stamps keep newer writes: show them, leave coverage
+                // unproven, and fetch again. Bounded, so constant invalidation cannot
+                // starve the install.
+                yield* Effect.annotateCurrentSpan("refetches", refetches + 1);
+                if (yield* install(write)) yield* notify;
+                // A pass replaced this load while it installed.
+                if (loadTasks.get(key) !== task) return;
             }
-            task.phase = "installing";
-            const installed = yield* installUnlessUnsettled(write).pipe(
-                Effect.onExit((exit) => Effect.sync(() => write.settle(Exit.isSuccess(exit) && exit.value)))
-            );
+            const installed = yield* install(write);
             if (!installed) return yield* Effect.annotateCurrentSpan("dropped", "unsettled-action");
             yield* notify;
             if (demands.get(key) === demand && demand.revision === task.revision) {
@@ -2740,7 +2760,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 existing.revalidation === revalidateGenerations.get(type)
             )
                 return existing;
-            // A superseded fetch is cancelled; one already installing finishes first.
+            // A fetch for an older revision of this demand refetches once it lands, after
+            // installing its rows; join it rather than discard them.
+            if (existing?.demand === demand && existing.phase !== "installing") return existing;
+            // A replaced demand's fetch is cancelled; one already installing finishes first.
             const cancelled = existing && existing.phase !== "installing" ? existing : undefined;
             // Earlier loads this one may reuse: its own older revision, a containing subset,
             // or, for a primary-key lookup, any load of its type that may return that row.
@@ -2760,6 +2783,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 .map(([, other]) => other);
             const task: LoadTask = {
                 order: ++loadOrder,
+                demand,
                 revision: demand.revision,
                 revalidation: revalidateGenerations.get(type),
                 subset: demand.subset,

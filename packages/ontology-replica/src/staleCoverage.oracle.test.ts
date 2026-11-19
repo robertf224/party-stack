@@ -100,6 +100,8 @@ const Scenario = Schema.Struct({
     // install time, which a slow response legitimately exceeds; those runs check
     // version order and convergence.
     capture: Schema.Literals(["end", "start"]),
+    // Every fetch takes this long in clock time, so polls and edits land mid-fetch.
+    latencyMs: Schema.optional(Schema.Literals([0, 2_500, 4_500])),
     operations: Schema.Array(Operation),
 });
 // Focused generators: each explores one family of interleavings densely.
@@ -140,6 +142,19 @@ const ActionScenario = scenario(
     }
 );
 
+// Liveness: fetches slower than the poll interval, so every one is overtaken by a
+// tick, and reads keep arriving. Each read must still finish while polls continue.
+// Serial scheduling is excluded: it is a safety reference, and its queued passes each
+// reload every invalidated demand in turn, which is slow by design.
+const LivenessScenario = scenario(Schema.Union([ops.edit, ops.read, ops.advance, ops.revalidate, ops.pass]), {
+    stale: Schema.Boolean,
+    poll: Schema.Literal(true),
+    serial: Schema.Literal(false),
+    background: Schema.Boolean,
+    capture: Schema.Literal("end"),
+    latencyMs: Schema.Literals([2_500, 4_500]),
+});
+
 const run = (scenario: typeof Scenario.Type) =>
     Effect.scoped(
         Effect.gen(function* () {
@@ -165,6 +180,7 @@ const run = (scenario: typeof Scenario.Type) =>
             const heldLoads: Array<Deferred.Deferred<void>> = [];
             // The source version each committed action produced.
             const committedAt = new Map<string, number>();
+            let latency = scenario.latencyMs ?? 0;
             let failReadBack = false;
             let committedSinceFailure = false;
             const backend = makeOntologyBackend({
@@ -193,6 +209,7 @@ const run = (scenario: typeof Scenario.Type) =>
                                 subset.query ?? {}
                             );
                         const early = scenario.capture === "start" ? read() : undefined;
+                        if (latency) yield* Effect.sleep(latency);
                         if (holds.loads) {
                             const held = yield* Deferred.make<void>();
                             heldLoads.push(held);
@@ -406,6 +423,23 @@ const run = (scenario: typeof Scenario.Type) =>
                 }
                 if (violation) break;
             }
+            // With polls still firing, every read finishes within a few fetch latencies:
+            // invalidation mid-fetch may delay a load, never starve it.
+            if (scenario.latencyMs && !violation) {
+                const deadline = 6 * scenario.latencyMs + pollIntervalMs;
+                for (let waited = 0; waited < deadline; waited += 500) {
+                    yield* TestClock.adjust(500);
+                    yield* progress;
+                    yield* monotonic;
+                }
+                const stuck = reads.filter((fiber) => fiber.pollUnsafe() === undefined).length;
+                if (stuck) fail(`${stuck} read(s) unfinished ${deadline} ms into continuous polling`);
+                if (violation) return yield* Effect.fail(new Error(violation));
+                // Converge without latency; let fetches already sleeping land.
+                latency = 0;
+                yield* TestClock.adjust(scenario.latencyMs);
+                yield* progress;
+            }
             // Everything released, every read and pass completes.
             yield* release("oldest");
             yield* progress;
@@ -459,6 +493,12 @@ it.effect.prop(
     [ActionScenario],
     ([value]) => run(asScenario(value)),
     { arbitrary: { runs: 200, size: 24, seed: "stale-coverage-actions-v1" }, timeout: 120_000 }
+);
+it.effect.prop(
+    "reads finish while polls keep invalidating loads slower than the poll interval",
+    [LivenessScenario],
+    ([value]) => run(asScenario(value)),
+    { arbitrary: { runs: 100, size: 24, seed: "stale-coverage-liveness-v1" }, timeout: 120_000 }
 );
 
 it.effect("a read during a held refresh of a stale collection is served within the bound", () =>

@@ -322,7 +322,7 @@ it.live("stale admission never installs a snapshot while an action is sending", 
     )
 );
 
-it.live("an explicit revalidation is not satisfied by a load already in flight", () =>
+it.live("an explicit revalidation during a load refetches before that load completes", () =>
     Effect.scoped(
         Effect.gen(function* () {
             const f = yield* fixture({ startSync: false, refresh: { maxStaleAgeMs: 60_000 } });
@@ -332,16 +332,16 @@ it.live("an explicit revalidation is not satisfied by a load already in flight",
             const held = yield* f.holdLoads();
             const refresh = yield* Effect.forkScoped(f.replica.syncOnce);
             yield* held.started;
-            // Requested after that fetch began, so its result installs as still due.
+            // Requested after that fetch began: its rows install as still due, and the
+            // same load fetches again.
             yield* f.replica.markDemandedStale;
+            f.setValue(2);
             yield* held.release;
             yield* Fiber.join(refresh);
-            expect(f.loads()).toBe(2);
-            yield* f.replica.syncSubset(whole).pipe(Effect.timeout("1 second"));
-            expect((yield* proofOf(f.replica, whole)).proof?.stale).toBe(true);
-            yield* f.replica.syncOnce;
             expect(f.loads()).toBe(3);
             expect((yield* proofOf(f.replica, whole)).proof?.stale).toBeUndefined();
+            const { rows } = yield* f.replica.snapshotSubset({ ...whole, query: {} });
+            expect(rows.map((row) => (row.value as { value: number }).value)).toEqual([2]);
         })
     )
 );
@@ -407,3 +407,53 @@ it.effect("rejects a negative stale bound", () =>
         })
     )
 );
+
+for (const scheduling of [undefined, "serial"] as const)
+    it.effect(`a load slower than the poll interval still installs (${scheduling ?? "detached"})`, () =>
+        Effect.scoped(
+            Effect.gen(function* () {
+                let version = 0;
+                const tables = yield* Memory.make();
+                const replica = yield* makeReplica({
+                    namespace: "slow-poll",
+                    ir,
+                    tables,
+                    startSync: true,
+                    objectCacheGc: false,
+                    ...(scheduling === "serial" ? { scheduling: "serial" as const } : {}),
+                    execute: () => Effect.void,
+                    backend: makeOntologyBackend({
+                        ir,
+                        name: "fixture",
+                        sourceId: "fixture",
+                        supportsIdempotency: false,
+                        refresh: () => ({ pollIntervalMs: 1_000 }),
+                        queryFunction: () => Effect.void,
+                        applyAction: () => Effect.die("unused"),
+                        loadSubset: (request) =>
+                            Effect.gen(function* () {
+                                const subset = yield* compileObjectSubset(ir, request);
+                                const seen = ++version;
+                                yield* Effect.sleep(1_500);
+                                return {
+                                    rows: evaluateQuery(
+                                        [{ key: "one", value: { id: "one", value: seen } }],
+                                        subset.query
+                                    ),
+                                    complete: true,
+                                };
+                            }),
+                    }),
+                });
+                yield* replica.demand(whole);
+                const read = yield* Effect.forkScoped(replica.syncSubset(whole));
+                for (let tick = 0; tick < 20 && !read.pollUnsafe(); tick++) yield* TestClock.adjust(500);
+                // Every fetch is invalidated by a poll tick before it lands; the read still
+                // returns, and the rows installed are the newest fetched.
+                expect(read.pollUnsafe()).toBeDefined();
+                yield* Fiber.join(read);
+                const { rows } = yield* replica.snapshotSubset({ ...whole, query: {} });
+                expect(rows).toHaveLength(1);
+            })
+        )
+    );

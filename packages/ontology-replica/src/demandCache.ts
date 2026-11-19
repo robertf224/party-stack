@@ -22,7 +22,15 @@ export interface DemandPolicy {
     readonly idleRetentionMs?: number;
     /** Active plus idle distinct subsets; idle entries are evicted before rejecting new work. */
     readonly maxSubsets?: number;
-    /** Subset fetches in flight at once for backends without a change journal. Default 6. */
+    /**
+     * Subset fetches in flight at once for backends without a change journal. Default 6.
+     *
+     * Six matches browsers' per-host connection limit over HTTP/1.1, beyond which extra
+     * fetches only queue, and Cloudflare Workers' limit on simultaneous outbound
+     * connections. Over HTTP/2 a higher value can help; the backend's own rate and
+     * concurrency limits still apply. Replicas fed by a parent `source`, such as tab
+     * replicas of a SharedWorker owner, do not fetch from the network and ignore it.
+     */
     readonly maxConcurrentLoads?: number;
 }
 
