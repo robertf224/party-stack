@@ -30,12 +30,15 @@ const State = Schema.Struct({
 });
 
 /** Egress convenience over ordinary reads, refresh action and property decryption.
+ * Pass `refresh: false` when the caller coordinates renewal itself, as the connection
+ * manager does; the stored token is then returned as is.
  * The supplied backend may be local or remote and must authorize token-property
  * access. This adds no alternate permission path or credential-returning RPC.
  */
 export const connectionAccessToken = Effect.fn("Connect.accessToken")(function* (
     backend: OntologyBackendService,
-    connectionId: string
+    connectionId: string,
+    options: { readonly refresh?: boolean } = {}
 ) {
     if (!backend.encrypted)
         return yield* new BackendError({
@@ -78,7 +81,7 @@ export const connectionAccessToken = Effect.fn("Connect.accessToken")(function* 
         return row;
     });
     let current = yield* read();
-    if (accessTokenNeedsRefresh(current, yield* Clock.currentTimeMillis)) {
+    if (options.refresh !== false && accessTokenNeedsRefresh(current, yield* Clock.currentTimeMillis)) {
         yield* backend.applyAction({
             id: crypto.randomUUID(),
             name: "refreshConnection",

@@ -57,7 +57,7 @@ const renewalUnavailable = (cause: BackendError) =>
         kind: "Unavailable",
         retryable: true,
         actionOutcome: "not-committed",
-        message: "The rejected credential could not be renewed yet; retry the request.",
+        message: "The credential could not be renewed yet; retry the request.",
         cause,
     });
 
@@ -139,30 +139,31 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                     message: "Service connector is unavailable.",
                 });
             const sessionVerification = yield* Semaphore.make(1);
-            // One refresh at a time per connection, whether early (the saved token is about
-            // to expire) or after the service rejected it. The credential authority fails a
-            // second concurrent refresh with Conflict rather than queueing it.
-            const renewal = yield* Semaphore.make(1);
-            const currentCredential = Effect.fnUntraced(function* (): Effect.fn.Return<string, BackendError> {
+            const currentCredential = Effect.fnUntraced(function* (
+                renewEarly = true
+            ): Effect.fn.Return<string, BackendError> {
                 const current = yield* read(ref.objectType, ref.id);
                 if (!current || current.status === "inactive")
                     return yield* unavailable("The selected connection is disconnected.");
                 if (current.status !== "active")
                     return yield* unavailable("The selected connection requires authentication.");
                 if (ref.objectType === "OAuthConnection") {
-                    const saved = current as ConnectOntology["objectTypes"]["OAuthConnection"];
-                    if (!accessTokenNeedsRefresh(saved, yield* Clock.currentTimeMillis))
-                        return yield* connectionAccessToken(backend, ref.id);
-                    // Requests queued behind this refresh re-read the saved token and use it.
-                    return yield* renewal.withPermit(
-                        connectionAccessToken(backend, ref.id).pipe(
-                            Effect.tap(() =>
-                                read(ref.objectType, ref.id).pipe(
-                                    Effect.tap((value) => Effect.sync(() => install(value)))
-                                )
-                            )
+                    if (
+                        renewEarly &&
+                        accessTokenNeedsRefresh(
+                            current as ConnectOntology["objectTypes"]["OAuthConnection"],
+                            yield* Clock.currentTimeMillis
                         )
-                    );
+                    ) {
+                        // Renew a token that is about to expire through the connection's one
+                        // renewal, like a rejected one. Requests queued behind it skip their own
+                        // refresh once the credential changes, even when the new token is also
+                        // short-lived, and share a failed attempt instead of each retrying it.
+                        yield* renew(credentialGeneration);
+                        return yield* currentCredential(false);
+                    }
+                    // This manager owns renewal; the helper only reads and decrypts.
+                    return yield* connectionAccessToken(backend, ref.id, { refresh: false });
                 }
                 const expiresAt = (
                     current as
@@ -438,6 +439,7 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                 if (isUnauthenticatedError(error)) yield* markNeedsAuthentication(observed);
                 return yield* error;
             });
+            const renewal = yield* Semaphore.make(1);
             // Renew the credential that was saved at `version`, once: concurrent rejections
             // of the same credential share one renewal, and a newer credential wins.
             // Rejections queued behind a renewal that failed share its failure instead of

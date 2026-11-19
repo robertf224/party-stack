@@ -361,61 +361,125 @@ test("rejected credentials renew once, retry body-less requests, and never renew
     );
 });
 
+// Requests 2..n see the stale token and queue for renewal while the first one's
+// provider refresh is in flight; the authority would fail their own refreshes with Conflict.
+const earlyRefreshRace = Effect.fnUntraced(function* (
+    requests: number,
+    refreshed: Effect.Effect<
+        { accessToken: string; accessTokenExpiresAt?: Temporal.Instant; userId: string },
+        ConnectError
+    >
+) {
+    const sent: string[] = [];
+    const f = yield* setup(({ credential }) =>
+        Effect.succeed({
+            fetch: (request) =>
+                Effect.gen(function* () {
+                    sent.push(`${new URL(request.url).pathname} ${yield* credential}`);
+                    return new Response();
+                }),
+            createWebSocket: () => Effect.die("unused"),
+        })
+    );
+    // Inside the renewal window, so the next request refreshes before sending.
+    f.exchange.mockImplementation(() =>
+        Effect.succeed({
+            accessToken: "private-access",
+            accessTokenExpiresAt: Temporal.Now.instant().add({ seconds: 1 }),
+            refreshToken: "private-refresh",
+            userId: "alice",
+        })
+    );
+    const access = yield* acquireConfiguredConnection({
+        manager: f.manager,
+        serviceInstanceId: "stack",
+        oauth,
+        browserAuthentication: f.browser,
+    });
+    const started = yield* Deferred.make<void>();
+    const reply = yield* Deferred.make<void>();
+    f.refresh.mockImplementation(() =>
+        Effect.gen(function* () {
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(reply);
+            return yield* refreshed;
+        })
+    );
+    const version = access.authentication.credentialVersion;
+    const fetch = (index: number) =>
+        access.egress.fetch(`https://service.test/${index}`).pipe(Effect.result, Effect.forkScoped);
+    const first = yield* fetch(1);
+    yield* Deferred.await(started);
+    const rest = yield* Effect.forEach(
+        Array.from({ length: requests - 1 }, (_, i) => i + 2),
+        fetch
+    );
+    yield* Effect.sleep(50);
+    yield* Deferred.succeed(reply, undefined);
+    const results = yield* Effect.forEach([first, ...rest], Fiber.join);
+    return { f, access, version, sent, results };
+});
+
 test("concurrent requests with an expiring credential share one early refresh", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const sent: string[] = [];
-                const f = yield* setup(({ credential }) =>
-                    Effect.succeed({
-                        fetch: (request) =>
-                            Effect.gen(function* () {
-                                sent.push(`${new URL(request.url).pathname} ${yield* credential}`);
-                                return new Response();
-                            }),
-                        createWebSocket: () => Effect.die("unused"),
-                    })
+                const { f, access, version, sent, results } = yield* earlyRefreshRace(
+                    3,
+                    Effect.succeed({ accessToken: "refreshed-access", userId: "alice" })
                 );
-                // Inside the renewal window, so the next request refreshes before sending.
-                f.exchange.mockImplementation(() =>
-                    Effect.succeed({
-                        accessToken: "private-access",
-                        accessTokenExpiresAt: Temporal.Now.instant().add({ seconds: 1 }),
-                        refreshToken: "private-refresh",
-                        userId: "alice",
-                    })
-                );
-                const access = yield* acquireConfiguredConnection({
-                    manager: f.manager,
-                    serviceInstanceId: "stack",
-                    oauth,
-                    browserAuthentication: f.browser,
-                });
-                const started = yield* Deferred.make<void>();
-                const reply = yield* Deferred.make<void>();
-                f.refresh.mockImplementation(() =>
-                    Effect.gen(function* () {
-                        yield* Deferred.succeed(started, undefined);
-                        yield* Deferred.await(reply);
-                        return { accessToken: "refreshed-access", userId: "alice" };
-                    })
-                );
-                const version = access.authentication.credentialVersion;
-                const one = yield* access.egress.fetch("https://service.test/one").pipe(Effect.forkScoped);
-                yield* Deferred.await(started);
-                // Let the second request see the stale token and reach its own refresh while the
-                // first is in flight; the authority would fail that refresh with Conflict.
-                const two = yield* access.egress.fetch("https://service.test/two").pipe(Effect.forkScoped);
-                yield* Effect.sleep(50);
-                yield* Deferred.succeed(reply, undefined);
-                expect((yield* Fiber.join(one)).status).toBe(200);
-                expect((yield* Fiber.join(two)).status).toBe(200);
+                expect(results.map((result) => result._tag)).toEqual(["Success", "Success", "Success"]);
                 expect(f.refresh).toHaveBeenCalledOnce();
-                expect([...sent].sort()).toEqual(["/one refreshed-access", "/two refreshed-access"]);
+                expect([...sent].sort()).toEqual([
+                    "/1 refreshed-access",
+                    "/2 refreshed-access",
+                    "/3 refreshed-access",
+                ]);
                 expect(access.authentication.credentialVersion).toBeGreaterThan(version);
                 // A late rejection of the replaced credential does not renew the new one.
                 yield* access.authentication.refresh(version);
                 expect(f.refresh).toHaveBeenCalledOnce();
+            })
+        )
+    );
+});
+
+test("a refreshed token that is also short-lived is not refreshed again by queued requests", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { f, sent, results } = yield* earlyRefreshRace(
+                    3,
+                    Effect.sync(() => ({
+                        accessToken: "short-access",
+                        accessTokenExpiresAt: Temporal.Now.instant().add({ seconds: 30 }),
+                        userId: "alice",
+                    }))
+                );
+                expect(results.map((result) => result._tag)).toEqual(["Success", "Success", "Success"]);
+                expect(f.refresh).toHaveBeenCalledOnce();
+                expect([...sent].sort()).toEqual(["/1 short-access", "/2 short-access", "/3 short-access"]);
+            })
+        )
+    );
+});
+
+test("requests queued behind a failed early refresh share its failure", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const { f, access, sent, results } = yield* earlyRefreshRace(
+                    3,
+                    Effect.fail(connectError("Provider", "Token endpoint unavailable.", true))
+                );
+                for (const result of results)
+                    expect(result).toMatchObject({
+                        _tag: "Failure",
+                        failure: { kind: "Unavailable", retryable: true },
+                    });
+                expect(f.refresh).toHaveBeenCalledOnce();
+                expect(sent).toEqual([]);
+                expect(access.authentication.state.status).toBe("active");
             })
         )
     );
