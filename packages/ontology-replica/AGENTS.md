@@ -28,14 +28,27 @@ the state involved. Each fact below cites where to verify it.
   but unconfirmed, or queued to retry after an attempt whose outcome is unknown (a
   deduplicating backend retries instead of blocking). `unsettled` names those states:
   installs are fenced while any action is unsettled (`installUnlessUnsettled`), serial
-  and journal passes step aside, and `applyWatchChanges` holds changes. A blocked action
-  is not replayed, and neither is anything behind it; rebase labels them `dropped`.
+  and journal passes step aside, and `applyWatchChanges` holds changes. Detached passes
+  do not step aside: their fetches may start during a dispatch because the install is
+  what the fence checks, under `gate`. A blocked action is not replayed, and neither is
+  anything behind it; rebase labels them `dropped`.
 - **Unknown outcomes.** An attempt that may have committed and will not be retried has
   no receipt to read back, so `revalidateAfterUnknownOutcome` marks every age-based
   confirmation due, as an incomplete receipt does: demanded subsets reload now, stored
-  ones on their next demand. Detached passes
-  do not step aside: their fetches may start during a dispatch because the install is
-  what the fence checks, under `gate`.
+  ones on their next demand.
+- **Delivery holds demand; views change in place.** A delivery subscription
+  (`subscribeClient`, `subscribeSelection`) holds its selection's demand, one lease per
+  subset, and a released demand cancels its in-flight load. A child changes its view with
+  `updateParentView` → `source.updateView` → `updateClientView`: the owner acquires the
+  added subsets before releasing removed ones, and the same stream delivers the change, so
+  loads both views select keep running. Frames already captured for the previous view
+  still arrive; `checkDelivery` installs those from `parentDeliveryFloor` on as views the
+  stream passed through. A view sent before its subscription opens (over RPC the stream
+  opens a round trip later) is kept and applied when it does. A source without
+  `updateView` makes the child subscribe again; `demand.idleRetentionMs` (5 seconds by
+  default for live replicas) keeps released demand across that gap. Opening the new
+  subscription before closing the old does not work: both would resume the same
+  `streamId`, and the delivery manager allows one producer per stream.
 - **Coverage.** A `coverage` row records that a subset was loaded completely, when
   (`updatedAt`, taken when the fetch returned), and whether it is `invalidated` or due
   (`revalidate`). In memory, each type has a coverage generation and each demand a

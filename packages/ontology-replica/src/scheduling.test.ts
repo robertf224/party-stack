@@ -355,6 +355,8 @@ test("row GC progresses during submission and retains that action's dependencies
                 const release = yield* Deferred.make<void>();
                 const replica = yield* makeReplica({
                     namespace: "gc-during-submit",
+                    // Release is under test: no idle retention.
+                    demand: { idleRetentionMs: 0 },
                     ir,
                     connectivity,
                     tables: yield* Memory.make(),

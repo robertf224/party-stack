@@ -124,6 +124,11 @@ export interface OntologySource {
     readonly acknowledgeDelivery?: (
         position: import("./delivery.js").DeliveryPosition
     ) => Effect.Effect<void, BackendError>;
+    /** Change the view of this client's open state subscription in place. The source
+     * acquires the added subsets before releasing removed ones and delivers the change
+     * on the same stream. A source that cannot fails `ViewReplaced`, and the client
+     * subscribes again with the new view. */
+    readonly updateView?: (session: ClientSession, view: ClientView) => Effect.Effect<void, BackendError>;
     /** Acceptance only; selected delivery carries the resulting state. */
     readonly accept?: (request: ClientSubmission) => Effect.Effect<void, BackendError>;
     /** Snapshot-mode interest lease. The first element confirms acquisition;
