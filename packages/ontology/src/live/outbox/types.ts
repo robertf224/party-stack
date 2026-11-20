@@ -26,9 +26,10 @@ export interface OntologyOutboxEntry {
     retryRequiresAcknowledgement?: boolean;
     lastError?: import("@party-stack/ontology-backend").BackendError;
     /** Whether this action's local prediction is reflected in the data you read.
-     * `dropped`: the latest replay failed (for example, newer data changed what it
-     * reads), so the action is still pending and will be sent, but is not reflected
-     * locally. `none`: it was never predicted here, either because its visibility is
+     * `dropped`: not reflected locally. Either the latest replay failed (for example,
+     * newer data changed what it reads; `predictionError` says why) and the action is
+     * still pending and will be sent, or the queue is stopped at a blocked action (this
+     * one or an earlier one) until it is retried or removed. `none`: it was never predicted here, either because its visibility is
      * `confirmed` or because a parent replica predicts it. */
     prediction?: "applied" | "dropped" | "none";
     /** Why the prediction was dropped. */

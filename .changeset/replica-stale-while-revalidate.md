@@ -1,6 +1,7 @@
 ---
 "@party-stack/ontology-replica": minor
 "@party-stack/ontology-backend": patch
+"@party-stack/ontology": patch
 ---
 
 Keep answering reads while large collections load or refresh, and add stale-while-revalidate.
@@ -16,3 +17,6 @@ Keep answering reads while large collections load or refresh, and add stale-whil
 - Coverage ages survive a device clock corrected backwards: a clock reading more than a second earlier than the newest time the replica has seen invalidates every age-based confirmation from before, instead of letting old data look fresh for the size of the correction.
 - An explicit pass now reports a load that failed before the pass waited for it; previously a fast failure could leave `syncOnce` reporting success.
 - A backend request that throws (a defect rather than a `BackendError`) now fails with `Internal` under every scheduling: fetches, action dispatch (recorded as an unknown outcome, so it is never retried blindly), change pulls, queries and validation. Previously detached loads resolved their readers as if they had succeeded, gated reads died, and a crashed dispatch could stop the outbox worker. Subscriptions already handled this.
+- An action retried after an attempt that may have committed (a deduplicating backend retries it rather than blocking) now holds back snapshots and watch changes until its retry settles, as an action in flight does. Previously a load in between could show the action twice: its commit in the confirmed row, plus its prediction on top. This affected both schedulings.
+- When an attempt may have committed and will not be retried, the replica revalidates every age-based confirmation, as it does for a receipt whose affected list is incomplete, so the commit shows without waiting for coverage to expire.
+- An action that is not replayed because the queue is stopped at a blocked action (it or an earlier one) is now labelled `prediction: "dropped"` instead of keeping its last label.

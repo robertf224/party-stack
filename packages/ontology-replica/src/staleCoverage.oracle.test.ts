@@ -89,6 +89,9 @@ const ops = {
     // The next dispatch commits at the source, then the adapter throws instead of
     // returning its receipt.
     crashAction: Schema.Struct({ kind: Schema.Literal("crashAction") }),
+    // The next dispatch commits at the source, then times out with a retryable error,
+    // so the replica cannot tell whether it committed.
+    timeoutAction: Schema.Struct({ kind: Schema.Literal("timeoutAction") }),
     // The last consumer of a subset leaves; a later read acquires it again. With
     // `collect`, the cache is collected right after, while the subset is unprotected.
     drop: Schema.Struct({
@@ -136,6 +139,9 @@ const Scenario = Schema.Struct({
     actionLatencyMs: Schema.optional(Schema.Literals([0, 1_000, 3_000])),
     // During the liveness window, an increment is enqueued this often.
     editEveryMs: Schema.optional(Schema.Literals([0, 1_000])),
+    // The source deduplicates a resent action by its id, so the replica retries an
+    // unknown outcome instead of blocking it.
+    idempotent: Schema.optional(Schema.Boolean),
     operations: Schema.Array(Operation),
 });
 // Focused generators: each explores one family of interleavings densely.
@@ -166,6 +172,7 @@ const ActionScenario = scenario(
         ops.increment,
         ops.lostReadBack,
         ops.crashAction,
+        ops.timeoutAction,
         ops.pass,
     ]),
     {
@@ -174,6 +181,7 @@ const ActionScenario = scenario(
         serial: Schema.Boolean,
         background: Schema.Boolean,
         capture: Schema.Literal("end"),
+        idempotent: Schema.Boolean,
     }
 );
 
@@ -286,6 +294,17 @@ const EditsScenario = scenario(Schema.Union([ops.edit, ops.read, ops.advance, op
 
 // The replica runs on the device clock, which a restart may find corrected by
 // `skew`; the oracle judges freshness by the source's clock.
+// The engine's own rule: an action whose prediction is replayed while the base may
+// already contain its commit holds snapshots back.
+const unsettled = (entry: {
+    readonly state: string;
+    readonly receipt?: { readonly outcome: string };
+    readonly failureOutcome?: string;
+}) =>
+    entry.state === "sending" ||
+    entry.receipt?.outcome === "committed" ||
+    (entry.state === "queued" && entry.failureOutcome === "unknown");
+
 const run = (scenario: typeof Scenario.Type) =>
     Effect.gen(function* () {
         const source = (yield* Clock.Clock) as TestClock.TestClock;
@@ -343,13 +362,13 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
             const injectedKinds = new Set<string>();
             let failuresFired = 0;
             let crashNextAction = false;
-            let outcomeUnknown = false;
+            let timeoutNextAction = false;
             let terminalInjected = false;
             const backend = makeOntologyBackend({
                 ir,
                 name: "stale-oracle",
                 sourceId: "stale-oracle",
-                supportsIdempotency: false,
+                supportsIdempotency: scenario.idempotent ?? false,
                 queryFunction: () => Effect.void,
                 refresh: () => ({ pollIntervalMs: scenario.poll ? pollIntervalMs : false }),
                 loadSubset: (request) =>
@@ -396,6 +415,13 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                     Effect.gen(function* () {
                         const id = String(request.parameters.id);
                         const row = server.get(id);
+                        // A deduplicating source answers a resend without applying it again.
+                        if (scenario.idempotent && committedAt.has(request.id))
+                            return {
+                                operationId: request.id,
+                                outcome: "committed" as const,
+                                affected: [{ objectType: "Item", keys: [id] }],
+                            };
                         if (row) {
                             yield* write({ ...row, value: row.value + 1 });
                             committedAt.set(request.id, version);
@@ -406,8 +432,16 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                         if (holds.actions) yield* Deferred.await(holds.actions);
                         if (crashNextAction) {
                             crashNextAction = false;
-                            outcomeUnknown = true;
                             return yield* Effect.die(new Error("Adapter bug after commit."));
+                        }
+                        if (timeoutNextAction) {
+                            timeoutNextAction = false;
+                            return yield* new BackendError({
+                                operation: "applyAction",
+                                kind: "Unavailable",
+                                message: "Timed out.",
+                                retryable: true,
+                            });
                         }
                         return {
                             operationId: request.id,
@@ -526,13 +560,7 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                             if (!demand || demand.installed !== demand.revision) return;
                             // Passes step aside for an unsettled action, so such a read returns
                             // whatever is cached, as before gate-free loading.
-                            if (
-                                (yield* replica.pending).some(
-                                    (entry) =>
-                                        entry.state === "sending" || entry.receipt?.outcome === "committed"
-                                )
-                            )
-                                return;
+                            if ((yield* replica.pending).some(unsettled)) return;
                             if (scenario.capture === "start") return;
                             for (const id of ids)
                                 if (!recent(id, subset, rows.get(id), now, age))
@@ -554,11 +582,9 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                     seen.set(id, Math.max(row.version, seen.get(id) ?? 0));
                     // A prediction still applied over a base that already contains its commit
                     // shows the action twice.
-                    // Rebase replays pending actions up to the first blocked one; a skipped
-                    // action keeps its last `prediction` label but is not shown.
-                    const firstBlocked = pending.findIndex((entry) => entry.state === "blocked");
-                    const replayed = firstBlocked === -1 ? pending : pending.slice(0, firstBlocked);
-                    for (const entry of replayed)
+                    // Its label must say so: an action rebase skips (at or behind a blocked
+                    // one) is labelled `dropped`.
+                    for (const entry of pending)
                         if (
                             String(entry.invocation.parameters.id) === id &&
                             entry.prediction === "applied" &&
@@ -608,12 +634,11 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                 else if (operation.kind === "pass") {
                     // An action still sending, or committed but unconfirmed, holds back snapshots.
                     firedAtPass = failuresFired;
-                    obstructed = (yield* replica.pending).some(
-                        (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
-                    );
+                    obstructed = (yield* replica.pending).some(unsettled);
                     passes.push(yield* Effect.forkScoped(Effect.result(replica.syncOnce)));
                 } else if (operation.kind === "revalidate") yield* replica.markDemandedStale;
                 else if (operation.kind === "crashAction") crashNextAction = true;
+                else if (operation.kind === "timeoutAction") timeoutNextAction = true;
                 else if (operation.kind === "lostReadBack") {
                     failReadBack = true;
                     committedSinceFailure = false;
@@ -783,12 +808,6 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
             yield* settle("a checkpoint", Effect.result(replica.syncOnce));
             yield* settle("a checkpoint", replica.syncOnce);
             yield* settle("a checkpoint", replica.syncOnce);
-            // A dispatch whose outcome is unknown has no receipt to read back: its commit
-            // shows once the coverage loaded before it expires, as the freshness bound allows.
-            if (outcomeUnknown) {
-                yield* TestClock.adjust(maxStaleAgeMs * 2);
-                yield* settle("a checkpoint", replica.syncOnce);
-            }
             for (const name of demanded) {
                 const subset = subsets[name]!;
                 yield* settle(`${name}: converging read`, replica.syncSubset(subset));
@@ -1001,5 +1020,30 @@ it.effect("collected rows take their coverage with them", () =>
             ],
         });
         expect(agreed).toBe(true);
+    })
+);
+
+it.effect("a retried action whose first dispatch may have committed is never shown twice", () =>
+    Effect.gen(function* () {
+        for (const serial of [false, true]) {
+            const agreed = yield* run({
+                stale: false,
+                poll: false,
+                serial,
+                background: false,
+                capture: "end",
+                idempotent: true,
+                // The dispatch commits, then times out: the replica retries it later, and
+                // a load in between returns the committed row.
+                operations: [
+                    { kind: "timeoutAction" },
+                    { kind: "read", subset: "groupA" },
+                    { kind: "increment", id: "i0" },
+                    { kind: "pass" },
+                    { kind: "read", subset: "whole" },
+                ],
+            });
+            expect(agreed).toBe(true);
+        }
     })
 );

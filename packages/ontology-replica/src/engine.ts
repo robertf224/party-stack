@@ -1114,6 +1114,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         );
     });
 
+    // An action whose prediction is still replayed while the base may already contain
+    // its commit: in flight, committed but not yet read back, or queued to retry after an
+    // attempt whose outcome is unknown. A snapshot or change installed now could show it
+    // twice, so installs wait until it settles.
+    const unsettled = (entry: PendingAction) =>
+        entry.state === "sending" ||
+        entry.receipt?.outcome === "committed" ||
+        (entry.state === "queued" && entry.failureOutcome === "unknown");
     const pendingIn = (tx: ReadTransaction) =>
         tx
             .query(outbox, { orderBy: [{ field: field("sequence") }] })
@@ -1383,6 +1391,28 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         yield* tx.put(outbox, entry.invocation.id, failed);
         // Discard means abandon local intent, not cancel a remote execution.
         if (!retry && options.outbox?.failureStrategy === "discard-all") yield* discardFailedTail(tx);
+        // A retry settles the outcome with a receipt; otherwise nothing will.
+        return ambiguous && !retry;
+    });
+    // An outcome that may have committed and will not be retried leaves no receipt to read
+    // back, and the action may have changed rows its prediction never touched. As with a
+    // receipt whose affected list is incomplete, every age-based confirmation is due: the
+    // subsets readers demand reload now (served stale meanwhile, within the bound) and
+    // stored ones reload on their next demand.
+    const revalidateAfterUnknownOutcome = Effect.suspend(() => {
+        if (options.source || adapter?.changes) return Effect.void;
+        const types = new Set(definitions.keys());
+        if (serveStale) return access(markRevalidate(types, true));
+        for (const type of types) coverageGenerations.set(type, Symbol());
+        return access(
+            tables.transaction((tx) =>
+                Effect.gen(function* () {
+                    for (const row of yield* tx.query(coverage))
+                        if (!row.value.invalidated)
+                            yield* tx.put(coverage, row.key, { ...row.value, invalidated: true });
+                })
+            )
+        ).pipe(Effect.andThen(wakeState));
     });
     const rebase = Effect.fn("Replica.rebase")(function* (tx: Transaction) {
         for (const [type, v] of views) {
@@ -1393,6 +1423,13 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         for (const entry of yield* pendingIn(tx)) {
             if (blocked || entry.state === "blocked") {
                 blocked = true;
+                // Not replayed while the queue is stopped at a blocked action: it is no
+                // longer reflected locally, whatever its last replay did.
+                // Entries stored before `prediction` existed default to their optimism.
+                if ((entry.prediction ?? (entry.optimistic ? "applied" : "none")) === "applied") {
+                    const { predictionFailure: _failure, predictionMessage: _message, ...rest } = entry;
+                    yield* tx.put(outbox, entry.invocation.id, { ...rest, prediction: "dropped" });
+                }
                 continue;
             }
             if (sourcePredicts) continue;
@@ -2123,12 +2160,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 // change that already includes it would apply it twice. Hold the base;
                 // the reload after confirmation picks the change up.
                 const pending = yield* boundary(tables.read(pendingIn));
-                if (
-                    pending.some(
-                        (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
-                    )
-                )
-                    return false;
+                if (pending.some(unsettled)) return false;
                 const primaryKey = definitions.get(objectType)!.primaryKey;
                 const exits: Key[] = [];
                 // Newer than any fetch already in flight: those must not replace these rows.
@@ -2412,11 +2444,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 );
                 if (result._tag === "Failure") {
                     const error = result.failure;
-                    yield* boundary(
+                    const unresolved = yield* boundary(
                         tables.transaction((tx) =>
                             recordFailure(tx, head, error, backend.supportsIdempotency)
                         )
                     );
+                    if (unresolved) yield* revalidateAfterUnknownOutcome;
                     if (options.outbox?.failureStrategy === "discard-all")
                         yield* boundary(tables.transaction(rebase));
                     if (options.outbox?.failureStrategy === "discard-all") {
@@ -2749,12 +2782,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             boundary(
                 tables.transaction((tx) =>
                     Effect.gen(function* () {
-                        if (
-                            (yield* pendingIn(tx)).some(
-                                (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
-                            )
-                        )
-                            return false;
+                        if ((yield* pendingIn(tx)).some(unsettled)) return false;
                         yield* write(tx);
                         yield* rebase(tx);
                         return true;
@@ -3008,13 +3036,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         // A committed receipt must settle its overlay before a new source snapshot.
         // Recovery belongs to the outbox worker, never to a query acquisition. Detached
         // loads fetch regardless; their installs check this under the gate instead.
-        if (
-            !detachedLoads &&
-            (yield* boundary(tables.read(pendingIn))).some(
-                (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
-            )
-        )
-            return;
+        if (!detachedLoads && (yield* boundary(tables.read(pendingIn))).some(unsettled)) return;
         yield* Effect.annotateCurrentSpan("stage", "pulling-changes");
         yield* pull();
         yield* Effect.annotateCurrentSpan("stage", "reading-position");

@@ -24,10 +24,16 @@ the state involved. Each fact below cites where to verify it.
   outbox entry and rebases. A failed dispatch goes back to `queued` (with
   `failureOutcome: "unknown"` when it may have committed) or to `blocked`.
 - **The double-apply hazard.** A prediction must never be replayed over a base that
-  already contains its commit. That is possible while an action is `sending` or committed
-  but unconfirmed, and after an unknown-outcome failure. Hence: installs are fenced while
-  an action is sending or committed-unconfirmed (`installUnlessUnsettled`), serial and
-  journal passes step aside then, and `applyWatchChanges` holds changes. Detached passes
+  already contains its commit. That is possible while an action is `sending`, committed
+  but unconfirmed, or queued to retry after an attempt whose outcome is unknown (a
+  deduplicating backend retries instead of blocking). `unsettled` names those states:
+  installs are fenced while any action is unsettled (`installUnlessUnsettled`), serial
+  and journal passes step aside, and `applyWatchChanges` holds changes. A blocked action
+  is not replayed, and neither is anything behind it; rebase labels them `dropped`.
+- **Unknown outcomes.** An attempt that may have committed and will not be retried has
+  no receipt to read back, so `revalidateAfterUnknownOutcome` marks every age-based
+  confirmation due, as an incomplete receipt does: demanded subsets reload now, stored
+  ones on their next demand. Detached passes
   do not step aside: their fetches may start during a dispatch because the install is
   what the fence checks, under `gate`.
 - **Coverage.** A `coverage` row records that a subset was loaded completely, when
@@ -97,7 +103,7 @@ example tests:
   dispatches, lost read-backs, `revalidate()`, `invalidate()`, explicit and background
   passes, a steady stream of edits, consumers leaving and returning, cache collection,
   retryable, terminal and crashing (defect) fetches, dispatches that commit and then
-  crash, and restarts on the same storage with the
+  crash or time out (with and without a deduplicating backend), and restarts on the same storage with the
   device clock corrected forwards or backwards. Deadlines for progress scale with every wait a load can legitimately incur
   (fetch latency and an action's turn), so they flag starvation rather than slowness.
 - The oracle judges freshness by the source's clock; the replica runs on a device
