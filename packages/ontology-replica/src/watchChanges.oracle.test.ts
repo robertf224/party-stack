@@ -4,7 +4,7 @@ import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, evaluateQuery, field } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Deferred, Effect, Fiber, Queue, Schema, Stream } from "effect";
+import { Cause, Deferred, Effect, Fiber, Queue, Schema, Stream } from "effect";
 import { expect } from "vitest";
 import { makeReplica } from "./testing.js";
 import type { ConnectionLifecycle, ConnectionState } from "@party-stack/connect";
@@ -61,7 +61,10 @@ const Operation = Schema.Union([
     // lostReadBack: the commit's read-back fails, leaving it committed but unconfirmed.
     // expireWatch: the source rejects the open watch's credential, and the source keeps
     // changing while the watch is down.
-    Schema.Struct({ kind: Schema.Literals(["dispatch", "slowDispatch", "lostReadBack", "expireWatch"]) }),
+    // crashWatch: the adapter's watch stream throws (a defect), and changes go unreported.
+    Schema.Struct({
+        kind: Schema.Literals(["dispatch", "slowDispatch", "lostReadBack", "expireWatch", "crashWatch"]),
+    }),
 ]);
 const Scenario = Schema.Struct({ operations: Schema.Array(Operation).check(Schema.isMaxLength(16)) });
 
@@ -289,11 +292,14 @@ const run = (operations: (typeof Scenario.Type)["operations"]) =>
                         { id: operation.id, value: operation.value, group: operation.group },
                         operation.report
                     );
-                    // A missed change is only recovered by revalidating demanded data.
-                    if (operation.report === "missed") yield* replica.markDemandedStale;
-                } else if (operation.kind === "delete")
+                    // A missed change is only recovered by revalidating demanded data, and
+                    // so is any change while a crashed watch stays closed.
+                    if (operation.report === "missed" || watchers.size === 0)
+                        yield* replica.markDemandedStale;
+                } else if (operation.kind === "delete") {
                     yield* write(operation.id, undefined, operation.report);
-                else if (operation.kind === "increment") {
+                    if (watchers.size === 0) yield* replica.markDemandedStale;
+                } else if (operation.kind === "increment") {
                     // The first prediction must succeed: enqueueing an action for an
                     // object this replica does not have is rejected outright.
                     const known = (yield* replica.get("Item", operation.id)) !== undefined;
@@ -309,6 +315,8 @@ const run = (operations: (typeof Scenario.Type)["operations"]) =>
                 else if (operation.kind === "expireWatch") {
                     const before = renewals;
                     const expired = [...watchers];
+                    // Nothing to expire once a crashed watch has closed for good.
+                    if (expired.length === 0) continue;
                     for (const watch of expired)
                         yield* Queue.fail(
                             watch.events,
@@ -331,6 +339,24 @@ const run = (operations: (typeof Scenario.Type)["operations"]) =>
                         yield* Effect.sleep(2);
                     if (expired.length && renewals !== before + 1) return false;
                     if (watchers.size === 0) return false;
+                } else if (operation.kind === "crashWatch") {
+                    const crashed = [...watchers];
+                    for (const watch of crashed)
+                        yield* Queue.failCause(watch.events, Cause.die(new Error("Watch bug.")));
+                    for (const row of [...server.values()])
+                        yield* write(row.id, { ...row, value: row.value + 1 }, "missed");
+                    // A crashed watch must not keep vouching for coverage: it reopens, or
+                    // its demand reports the failure (and falls back to age-based reuse).
+                    let reported = crashed.length === 0;
+                    for (let attempt = 0; attempt < 500 && !reported; attempt++) {
+                        yield* Effect.sleep(2);
+                        const status = yield* replica.status;
+                        reported =
+                            watchers.size > 0 ||
+                            status.demands.every((demand) => demand.watchError !== undefined);
+                    }
+                    if (!reported) return false;
+                    yield* replica.markDemandedStale;
                 } else if (operation.kind === "lostReadBack") {
                     const head = (yield* replica.pending)[0];
                     if (!head) continue;

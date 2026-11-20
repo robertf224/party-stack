@@ -78,6 +78,7 @@ import {
 } from "effect";
 import { hasWindow, isWholeCollection, primaryKeyLookup } from "./coverage.js";
 import { cachedCopy, withCachedCopy, encryptedCacheCodec, preserveCachedCopies } from "./encryptedCache.js";
+import { guardBackend } from "./guardBackend.js";
 import { makeReplicaDiagnostics } from "./status.js";
 import type { ReplicaLoad, ReplicaStatus } from "./status.js";
 
@@ -520,7 +521,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 frames: subscription.frames.pipe(Stream.provideService(Tracer.Tracer, deliveryTracer)),
             }))
         );
-    const adapter = options.backend;
+    // Backend defects fail as `Internal`, so every path handles them as failures.
+    const adapter = options.backend && guardBackend(options.backend);
     const sourceId = options.source?.sourceId ?? adapter!.sourceId;
     const backendEffect = adapter
         ? Effect.succeed(adapter)
@@ -1499,21 +1501,18 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const loadSubset = (subset: CompiledSubset, reason: ReplicaLoad["reason"]) =>
         diagnostics.load(
             { operation: "loadSubset", reason, subset },
-            adapter!.loadSubset(objectSubset(subset.objectType, subset.query)).pipe(
-                // An adapter that throws fails the load like any other error, under
-                // every scheduling, instead of killing the reader or the sync loop.
-                Effect.catchDefect((defect) =>
-                    Effect.fail(fault("Internal", "The backend failed unexpectedly.", defect))
-                ),
-                Effect.flatMap((snapshot) =>
-                    resolveSubsetSnapshot(
-                        options.ir,
-                        objectSubset(subset.objectType, subset.query),
-                        snapshot,
-                        options.context
+            adapter!
+                .loadSubset(objectSubset(subset.objectType, subset.query))
+                .pipe(
+                    Effect.flatMap((snapshot) =>
+                        resolveSubsetSnapshot(
+                            options.ir,
+                            objectSubset(subset.objectType, subset.query),
+                            snapshot,
+                            options.context
+                        )
                     )
-                )
-            ),
+                ),
             (snapshot) => ({
                 rows: snapshot.snapshot.rows.length,
                 fetchedRows: snapshot.snapshot.fetchedRows,
@@ -2921,7 +2920,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     // The aggregate lease owns this load: releasing its last consumer
                     // cancels the IO, a single reader's interruption does not.
                     Effect.raceFirst(
-                        // Adapter defects already fail in `loadSubset`. A defect in the load
+                        // Backend defects already fail (`guardBackend`). A defect in the load
                         // itself fails it too: left alone, it would skip the failure path and
                         // the cleanup below would resolve its readers as if it had succeeded.
                         runLoad(key, demand, task, before).pipe(

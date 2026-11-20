@@ -86,6 +86,9 @@ const ops = {
     increment: Schema.Struct({ kind: Schema.Literal("increment"), id: Id }),
     // The next receipt's read-back fails, leaving its commit unconfirmed until a later pass.
     lostReadBack: Schema.Struct({ kind: Schema.Literal("lostReadBack") }),
+    // The next dispatch commits at the source, then the adapter throws instead of
+    // returning its receipt.
+    crashAction: Schema.Struct({ kind: Schema.Literal("crashAction") }),
     // The last consumer of a subset leaves; a later read acquires it again. With
     // `collect`, the cache is collected right after, while the subset is unprotected.
     drop: Schema.Struct({
@@ -162,6 +165,7 @@ const ActionScenario = scenario(
         ops.advance,
         ops.increment,
         ops.lostReadBack,
+        ops.crashAction,
         ops.pass,
     ]),
     {
@@ -186,6 +190,7 @@ const LifecycleScenario = scenario(
         ops.pass,
         ops.revalidate,
         ops.increment,
+        ops.crashAction,
         ops.drop,
         ops.gc,
         ops.failFetch,
@@ -337,6 +342,8 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
             // Kinds of the fetch failures injected so far; a read may fail with one of them.
             const injectedKinds = new Set<string>();
             let failuresFired = 0;
+            let crashNextAction = false;
+            let outcomeUnknown = false;
             let terminalInjected = false;
             const backend = makeOntologyBackend({
                 ir,
@@ -397,6 +404,11 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                         if (actionLatency) yield* Effect.sleep(actionLatency);
                         // Committed at the source before the receipt reaches the replica.
                         if (holds.actions) yield* Deferred.await(holds.actions);
+                        if (crashNextAction) {
+                            crashNextAction = false;
+                            outcomeUnknown = true;
+                            return yield* Effect.die(new Error("Adapter bug after commit."));
+                        }
                         return {
                             operationId: request.id,
                             outcome: "committed" as const,
@@ -542,7 +554,11 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                     seen.set(id, Math.max(row.version, seen.get(id) ?? 0));
                     // A prediction still applied over a base that already contains its commit
                     // shows the action twice.
-                    for (const entry of pending)
+                    // Rebase replays pending actions up to the first blocked one; a skipped
+                    // action keeps its last `prediction` label but is not shown.
+                    const firstBlocked = pending.findIndex((entry) => entry.state === "blocked");
+                    const replayed = firstBlocked === -1 ? pending : pending.slice(0, firstBlocked);
+                    for (const entry of replayed)
                         if (
                             String(entry.invocation.parameters.id) === id &&
                             entry.prediction === "applied" &&
@@ -597,6 +613,7 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                     );
                     passes.push(yield* Effect.forkScoped(Effect.result(replica.syncOnce)));
                 } else if (operation.kind === "revalidate") yield* replica.markDemandedStale;
+                else if (operation.kind === "crashAction") crashNextAction = true;
                 else if (operation.kind === "lostReadBack") {
                     failReadBack = true;
                     committedSinceFailure = false;
@@ -656,8 +673,19 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                     // A failed refresh leaves its stale proof visible.
                     failuresFired === firedAtPass
                 ) {
-                    for (const demand of (yield* replica.status).demands)
-                        if (demand.coverageProof?.stale)
+                    const demands = (yield* replica.status).demands;
+                    const failed = new Set(
+                        demands.filter((demand) => demand.loadError).map((demand) => subsetName(demand))
+                    );
+                    for (const demand of demands)
+                        // A revalidation that failed keeps its stale proof, with the failure
+                        // reported on the demand that owns the covering subset, until a new
+                        // revision loads.
+                        if (
+                            demand.coverageProof?.stale &&
+                            !failed.has(subsetName(demand)) &&
+                            !(demand.coveredBy && failed.has(subsetName(demand.coveredBy)))
+                        )
                             fail(`${subsetName(demand)}: still stale after an unobstructed pass`);
                 }
                 if (violation) break;
@@ -755,6 +783,12 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
             yield* settle("a checkpoint", Effect.result(replica.syncOnce));
             yield* settle("a checkpoint", replica.syncOnce);
             yield* settle("a checkpoint", replica.syncOnce);
+            // A dispatch whose outcome is unknown has no receipt to read back: its commit
+            // shows once the coverage loaded before it expires, as the freshness bound allows.
+            if (outcomeUnknown) {
+                yield* TestClock.adjust(maxStaleAgeMs * 2);
+                yield* settle("a checkpoint", replica.syncOnce);
+            }
             for (const name of demanded) {
                 const subset = subsets[name]!;
                 yield* settle(`${name}: converging read`, replica.syncSubset(subset));
