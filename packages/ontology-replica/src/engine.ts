@@ -1308,7 +1308,6 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         return {
             ...previous,
             invocation,
-            touchedTypes: [...new Set([...staged.values()].map((write) => write.type))],
             prediction: entry.optimistic ? ("applied" as const) : ("none" as const),
         };
     });
@@ -1968,12 +1967,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 requests.set(subsetKey(subset), subset);
             }
         }
+        // Every demand and resident row is requested above, so the snapshots include
+        // whatever committed actions changed that a reader needs.
         const entries = yield* boundary(tables.read(pendingIn));
-        for (const entry of entries)
-            if (entry.receipt?.outcome === "committed")
-                // Demands and resident rows are already requested above; whole types are not.
-                for (const type of entry.touchedTypes)
-                    for (const subset of demandedSubsets(type)) requests.set(subsetKey(subset), subset);
         const writes: Array<Effect.Success<ReturnType<typeof prepareSnapshot>>> = [];
         yield* Effect.gen(function* () {
             for (const subset of requests.values())
@@ -3392,7 +3388,6 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             state: "queued",
             optimistic: settings?.optimistic ?? true,
             attempts: 0,
-            touchedTypes: [],
         };
         const resolved = sourcePredicts ? yield* forwardOnly(tx, proposed) : yield* replay(tx, proposed);
         yield* tx.put(outbox, invocation.id, resolved);

@@ -1,5 +1,6 @@
 ---
 "@party-stack/ontology-replica": minor
+"@party-stack/ontology-backend": patch
 ---
 
 Keep answering reads while large collections load or refresh, and add stale-while-revalidate.
@@ -11,3 +12,4 @@ Keep answering reads while large collections load or refresh, and add stale-whil
 - Reads take priority over background refreshes: loads no reader waits for leave one fetch slot free.
 - Under `maxStaleAgeMs`, a demand's poll tick marks only its own coverage due, so a type with many demands is refreshed once per interval rather than once per demand.
 - Journal-backed, delivery and protocol-source replicas keep their existing gated scheduling.
+- Remove the unused `touchedTypes` field from pending actions. History recovery, its only reader, already requests every demanded subset. Entries from older peers that still carry the field decode normally.
