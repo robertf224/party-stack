@@ -1,5 +1,26 @@
 # @party-stack/issue-tracker
 
+## 0.2.34
+
+### Patch Changes
+
+- Updated dependencies [94fe53b]
+- Updated dependencies [31c8383]
+- Updated dependencies [ae2426b]
+- Updated dependencies [eabf393]
+- Updated dependencies [42aab8f]
+    - @party-stack/connect@0.4.0
+    - @party-stack/foundry-ontology@0.21.5
+    - @party-stack/ontology-server@0.11.8
+    - @party-stack/ontology-replica@0.4.0
+    - @party-stack/ontology-backend@0.4.0
+    - @party-stack/ontology@0.23.5
+    - @party-stack/better-auth@0.5.3
+    - @party-stack/web-runtime@0.5.4
+    - @party-stack/ontology-devtools@0.8.5
+    - @party-stack/ontology-react@0.2.9
+    - @party-stack/sql-ontology-storage@0.3.1
+
 ## 0.2.33
 
 ### Patch Changes

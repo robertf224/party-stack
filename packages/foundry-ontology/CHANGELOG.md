@@ -1,5 +1,24 @@
 # @party-stack/foundry-ontology
 
+## 0.21.5
+
+### Patch Changes
+
+- 31c8383: Submission criteria and OMS action metadata loads now reach Foundry's ontology metadata service through the client's own `fetch`. conjure-lite ignores `fetch`, so a client whose credentials live in it, such as an authenticated-egress or SharedWorker connection client, used to send the submission-criteria request anonymously. The context also passed that client's rejecting `tokenProvider`. Both call sites now share one context: `fetchFn` only, on the Foundry origin.
+- 42aab8f: Foundry metadata ActionType searches ordered by `displayName` with a limit now ask Foundry for that order and stop paging once the window is filled. They then load full metadata and OMS metadata only for those rows, so the cost is proportional to the limit rather than to the ontology. The backend reports the leading window as the fulfilled subset. If Foundry's order ever disagrees with the local engine's, it falls back to the full scan.
+
+    The `contains` prefilter no longer drops matches:
+
+    - Terms made only of stopwords (`at`, `in`, `to`, ...) are no longer sent to Foundry, which matched nothing for them.
+    - Case-insensitive `ilike` on `name` stays local, because Foundry only searches the kebab-case API name.
+    - Patterns containing `_` or `\` now send their literal parts instead of disabling the prefilter.
+
+- Updated dependencies [94fe53b]
+- Updated dependencies [eabf393]
+    - @party-stack/connect@0.4.0
+    - @party-stack/ontology-backend@0.4.0
+    - @party-stack/ontology@0.23.5
+
 ## 0.21.4
 
 ### Patch Changes
