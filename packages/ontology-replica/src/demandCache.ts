@@ -21,7 +21,12 @@ export interface DemandRefreshPolicy {
 
 export interface DemandPolicy {
     readonly refresh?: DemandRefreshPolicy;
-    /** Retain an unused subset's upstream demand for reuse. Zero releases immediately. */
+    /** Keep an unused subset's upstream demand (its watch or polling, and any load in
+     * flight) this long after its last consumer releases it, so a consumer that returns
+     * reuses it. Rows stay cached either way; this only decides how long they stay live.
+     * Default 5 seconds for live replicas and 0 for one-shot ones; zero releases at once.
+     * (Zero's query TTL and TanStack's `gcTime` default to 5 minutes, but they also
+     * decide when data is dropped; here a longer value mainly keeps upstream work running.) */
     readonly idleRetentionMs?: number;
     /** Active plus idle distinct subsets; idle entries are evicted before rejecting new work. */
     readonly maxSubsets?: number;

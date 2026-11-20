@@ -867,6 +867,8 @@ test("background demand IO survives one consumer's cancellation and stops after 
                 let canceled = false;
                 const replica = yield* makeReplica({
                     namespace: "cancel-shared-demand",
+                    // Release is under test: no idle retention.
+                    demand: { idleRetentionMs: 0 },
                     ir,
                     tables: yield* Memory.make(),
                     objectCacheGc: false,

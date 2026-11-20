@@ -445,6 +445,8 @@ test("replacing a pin cancels its pending acquisition and cannot install the obs
                 const replica = yield* makeReplica({
                     ...f,
                     namespace: "pin-cancel",
+                    // Release is under test: no idle retention.
+                    demand: { idleRetentionMs: 0 },
                     ir,
                     cache: { objects: false },
                     backend: {

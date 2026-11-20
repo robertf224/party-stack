@@ -252,6 +252,19 @@ export const serveOpenedOntologyWorker = Effect.fn("OntologyServer.openWorker")(
             Effect.flatMap(current, (value) => value.subscribe!(session, view, policy, resume)),
         acknowledgeDelivery: (position) =>
             Effect.flatMap(current, (value) => value.acknowledgeDelivery!(position)),
+        updateView: (session, view) =>
+            Effect.flatMap(current, (value) =>
+                value.updateView
+                    ? value.updateView(session, view)
+                    : Effect.fail(
+                          new BackendError({
+                              operation: "UpdateView",
+                              kind: "ViewReplaced",
+                              retryable: true,
+                              message: "This source replaces views by subscribing again.",
+                          })
+                      )
+            ),
         acknowledge: (...args) => Effect.flatMap(current, (value) => value.acknowledge(...args)),
         demand: (subset) => Stream.unwrap(Effect.map(current, (value) => value.demand(subset))),
         subscribeChanges: Effect.flatMap(current, (value) => value.subscribeChanges),

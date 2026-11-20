@@ -409,19 +409,22 @@ test("incremental state delivery owns demand without a parallel Demand RPC", asy
                     )
                 );
                 yield* Scope.close(consumer, Exit.void);
+                // Released after the delivery handoff window (5 s), not at once.
                 yield* Effect.promise(() =>
-                    vi.waitFor(async () =>
-                        expect(
-                            (await Effect.runPromise(parent.status.get)).demands.filter(
-                                (d) => d.references > 0
-                            )
-                        ).toHaveLength(0)
+                    vi.waitFor(
+                        async () =>
+                            expect(
+                                (await Effect.runPromise(parent.status.get)).demands.filter(
+                                    (d) => d.references > 0
+                                )
+                            ).toHaveLength(0),
+                        { timeout: 8_000 }
                     )
                 );
             })
         )
     );
-});
+}, 15_000);
 
 test.each(["Unavailable", "Forbidden"] as const)(
     "Demand RPC exposes %s after readiness without transport retries",
