@@ -182,15 +182,18 @@ revalidation on the next demand. Healthy live watches keep coverage current.
 A read that existing coverage already answers resolves right away, even while
 another subset is loading. For backends without a change journal, loads also
 fetch concurrently (up to `demand.maxConcurrentLoads`, default 6), so a cold
-read doesn't wait behind a slow refresh, and queued actions are sent meanwhile. To also answer from expired coverage while it
-refreshes, set `refresh.maxStaleAgeMs`. A read then gets data confirmed up to
-that long ago immediately, and a background refresh replaces it. The demand's
-`coverageProof` reports `stale: true` until the refresh lands. Set it longer
-than `maxCoverageAgeMs`: the window between the two is where reads answer at
-once while refreshing. While the replica can sync, coverage older than the bound
-is never served; the read waits for its reload. Offline, reads still return
-whatever is cached, of any age. This applies to backends without a change
-journal.
+read doesn't wait behind a slow refresh, and queued actions are sent meanwhile.
+
+Expired coverage is also answered while it refreshes, up to
+`refresh.maxStaleAgeMs` after it was confirmed (default ten times
+`maxCoverageAgeMs`, so 10 minutes). A read gets the cached data immediately and
+a background refresh replaces it; the demand's `coverageProof` reports
+`stale: true` until the refresh lands. While the replica can sync, coverage older
+than the bound is never served; the read waits for its reload. Offline, reads
+still return whatever is cached, of any age. Set `maxStaleAgeMs: 0` for data where
+a stale answer is wrong rather than late, such as permissions. This applies to
+backends without a change journal, and not to one-shot (`live: false`) replicas,
+which have no background refresh.
 
 `maxBytes` triggers collection toward `targetBytes`. Active demand, pins, and
 pending actions protect the data they need. These limits cover cached payloads,

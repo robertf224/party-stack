@@ -242,7 +242,30 @@ it.effect("coverage older than the stale bound waits for its reload", () =>
     )
 );
 
-it.effect("without maxStaleAgeMs expired coverage is never served stale", () =>
+const waitsForReload = (f: Effect.Success<ReturnType<typeof fixture>>) =>
+    Effect.gen(function* () {
+        const held = yield* f.holdLoads();
+        const read = yield* Effect.forkScoped(f.replica.syncSubset(whole));
+        yield* held.started;
+        yield* TestClock.adjust(0);
+        expect(read.pollUnsafe()).toBeUndefined();
+        yield* held.release;
+        yield* Fiber.join(read);
+    });
+
+it.effect("with maxStaleAgeMs 0 expired coverage is never served stale", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            const f = yield* fixture({ refresh: { maxCoverageAgeMs: 1_000, maxStaleAgeMs: 0 } });
+            yield* f.replica.demand(whole);
+            yield* f.replica.syncSubset(whole);
+            yield* TestClock.adjust(2_000);
+            yield* waitsForReload(f);
+        })
+    )
+);
+
+it.effect("by default expired coverage is served stale for ten coverage ages", () =>
     Effect.scoped(
         Effect.gen(function* () {
             const f = yield* fixture({ refresh: { maxCoverageAgeMs: 1_000 } });
@@ -250,12 +273,29 @@ it.effect("without maxStaleAgeMs expired coverage is never served stale", () =>
             yield* f.replica.syncSubset(whole);
             yield* TestClock.adjust(2_000);
             const held = yield* f.holdLoads();
-            const read = yield* Effect.forkScoped(f.replica.syncSubset(whole));
+            yield* f.replica.syncSubset(whole);
+            expect(yield* proofOf(f.replica, whole)).toMatchObject({
+                proof: { stale: true, confirmedAt: 0 },
+            });
             yield* held.started;
-            yield* TestClock.adjust(0);
-            expect(read.pollUnsafe()).toBeUndefined();
             yield* held.release;
-            yield* Fiber.join(read);
+            yield* settled(f.replica);
+            // Ten coverage ages after the refresh, the read waits again.
+            yield* TestClock.adjust(10_000);
+            yield* waitsForReload(f);
+        })
+    )
+);
+
+it.effect("a one-shot replica does not serve stale coverage by default", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            // Nothing would revalidate it in the background.
+            const f = yield* fixture({ refresh: { maxCoverageAgeMs: 1_000 }, startSync: false });
+            yield* f.replica.demand(whole);
+            yield* f.replica.syncSubset(whole);
+            yield* TestClock.adjust(2_000);
+            yield* waitsForReload(f);
         })
     )
 );
@@ -375,7 +415,8 @@ it.live("a cold read is not blocked by a slow refresh of another subset of its t
 it.live("an action dispatches and confirms while a refresh is still fetching", () =>
     Effect.scoped(
         Effect.gen(function* () {
-            const f = yield* fixture({});
+            // The read waits for the refresh rather than answering stale.
+            const f = yield* fixture({ refresh: { maxStaleAgeMs: 0 } });
             yield* f.replica.demand(whole);
             yield* f.replica.syncSubset(whole);
             yield* f.replica.markDemandedStale;

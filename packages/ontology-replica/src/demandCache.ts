@@ -11,8 +11,11 @@ export interface DemandRefreshPolicy {
      * confirmation younger than this is served immediately once it is no longer fresh
      * (past `maxCoverageAgeMs`, or due after a poll tick or `revalidate()`), and its
      * proof reports `stale: true` while a background refresh replaces it. Older or
-     * invalidated coverage is never served. Default 0 disables stale serving;
-     * Infinity serves any retained confirmation while revalidating. */
+     * invalidated coverage is never served. Default ten times `maxCoverageAgeMs`
+     * (10 minutes with the default coverage age), or 0 for a one-shot replica that has
+     * no background sync to revalidate it. 0 disables stale serving, for data
+     * where a stale answer is wrong rather than late; Infinity serves any retained
+     * confirmation while revalidating. Offline, cached data is served regardless. */
     readonly maxStaleAgeMs?: number;
 }
 

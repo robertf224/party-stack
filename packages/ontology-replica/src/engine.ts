@@ -481,7 +481,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const maxCoverageAge = options.demand?.refresh?.maxCoverageAgeMs ?? 60_000;
     if (Number.isNaN(maxCoverageAge) || maxCoverageAge < 0)
         return yield* fault("InvalidConfiguration", "Coverage age must be nonnegative or Infinity.");
-    const maxStaleAge = options.demand?.refresh?.maxStaleAgeMs ?? 0;
+    // Offline reads already return cached data of any age, so a bounded stale window
+    // while online is strictly fresher than that. Ten coverage ages by default, when a
+    // background loop exists to revalidate what it serves; a one-shot replica never would.
+    const maxStaleAge =
+        options.demand?.refresh?.maxStaleAgeMs ?? (options.startSync === false ? 0 : maxCoverageAge * 10);
     if (Number.isNaN(maxStaleAge) || maxStaleAge < 0)
         return yield* fault("InvalidConfiguration", "Stale coverage age must be nonnegative or Infinity.");
     // Age-based revalidation only. A change journal keeps coverage exact instead.

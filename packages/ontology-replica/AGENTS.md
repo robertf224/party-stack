@@ -12,8 +12,11 @@ the state involved. Each fact below cites where to verify it.
 - **Outbox and prediction.** Each pending action is an `outbox` row (`PendingAction`).
   `replay` runs the action's `execute` against visible state, stages its writes, and
   records every row it read or wrote in `actionRows` and every query it read in
-  `actionQueries`. Cache GC protects those rows and queries. `touchedTypes` on the entry
-  lists only the types it wrote.
+  `actionQueries` (subsets it read through `loadSubset`). Cache GC protects those rows
+  and every row matching those queries, and a source-fed replica asks its source to
+  deliver them (`requestedView`), so a replay always finds its inputs. `touchedTypes`
+  on the entry lists only the types it wrote; its one reader, `recoverHistory`, asks
+  for demanded subsets that function already requests.
 - **Rebase.** `rebase` clears every overlay and replays all pending actions in sequence
   order until the first `blocked` one. It runs after every base write (installs, watch
   changes, confirmations), so predictions are always recomputed over the current base.
