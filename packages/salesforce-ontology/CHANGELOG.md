@@ -1,5 +1,14 @@
 # @party-stack/salesforce-ontology
 
+## 0.6.6
+
+### Patch Changes
+
+- Updated dependencies [0f3d26a]
+    - @party-stack/ontology-backend@0.5.0
+    - @party-stack/ontology@0.23.6
+    - @party-stack/connect@0.4.1
+
 ## 0.6.5
 
 ### Patch Changes
