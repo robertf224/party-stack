@@ -4800,6 +4800,24 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     )
                 );
     };
+    // A delivery subscription holds its selection's demand. When it ends, the demand is
+    // held a little longer: a client replacing its view (or reconnecting) closes its old
+    // subscription before the next one reaches this replica, and releasing at once would
+    // cancel every load the two views share, only to start them again. Idle retention
+    // already keeps released demand; this adds only what it does not cover.
+    const deliveryHandoffMs = Math.max(0, 5_000 - (options.demand?.idleRetentionMs ?? 0));
+    const holdDeliveryDemand = (subsets: readonly CompiledSubset[]) =>
+        Effect.gen(function* () {
+            const leases = yield* Scope.fork(replicaScope);
+            for (const subset of subsets) yield* service.demand(subset).pipe(Scope.provide(leases));
+            yield* Effect.addFinalizer(() =>
+                Scope.close(leases, Exit.void).pipe(
+                    Effect.delay(deliveryHandoffMs),
+                    Effect.forkIn(replicaScope),
+                    Effect.asVoid
+                )
+            );
+        });
     const visibleRevision = (tx: ReadTransaction) =>
         tx.get(stateHead, "head").pipe(Effect.map((head) => head?.visibleRevision ?? 0));
     const service: ReplicaService = {
@@ -4864,7 +4882,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         subscribeSelection: (selection, policy, resume) =>
             traceDelivery(
                 Effect.gen(function* () {
-                    for (const subset of selection.subsets) yield* service.demand(subset);
+                    yield* holdDeliveryDemand(selection.subsets);
                     yield* syncSelection(selection.subsets);
                     return yield* committedDeliveries.open({
                         policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
@@ -4883,7 +4901,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     yield* access(tables.transaction((tx) => clients.select(tx, session, selected)));
                     // The selected stream owns upstream demand too: no parallel
                     // lease RPC can silently lose interest while delivery stays open.
-                    for (const subset of selected.selection.subsets) yield* service.demand(subset);
+                    yield* holdDeliveryDemand(selected.selection.subsets);
                     // Publish existing base/optimistic/action state immediately. Data
                     // refresh may be gated behind a submitting action; acceptance
                     // must remain deliverable while that action is still in flight.
