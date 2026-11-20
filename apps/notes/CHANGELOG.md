@@ -1,5 +1,15 @@
 # @party-stack/remote-notes
 
+## 0.2.28
+
+### Patch Changes
+
+- @party-stack/ontology@0.23.7
+- @party-stack/ontology-server@0.12.1
+- @party-stack/web-runtime@0.5.4
+- @party-stack/ontology-devtools@0.8.7
+- @party-stack/ontology-react@0.2.11
+
 ## 0.2.27
 
 ### Patch Changes
