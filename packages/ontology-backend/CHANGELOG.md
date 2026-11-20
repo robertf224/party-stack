@@ -1,5 +1,26 @@
 # @party-stack/ontology-backend
 
+## 0.4.0
+
+### Minor Changes
+
+- eabf393: Keep answering reads while large collections load or refresh, and add stale-while-revalidate.
+
+    - A read whose demand existing coverage already proves (for example a filtered query inside a pinned whole collection) resolves from one read transaction instead of queueing behind running loads.
+    - For backends without a change journal, subset fetches now run outside the replica's sync gate. A cold read is no longer blocked by a slow refresh of another subset, and actions dispatch and confirm while a refresh is fetching. Only the short install transactions take the gate. Each fetch is numbered when it starts, and an install skips rows a later-started fetch or watch change already wrote, so overlapping loads can finish in any order. An install that would land while an action is sending, or committed but unconfirmed, is dropped and reloaded after confirmation, so a prediction is never shown twice. A load whose demand is invalidated mid-fetch still installs its rows, without proving coverage, and fetches again, at most twice, so a refresh slower than the poll interval always lands. The new `demand.maxConcurrentLoads` (default 6, matching browsers' HTTP/1.1 per-host connection limit) caps fetches in flight.
+    - The new `demand.refresh.maxStaleAgeMs` serves coverage that is no longer fresh, but younger than the bound, right away. Its `coverageProof` reports `stale: true` and `confirmedAt` while a background refresh replaces it. Under this option, poll ticks and `revalidate()` mark coverage due instead of invalidating it, so a refresh that takes longer than the poll interval still installs. Coverage past the bound, invalidated coverage, and demands with a terminal load failure are never served stale. It defaults to ten times `maxCoverageAgeMs` (10 minutes with the default 60 s) for replicas that sync in the background, and to 0 for one-shot (`live: false`) replicas, which would never refresh what they serve. **Behavior change:** reads of expired coverage now return cached data at once instead of waiting for the reload. Set `maxStaleAgeMs: 0` to keep the old behavior, for example for authorization data.
+    - Under continuous edits, loads still install: the outbox takes the sync gate one action at a time and lets waiting installs go between actions, instead of holding it for its whole queue. Previously a steady stream of edits blocked every load.
+    - Reads take priority over background refreshes: loads no reader waits for leave one fetch slot free.
+    - Under `maxStaleAgeMs`, a demand's poll tick marks only its own coverage due, so a type with many demands is refreshed once per interval rather than once per demand.
+    - Journal-backed, delivery and protocol-source replicas keep their existing gated scheduling.
+    - Remove the unused `touchedTypes` field from pending actions. History recovery, its only reader, already requests every demanded subset. Entries from older peers that still carry the field decode normally.
+    - Coverage ages survive a device clock corrected backwards: a clock reading more than a second earlier than the newest time the replica has seen invalidates every age-based confirmation from before, instead of letting old data look fresh for the size of the correction.
+    - An explicit pass now reports a load that failed before the pass waited for it; previously a fast failure could leave `syncOnce` reporting success.
+    - A backend request that throws (a defect rather than a `BackendError`) now fails with `Internal` under every scheduling: fetches, action dispatch (recorded as an unknown outcome, so it is never retried blindly), change pulls, queries and validation. Previously detached loads resolved their readers as if they had succeeded, gated reads died, and a crashed dispatch could stop the outbox worker. Subscriptions already handled this.
+    - An action retried after an attempt that may have committed (a deduplicating backend retries it rather than blocking) now holds back snapshots and watch changes until its retry settles, as an action in flight does. Previously a load in between could show the action twice: its commit in the confirmed row, plus its prediction on top. This affected both schedulings.
+    - When an attempt may have committed and will not be retried, the replica revalidates every age-based confirmation, as it does for a receipt whose affected list is incomplete, so the commit shows without waiting for coverage to expire.
+    - An action that is not replayed because the queue is stopped at a blocked action (it or an earlier one) is now labelled `prediction: "dropped"` instead of keeping its last label.
+
 ## 0.3.2
 
 ### Patch Changes
