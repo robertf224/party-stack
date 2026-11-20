@@ -149,6 +149,10 @@ export async function searchActionTypeWindow(
     let previous: Row<unknown> | undefined;
     let boundary: Row<unknown> | undefined;
     let pageToken: string | undefined;
+    // Pages are sized to the rows still needed while Foundry's prefilter is exact. Once a
+    // row fails the local recheck (a filter Foundry cannot apply, such as `not`), the
+    // rest of the window may lie far ahead, so read full pages instead of small ones.
+    let rejected = false;
     for (;;) {
         const page = await ActionTypesV2.search(
             client,
@@ -156,7 +160,9 @@ export async function searchActionTypeWindow(
             {
                 where,
                 orderBy: { field: "actionTypeDisplayName", direction: window.direction },
-                pageSize: Math.min(MAX_PAGE_SIZE, Math.max(MIN_PAGE_SIZE, window.size - actions.length + 1)),
+                pageSize: rejected
+                    ? MAX_PAGE_SIZE
+                    : Math.min(MAX_PAGE_SIZE, Math.max(MIN_PAGE_SIZE, window.size - actions.length + 1)),
                 pageToken,
                 fuzziness: { type: "off" },
             },
@@ -172,7 +178,7 @@ export async function searchActionTypeWindow(
             if (applyQuery([row], { where: query.where }).length) {
                 actions.push(actionType);
                 if (actions.length === window.size) boundary = row;
-            }
+            } else rejected = true;
         }
         pageToken = page.nextPageToken;
         if (pageToken === undefined) return { actions, fetched };

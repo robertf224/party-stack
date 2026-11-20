@@ -1,6 +1,6 @@
 import { objectSubset, resolveSubsetSnapshot } from "@party-stack/ontology-backend/subset";
 import metaOntology from "@party-stack/ontology-spec/meta";
-import { and, eq, field, ilike, like, or } from "@party-stack/ontology-storage";
+import { and, eq, field, ilike, like, not, or } from "@party-stack/ontology-storage";
 import { applyQuery } from "@party-stack/ontology-storage/tables";
 import { Effect } from "effect";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -206,6 +206,34 @@ describe("windowed Foundry action type search", () => {
         expect((await page(25, 5))._tag).toBe("Success");
         expect((await page(20, 11))._tag).toBe("Failure");
         expect(searchRequests()[0]?.orderBy).toEqual({ field: "actionTypeDisplayName", direction: "desc" });
+    });
+
+    it("reads full pages once rows fail a filter Foundry cannot apply", async () => {
+        // Product types sort before lowercase names ("[" is U+005B) and are excluded with
+        // `not`, which Foundry's action type search has no operator for: checked locally.
+        const ontology = [
+            ...Array.from({ length: 300 }, (_, index) =>
+                actionType(`product-${pad(index)}`, `[Streamline] Product ${pad(index)}`)
+            ),
+            ...Array.from({ length: 40 }, (_, index) =>
+                actionType(`task-${pad(index)}`, `task ${pad(index)}`)
+            ),
+        ];
+        foundry(ontology);
+        const query: Query = {
+            where: not(like(field("displayName"), "[Streamline]%")),
+            orderBy: [{ field: field("displayName"), direction: "asc" }],
+            limit: 10,
+        };
+        const result = await load(query);
+        expect(keys(result.snapshot.rows)).toEqual(oracle(ontology, query));
+        // A first page sized to the window, then full pages past the excluded rows.
+        expect(searchRequests().map((request) => request.pageSize)).toEqual([11, 100, 100, 100]);
+        expect(searchRequests()[0]?.where).toBeUndefined();
+        // Full metadata only for the window's rows.
+        expect(
+            mocks.getFullMetadataBatch.mock.calls.flatMap((call) => call[2].requests).length
+        ).toBeLessThanOrEqual(11);
     });
 
     it("rechecks the filter locally and reads past display name ties at the boundary", async () => {
