@@ -44,9 +44,9 @@ const objectType = (name: string, displayName = name) => ({
     datasources: [],
     status: "ACTIVE" as const,
 });
-const objectMetadata = (name: string, displayName = name) => ({
+const objectMetadata = (name: string, displayName = name, linkTypes: unknown[] = []) => ({
     objectType: objectType(name, displayName),
-    linkTypes: [],
+    linkTypes: linkTypes as never[],
     implementsInterfaces: [],
     implementsInterfaces2: {},
     sharedPropertyTypeMapping: {},
@@ -181,18 +181,19 @@ describe("native selective Foundry metadata", () => {
     it.each(["source", "target", "or", "and"])(
         "resolves both physical sides of a %s endpoint query without an ontology scan",
         async (kind) => {
-            vi.mocked(ObjectTypesV2.listOutgoingLinkTypes).mockImplementation(
-                async (_client, _ontology, name, options) => {
-                    if (name === "Post")
-                        return options?.pageToken
-                            ? { data: [] }
-                            : { data: [side("author", "Author", "link", "authorId")], nextPageToken: "next" };
-                    return { data: [{ ...side("posts", "Post"), cardinality: "MANY" }] };
-                }
-            );
             vi.mocked(ObjectTypesV2.getFullMetadataBatch).mockImplementation(
                 async (_client, _ontology, body) => ({
-                    data: body.requests.map(({ objectType }) => objectMetadata(objectType)),
+                    data: body.requests.map(({ objectType }) =>
+                        objectMetadata(
+                            objectType,
+                            objectType,
+                            !body.includeLinkTypes
+                                ? []
+                                : objectType === "Post"
+                                  ? [side("author", "Author", "link", "authorId")]
+                                  : [{ ...side("posts", "Post"), cardinality: "MANY" }]
+                        )
+                    ),
                 })
             );
             vi.mocked(ObjectTypesV2.getOutgoingLinkTypesByObjectTypeRidBatch).mockImplementation(
@@ -230,7 +231,9 @@ describe("native selective Foundry metadata", () => {
                 }),
             ]);
             expect(result.raw.fulfilledSubset?.where).toBeDefined();
-            expect(ObjectTypesV2.getFullMetadataBatch).toHaveBeenCalledTimes(kind === "or" ? 0 : 1);
+            // The selected endpoints with their sides, then the unselected neighbor's RID.
+            expect(ObjectTypesV2.getFullMetadataBatch).toHaveBeenCalledTimes(kind === "or" ? 1 : 2);
+            expect(ObjectTypesV2.listOutgoingLinkTypes).not.toHaveBeenCalled();
             const inverseCalls = vi.mocked(ObjectTypesV2.getOutgoingLinkTypesByObjectTypeRidBatch).mock.calls;
             expect(
                 inverseCalls.map(([, ontology, body, settings]) => ({ ontology, body, settings }))
@@ -257,12 +260,17 @@ describe("native selective Foundry metadata", () => {
 
     it("deduplicates an endpoint union and batches neighbor and inverse lookups at 100", async () => {
         const names = Array.from({ length: 205 }, (_, index) => `Neighbor${index}`);
-        vi.mocked(ObjectTypesV2.listOutgoingLinkTypes).mockResolvedValue({
-            data: names.map((name) => side(name, name, `link-${name}`, `fk-${name}`)),
-        });
         vi.mocked(ObjectTypesV2.getFullMetadataBatch).mockImplementation(
             async (_client, _ontology, body) => ({
-                data: body.requests.map(({ objectType }) => objectMetadata(objectType)),
+                data: body.requests.map(({ objectType }) =>
+                    objectMetadata(
+                        objectType,
+                        objectType,
+                        body.includeLinkTypes
+                            ? names.map((name) => side(name, name, `link-${name}`, `fk-${name}`))
+                            : []
+                    )
+                ),
             })
         );
         vi.mocked(ObjectTypesV2.getOutgoingLinkTypesByObjectTypeRidBatch).mockImplementation(
@@ -279,10 +287,10 @@ describe("native selective Foundry metadata", () => {
             where: or(eq(field("source", "objectType"), "Post"), eq(field("target", "objectType"), "Post")),
         });
         expect(result.snapshot.rows).toHaveLength(205);
-        expect(ObjectTypesV2.listOutgoingLinkTypes).toHaveBeenCalledOnce();
+        expect(ObjectTypesV2.listOutgoingLinkTypes).not.toHaveBeenCalled();
         expect(
             vi.mocked(ObjectTypesV2.getFullMetadataBatch).mock.calls.map((call) => call[2].requests.length)
-        ).toEqual([100, 100, 5]);
+        ).toEqual([1, 100, 100, 5]);
         expect(
             vi
                 .mocked(ObjectTypesV2.getOutgoingLinkTypesByObjectTypeRidBatch)
@@ -291,10 +299,13 @@ describe("native selective Foundry metadata", () => {
     });
 
     it("omits links with an inaccessible opposite endpoint", async () => {
-        vi.mocked(ObjectTypesV2.listOutgoingLinkTypes).mockResolvedValue({
-            data: [side("author", "Author", "link", "authorId")],
-        });
-        vi.mocked(ObjectTypesV2.getFullMetadataBatch).mockResolvedValue({ data: [] });
+        vi.mocked(ObjectTypesV2.getFullMetadataBatch).mockImplementation(
+            async (_client, _ontology, body) => ({
+                data: body.includeLinkTypes
+                    ? [objectMetadata("Post", "Post", [side("author", "Author", "link", "authorId")])]
+                    : [],
+            })
+        );
         expect(
             (await load("LinkType", { where: eq(field("source", "objectType"), "Post") })).snapshot.rows
         ).toEqual([]);
@@ -302,10 +313,12 @@ describe("native selective Foundry metadata", () => {
     });
 
     it("normalizes self links once without resolving their own endpoint again", async () => {
-        vi.mocked(ObjectTypesV2.listOutgoingLinkTypes).mockResolvedValue({
+        vi.mocked(ObjectTypesV2.getFullMetadataBatch).mockResolvedValue({
             data: [
-                side("manager", "Employee", "self", "managerId"),
-                { ...side("reports", "Employee", "self"), cardinality: "MANY" },
+                objectMetadata("Employee", "Employee", [
+                    side("manager", "Employee", "self", "managerId"),
+                    { ...side("reports", "Employee", "self"), cardinality: "MANY" },
+                ]),
             ],
         });
         const result = await load("LinkType", { where: eq(field("source", "objectType"), "Employee") });
@@ -315,8 +328,7 @@ describe("native selective Foundry metadata", () => {
             target: { name: "manager" },
             cardinality: "many",
         });
-        expect(ObjectTypesV2.listOutgoingLinkTypes).toHaveBeenCalledOnce();
-        expect(ObjectTypesV2.getFullMetadataBatch).not.toHaveBeenCalled();
+        expect(ObjectTypesV2.getFullMetadataBatch).toHaveBeenCalledOnce();
         expect(ObjectTypesV2.getOutgoingLinkTypesByObjectTypeRidBatch).not.toHaveBeenCalled();
     });
 
@@ -341,22 +353,18 @@ describe("native selective Foundry metadata", () => {
         expect(OntologiesV2.getFullMetadata).not.toHaveBeenCalled();
     });
 
-    it.each(["ValueType", "LinkType"])("treats only a direct %s 404 as absence", async (type) => {
+    it.each(["ValueType", "LinkType"])("treats only a missing %s endpoint as absence", async (type) => {
         vi.mocked(OntologyValueTypes.get).mockRejectedValue({ statusCode: 404 });
-        vi.mocked(ObjectTypesV2.listOutgoingLinkTypes).mockRejectedValue({ statusCode: 404 });
+        // The batch omits an object type that does not exist or is not readable.
+        vi.mocked(ObjectTypesV2.getFullMetadataBatch).mockResolvedValue({ data: [] });
         const path = type === "ValueType" ? field("name") : field("target", "objectType");
         expect((await load(type, { where: eq(path, "Missing") })).snapshot.rows).toEqual([]);
         expect(OntologyValueTypes.list).not.toHaveBeenCalled();
         expect(ObjectTypesV2.list).not.toHaveBeenCalled();
     });
 
-    it("fails a missing continuation page instead of certifying a partial link neighborhood", async () => {
-        vi.mocked(ObjectTypesV2.listOutgoingLinkTypes)
-            .mockResolvedValueOnce({
-                data: [side("author", "Author", "link", "authorId")],
-                nextPageToken: "next",
-            })
-            .mockRejectedValueOnce({ statusCode: 404 });
+    it("fails a request-level link batch 404 instead of certifying no links", async () => {
+        vi.mocked(ObjectTypesV2.getFullMetadataBatch).mockRejectedValue({ statusCode: 404 });
         const result = await Effect.runPromise(
             Effect.result(
                 makeFoundryMetadataBackend({ client }).loadSubset(
@@ -365,23 +373,84 @@ describe("native selective Foundry metadata", () => {
             )
         );
         expect(result).toMatchObject({ _tag: "Failure", failure: { kind: "NotFound", retryable: false } });
-        expect(ObjectTypesV2.listOutgoingLinkTypes).toHaveBeenCalledTimes(2);
+    });
+
+    it("loads every link type with one outgoing batch per 100 object types", async () => {
+        const names = Array.from({ length: 205 }, (_, index) => `Type${index}`);
+        vi.mocked(ObjectTypesV2.list)
+            .mockResolvedValueOnce({
+                data: names.slice(0, 100).map((name) => objectType(name)),
+                nextPageToken: "a",
+            })
+            .mockResolvedValueOnce({
+                data: names.slice(100, 200).map((name) => objectType(name)),
+                nextPageToken: "b",
+            })
+            .mockResolvedValueOnce({ data: names.slice(200).map((name) => objectType(name)) });
+        // Each type links to the next one: Type0 -> Type1 -> ... -> Type204.
+        vi.mocked(ObjectTypesV2.getOutgoingLinkTypesByObjectTypeRidBatch).mockImplementation(
+            async (_client, _ontology, body) => ({
+                data: Object.fromEntries(
+                    body.requests.map(({ objectTypeRid }) => {
+                        const index = Number(objectTypeRid.slice("rid-Type".length));
+                        return [
+                            objectTypeRid,
+                            [
+                                ...(index < 204
+                                    ? [
+                                          side(
+                                              `next${index}`,
+                                              `Type${index + 1}`,
+                                              `link-${index}`,
+                                              `fk-${index}`
+                                          ),
+                                      ]
+                                    : []),
+                                ...(index > 0
+                                    ? [
+                                          {
+                                              ...side(
+                                                  `previous${index - 1}`,
+                                                  `Type${index - 1}`,
+                                                  `link-${index - 1}`
+                                              ),
+                                              cardinality: "MANY" as const,
+                                          },
+                                      ]
+                                    : []),
+                            ],
+                        ];
+                    })
+                ),
+            })
+        );
+        const result = await load("LinkType");
+        expect(result.snapshot.rows).toHaveLength(204);
+        const calls = vi.mocked(ObjectTypesV2.getOutgoingLinkTypesByObjectTypeRidBatch).mock.calls;
+        expect(calls.map((call) => call[2].requests.length)).toEqual([100, 100, 5]);
+        // No link type filter: every outgoing link type of each object type.
+        expect(calls.every((call) => !("filterLinkTypeRids" in call[2]))).toBe(true);
+        expect(ObjectTypesV2.listOutgoingLinkTypes).not.toHaveBeenCalled();
         expect(ObjectTypesV2.getFullMetadataBatch).not.toHaveBeenCalled();
     });
 
     it("reacquires provider metadata for a later load on the same backend", async () => {
         const backend = makeFoundryMetadataBackend({ client });
         const requested = objectSubset("LinkType", { where: eq(field("source", "objectType"), "Employee") });
-        vi.mocked(ObjectTypesV2.listOutgoingLinkTypes).mockResolvedValue({
+        vi.mocked(ObjectTypesV2.getFullMetadataBatch).mockResolvedValue({
             data: [
-                side("manager", "Employee", "self", "managerId"),
-                { ...side("reports", "Employee", "self"), cardinality: "MANY" },
+                objectMetadata("Employee", "Employee", [
+                    side("manager", "Employee", "self", "managerId"),
+                    { ...side("reports", "Employee", "self"), cardinality: "MANY" },
+                ]),
             ],
         });
         expect((await Effect.runPromise(backend.loadSubset(requested))).rows).toHaveLength(1);
-        vi.mocked(ObjectTypesV2.listOutgoingLinkTypes).mockResolvedValue({ data: [] });
+        vi.mocked(ObjectTypesV2.getFullMetadataBatch).mockResolvedValue({
+            data: [objectMetadata("Employee")],
+        });
         expect((await Effect.runPromise(backend.loadSubset(requested))).rows).toEqual([]);
-        expect(ObjectTypesV2.listOutgoingLinkTypes).toHaveBeenCalledTimes(2);
+        expect(ObjectTypesV2.getFullMetadataBatch).toHaveBeenCalledTimes(2);
     });
 
     it.each([
@@ -389,7 +458,7 @@ describe("native selective Foundry metadata", () => {
         [500, "Unavailable", true],
     ] as const)("preserves direct lookup HTTP %s failures", async (statusCode, kind, retryable) => {
         vi.mocked(OntologyValueTypes.get).mockRejectedValue({ statusCode });
-        vi.mocked(ObjectTypesV2.listOutgoingLinkTypes).mockRejectedValue({ statusCode });
+        vi.mocked(ObjectTypesV2.getFullMetadataBatch).mockRejectedValue({ statusCode });
         for (const [type, where] of [
             ["ValueType", eq(field("name"), "Email")],
             ["LinkType", eq(field("source", "objectType"), "Post")],
