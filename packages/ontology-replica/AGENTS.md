@@ -91,7 +91,7 @@ example tests:
   held or slow fetches (latency in clock time, or resumed one at a time), held or slow
   dispatches, lost read-backs, `revalidate()`, `invalidate()`, explicit and background
   passes, a steady stream of edits, consumers leaving and returning, cache collection,
-  retryable and terminal fetch failures, and restarts on the same storage with the
+  retryable, terminal and crashing (defect) fetches, and restarts on the same storage with the
   device clock corrected forwards or backwards. Deadlines for progress scale with every wait a load can legitimately incur
   (fetch latency and an action's turn), so they flag starvation rather than slowness.
 - The oracle judges freshness by the source's clock; the replica runs on a device

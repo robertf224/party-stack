@@ -1499,18 +1499,21 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const loadSubset = (subset: CompiledSubset, reason: ReplicaLoad["reason"]) =>
         diagnostics.load(
             { operation: "loadSubset", reason, subset },
-            adapter!
-                .loadSubset(objectSubset(subset.objectType, subset.query))
-                .pipe(
-                    Effect.flatMap((snapshot) =>
-                        resolveSubsetSnapshot(
-                            options.ir,
-                            objectSubset(subset.objectType, subset.query),
-                            snapshot,
-                            options.context
-                        )
-                    )
+            adapter!.loadSubset(objectSubset(subset.objectType, subset.query)).pipe(
+                // An adapter that throws fails the load like any other error, under
+                // every scheduling, instead of killing the reader or the sync loop.
+                Effect.catchDefect((defect) =>
+                    Effect.fail(fault("Internal", "The backend failed unexpectedly.", defect))
                 ),
+                Effect.flatMap((snapshot) =>
+                    resolveSubsetSnapshot(
+                        options.ir,
+                        objectSubset(subset.objectType, subset.query),
+                        snapshot,
+                        options.context
+                    )
+                )
+            ),
             (snapshot) => ({
                 rows: snapshot.snapshot.rows.length,
                 fetchedRows: snapshot.snapshot.fetchedRows,
@@ -2918,9 +2921,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     // The aggregate lease owns this load: releasing its last consumer
                     // cancels the IO, a single reader's interruption does not.
                     Effect.raceFirst(
-                        // A defect (an adapter bug) fails the load like any other error.
-                        // Left alone, it would skip the failure path and the cleanup below
-                        // would resolve its readers as if the load had succeeded.
+                        // Adapter defects already fail in `loadSubset`. A defect in the load
+                        // itself fails it too: left alone, it would skip the failure path and
+                        // the cleanup below would resolve its readers as if it had succeeded.
                         runLoad(key, demand, task, before).pipe(
                             Effect.catchDefect((defect) =>
                                 Effect.fail(fault("Internal", "The subset load failed unexpectedly.", defect))

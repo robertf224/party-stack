@@ -4,7 +4,7 @@ import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, evaluateQuery, field } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Clock, Deferred, Effect, Exit, Fiber, Schema, Scope } from "effect";
+import { Cause, Clock, Deferred, Effect, Exit, Fiber, Schema, Scope } from "effect";
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 import { makeReplica } from "./testing.js";
@@ -96,7 +96,11 @@ const ops = {
     // Collect every cached row nothing protects.
     gc: Schema.Struct({ kind: Schema.Literal("gc") }),
     // The next subset fetch (not a read-back) fails.
-    failFetch: Schema.Struct({ kind: Schema.Literal("failFetch"), retryable: Schema.Boolean }),
+    // "defect": the adapter throws instead of failing with a `BackendError`.
+    failFetch: Schema.Struct({
+        kind: Schema.Literal("failFetch"),
+        failure: Schema.Literals(["retryable", "terminal", "defect"]),
+    }),
     // The app restarts on the same storage. Its device clock may have been corrected
     // meanwhile: the replica's clock then reads this much more than before.
     // -8 s exceeds the stale bound, so stale serving is exercised too.
@@ -329,7 +333,7 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
             let actionLatency = scenario.actionLatencyMs ?? 0;
             let failReadBack = false;
             let committedSinceFailure = false;
-            let failNext: { readonly retryable: boolean } | undefined;
+            let failNext: "retryable" | "terminal" | "defect" | undefined;
             // Kinds of the fetch failures injected so far; a read may fail with one of them.
             const injectedKinds = new Set<string>();
             let failuresFired = 0;
@@ -355,9 +359,11 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                             });
                         }
                         if (failNext && subset.query?.where?.kind !== "in") {
-                            const { retryable } = failNext;
+                            const injected = failNext;
+                            const retryable = injected === "retryable";
                             failNext = undefined;
                             failuresFired++;
+                            if (injected === "defect") return yield* Effect.die(new Error("Adapter bug."));
                             return yield* new BackendError({
                                 operation: "loadSubset",
                                 kind: retryable ? "Unavailable" : "InvalidRequest",
@@ -608,9 +614,14 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                 } else if (operation.kind === "gc")
                     yield* Effect.result(replica.collectGarbage({ minUnusedAgeMs: 0 }));
                 else if (operation.kind === "failFetch") {
-                    failNext = { retryable: operation.retryable };
-                    injectedKinds.add(operation.retryable ? "Unavailable" : "InvalidRequest");
-                    terminalInjected ||= !operation.retryable;
+                    failNext = operation.failure;
+                    // The replica reports an adapter defect as an `Internal` failure.
+                    injectedKinds.add(
+                        { retryable: "Unavailable", terminal: "InvalidRequest", defect: "Internal" }[
+                            operation.failure
+                        ]
+                    );
+                    terminalInjected ||= operation.failure !== "retryable";
                 } else if (operation.kind === "reopen") {
                     // The app closes: its reads and passes end with it.
                     for (const fiber of [...reads, ...passes]) yield* Fiber.interrupt(fiber);
@@ -704,9 +715,15 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                         yield* progress;
                         if (!fiber.pollUnsafe()) yield* TestClock.adjust(1_000);
                     }
-                    if (!fiber.pollUnsafe()) {
+                    const exit = fiber.pollUnsafe();
+                    if (!exit) {
                         fail(`${label} never finished`);
                         yield* Fiber.interrupt(fiber);
+                        return undefined;
+                    }
+                    // A replica operation may fail, never die.
+                    if (Exit.hasDies(exit)) {
+                        fail(`${label} died: ${Cause.pretty(exit.cause).split("\n")[0]}`);
                         return undefined;
                     }
                     return yield* Fiber.join(fiber);
@@ -716,7 +733,11 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
             yield* progress;
             yield* settle(
                 "a read or pass",
-                Effect.forEach([...reads, ...passes], (fiber) => Fiber.await(fiber), { discard: true })
+                Effect.forEach([...reads, ...passes], (fiber) =>
+                    Effect.flatMap(Fiber.await(fiber), (exit) =>
+                        Exit.hasDies(exit) ? Effect.die(Cause.squash(exit.cause)) : Effect.void
+                    )
+                )
             );
             if (violation) return yield* Effect.fail(new Error(violation));
             yield* monotonic;

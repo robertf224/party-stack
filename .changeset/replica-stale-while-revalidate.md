@@ -15,4 +15,4 @@ Keep answering reads while large collections load or refresh, and add stale-whil
 - Remove the unused `touchedTypes` field from pending actions. History recovery, its only reader, already requests every demanded subset. Entries from older peers that still carry the field decode normally.
 - Coverage ages survive a device clock corrected backwards: a clock reading more than a second earlier than the newest time the replica has seen invalidates every age-based confirmation from before, instead of letting old data look fresh for the size of the correction.
 - An explicit pass now reports a load that failed before the pass waited for it; previously a fast failure could leave `syncOnce` reporting success.
-- A subset load whose backend throws (a defect rather than a `BackendError`) now fails its readers with an `Internal` error instead of resolving them as if it had succeeded.
+- A subset fetch whose backend throws (a defect rather than a `BackendError`) now fails with an `Internal` error under every scheduling. Previously detached loads resolved their readers as if they had succeeded, and gated reads died.
