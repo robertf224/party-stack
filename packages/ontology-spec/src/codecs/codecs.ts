@@ -83,3 +83,16 @@ export const TemporalTimestamp = Schema.instanceOf(Temporal.Instant, {
             })
         ),
 });
+
+const items = (count: number) => `${count} ${count === 1 ? "item" : "items"}`;
+
+/** Inclusive bounds on a list's number of elements. */
+export function isListSize({ min, max }: { readonly min?: number; readonly max?: number }) {
+    return Schema.makeFilter<ReadonlyArray<unknown>>((input) => {
+        if ((min === undefined || input.length >= min) && (max === undefined || input.length <= max))
+            return true;
+        if (min !== undefined && max !== undefined)
+            return min === max ? `Enter exactly ${items(min)}.` : `Enter between ${min} and ${items(max)}.`;
+        return min !== undefined ? `Enter at least ${items(min)}.` : `Enter at most ${items(max!)}.`;
+    });
+}
