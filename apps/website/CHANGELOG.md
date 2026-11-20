@@ -1,5 +1,16 @@
 # @party-stack/website
 
+## 0.0.11
+
+### Patch Changes
+
+- Updated dependencies [0f3d26a]
+    - @party-stack/ontology-backend@0.5.0
+    - @party-stack/ontology@0.23.6
+    - @party-stack/web-runtime@0.5.4
+    - @party-stack/ontology-devtools@0.8.6
+    - @party-stack/ontology-react@0.2.10
+
 ## 0.0.10
 
 ### Patch Changes

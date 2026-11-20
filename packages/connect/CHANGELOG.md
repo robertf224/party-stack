@@ -1,5 +1,12 @@
 # @party-stack/connections
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [0f3d26a]
+    - @party-stack/ontology-backend@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes

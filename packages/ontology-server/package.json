@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/ontology-server",
-    "version": "0.11.8",
+    "version": "0.12.0",
     "files": [
         "lib"
     ],
