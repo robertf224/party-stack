@@ -1,6 +1,6 @@
 ---
 "@party-stack/ontology-replica": minor
-"@party-stack/ontology-backend": patch
+"@party-stack/ontology-backend": minor
 "@party-stack/ontology": patch
 ---
 
