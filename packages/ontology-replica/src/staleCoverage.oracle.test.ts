@@ -102,6 +102,10 @@ const Scenario = Schema.Struct({
     capture: Schema.Literals(["end", "start"]),
     // Every fetch takes this long in clock time, so polls and edits land mid-fetch.
     latencyMs: Schema.optional(Schema.Literals([0, 2_500, 4_500])),
+    // Each dispatch commits at the source, then takes this long to return its receipt.
+    actionLatencyMs: Schema.optional(Schema.Literals([0, 1_000, 3_000])),
+    // During the liveness window, an increment is enqueued this often.
+    editEveryMs: Schema.optional(Schema.Literals([0, 1_000])),
     operations: Schema.Array(Operation),
 });
 // Focused generators: each explores one family of interleavings densely.
@@ -155,6 +159,20 @@ const LivenessScenario = scenario(Schema.Union([ops.edit, ops.read, ops.advance,
     latencyMs: Schema.Literals([2_500, 4_500]),
 });
 
+// Liveness under continuous edits: actions keep dispatching while slow fetches land,
+// so some action is nearly always sending or awaiting confirmation. Every demanded
+// subset must still be proven at some point, and every read must finish.
+const EditsScenario = scenario(Schema.Union([ops.edit, ops.read, ops.advance, ops.increment, ops.pass]), {
+    stale: Schema.Boolean,
+    poll: Schema.Boolean,
+    serial: Schema.Literal(false),
+    background: Schema.Literal(true),
+    capture: Schema.Literal("end"),
+    latencyMs: Schema.Literal(2_500),
+    actionLatencyMs: Schema.Literals([1_000, 3_000]),
+    editEveryMs: Schema.Literal(1_000),
+});
+
 const run = (scenario: typeof Scenario.Type) =>
     Effect.scoped(
         Effect.gen(function* () {
@@ -181,6 +199,7 @@ const run = (scenario: typeof Scenario.Type) =>
             // The source version each committed action produced.
             const committedAt = new Map<string, number>();
             let latency = scenario.latencyMs ?? 0;
+            let actionLatency = scenario.actionLatencyMs ?? 0;
             let failReadBack = false;
             let committedSinceFailure = false;
             const backend = makeOntologyBackend({
@@ -226,6 +245,7 @@ const run = (scenario: typeof Scenario.Type) =>
                             committedAt.set(request.id, version);
                             committedSinceFailure = true;
                         }
+                        if (actionLatency) yield* Effect.sleep(actionLatency);
                         // Committed at the source before the receipt reaches the replica.
                         if (holds.actions) yield* Deferred.await(holds.actions);
                         return {
@@ -426,18 +446,45 @@ const run = (scenario: typeof Scenario.Type) =>
             // With polls still firing, every read finishes within a few fetch latencies:
             // invalidation mid-fetch may delay a load, never starve it.
             if (scenario.latencyMs && !violation) {
-                const deadline = 6 * scenario.latencyMs + pollIntervalMs;
+                // Each of a load's (at most three) fetches may wait one action's turn
+                // (dispatch plus read-back) to install, and a contained subset may wait
+                // for its containing load first.
+                const turn = scenario.editEveryMs ? (scenario.actionLatencyMs ?? 0) + scenario.latencyMs : 0;
+                const deadline = 6 * (scenario.latencyMs + turn) + pollIntervalMs;
+                const proven = new Set<string>();
                 for (let waited = 0; waited < deadline; waited += 500) {
+                    if (scenario.editEveryMs && waited % scenario.editEveryMs === 0) {
+                        const id = ids[(waited / scenario.editEveryMs) % ids.length]!;
+                        yield* replica.enqueue({
+                            id: `increment-${sequence++}`,
+                            name: "increment",
+                            parameters: { id },
+                        });
+                    }
+                    // With edits under way, read every subset, then invalidate them all:
+                    // each must load again and install while the outbox stays busy.
+                    if (scenario.editEveryMs && waited === 500)
+                        for (const name of Object.keys(subsets)) yield* read(name);
+                    if (scenario.editEveryMs && waited === 1_000) yield* replica.invalidate();
                     yield* TestClock.adjust(500);
                     yield* progress;
                     yield* monotonic;
+                    if (waited >= 1_000)
+                        for (const demand of (yield* replica.status).demands)
+                            if (demand.installed === demand.revision) proven.add(subsetName(demand));
                 }
                 const stuck = reads.filter((fiber) => fiber.pollUnsafe() === undefined).length;
-                if (stuck) fail(`${stuck} read(s) unfinished ${deadline} ms into continuous polling`);
+                if (stuck) fail(`${stuck} read(s) unfinished ${deadline} ms into continuous interference`);
+                // Without stale serving, polls faster than a load leave no instant at
+                // which coverage is current, under either scheduling.
+                if (scenario.editEveryMs && (!scenario.poll || scenario.stale))
+                    for (const name of demanded)
+                        if (!proven.has(name)) fail(`${name}: never proven while edits continued`);
                 if (violation) return yield* Effect.fail(new Error(violation));
                 // Converge without latency; let fetches already sleeping land.
                 latency = 0;
-                yield* TestClock.adjust(scenario.latencyMs);
+                actionLatency = 0;
+                yield* TestClock.adjust(scenario.latencyMs + (scenario.actionLatencyMs ?? 0));
                 yield* progress;
             }
             // Everything released, every read and pass completes.
@@ -499,6 +546,12 @@ it.effect.prop(
     [LivenessScenario],
     ([value]) => run(asScenario(value)),
     { arbitrary: { runs: 100, size: 24, seed: "stale-coverage-liveness-v1" }, timeout: 120_000 }
+);
+it.effect.prop(
+    "demanded subsets are proven and reads finish while edits keep dispatching",
+    [EditsScenario],
+    ([value]) => run(asScenario(value)),
+    { arbitrary: { runs: 50, size: 24, seed: "stale-coverage-edits-v1" }, timeout: 120_000 }
 );
 
 it.effect("a read during a held refresh of a stale collection is served within the bound", () =>

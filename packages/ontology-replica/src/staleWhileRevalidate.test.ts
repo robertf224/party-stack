@@ -95,7 +95,11 @@ const fixture = Effect.fnUntraced(function* (options: {
                     }
                     value = 99;
                     events.push("applied");
-                    return { operationId: request.id, outcome: "committed" as const, affected: [] };
+                    return {
+                        operationId: request.id,
+                        outcome: "committed" as const,
+                        affected: [{ objectType: "Item", keys: ["one"] }],
+                    };
                 }),
             loadSubset: (request) =>
                 Effect.gen(function* () {
@@ -302,20 +306,19 @@ it.live("stale admission never installs a snapshot while an action is sending", 
             const action = yield* f.holdActions;
             yield* f.replica.enqueue({ id: "write-1", name: "write", parameters: {} });
             yield* action.started;
-            // Served immediately with the optimistic overlay; the revalidation it
-            // requests waits for the action rather than racing its receipt.
+            // Served immediately with the optimistic overlay. The revalidation it requests
+            // may fetch, but cannot install until the receipt settles the overlay.
             yield* f.replica.syncSubset(whole).pipe(Effect.timeout("1 second"));
             expect((yield* proofOf(f.replica, whole)).proof?.stale).toBe(true);
             expect(yield* f.replica.get("Item", "one")).toEqual({ id: "one", value: 99 });
             yield* Effect.sleep("50 millis");
-            expect(f.events).toEqual(["apply"]);
+            expect(yield* f.replica.confirmed.get("Item", "one")).toEqual({ id: "one", value: 1 });
 
             yield* action.release;
             yield* f.replica.awaitAction("write-1").pipe(Effect.timeout("1 second"));
             yield* f.replica.syncSubset(whole);
-            yield* Effect.sleep("50 millis").pipe(Effect.repeat({ until: () => f.loads() > 0, times: 40 }));
-            // Revalidation resumes only after the receipt settled the overlay.
-            expect(f.events.slice(0, 3)).toEqual(["apply", "applied", "load:Item"]);
+            expect(f.events.indexOf("applied")).toBeGreaterThan(f.events.indexOf("apply"));
+            expect(yield* f.replica.confirmed.get("Item", "one")).toEqual({ id: "one", value: 99 });
             expect(yield* f.replica.get("Item", "one")).toEqual({ id: "one", value: 99 });
             expect(yield* f.replica.pending).toEqual([]);
         })
@@ -457,3 +460,68 @@ for (const scheduling of [undefined, "serial"] as const)
             })
         )
     );
+
+it.effect("a poll tick marks only its own demand's coverage due", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            const f = yield* fixture({
+                startSync: false,
+                pollIntervalMs: 1_000,
+                refresh: { maxStaleAgeMs: 10_000 },
+            });
+            const ones = { objectType: "Item", query: { where: eq(field("value"), 1) } };
+            const twos = { objectType: "Item", query: { where: eq(field("value"), 2) } };
+            const staleOf = (value: number) =>
+                Effect.map(
+                    f.replica.status,
+                    (status) =>
+                        status.demands.find((demand) =>
+                            JSON.stringify(demand.query).includes(`"value":${value}`)
+                        )?.coverageProof?.stale
+                );
+            yield* f.replica.demand(ones);
+            yield* f.replica.syncSubset(ones);
+            yield* TestClock.adjust(500);
+            yield* f.replica.demand(twos);
+            yield* f.replica.syncSubset(twos);
+            // Only `ones` has polled since it loaded.
+            yield* TestClock.adjust(600);
+            yield* f.replica.syncSubset(ones);
+            yield* f.replica.syncSubset(twos);
+            expect(yield* staleOf(1)).toBe(true);
+            expect(yield* staleOf(2)).toBeUndefined();
+        })
+    )
+);
+
+it.live("a read's fetch is not queued behind background refreshes", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            const f = yield* fixture({ startSync: false, maxConcurrentLoads: 2 });
+            const items = [1, 2, 3].map((value) => ({
+                objectType: "Item",
+                query: { where: eq(field("value"), value) },
+            }));
+            for (const subset of items) {
+                yield* f.replica.demand(subset);
+                yield* f.replica.syncSubset(subset);
+            }
+            yield* f.replica.invalidate(["Item"]);
+            const held = yield* f.holdLoads();
+            f.events.length = 0;
+            // A checkpoint refreshes all three; no reader is waiting for them.
+            const refresh = yield* Effect.forkScoped(f.replica.syncOnce);
+            yield* held.started;
+            yield* Effect.sleep("20 millis");
+            yield* f.replica.demand(tags);
+            const read = yield* Effect.forkScoped(f.replica.syncSubset(tags));
+            yield* Effect.sleep("50 millis");
+            // One background fetch runs; the cold read takes the slot left for reads.
+            expect(f.events).toEqual(["load:Item", "load:Tag"]);
+            yield* held.release;
+            yield* Fiber.join(read);
+            yield* Fiber.join(refresh);
+            expect(f.loads("Item")).toBe(3);
+        })
+    )
+);

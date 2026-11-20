@@ -794,8 +794,44 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     if (!Number.isSafeInteger(maxConcurrentLoads) || maxConcurrentLoads < 1)
         return yield* fault("InvalidConfiguration", "Concurrent loads must be a positive integer.");
     const loadPermits = yield* Semaphore.make(maxConcurrentLoads);
+    // Loads no reader is waiting for (background passes, checkpoints, dependent reloads)
+    // also take one of these, leaving a fetch slot for reads.
+    const backgroundPermits = yield* Semaphore.make(Math.max(1, maxConcurrentLoads - 1));
     // Fetches one load may repeat after mid-fetch invalidation before it completes anyway.
     const maxLoadRefetches = 2;
+    // Detached loads install under `gate`, which the outbox also holds while it dispatches
+    // and confirms an action. The outbox then takes `gate` one action at a time and, between
+    // actions, lets the installs already waiting go first: `Semaphore` is not FIFO, so a
+    // drain that released and retook it would keep it, and a steady stream of edits would
+    // starve every install.
+    let installsIssued = 0;
+    let installsFinished = 0;
+    const installTurns: Array<{ readonly through: number; readonly done: Deferred.Deferred<void> }> = [];
+    const withInstallGate = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.suspend(() => {
+            installsIssued++;
+            return gate.withPermit(effect).pipe(
+                Effect.ensuring(
+                    Effect.suspend(() => {
+                        installsFinished++;
+                        const ready = installTurns.filter((turn) => turn.through <= installsFinished);
+                        for (const turn of ready) installTurns.splice(installTurns.indexOf(turn), 1);
+                        return Effect.forEach(ready, (turn) => Deferred.succeed(turn.done, undefined), {
+                            discard: true,
+                        });
+                    })
+                )
+            );
+        });
+    // Only one drain turn at a time waits on `gate`, so the installs waiting there are
+    // never behind more than the turn in progress.
+    const drainTurn = yield* Semaphore.make(1);
+    const afterWaitingInstalls = Effect.suspend(() => {
+        if (installsFinished >= installsIssued) return Effect.void;
+        const done = Deferred.makeUnsafe<void>();
+        installTurns.push({ through: installsIssued, done });
+        return Deferred.await(done);
+    });
     const demands = new Map<
         string,
         {
@@ -831,7 +867,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     // row remembers the newest fetch (or watch change) that wrote it. An install
     // skips rows a later-started fetch already wrote, so an older snapshot never
     // replaces newer data. Only fetches of this session can be in flight, so the
-    // map is in memory and empties whenever no fetch is outstanding.
+    // map is in memory. A stamp no newer than the oldest fetch in flight can no longer
+    // supersede anything and is dropped, so overlapping fetches keep it bounded.
     let fetchSequence = 0;
     const fetchesInFlight = new Set<number>();
     const rowFetches = new Map<string, number>();
@@ -842,7 +879,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     };
     const endFetch = (sequence: number) => {
         fetchesInFlight.delete(sequence);
-        if (fetchesInFlight.size === 0) rowFetches.clear();
+        if (fetchesInFlight.size === 0) return rowFetches.clear();
+        const oldest = Math.min(...fetchesInFlight);
+        if (sequence > oldest) return;
+        for (const [id, stamp] of rowFetches) if (stamp <= oldest) rowFetches.delete(id);
     };
     const rowWriter = (objectType: string) => {
         const touched: Array<readonly [string, number | undefined, number]> = [];
@@ -2281,7 +2321,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             yield* confirmReceipt(entry, entry.receipt);
         }
     });
-    const drainOutbox = Effect.fn("Replica.drainOutbox", { root: true })(function* (recover = true) {
+    // `single` settles at most one action and reports whether more may follow.
+    const drainOutbox = Effect.fn("Replica.drainOutbox", { root: true })(function* (
+        recover = true,
+        single = false
+    ) {
         yield* open;
         if (replicationError?.recovery === "stop")
             return yield* fault(replicationError.kind, replicationError.message);
@@ -2426,14 +2470,35 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             } else {
                 yield* confirmReceipt(head, receipt);
             }
+            if (single) return { more: true as const };
         }
     });
+    // Under detached loads, drain one action per hold of `gate`, letting waiting installs
+    // in between. Between actions none is sending or awaiting confirmation, so an install
+    // then cannot show an action twice. The background worker and explicit checkpoints
+    // can drain at once; `drainTurn` keeps all but one of them off `gate`, and each turn
+    // first lets waiting installs go.
+    const drainInTurns = (recover = true) =>
+        Effect.gen(function* () {
+            for (;;) {
+                const result = yield* drainTurn.withPermit(
+                    afterWaitingInstalls.pipe(Effect.andThen(gate.withPermit(drainOutbox(recover, true))))
+                );
+                if (!result || !("more" in result)) return result;
+            }
+        });
     type CoverageProof = NonNullable<ReplicaStatus["demands"][number]["coverageProof"]>;
     // Under `maxStaleAgeMs`, a poll tick or explicit revalidation marks coverage
     // due without invalidating it or fencing in-flight loads: the rows are not known
     // to have changed, so they stay servable within the bound while the next pass
     // reloads them. A refresh that outlasts the poll interval can still install.
-    const markRevalidate = (objectTypes: ReadonlySet<string>, fence = false) =>
+    // `subsets`, when given, limits marking to those coverage records: a poll tick says
+    // only that its own demand is due, not every subset of the type.
+    const markRevalidate = (
+        objectTypes: ReadonlySet<string>,
+        fence = false,
+        subsets?: readonly (CompiledSubset | undefined)[]
+    ) =>
         Effect.sync(() => {
             if (fence) for (const objectType of objectTypes) revalidateGenerations.set(objectType, Symbol());
         }).pipe(
@@ -2445,7 +2510,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 for (const cached of yield* tx.query(coverage, {
                                     where: eq(field("subset", "objectType"), objectType),
                                 }))
-                                    if (!cached.value.invalidated && !cached.value.revalidate)
+                                    if (
+                                        !cached.value.invalidated &&
+                                        !cached.value.revalidate &&
+                                        (!subsets ||
+                                            subsets.some(
+                                                (subset) => subset && subsetKey(subset) === cached.key
+                                            ))
+                                    )
                                         yield* tx.put(coverage, cached.key, {
                                             ...cached.value,
                                             revalidate: true,
@@ -2638,26 +2710,23 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     // dropped, as a pass steps aside then; the demand reloads after confirmation. The
     // fetch itself never waits for actions, and actions never wait for a fetch.
     const installUnlessUnsettled = (write: (tx: Transaction) => Effect.Effect<void, unknown>) =>
-        gate
-            .withPermit(
-                boundary(
-                    tables.transaction((tx) =>
-                        Effect.gen(function* () {
-                            if (
-                                (yield* pendingIn(tx)).some(
-                                    (entry) =>
-                                        entry.state === "sending" || entry.receipt?.outcome === "committed"
-                                )
+        withInstallGate(
+            boundary(
+                tables.transaction((tx) =>
+                    Effect.gen(function* () {
+                        if (
+                            (yield* pendingIn(tx)).some(
+                                (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
                             )
-                                return false;
-                            yield* write(tx);
-                            yield* rebase(tx);
-                            return true;
-                        })
-                    )
+                        )
+                            return false;
+                        yield* write(tx);
+                        yield* rebase(tx);
+                        return true;
+                    })
                 )
             )
-            .pipe(Effect.withSpan("Replica.installSnapshot"));
+        ).pipe(Effect.withSpan("Replica.installSnapshot"));
     // One load per demand subset, outside the sync gate. Passes start or join these;
     // readers await only the ones they asked for. A load first waits for earlier
     // loads of subsets that contain it and reuses their result when that proves it.
@@ -2671,6 +2740,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         readonly subset: CompiledSubset;
         readonly done: Deferred.Deferred<void, BackendError>;
         phase: "waiting" | "fetching" | "installing";
+        // Installed rows, reused another load, or stepped aside for an action. Its readers
+        // then return, as after a serial pass; only a load cancelled before any of these
+        // hands its readers to its replacement.
+        settled: boolean;
+        // A reader is waiting for it; set when one joins, for its later fetches.
+        foreground: boolean;
         fiber?: Fiber.Fiber<unknown>;
     };
     const loadTasks = new Map<string, LoadTask>();
@@ -2688,13 +2763,19 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 yield* Effect.forEach(before, (other) => Effect.exit(Deferred.await(other.done)), {
                     discard: true,
                 });
-                if (yield* renewProofs(type, demand)) return;
+                if (yield* renewProofs(type, demand)) {
+                    task.settled = true;
+                    return;
+                }
             }
             const install = (write: Effect.Success<ReturnType<typeof prepareSnapshot>>) => {
                 task.phase = "installing";
                 return installUnlessUnsettled(write).pipe(
                     Effect.onExit((exit) =>
-                        Effect.sync(() => write.settle(Exit.isSuccess(exit) && exit.value))
+                        Effect.sync(() => {
+                            write.settle(Exit.isSuccess(exit) && exit.value);
+                            if (Exit.isSuccess(exit)) task.settled = true;
+                        })
                     )
                 );
             };
@@ -2703,7 +2784,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 task.phase = "fetching";
                 task.revision = demand.revision;
                 task.revalidation = revalidateGenerations.get(type);
-                write = yield* loadPermits.withPermit(
+                const fetch = loadPermits.withPermit(
                     prepareSnapshot(
                         demand.subset,
                         undefined,
@@ -2711,6 +2792,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         demand.installed === 0 ? "demand" : "refresh"
                     )
                 );
+                write = yield* task.foreground ? fetch : backgroundPermits.withPermit(fetch);
                 if (
                     demands.get(key) !== demand ||
                     (demand.revision === task.revision &&
@@ -2751,18 +2833,22 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     })
                 );
         });
-    const startLoad = (key: string, demand: DemandEntry): Effect.Effect<LoadTask> =>
+    const startLoad = (key: string, demand: DemandEntry, foreground = false): Effect.Effect<LoadTask> =>
         Effect.gen(function* () {
             const type = demand.subset.objectType;
             const existing = loadTasks.get(key);
+            const join = (task: LoadTask) => {
+                if (foreground) task.foreground = true;
+                return task;
+            };
             if (
                 existing?.revision === demand.revision &&
                 existing.revalidation === revalidateGenerations.get(type)
             )
-                return existing;
+                return join(existing);
             // A fetch for an older revision of this demand refetches once it lands, after
             // installing its rows; join it rather than discard them.
-            if (existing?.demand === demand && existing.phase !== "installing") return existing;
+            if (existing?.demand === demand && existing.phase !== "installing") return join(existing);
             // A replaced demand's fetch is cancelled; one already installing finishes first.
             const cancelled = existing && existing.phase !== "installing" ? existing : undefined;
             // Earlier loads this one may reuse: its own older revision, a containing subset,
@@ -2789,6 +2875,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 subset: demand.subset,
                 done: yield* Deferred.make<void, BackendError>(),
                 phase: "waiting",
+                settled: false,
+                foreground,
             };
             loadTasks.set(key, task);
             const authenticationAtLoad = authenticationGeneration;
@@ -2844,7 +2932,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 const task = loadTasks.get(key);
                 if (!task) return;
                 yield* Deferred.await(task.done);
-                if (demands.get(key) !== demand || demand.installed === demand.revision) return;
+                if (task.settled || demands.get(key) !== demand || demand.installed === demand.revision)
+                    return;
                 if (loadTasks.get(key) === task) return;
             }
         });
@@ -2861,8 +2950,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         const backend = yield* backendEffect;
         if (!(yield* canSync)) return;
         // A committed receipt must settle its overlay before a new source snapshot.
-        // Recovery belongs to the outbox worker, never to a query acquisition.
+        // Recovery belongs to the outbox worker, never to a query acquisition. Detached
+        // loads fetch regardless; their installs check this under the gate instead.
         if (
+            !detachedLoads &&
             (yield* boundary(tables.read(pendingIn))).some(
                 (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
             )
@@ -3044,7 +3135,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             for (const entry of planned) {
                 const key = subsetKey(entry.demand.subset);
                 if (demands.get(key) !== entry.demand) continue;
-                yield* startLoad(key, entry.demand);
+                yield* startLoad(key, entry.demand, !background && requested !== undefined && entry.relevant);
                 if (!background && entry.relevant) awaited.push(entry);
             }
             if (coverageChanged) yield* notify;
@@ -3340,7 +3431,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         Effect.gen(function* () {
                             yield* gate.withPermit(recoverOutbox());
                             const state = yield* Effect.result(awaitPass(passGate.withPermit(sync())));
-                            yield* gate.withPermit(drainOutbox(false));
+                            yield* drainInTurns(false);
                             if (state._tag === "Failure") return yield* state.failure;
                         })
                     )
@@ -4373,7 +4464,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         }
                         if (serveStale && !watched) {
                             // A poll tick says only that this demand is due.
-                            yield* markRevalidate(new Set([copy.objectType]));
+                            yield* markRevalidate(new Set([copy.objectType]), false, [
+                                copy,
+                                demand.coveredBy,
+                            ]);
                             yield* diagnostics.changed;
                             return;
                         }
@@ -4435,9 +4529,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                               for (;;) {
                                   yield* Effect.sleep(configuredInterval);
                                   if (serveStale) {
-                                      yield* markRevalidate(new Set([copy.objectType])).pipe(
-                                          Effect.catch(service.reportReplicationFailure)
-                                      );
+                                      yield* markRevalidate(new Set([copy.objectType]), false, [
+                                          copy,
+                                          demand.coveredBy,
+                                      ]).pipe(Effect.catch(service.reportReplicationFailure));
                                       continue;
                                   }
                                   demand.revision++;
@@ -6022,11 +6117,15 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     const result = yield* Effect.result(
                         Effect.annotateCurrentSpan("stage", "waiting-for-publication-gate").pipe(
                             Effect.andThen(
-                                gate.withPermit(
-                                    Effect.annotateCurrentSpan("stage", "processing").pipe(
-                                        Effect.andThen(drainOutbox())
-                                    )
-                                )
+                                detachedLoads
+                                    ? Effect.annotateCurrentSpan("stage", "processing").pipe(
+                                          Effect.andThen(drainInTurns())
+                                      )
+                                    : gate.withPermit(
+                                          Effect.annotateCurrentSpan("stage", "processing").pipe(
+                                              Effect.andThen(drainOutbox())
+                                          )
+                                      )
                             ),
                             Effect.withSpan("Replica.outboxWork", { root: true })
                         )
