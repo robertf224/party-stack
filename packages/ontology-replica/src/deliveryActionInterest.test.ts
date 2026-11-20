@@ -64,6 +64,8 @@ it.effect("action-only replacement preserves an in-flight receipt and delivers a
         const semanticAcks: { generation: number; current: number }[] = [];
         const source: OntologySource = {
             ...actual,
+            // This exercises replacing the subscription, which replays a held target.
+            updateView: undefined,
             acknowledge: (session, revision, through, generation) =>
                 Effect.gen(function* () {
                     semanticAcks.push({ generation: generation ?? 0, current: latestGeneration });
@@ -166,7 +168,9 @@ it.effect.each(["changed row selection", "newer imported state"] as const)(
             });
             yield* parent.demand({ objectType: "Counter" });
             yield* parent.syncOnce;
-            const source = replicaStateSource(parent);
+            // A parent that replaces views by resubscribing: a frame for the previous view
+            // can only come from the subscription the child already gave up.
+            const source = { ...replicaStateSource(parent), updateView: undefined };
             const child = yield* makeReplica({
                 namespace: `interest-fence-child-${reason}`,
                 ir,

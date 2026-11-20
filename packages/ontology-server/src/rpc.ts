@@ -85,6 +85,10 @@ const ReplicaRpcs = RpcGroup.make(
         error: BackendError,
         stream: true,
     }),
+    Rpc.make("UpdateView", {
+        payload: { session: ClientSessionSchema, view: ClientViewCodec },
+        error: BackendError,
+    }),
     Rpc.make("AckDelivery", {
         payload: { kind: Schema.Literals(["committed", "speculative"]), position: DeliveryPositionSchema },
         error: BackendError,
@@ -214,6 +218,7 @@ export type OntologyRpcRequest =
           readonly selection: ObjectSelection;
       }
     | { readonly operation: "SubscribeState"; readonly session: ClientSession; readonly view: ClientView }
+    | { readonly operation: "UpdateView"; readonly session: ClientSession; readonly view: ClientView }
     | {
           readonly operation: "AckDelivery";
           readonly kind: "committed" | "speculative";
@@ -270,6 +275,7 @@ const clientSyncOperations: ReadonlySet<OntologyRpcRequest["operation"]> = new S
     "SubscribeSelection",
     "AckDelivery",
     "SubscribeState",
+    "UpdateView",
     "OpenClient",
     "Read",
     "Submit",
@@ -516,6 +522,22 @@ const baseOntologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => {
                             ),
                         }))
                     );
+                })
+            ),
+        UpdateView: (request, context) =>
+            authorize({ operation: "UpdateView", ...request }, context.headers).pipe(
+                Effect.andThen(() => {
+                    if (snapshots || !source.subscribe) return unavailableDelivery();
+                    return source.updateView
+                        ? source.updateView(request.session, request.view)
+                        : Effect.fail(
+                              new BackendError({
+                                  operation: "UpdateView",
+                                  kind: "ViewReplaced",
+                                  retryable: true,
+                                  message: "This source replaces views by subscribing again.",
+                              })
+                          );
                 })
             ),
         AckDelivery: (request, context) =>
@@ -1017,6 +1039,9 @@ const openProtocolClient = Effect.fnUntraced(function* (
         acknowledgeDelivery: description.stateDelivery
             ? (position) =>
                   client.AckDelivery({ kind: "speculative", position }).pipe(Effect.mapError(unavailable))
+            : undefined,
+        updateView: description.stateDelivery
+            ? (session, view) => client.UpdateView({ session, view }).pipe(Effect.mapError(unavailable))
             : undefined,
         acknowledge: (session, revision, through, viewGeneration) =>
             client

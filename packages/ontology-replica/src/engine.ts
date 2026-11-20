@@ -84,6 +84,8 @@ import type { ReplicaLoad, ReplicaStatus } from "./status.js";
 
 // Local selection fencing is execution context, never part of the provider's
 // immutable batch bytes or persisted replay fingerprint.
+/** Default `demand.idleRetentionMs` for live replicas. */
+export const DEFAULT_IDLE_RETENTION_MS = 5_000;
 const deliveryGeneration = Context.Reference<number | undefined>(
     "@party-stack/ontology-replica/deliveryGeneration",
     { defaultValue: () => undefined }
@@ -259,6 +261,20 @@ export interface ReplicaService extends OwnedReadTransaction {
         policy?: DeliveryPolicy,
         resume?: DeliveryPosition
     ) => Effect.Effect<DeliverySubscription, BackendError, Scope.Scope>;
+    /** Replace an open client delivery's view in place: demand for added subsets is
+     * acquired before demand for removed ones is released, and the same stream carries
+     * the change. A view sent before its subscription opens here is kept and the
+     * subscription starts from it. */
+    readonly updateClientView: (
+        session: ClientSession,
+        view: ClientView
+    ) => Effect.Effect<void, BackendError>;
+    /** Send this replica's requested view to its parent's open delivery. Returns the
+     * generation sent, or undefined when the parent cannot update views in place. */
+    readonly updateParentView: (
+        source: OntologySource,
+        session?: ClientSession
+    ) => Effect.Effect<number | undefined, BackendError>;
     readonly resetParentDelivery: Effect.Effect<void, BackendError>;
     readonly receiveDelivery: (
         frame: DeliveryFrame,
@@ -3949,6 +3965,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             coverage: coverageEntries,
         } satisfies DeliveryMetadata;
     });
+    // The view generation the current parent delivery opened with, when that parent
+    // updates views in place. Every later view goes to the same stream, so its frames for
+    // any generation from here up to the requested one, including frames captured before
+    // an update reached the parent, install in order as views the stream passed through.
+    let parentDeliveryFloor: number | undefined;
     const checkDelivery = Effect.fnUntraced(function* (tx: Transaction, meta: DeliveryMetadata) {
         if (meta.sourceId !== sourceId) return yield* fault("SourceMismatch", "Delivery source changed.");
         if (meta.schemaHash !== schemaHash)
@@ -3967,6 +3988,17 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             ? meta.generation
             : ((yield* deliveryGeneration) ?? meta.generation);
         if (current.parentViewGeneration === generation) return true;
+        if (
+            options.source &&
+            parentDeliveryFloor !== undefined &&
+            generation >= parentDeliveryFloor &&
+            generation < (current.parentViewGeneration ?? 0)
+        ) {
+            const importedHead = yield* tx.get(imported, "head");
+            if (importedHead && importedHead.revision > meta.revision)
+                return yield* fault("HistoryExpired", "A newer parent state replaced this target.");
+            return false;
+        }
         if (
             options.source &&
             generation >= 1 &&
@@ -4638,7 +4670,15 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     });
     const demandCodec = Table.make<CompiledSubset>({ name: "demand" });
     const demandCache = yield* makeDemandCache({
-        policy: options.demand,
+        // Live replicas keep a released subset's demand briefly, so a consumer that
+        // comes straight back (a remount, a view replaced by resubscribing) reuses its
+        // load and watch. A one-shot replica has nothing running to keep.
+        policy: {
+            ...options.demand,
+            idleRetentionMs:
+                options.demand?.idleRetentionMs ??
+                (options.startSync === false ? 0 : DEFAULT_IDLE_RETENTION_MS),
+        },
         acquire: (key) => acquireDemand(demandCodec.decode(key)),
     });
     const waitForDelivery = (
@@ -4800,24 +4840,15 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     )
                 );
     };
-    // A delivery subscription holds its selection's demand. When it ends, the demand is
-    // held a little longer: a client replacing its view (or reconnecting) closes its old
-    // subscription before the next one reaches this replica, and releasing at once would
-    // cancel every load the two views share, only to start them again. Idle retention
-    // already keeps released demand; this adds only what it does not cover.
-    const deliveryHandoffMs = Math.max(0, 5_000 - (options.demand?.idleRetentionMs ?? 0));
-    const holdDeliveryDemand = (subsets: readonly CompiledSubset[]) =>
-        Effect.gen(function* () {
-            const leases = yield* Scope.fork(replicaScope);
-            for (const subset of subsets) yield* service.demand(subset).pipe(Scope.provide(leases));
-            yield* Effect.addFinalizer(() =>
-                Scope.close(leases, Exit.void).pipe(
-                    Effect.delay(deliveryHandoffMs),
-                    Effect.forkIn(replicaScope),
-                    Effect.asVoid
-                )
-            );
-        });
+    // Live client deliveries by client, so a view change edits the open subscription
+    // instead of replacing it (see `updateClientView`).
+    const liveClientViews = new Map<
+        string,
+        { readonly update: (view: ClientView) => Effect.Effect<void, BackendError> }
+    >();
+    // A view sent before its subscription reached this replica (over RPC the stream
+    // opens a round trip later). The subscription starts from it when it opens.
+    const earlyClientViews = new Map<string, ClientView>();
     const visibleRevision = (tx: ReadTransaction) =>
         tx.get(stateHead, "head").pipe(Effect.map((head) => head?.visibleRevision ?? 0));
     const service: ReplicaService = {
@@ -4882,7 +4913,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         subscribeSelection: (selection, policy, resume) =>
             traceDelivery(
                 Effect.gen(function* () {
-                    yield* holdDeliveryDemand(selection.subsets);
+                    for (const subset of selection.subsets) yield* service.demand(subset);
                     yield* syncSelection(selection.subsets);
                     return yield* committedDeliveries.open({
                         policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
@@ -4898,10 +4929,74 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         subscribeClient: (session, selected, policy, resume) =>
             traceDelivery(
                 Effect.gen(function* () {
+                    const clientId = session.client.clientId;
+                    // Register before any other setup: an update arriving meanwhile
+                    // is applied once setup finishes rather than lost.
+                    let ready = false;
+                    let queued = earlyClientViews.get(clientId);
+                    earlyClientViews.delete(clientId);
+                    let update: ((view: ClientView) => Effect.Effect<void, BackendError>) | undefined;
+                    const live = {
+                        update: (view: ClientView) =>
+                            ready && update
+                                ? update(view)
+                                : Effect.sync(() => {
+                                      if (!queued || view.generation > queued.generation) queued = view;
+                                  }),
+                    };
+                    yield* Effect.acquireRelease(
+                        Effect.sync(() => liveClientViews.set(clientId, live)),
+                        () =>
+                            Effect.sync(() => {
+                                if (liveClientViews.get(clientId) === live) liveClientViews.delete(clientId);
+                            })
+                    );
                     yield* access(tables.transaction((tx) => clients.select(tx, session, selected)));
                     // The selected stream owns upstream demand too: no parallel
                     // lease RPC can silently lose interest while delivery stays open.
-                    yield* holdDeliveryDemand(selected.selection.subsets);
+                    // Each subset holds its own lease, so a view update keeps the
+                    // subsets it still selects and releases only the ones it drops.
+                    const subscription = yield* Effect.scope;
+                    const leases = new Map<string, Scope.Closeable>();
+                    const hold = Effect.fnUntraced(function* (subset: CompiledSubset) {
+                        const key = subsetKey(subset);
+                        if (leases.has(key)) return;
+                        const lease = yield* Scope.fork(subscription);
+                        yield* service.demand(subset).pipe(Scope.provide(lease));
+                        leases.set(key, lease);
+                    });
+                    for (const subset of selected.selection.subsets) yield* hold(subset);
+                    let current = selected;
+                    const viewChanged = yield* Queue.sliding<void>(1);
+                    // Serialize updates: each one acquires before it releases.
+                    const updating = yield* Semaphore.make(1);
+                    update = (view: ClientView) =>
+                        updating.withPermits(1)(
+                            Effect.gen(function* () {
+                                if (view.generation <= current.generation) return;
+                                const added = view.selection.subsets.filter(
+                                    (subset) => !leases.has(subsetKey(subset))
+                                );
+                                for (const subset of added) yield* hold(subset);
+                                // Captures read the view inside their own transaction, so a
+                                // capture never selects an older generation than the client's.
+                                current = view;
+                                yield* access(tables.transaction((tx) => clients.select(tx, session, view)));
+                                const kept = new Set(view.selection.subsets.map(subsetKey));
+                                for (const [key, lease] of leases)
+                                    if (!kept.has(key)) {
+                                        leases.delete(key);
+                                        yield* Scope.close(lease, Exit.void);
+                                    }
+                                yield* Queue.offer(viewChanged, undefined);
+                                yield* syncSelection(added).pipe(
+                                    Effect.catch(() => Effect.void),
+                                    Effect.forkIn(subscription)
+                                );
+                            })
+                        );
+                    ready = true;
+                    if (queued && queued.generation > current.generation) yield* update(queued);
                     // Publish existing base/optimistic/action state immediately. Data
                     // refresh may be gated behind a submitting action; acceptance
                     // must remain deliverable while that action is still in flight.
@@ -4911,13 +5006,16 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         binding: JSON.stringify([ownSourceId, schemaHash, session.client.clientId]),
                         identity: JSON.stringify(selected),
                         rowSelection: JSON.stringify(selected.selection.subsets),
-                        changes: service.subscribeChanges,
-                        renew: (tx) => boundary(clients.select(tx, session, selected)).pipe(Effect.asVoid),
+                        changes: Effect.map(service.subscribeChanges, (changes) =>
+                            Stream.merge(changes, Stream.fromQueue(viewChanged))
+                        ),
+                        renew: (tx) => boundary(clients.select(tx, session, current)).pipe(Effect.asVoid),
                         capture: (tx, emit) =>
                             boundary(
                                 Effect.gen(function* () {
-                                    yield* clients.select(tx, session, selected);
-                                    const meta = yield* captureSelection(tx, selected, emit, true);
+                                    const view = current;
+                                    yield* clients.select(tx, session, view);
+                                    const meta = yield* captureSelection(tx, view, emit, true);
                                     return {
                                         ...meta,
                                         client: yield* clients.deliver(tx, session, meta.revision),
@@ -4933,6 +5031,29 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     };
                 })
             ),
+        updateClientView: (session, view) =>
+            Effect.suspend(() => {
+                const clientId = session.client.clientId;
+                const live = liveClientViews.get(clientId);
+                if (live) return live.update(view);
+                // Its subscription may still be on the way. If it never arrives, the client
+                // sees its stream end and subscribes again with its current view anyway.
+                const early = earlyClientViews.get(clientId);
+                if (!early || view.generation > early.generation) {
+                    earlyClientViews.delete(clientId);
+                    earlyClientViews.set(clientId, view);
+                    if (earlyClientViews.size > 1_024)
+                        earlyClientViews.delete(earlyClientViews.keys().next().value!);
+                }
+                return Effect.void;
+            }),
+        updateParentView: (source, session) =>
+            Effect.gen(function* () {
+                if (!source.updateView || !session) return undefined;
+                const selected = yield* requestedView();
+                yield* source.updateView(session, selected);
+                return selected.generation;
+            }),
         parentDeliveryGeneration: requestedView().pipe(Effect.map((selected) => selected.generation)),
         openParentDelivery: (source) =>
             Effect.gen(function* () {
@@ -4954,6 +5075,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                           undefined,
                           resume
                       );
+                parentDeliveryFloor = source?.updateView ? selected.generation : undefined;
                 return {
                     generation: selected.generation,
                     session,

@@ -597,6 +597,8 @@ test("persisted-only readers preserve cached rows without selecting new upstream
                 const selected: number[] = [];
                 const replica = yield* makeReplica({
                     namespace: "local-reader",
+                    // Release is under test: no idle retention.
+                    demand: { idleRetentionMs: 0 },
                     ir,
                     execute,
                     tables: yield* Memory.make(),
@@ -1038,6 +1040,8 @@ test.each(["committed", "speculative"] as const)(
                     yield* authority.storage.transaction((tx) => tx.put("Counter", { id: "one", count: 1 }));
                     const parent = yield* makeReplica({
                         namespace: "covering-parent",
+                        // Release is under test: no idle retention.
+                        demand: { idleRetentionMs: 0 },
                         ir,
                         tables: yield* Memory.make(),
                         backend: authority,
@@ -1045,6 +1049,8 @@ test.each(["committed", "speculative"] as const)(
                     });
                     const child = yield* makeReplica({
                         namespace: "covered-child",
+                        // Release is under test: no idle retention.
+                        demand: { idleRetentionMs: 0 },
                         ir,
                         tables: yield* Memory.make(),
                         execute,
@@ -1122,8 +1128,10 @@ test("covered demand does not wait for an unrelated replacement selection", asyn
                     namespace: "independent-child",
                     ir: definition,
                     tables: yield* Memory.make(),
+                    // Holds the subscription that replaces the view.
                     source: {
                         ...source,
+                        updateView: undefined,
                         subscribe: (...args) =>
                             source.subscribe!(...args).pipe(
                                 Effect.map((subscription) => ({
@@ -1179,8 +1187,10 @@ test("a narrower live filter reuses installed region coverage while replacement 
                     namespace: "filtered-child",
                     ir,
                     tables: yield* Memory.make(),
+                    // Holds the subscription that replaces the view.
                     source: {
                         ...source,
+                        updateView: undefined,
                         subscribe: (...args) =>
                             source.subscribe!(...args).pipe(
                                 Effect.map((subscription) => ({
@@ -1353,6 +1363,8 @@ test.each(["complete", "invalid", "cancel"] as const)(
                     const release = yield* Deferred.make<void>();
                     const child = yield* makePublicReplica({
                         namespace: "slow-delivery",
+                        // Release is under test: no idle retention.
+                        demand: { idleRetentionMs: 0 },
                         ir,
                         tables: yield* Memory.make(),
                         backend: {

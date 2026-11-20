@@ -56,6 +56,7 @@ export const replicaStateSource = (parent: ReplicaService): OntologySource => ({
     subscribe: parent.subscribeClient,
     accept: parent.acceptClient,
     acknowledgeDelivery: parent.acknowledgeDelivery,
+    updateView: parent.updateClientView,
     demand: (subset) =>
         Stream.concat(
             Stream.fromEffect(parent.demand(subset).pipe(Effect.andThen(parent.syncSubset(subset)))),
@@ -153,16 +154,31 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
                                     immediateSnapshotRecovery = true;
                                 })
                             );
+                            // A selection change edits the open subscription when the
+                            // parent supports it, so the subsets both views select keep
+                            // their demand and loads. Otherwise, or if the parent no longer
+                            // has this subscription open, subscribe again with the new view.
+                            let sent = opened.generation;
                             const changed = Effect.gen(function* () {
                                 for (;;) {
                                     yield* Queue.take(selectionWake);
-                                    if ((yield* child.parentDeliveryGeneration) !== opened.generation)
-                                        return yield* new BackendError({
-                                            operation: "delivery.selection",
-                                            kind: "ViewReplaced",
-                                            retryable: true,
-                                            message: "Selection changed.",
-                                        });
+                                    if ((yield* child.parentDeliveryGeneration) === sent) continue;
+                                    const updated =
+                                        source && opened.session
+                                            ? yield* child
+                                                  .updateParentView(source, opened.session)
+                                                  .pipe(Effect.catch(() => Effect.succeed(undefined)))
+                                            : undefined;
+                                    if (updated !== undefined) {
+                                        sent = updated;
+                                        continue;
+                                    }
+                                    return yield* new BackendError({
+                                        operation: "delivery.selection",
+                                        kind: "ViewReplaced",
+                                        retryable: true,
+                                        message: "Selection changed.",
+                                    });
                                 }
                             });
                             yield* Effect.raceFirst(consume, changed);
