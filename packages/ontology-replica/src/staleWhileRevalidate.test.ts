@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { makeOntologyBackend } from "@party-stack/ontology-backend";
+import { BackendError, makeOntologyBackend } from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, evaluateQuery, field } from "@party-stack/ontology-storage";
@@ -42,6 +42,7 @@ const fixture = Effect.fnUntraced(function* (options: {
     const tables = yield* Memory.make();
     const events: string[] = [];
     let value = 1;
+    let failLoads: string | undefined;
     let hold:
         | { started: Deferred.Deferred<void>; release: Deferred.Deferred<void>; once: boolean }
         | undefined;
@@ -105,6 +106,13 @@ const fixture = Effect.fnUntraced(function* (options: {
                 Effect.gen(function* () {
                     const subset = yield* compileObjectSubset(ir, request);
                     events.push(`load:${subset.objectType}`);
+                    if (failLoads === subset.objectType)
+                        return yield* new BackendError({
+                            operation: "loadSubset",
+                            kind: "Unauthenticated",
+                            retryable: false,
+                            message: "Sign in again.",
+                        });
                     const held = hold;
                     if (held?.once) hold = undefined;
                     if (held) {
@@ -125,6 +133,9 @@ const fixture = Effect.fnUntraced(function* (options: {
         loads: (type = "Item") => events.filter((event) => event === `load:${type}`).length,
         setValue: (next: number) => {
             value = next;
+        },
+        failLoads: (objectType: string | undefined) => {
+            failLoads = objectType;
         },
         holdLoads,
         holdActions,
@@ -563,6 +574,31 @@ it.live("a read's fetch is not queued behind background refreshes", () =>
             yield* Fiber.join(read);
             yield* Fiber.join(refresh);
             expect(f.loads("Item")).toBe(3);
+        })
+    )
+);
+
+it.live("an explicit pass reports a load that failed before the pass awaited it", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            const f = yield* fixture({ startSync: false });
+            // The pass awaits its loads in demand order: Tag's, then Item's.
+            yield* f.replica.demand(tags);
+            yield* f.replica.demand(whole);
+            yield* f.replica.syncOnce;
+            yield* f.replica.invalidate();
+            // Item's load fails at once and leaves the load registry while the pass
+            // still waits for Tag's held load.
+            f.failLoads("Item");
+            const held = yield* f.holdLoads(true);
+            const pass = yield* Effect.forkScoped(Effect.result(f.replica.syncOnce));
+            yield* held.started;
+            yield* Effect.sleep("20 millis");
+            yield* held.release;
+            expect(yield* Fiber.join(pass)).toMatchObject({
+                _tag: "Failure",
+                failure: { kind: "Unauthenticated" },
+            });
         })
     )
 );

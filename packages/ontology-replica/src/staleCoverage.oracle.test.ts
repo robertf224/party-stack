@@ -4,14 +4,15 @@ import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import { eq, evaluateQuery, field } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Clock, Deferred, Effect, Fiber, Schema } from "effect";
+import { Clock, Deferred, Effect, Exit, Fiber, Schema, Scope } from "effect";
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 import { makeReplica } from "./testing.js";
 import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 
 // Oracle: the source's own history. Under any interleaving of source edits, clock
-// jumps, poll ticks, held loads, held action dispatches and reads, a read that
+// jumps, poll ticks, held loads, held action dispatches, demand releases, cache
+// collection, failed fetches, restarts (with the device clock corrected) and reads, a read that
 // resolves must return, row by row, the source state at some instant inside its
 // freshness bound: `maxCoverageAgeMs` for a fresh proof, `maxStaleAgeMs` for a stale
 // one. A row's confirmed version never moves backwards, and once everything is
@@ -73,14 +74,36 @@ const ops = {
     }),
     // Later loads or action dispatches block until `release`.
     hold: Schema.Struct({ kind: Schema.Literal("hold"), what: Schema.Literals(["loads", "actions"]) }),
-    // Held loads resume one at a time: in start order, or newest first.
-    release: Schema.Struct({ kind: Schema.Literal("release"), order: Schema.Literals(["oldest", "newest"]) }),
+    // Held loads resume one at a time: in start order, or newest first. "one" resumes
+    // only the oldest and keeps the rest held, so other operations land between installs.
+    release: Schema.Struct({
+        kind: Schema.Literal("release"),
+        order: Schema.Literals(["oldest", "newest", "one"]),
+    }),
     // An explicit checkpoint: load what is due, then dispatch the outbox.
     pass: Schema.Struct({ kind: Schema.Literal("pass") }),
     revalidate: Schema.Struct({ kind: Schema.Literal("revalidate") }),
     increment: Schema.Struct({ kind: Schema.Literal("increment"), id: Id }),
     // The next receipt's read-back fails, leaving its commit unconfirmed until a later pass.
     lostReadBack: Schema.Struct({ kind: Schema.Literal("lostReadBack") }),
+    // The last consumer of a subset leaves; a later read acquires it again. With
+    // `collect`, the cache is collected right after, while the subset is unprotected.
+    drop: Schema.Struct({
+        kind: Schema.Literal("drop"),
+        subset: Schema.Literals(["whole", "groupA", "point"]),
+        collect: Schema.Boolean,
+    }),
+    // Collect every cached row nothing protects.
+    gc: Schema.Struct({ kind: Schema.Literal("gc") }),
+    // The next subset fetch (not a read-back) fails.
+    failFetch: Schema.Struct({ kind: Schema.Literal("failFetch"), retryable: Schema.Boolean }),
+    // The app restarts on the same storage. Its device clock may have been corrected
+    // meanwhile: the replica's clock then reads this much more than before.
+    // -8 s exceeds the stale bound, so stale serving is exercised too.
+    reopen: Schema.Struct({
+        kind: Schema.Literal("reopen"),
+        skewMs: Schema.Literals([0, -3_000, -8_000, 3_000]),
+    }),
 };
 const Operation = Schema.Union(Object.values(ops));
 const scenario = <Op extends Schema.Top>(operation: Op, settings: Schema.Struct.Fields) =>
@@ -146,18 +169,97 @@ const ActionScenario = scenario(
     }
 );
 
+// Lifecycle: consumers come and go, the cache is collected, fetches fail and the app
+// restarts, alongside loads, edits and actions. Reads stay within their bound, versions
+// never regress and the replica converges.
+const LifecycleScenario = scenario(
+    Schema.Union([
+        ops.edit,
+        ops.advance,
+        ops.read,
+        ops.hold,
+        ops.release,
+        ops.pass,
+        ops.revalidate,
+        ops.increment,
+        ops.drop,
+        ops.gc,
+        ops.failFetch,
+        ops.reopen,
+    ]),
+    {
+        stale: Schema.Boolean,
+        poll: Schema.Boolean,
+        serial: Schema.Boolean,
+        background: Schema.Boolean,
+        capture: Schema.Literal("end"),
+    }
+);
+
+// Collection: consumers leave and the cache is collected between reads, edits and
+// short clock moves, so a re-read often lands while old coverage would still be fresh.
+const CollectionScenario = scenario(
+    Schema.Union([
+        ops.read,
+        ops.drop,
+        ops.gc,
+        ops.edit,
+        ops.hold,
+        Schema.Struct({ kind: Schema.Literal("release"), order: Schema.Literal("one") }),
+        Schema.Struct({ kind: Schema.Literal("advance"), ms: Schema.Literals([0, 1_200]) }),
+    ]),
+    {
+        stale: Schema.Boolean,
+        poll: Schema.Literal(false),
+        serial: Schema.Boolean,
+        background: Schema.Literal(false),
+        capture: Schema.Literal("end"),
+    }
+);
+
+// Restarts: the app reopens on the same storage, sometimes with its clock corrected.
+const RestartScenario = scenario(
+    Schema.Union([
+        ops.read,
+        ops.edit,
+        Schema.Struct({ kind: Schema.Literal("advance"), ms: Schema.Literals([0, 1_200]) }),
+        ops.reopen,
+        ops.pass,
+        ops.increment,
+    ]),
+    {
+        stale: Schema.Boolean,
+        poll: Schema.Boolean,
+        serial: Schema.Boolean,
+        background: Schema.Boolean,
+        capture: Schema.Literal("end"),
+    }
+);
+
 // Liveness: fetches slower than the poll interval, so every one is overtaken by a
 // tick, and reads keep arriving. Each read must still finish while polls continue.
 // Serial scheduling is excluded: it is a safety reference, and its queued passes each
 // reload every invalidated demand in turn, which is slow by design.
-const LivenessScenario = scenario(Schema.Union([ops.edit, ops.read, ops.advance, ops.revalidate, ops.pass]), {
-    stale: Schema.Boolean,
-    poll: Schema.Literal(true),
-    serial: Schema.Literal(false),
-    background: Schema.Boolean,
-    capture: Schema.Literal("end"),
-    latencyMs: Schema.Literals([2_500, 4_500]),
-});
+const LivenessScenario = scenario(
+    Schema.Union([
+        ops.edit,
+        ops.read,
+        ops.advance,
+        ops.revalidate,
+        ops.pass,
+        ops.drop,
+        ops.gc,
+        ops.failFetch,
+    ]),
+    {
+        stale: Schema.Boolean,
+        poll: Schema.Literal(true),
+        serial: Schema.Literal(false),
+        background: Schema.Boolean,
+        capture: Schema.Literal("end"),
+        latencyMs: Schema.Literals([2_500, 4_500]),
+    }
+);
 
 // Liveness under continuous edits: actions keep dispatching while slow fetches land,
 // so some action is nearly always sending or awaiting confirmation. Every demanded
@@ -173,7 +275,30 @@ const EditsScenario = scenario(Schema.Union([ops.edit, ops.read, ops.advance, op
     editEveryMs: Schema.Literal(1_000),
 });
 
+// The replica runs on the device clock, which a restart may find corrected by
+// `skew`; the oracle judges freshness by the source's clock.
 const run = (scenario: typeof Scenario.Type) =>
+    Effect.gen(function* () {
+        const source = (yield* Clock.Clock) as TestClock.TestClock;
+        const device = { skew: 0 };
+        const millis = () => source.currentTimeMillisUnsafe() + device.skew;
+        const nanos = () => source.currentTimeNanosUnsafe() + BigInt(device.skew) * 1_000_000n;
+        const clock: TestClock.TestClock = {
+            currentTimeMillisUnsafe: millis,
+            currentTimeMillis: Effect.sync(millis),
+            currentTimeNanosUnsafe: nanos,
+            currentTimeNanos: Effect.sync(nanos),
+            monotonicTimeNanosUnsafe: () => source.monotonicTimeNanosUnsafe(),
+            monotonicTimeNanos: source.monotonicTimeNanos,
+            sleep: (duration) => source.sleep(duration),
+            adjust: (duration) => source.adjust(duration),
+            setTime: (timestamp) => source.setTime(timestamp),
+            withLive: (effect) => source.withLive(effect),
+        };
+        return yield* simulate(scenario, source, device).pipe(Effect.provideService(Clock.Clock, clock));
+    });
+
+const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: { skew: number }) =>
     Effect.scoped(
         Effect.gen(function* () {
             const bound = scenario.stale ? maxStaleAgeMs : maxCoverageAgeMs;
@@ -186,10 +311,12 @@ const run = (scenario: typeof Scenario.Type) =>
             const write = Effect.fnUntraced(function* (row: Omit<Item, "version">) {
                 const next = { ...row, version: ++version };
                 server.set(row.id, next);
-                history.get(row.id)!.push({ time: yield* Clock.currentTimeMillis, row: next });
+                history.get(row.id)!.push({ time: source.currentTimeMillisUnsafe(), row: next });
             });
             yield* write({ id: "i0", value: 0, group: "a" });
             yield* write({ id: "i1", value: 0, group: "b" });
+            // The seed precedes the replica: no read can observe the rows' absence before it.
+            for (const id of ["i0", "i1"]) history.set(id, history.get(id)!.slice(1));
             const holds = {
                 loads: false,
                 actions: undefined as Deferred.Deferred<void> | undefined,
@@ -202,6 +329,11 @@ const run = (scenario: typeof Scenario.Type) =>
             let actionLatency = scenario.actionLatencyMs ?? 0;
             let failReadBack = false;
             let committedSinceFailure = false;
+            let failNext: { readonly retryable: boolean } | undefined;
+            // Kinds of the fetch failures injected so far; a read may fail with one of them.
+            const injectedKinds = new Set<string>();
+            let failuresFired = 0;
+            let terminalInjected = false;
             const backend = makeOntologyBackend({
                 ir,
                 name: "stale-oracle",
@@ -220,6 +352,17 @@ const run = (scenario: typeof Scenario.Type) =>
                                 kind: "Unavailable",
                                 message: "Read-back failed.",
                                 retryable: true,
+                            });
+                        }
+                        if (failNext && subset.query?.where?.kind !== "in") {
+                            const { retryable } = failNext;
+                            failNext = undefined;
+                            failuresFired++;
+                            return yield* new BackendError({
+                                operation: "loadSubset",
+                                kind: retryable ? "Unavailable" : "InvalidRequest",
+                                message: "Fetch failed.",
+                                retryable,
                             });
                         }
                         const read = () =>
@@ -255,21 +398,30 @@ const run = (scenario: typeof Scenario.Type) =>
                         };
                     }),
             });
-            const replica = yield* makeReplica({
-                namespace: "stale-oracle",
-                ir,
-                tables: yield* Memory.make(),
-                backend,
-                startSync: scenario.background,
-                objectCacheGc: false,
-                ...(scenario.serial ? { scheduling: "serial" as const } : {}),
-                demand: { refresh: { maxCoverageAgeMs, maxStaleAgeMs: scenario.stale ? maxStaleAgeMs : 0 } },
-                execute: (tx, action) =>
-                    Effect.gen(function* () {
-                        const row = yield* tx.get("Item", String(action.parameters.id));
-                        if (row) yield* tx.put("Item", { ...row, value: Number(row.value) + 1 });
-                    }),
+            const tables = yield* Memory.make();
+            const open = Effect.gen(function* () {
+                const scope = yield* Scope.make();
+                const replica = yield* makeReplica({
+                    namespace: "stale-oracle",
+                    ir,
+                    tables,
+                    backend,
+                    startSync: scenario.background,
+                    objectCacheGc: false,
+                    ...(scenario.serial ? { scheduling: "serial" as const } : {}),
+                    demand: {
+                        idleRetentionMs: 0,
+                        refresh: { maxCoverageAgeMs, maxStaleAgeMs: scenario.stale ? maxStaleAgeMs : 0 },
+                    },
+                    execute: (tx, action) =>
+                        Effect.gen(function* () {
+                            const row = yield* tx.get("Item", String(action.parameters.id));
+                            if (row) yield* tx.put("Item", { ...row, value: Number(row.value) + 1 });
+                        }),
+                }).pipe(Scope.provide(scope));
+                return { replica, scope };
             });
+            let { replica, scope: replicaScope } = yield* open;
 
             let violation: string | undefined;
             const fail = (message: string) => {
@@ -298,6 +450,17 @@ const run = (scenario: typeof Scenario.Type) =>
                 });
             };
             const demanded = new Set<string>();
+            // Each demanded subset's long-lived consumer; `drop` ends it.
+            const leases = new Map<string, Scope.Closeable>();
+            const drops = new Map<string, number>();
+            const lease = (name: string) =>
+                Effect.gen(function* () {
+                    demanded.add(name);
+                    if (leases.has(name)) return;
+                    const scope = yield* Scope.make();
+                    leases.set(name, scope);
+                    yield* replica.demand(subsets[name]!).pipe(Scope.provide(scope));
+                });
             // Status reports canonical queries; recognize the three fixture subsets.
             const subsetName = (entry: { readonly query?: { readonly where?: unknown } }) => {
                 const where = JSON.stringify(entry.query?.where ?? null);
@@ -307,16 +470,22 @@ const run = (scenario: typeof Scenario.Type) =>
             const read = (name: string) =>
                 Effect.gen(function* () {
                     const subset = subsets[name]!;
-                    if (!demanded.has(name)) {
-                        demanded.add(name);
-                        yield* replica.demand(subset);
-                    }
+                    yield* lease(name);
+                    const dropped = drops.get(name) ?? 0;
                     const fiber = yield* Effect.forkScoped(
                         Effect.gen(function* () {
                             const synced = yield* Effect.result(replica.syncSubset(subset));
-                            if (synced._tag === "Failure")
+                            // An injected fetch failure may fail a read, and so may releasing
+                            // the subset it was reading.
+                            if (synced._tag === "Failure") {
+                                if (
+                                    injectedKinds.has(synced.failure.kind) ||
+                                    (drops.get(name) ?? 0) !== dropped
+                                )
+                                    return;
                                 return fail(`${name}: read failed ${synced.failure.kind}`);
-                            const now = yield* Clock.currentTimeMillis;
+                            }
+                            const now = source.currentTimeMillisUnsafe();
                             const demand = (yield* replica.status).demands.find(
                                 (entry) => subsetName(entry) === name
                             );
@@ -327,7 +496,7 @@ const run = (scenario: typeof Scenario.Type) =>
                                     query: subset.query ?? {},
                                 })).rows.map((row) => [String(row.key), row.value as Item])
                             );
-                            if (proof?.stale && !(now - proof.confirmedAt! < maxStaleAgeMs))
+                            if (proof?.stale && !(now + device.skew - proof.confirmedAt! < maxStaleAgeMs))
                                 fail(
                                     `${name}: stale proof confirmed at ${proof.confirmedAt} served at ${now}`
                                 );
@@ -383,8 +552,13 @@ const run = (scenario: typeof Scenario.Type) =>
                     yield* Effect.yieldNow;
                 }
             });
-            const release = (order: "oldest" | "newest") =>
+            const release = (order: "oldest" | "newest" | "one") =>
                 Effect.gen(function* () {
+                    if (order === "one") {
+                        const next = heldLoads.shift();
+                        if (next) yield* Deferred.succeed(next, undefined);
+                        return;
+                    }
                     holds.loads = false;
                     const held = holds.actions;
                     holds.actions = undefined;
@@ -399,6 +573,7 @@ const run = (scenario: typeof Scenario.Type) =>
                 });
             let sequence = 0;
             let obstructed = false;
+            let firedAtPass = 0;
             for (const operation of scenario.operations) {
                 if (operation.kind === "edit")
                     yield* write({ id: operation.id, value: operation.value, group: operation.group });
@@ -410,6 +585,7 @@ const run = (scenario: typeof Scenario.Type) =>
                 } else if (operation.kind === "release") yield* release(operation.order);
                 else if (operation.kind === "pass") {
                     // An action still sending, or committed but unconfirmed, holds back snapshots.
+                    firedAtPass = failuresFired;
                     obstructed = (yield* replica.pending).some(
                         (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
                     );
@@ -418,6 +594,36 @@ const run = (scenario: typeof Scenario.Type) =>
                 else if (operation.kind === "lostReadBack") {
                     failReadBack = true;
                     committedSinceFailure = false;
+                } else if (operation.kind === "drop") {
+                    const scope = leases.get(operation.subset);
+                    if (scope) {
+                        leases.delete(operation.subset);
+                        drops.set(operation.subset, (drops.get(operation.subset) ?? 0) + 1);
+                        yield* Scope.close(scope, Exit.void);
+                    }
+                    if (operation.collect) {
+                        yield* progress;
+                        yield* Effect.result(replica.collectGarbage({ minUnusedAgeMs: 0 }));
+                    }
+                } else if (operation.kind === "gc")
+                    yield* Effect.result(replica.collectGarbage({ minUnusedAgeMs: 0 }));
+                else if (operation.kind === "failFetch") {
+                    failNext = { retryable: operation.retryable };
+                    injectedKinds.add(operation.retryable ? "Unavailable" : "InvalidRequest");
+                    terminalInjected ||= !operation.retryable;
+                } else if (operation.kind === "reopen") {
+                    // The app closes: its reads and passes end with it.
+                    for (const fiber of [...reads, ...passes]) yield* Fiber.interrupt(fiber);
+                    reads.length = 0;
+                    passes.length = 0;
+                    yield* release("oldest");
+                    const reacquire = [...leases.keys()];
+                    for (const scope of leases.values()) yield* Scope.close(scope, Exit.void);
+                    leases.clear();
+                    yield* Scope.close(replicaScope, Exit.void);
+                    device.skew += operation.skewMs;
+                    ({ replica, scope: replicaScope } = yield* open);
+                    for (const name of reacquire) yield* lease(name);
                 } else {
                     const known = (yield* replica.get("Item", operation.id)) !== undefined;
                     if (known)
@@ -435,7 +641,9 @@ const run = (scenario: typeof Scenario.Type) =>
                     !holds.loads &&
                     !holds.actions &&
                     passes.every((fiber) => fiber.pollUnsafe() !== undefined) &&
-                    !obstructed
+                    !obstructed &&
+                    // A failed refresh leaves its stale proof visible.
+                    failuresFired === firedAtPass
                 ) {
                     for (const demand of (yield* replica.status).demands)
                         if (demand.coverageProof?.stale)
@@ -487,21 +695,49 @@ const run = (scenario: typeof Scenario.Type) =>
                 yield* TestClock.adjust(scenario.latencyMs + (scenario.actionLatencyMs ?? 0));
                 yield* progress;
             }
+            // Waits for an effect while the clock keeps moving, so a stuck one is reported
+            // (and shrunk) instead of hanging the test.
+            const settle = <A, E>(label: string, effect: Effect.Effect<A, E>) =>
+                Effect.gen(function* () {
+                    const fiber = yield* Effect.forkScoped(effect);
+                    for (let waited = 0; waited < 60_000 && !fiber.pollUnsafe(); waited += 1_000) {
+                        yield* progress;
+                        if (!fiber.pollUnsafe()) yield* TestClock.adjust(1_000);
+                    }
+                    if (!fiber.pollUnsafe()) {
+                        fail(`${label} never finished`);
+                        yield* Fiber.interrupt(fiber);
+                        return undefined;
+                    }
+                    return yield* Fiber.join(fiber);
+                });
             // Everything released, every read and pass completes.
             yield* release("oldest");
             yield* progress;
-            for (const fiber of [...reads, ...passes]) yield* Fiber.join(fiber);
+            yield* settle(
+                "a read or pass",
+                Effect.forEach([...reads, ...passes], (fiber) => Fiber.await(fiber), { discard: true })
+            );
+            if (violation) return yield* Effect.fail(new Error(violation));
             yield* monotonic;
             // After a full refresh with nothing held, every demand shows the source.
             failReadBack = false;
+            failNext = undefined;
+            // A terminal failure stays with its demand; a new consumer starts over.
+            if (terminalInjected) {
+                for (const scope of leases.values()) yield* Scope.close(scope, Exit.void);
+                leases.clear();
+            }
+            for (const name of demanded) yield* lease(name);
             yield* TestClock.adjust(maxStaleAgeMs * 2);
             // A read-back that failed earlier is confirmed by the first checkpoint.
-            yield* Effect.result(replica.syncOnce);
-            yield* replica.syncOnce;
-            yield* replica.syncOnce;
+            yield* settle("a checkpoint", Effect.result(replica.syncOnce));
+            yield* settle("a checkpoint", replica.syncOnce);
+            yield* settle("a checkpoint", replica.syncOnce);
             for (const name of demanded) {
                 const subset = subsets[name]!;
-                yield* replica.syncSubset(subset);
+                yield* settle(`${name}: converging read`, replica.syncSubset(subset));
+                if (violation) return yield* Effect.fail(new Error(violation));
                 const rows = (yield* replica.snapshotSubset({ ...subset, query: subset.query ?? {} })).rows;
                 const expected = ids.flatMap((id) => {
                     const row = project(subset, server.get(id));
@@ -540,6 +776,24 @@ it.effect.prop(
     [ActionScenario],
     ([value]) => run(asScenario(value)),
     { arbitrary: { runs: 200, size: 24, seed: "stale-coverage-actions-v1" }, timeout: 120_000 }
+);
+it.effect.prop(
+    "reads stay bounded and converge while consumers leave, the cache is collected, fetches fail and the app restarts",
+    [LifecycleScenario],
+    ([value]) => run(asScenario(value)),
+    { arbitrary: { runs: 200, size: 24, seed: "stale-coverage-lifecycle-v1" }, timeout: 120_000 }
+);
+it.effect.prop(
+    "a re-read after its consumers left and the cache was collected loads what was collected",
+    [CollectionScenario],
+    ([value]) => run(asScenario(value)),
+    { arbitrary: { runs: 200, size: 24, seed: "stale-coverage-collection-v1" }, timeout: 120_000 }
+);
+it.effect.prop(
+    "reads after a restart stay within their bound, even when the device clock was corrected",
+    [RestartScenario],
+    ([value]) => run(asScenario(value)),
+    { arbitrary: { runs: 200, size: 24, seed: "stale-coverage-restart-v1" }, timeout: 120_000 }
 );
 it.effect.prop(
     "reads finish while polls keep invalidating loads slower than the poll interval",
@@ -641,6 +895,54 @@ it.effect("a load in flight across a commit never installs over its unconfirmed 
                 { kind: "increment", id: "i0" },
                 { kind: "release", order: "oldest" },
                 { kind: "advance", ms: 8_000 },
+            ],
+        });
+        expect(agreed).toBe(true);
+    })
+);
+
+it.effect("coverage confirmed ahead of a corrected clock is not treated as fresh", () =>
+    Effect.gen(function* () {
+        for (const stale of [false, true]) {
+            const agreed = yield* run({
+                stale,
+                poll: false,
+                serial: false,
+                background: false,
+                capture: "end",
+                // Coverage is confirmed at 3 s; after a restart the device clock reads 8 s
+                // less, so that coverage looks confirmed in the future. The source changes
+                // at once; read 6 s later, the cached row is older than either bound.
+                operations: [
+                    { kind: "read", subset: "whole" },
+                    { kind: "advance", ms: 3_000 },
+                    { kind: "read", subset: "whole" },
+                    { kind: "reopen", skewMs: -8_000 },
+                    { kind: "edit", id: "i0", value: 5, group: "a" },
+                    { kind: "advance", ms: 3_000 },
+                    { kind: "advance", ms: 3_000 },
+                    { kind: "read", subset: "whole" },
+                ],
+            });
+            expect(agreed).toBe(true);
+        }
+    })
+);
+
+it.effect("collected rows take their coverage with them", () =>
+    Effect.gen(function* () {
+        const agreed = yield* run({
+            stale: false,
+            poll: false,
+            serial: false,
+            background: false,
+            capture: "end",
+            // Nothing protects the collection once its consumer leaves; a later read
+            // must load it again rather than trust coverage for rows no longer cached.
+            operations: [
+                { kind: "read", subset: "whole" },
+                { kind: "drop", subset: "whole", collect: true },
+                { kind: "read", subset: "whole" },
             ],
         });
         expect(agreed).toBe(true);

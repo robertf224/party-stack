@@ -732,6 +732,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     });
     const metadata = Table.make<Position>({ name: name("position") });
     const coverage = Table.make<Coverage>({ name: name("coverage") });
+    // The newest wall-clock time this replica has seen, starting from the newest stored
+    // confirmation; see `currentTime`.
+    let latestTime: number | undefined;
     const retention = Table.make<Retention>({ name: name("retention") });
     const touch = Effect.fnUntraced(function* (tx: Transaction, objectType: string, key: Key) {
         yield* tx.put(retention, identity(objectType, key), {
@@ -1445,8 +1448,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         return false;
                     }
                 };
-                for (const row of yield* tx.query(coverage))
+                for (const row of yield* tx.query(coverage)) {
                     if (!readable(row.value.subset)) yield* tx.delete(coverage, row.key);
+                    else latestTime = Math.max(latestTime ?? row.value.updatedAt, row.value.updatedAt);
+                }
                 for (const row of yield* tx.query(actionQueries))
                     if (!readable(row.value.subset)) yield* tx.delete(actionQueries, row.key);
                 for (const [type, v] of views) {
@@ -2488,6 +2493,31 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             }
         });
     type CoverageProof = NonNullable<ReplicaStatus["demands"][number]["coverageProof"]>;
+    // Coverage ages are wall-clock differences, so a clock moved backwards makes every
+    // earlier confirmation look younger by the correction. The replica keeps the newest
+    // time it has seen (starting from the newest stored confirmation); a clock reading
+    // more than `clockToleranceMs` earlier means the clock was corrected, and every
+    // age-based confirmation from before is invalidated and its in-flight loads fenced.
+    const clockToleranceMs = 1_000;
+    const currentTime = Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        if (adapter?.changes || options.source) return now;
+        if (latestTime !== undefined && now + clockToleranceMs < latestTime) {
+            for (const type of definitions.keys()) coverageGenerations.set(type, Symbol());
+            yield* access(
+                tables.transaction((tx) =>
+                    Effect.gen(function* () {
+                        for (const row of yield* tx.query(coverage))
+                            if (!row.value.invalidated)
+                                yield* tx.put(coverage, row.key, { ...row.value, invalidated: true });
+                    })
+                )
+            );
+            latestTime = now;
+            yield* notify;
+        } else latestTime = Math.max(latestTime ?? now, now);
+        return now;
+    });
     // Under `maxStaleAgeMs`, a poll tick or explicit revalidation marks coverage
     // due without invalidating it or fencing in-flight loads: the rows are not known
     // to have changed, so they stay servable within the bound while the next pass
@@ -2558,11 +2588,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 live.pollIntervalMs === undefined &&
                 !live.watchFailure &&
                 live.installed === live.revision;
+            // `now` comes from `currentTime`, which invalidates coverage confirmed before
+            // a clock correction.
+            const age = now - record.updatedAt;
             const fresh = backend.changes
                 ? record.snapshotCursor !== undefined && record.barrierCursor === undefined
-                : !record.revalidate && (liveWatch || now - record.updatedAt < maxAge);
+                : !record.revalidate && (liveWatch || age < maxAge);
             // Journal coverage is exact or absent; only age-based coverage can be stale.
-            const servable = fresh || (serveStale && now - record.updatedAt < maxStaleAge);
+            const servable = fresh || (serveStale && age < maxStaleAge);
             if (!servable || (!fresh && stale)) continue;
             const proof = (reason: CoverageProof["reason"]) => {
                 const maintained: CoverageProof = {
@@ -2631,7 +2664,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     // `acceptStale`. Callers capture refs before any asynchronous work.
     const proveDemands = (selected: readonly DemandRef[], acceptStale: boolean) =>
         Effect.gen(function* () {
-            const now = yield* Clock.currentTimeMillis;
+            const now = yield* currentTime;
             const proofs = yield* access(
                 tables
                     .read((tx) =>
@@ -2930,7 +2963,18 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         Effect.gen(function* () {
             for (;;) {
                 const task = loadTasks.get(key);
-                if (!task) return;
+                // A load that already finished has left the registry; its failure, if
+                // any, is still recorded against the revision it loaded.
+                if (!task) {
+                    const failure = demand.loadFailure;
+                    if (
+                        demands.get(key) === demand &&
+                        demand.installed !== demand.revision &&
+                        failure?.revision === demand.revision
+                    )
+                        return yield* Effect.fail(failure.error);
+                    return;
+                }
                 yield* Deferred.await(task.done);
                 if (task.settled || demands.get(key) !== demand || demand.installed === demand.revision)
                     return;
@@ -2962,7 +3006,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         yield* Effect.annotateCurrentSpan("stage", "pulling-changes");
         yield* pull();
         yield* Effect.annotateCurrentSpan("stage", "reading-position");
-        const now = yield* Clock.currentTimeMillis;
+        const now = yield* currentTime;
 
         const covered = (
             tx: ReadTransaction,
@@ -6194,7 +6238,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         yield* Effect.forkScoped(
             Effect.forever(
                 Effect.gen(function* () {
-                    const now = yield* Clock.currentTimeMillis;
+                    const now = yield* currentTime;
                     const swept = yield* boundary(
                         tables.transaction((tx) =>
                             Effect.gen(function* () {

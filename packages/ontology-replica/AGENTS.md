@@ -88,10 +88,19 @@ example tests:
 - Each safety property needs a matching progress property. Holds released all at once,
   followed by a convergence check, cannot detect a load that restarts forever.
 - Interference sources the oracle models today: source edits, clock jumps, poll ticks,
-  held or slow fetches (latency in clock time), held or slow dispatches, lost read-backs,
-  `revalidate()`, `invalidate()`, explicit and background passes, and a steady stream of
-  edits. Deadlines for progress scale with every wait a load can legitimately incur
+  held or slow fetches (latency in clock time, or resumed one at a time), held or slow
+  dispatches, lost read-backs, `revalidate()`, `invalidate()`, explicit and background
+  passes, a steady stream of edits, consumers leaving and returning, cache collection,
+  retryable and terminal fetch failures, and restarts on the same storage with the
+  device clock corrected forwards or backwards. Deadlines for progress scale with every wait a load can legitimately incur
   (fetch latency and an action's turn), so they flag starvation rather than slowness.
+- The oracle judges freshness by the source's clock; the replica runs on a device
+  clock that a restart may find corrected. Coverage ages are wall-clock differences, so
+  the replica detects a backward correction (`currentTime`) and invalidates every
+  age-based confirmation from before it.
+- Check that an oracle can fail before trusting a pass: a mutation that survives may
+  mean the generator never reaches the case (add a focused generator or an example) or
+  that the oracle accepts too much (for example, a state that held for zero time).
 - To debug a failing property, print a per-step trace (demand `installed`/`revision`,
   load registry phases, outbox states) only for runs that fail, and reproduce the shrunk
   scenario alone. Aggregate logs mix runs with different settings and mislead.

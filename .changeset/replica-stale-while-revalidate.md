@@ -13,3 +13,5 @@ Keep answering reads while large collections load or refresh, and add stale-whil
 - Under `maxStaleAgeMs`, a demand's poll tick marks only its own coverage due, so a type with many demands is refreshed once per interval rather than once per demand.
 - Journal-backed, delivery and protocol-source replicas keep their existing gated scheduling.
 - Remove the unused `touchedTypes` field from pending actions. History recovery, its only reader, already requests every demanded subset. Entries from older peers that still carry the field decode normally.
+- Coverage ages survive a device clock corrected backwards: a clock reading more than a second earlier than the newest time the replica has seen invalidates every age-based confirmation from before, instead of letting old data look fresh for the size of the correction.
+- An explicit pass now reports a load that failed before the pass waited for it; previously a fast failure could leave `syncOnce` reporting success.
