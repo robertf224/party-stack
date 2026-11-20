@@ -1631,8 +1631,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         const resolved = yield* loadSubset(request, reason);
         const snapshot = resolved.snapshot;
         const expanded = options.storeBroaderSubsets === true;
-        // A short complete window proves its whole filter: store every row it returned
-        // and record that proof as well as the window's own.
+        // A complete window that came back with fewer rows than its limit returned every
+        // row its filter matches. Store all of those rows, and next to the window's own
+        // coverage record write one for the filter alone (no order or limit), so other
+        // windows, cursors and narrower filters over it are answered locally.
         const whole = shortWindowFilter(
             resolved.fulfilled.query,
             snapshot.complete,

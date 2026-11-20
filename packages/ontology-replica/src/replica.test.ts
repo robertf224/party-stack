@@ -777,6 +777,9 @@ test("bounded coverage is not whole-collection coverage and idle journal windows
                     tables: yield* Memory.make(),
                     mutators: { increment: execute },
                 });
+                // Fill the window: a window shorter than its limit holds every row and
+                // would prove the whole collection.
+                yield* backend.applyAction({ id: "seed", name: "increment", parameters: {} });
                 let snapshots = 0;
                 const replica = yield* makeReplica({
                     namespace: "window-local",
