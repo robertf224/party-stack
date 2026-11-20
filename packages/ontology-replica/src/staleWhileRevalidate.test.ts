@@ -43,6 +43,7 @@ const fixture = Effect.fnUntraced(function* (options: {
     const events: string[] = [];
     let value = 1;
     let failLoads: string | undefined;
+    let dieLoads: string | undefined;
     let hold:
         | { started: Deferred.Deferred<void>; release: Deferred.Deferred<void>; once: boolean }
         | undefined;
@@ -106,6 +107,7 @@ const fixture = Effect.fnUntraced(function* (options: {
                 Effect.gen(function* () {
                     const subset = yield* compileObjectSubset(ir, request);
                     events.push(`load:${subset.objectType}`);
+                    if (dieLoads === subset.objectType) return yield* Effect.die(new Error("Adapter bug."));
                     if (failLoads === subset.objectType)
                         return yield* new BackendError({
                             operation: "loadSubset",
@@ -136,6 +138,9 @@ const fixture = Effect.fnUntraced(function* (options: {
         },
         failLoads: (objectType: string | undefined) => {
             failLoads = objectType;
+        },
+        dieLoads: (objectType: string | undefined) => {
+            dieLoads = objectType;
         },
         holdLoads,
         holdActions,
@@ -599,6 +604,27 @@ it.live("an explicit pass reports a load that failed before the pass awaited it"
                 _tag: "Failure",
                 failure: { kind: "Unauthenticated" },
             });
+        })
+    )
+);
+
+it.live("a load whose backend dies fails its readers instead of reporting success", () =>
+    Effect.scoped(
+        Effect.gen(function* () {
+            const f = yield* fixture({ startSync: false });
+            yield* f.replica.demand(whole);
+            yield* f.replica.syncOnce;
+            yield* f.replica.invalidate();
+            f.dieLoads("Item");
+            expect(yield* Effect.result(f.replica.syncSubset(whole))).toMatchObject({ _tag: "Failure" });
+            expect(yield* Effect.result(f.replica.syncOnce)).toMatchObject({ _tag: "Failure" });
+            expect((yield* proofOf(f.replica, whole)).installed).toBe(false);
+            // Once the backend recovers, a new revision loads normally.
+            f.dieLoads(undefined);
+            f.setValue(2);
+            yield* f.replica.invalidate();
+            yield* f.replica.syncSubset(whole);
+            expect(yield* f.replica.get("Item", "one")).toEqual({ id: "one", value: 2 });
         })
     )
 );

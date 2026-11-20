@@ -2917,7 +2917,17 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 Effect.result(
                     // The aggregate lease owns this load: releasing its last consumer
                     // cancels the IO, a single reader's interruption does not.
-                    Effect.raceFirst(runLoad(key, demand, task, before), Deferred.await(demand.released))
+                    Effect.raceFirst(
+                        // A defect (an adapter bug) fails the load like any other error.
+                        // Left alone, it would skip the failure path and the cleanup below
+                        // would resolve its readers as if the load had succeeded.
+                        runLoad(key, demand, task, before).pipe(
+                            Effect.catchDefect((defect) =>
+                                Effect.fail(fault("Internal", "The subset load failed unexpectedly.", defect))
+                            )
+                        ),
+                        Deferred.await(demand.released)
+                    )
                 ).pipe(
                     Effect.flatMap((result) =>
                         Effect.gen(function* () {
