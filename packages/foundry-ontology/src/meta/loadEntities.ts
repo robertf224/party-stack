@@ -6,7 +6,11 @@ import { convertFoundryMetaObjectType } from "./convertMetaObjectType.js";
 import { convertFoundryMetaValueType } from "./convertMetaValueType.js";
 import { listObjectTypes } from "./listObjectTypes.js";
 import { planMetaLookup } from "./planMetaLookup.js";
-import type { LinkTypeSideV2, ObjectTypeV2 } from "@osdk/foundry.ontologies";
+import type {
+    GetOutgoingLinkTypesByObjectTypeRidBatchRequest,
+    LinkTypeSideV2,
+    ObjectTypeV2,
+} from "@osdk/foundry.ontologies";
 import type { OntologyClient } from "@party-stack/foundry-client";
 import type {
     LinkType as MetaLinkType,
@@ -78,36 +82,58 @@ export async function loadFoundryMetaLinkTypes(
         "source.objectType": "objectType",
         "target.objectType": "objectType",
     });
-    const names = lookup?.values ?? (await listObjectTypes(client)).map((type) => type.apiName);
-    // Sharing is scoped to this load. Refreshes must acquire new provider metadata.
-    const outgoing = new Map<string, Promise<LinkTypeSideV2[]>>();
-    const load = (name: string) => {
-        let result = outgoing.get(name);
-        if (!result) {
-            result = AsyncIterable.toArray(
-                AsyncIterable.fromPagination(
-                    (pageSize, pageToken: string | undefined) =>
-                        pageToken === undefined
-                            ? ignoreMissing(() =>
-                                  ObjectTypesV2.listOutgoingLinkTypes(client, client.ontologyRid, name, {
-                                      pageSize,
-                                      pageToken,
-                                  })
-                              )
-                            : ObjectTypesV2.listOutgoingLinkTypes(client, client.ontologyRid, name, {
-                                  pageSize,
-                                  pageToken,
-                              }),
-                    (page) => page?.nextPageToken,
-                    (page) => page?.data ?? [],
-                    100
-                )
-            );
-            outgoing.set(name, result);
+    // Outgoing sides of the selected object types, by API name. Foundry lists link types
+    // per object type; the batch endpoints answer up to 100 object types per request.
+    const outgoing = new Map<string, LinkTypeSideV2[]>();
+    if (lookup) {
+        const metadata = await AsyncIterable.toArray(
+            AsyncIterable.fromBatches(
+                [...new Set(lookup.values)],
+                async (batch) =>
+                    (
+                        await ObjectTypesV2.getFullMetadataBatch(
+                            client,
+                            client.ontologyRid,
+                            {
+                                requests: batch.map((objectType) => ({ objectType })),
+                                includeLinkTypes: true,
+                            },
+                            { preview: true }
+                        )
+                    ).data,
+                100
+            )
+        );
+        for (const { objectType, linkTypes } of metadata) outgoing.set(objectType.apiName, linkTypes);
+    } else {
+        const objectTypes = await listObjectTypes(client);
+        const names = new Map(objectTypes.map((type) => [type.rid, type.apiName]));
+        const sides = await AsyncIterable.toArray(
+            AsyncIterable.fromBatches(
+                [...names.keys()],
+                async (batch) =>
+                    Object.entries(
+                        (
+                            await ObjectTypesV2.getOutgoingLinkTypesByObjectTypeRidBatch(
+                                client,
+                                client.ontologyRid,
+                                // Omitting the filter returns every outgoing link type.
+                                {
+                                    requests: batch.map((objectTypeRid) => ({ objectTypeRid })),
+                                } as GetOutgoingLinkTypesByObjectTypeRidBatchRequest,
+                                { preview: true }
+                            )
+                        ).data
+                    ),
+                100
+            )
+        );
+        for (const [rid, linkTypes] of sides) {
+            const name = names.get(rid);
+            if (name) outgoing.set(name, linkTypes);
         }
-        return result;
-    };
-    const selected = await Promise.all([...new Set(names)].map(load));
+    }
+    const selected = [...outgoing.values()];
     const selectedRids = new Set(selected.flatMap((sides) => sides.map((side) => side.linkTypeRid)));
     // A link needs both outgoing sides. Resolve only the unselected neighbors,
     // then ask the batch endpoint for the inverse sides of the selected links.
