@@ -958,6 +958,19 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             const record = yield* tx.get(coverage, candidateKey);
             if (record?.complete && !record.invalidated && coversSubset(subset, record.subset)) return record;
         }
+        // A delivered child also holds proofs it derived for a whole filter (see the
+        // delivery install), which no demand of its own names.
+        if (deliveryActive)
+            for (const { value: record } of yield* tx.query(coverage, {
+                where: eq(field("subset", "objectType"), subset.objectType),
+            }))
+                if (
+                    record.complete &&
+                    !record.invalidated &&
+                    !hasWindow(record.subset.query) &&
+                    coversSubset(subset, record.subset)
+                )
+                    return record;
         return exact;
     });
     // A previous confirmation is useful to readers even after a watch gap or
@@ -4378,6 +4391,37 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                     updatedAt: yield* Clock.currentTimeMillis,
                                 });
                         }
+                    }
+                    // The rule a loaded window follows (see prepareSnapshotIn): a complete
+                    // window holding fewer rows than its limit holds every row its filter
+                    // matches. The parent delivered all of the window's rows, so fewer local
+                    // matches than the limit prove the window short. The child can then
+                    // answer reads of that filter itself, such as a live query's boundary
+                    // and continuation reads, instead of waiting on its parent.
+                    const delivered = new Set(
+                        batch.metadata.coverage.map((entry) => subsetKey(entry.subset))
+                    );
+                    for (const entry of batch.metadata.coverage) {
+                        const query = entry.subset.query;
+                        if (!entry.complete || query?.limit === undefined) continue;
+                        const matches = yield* tx.query((yield* view(entry.subset.objectType)).base, {
+                            where: query.where,
+                            limit: query.limit,
+                        });
+                        const whole = shortWindowFilter(query, true, matches.length);
+                        if (whole === false) continue;
+                        const proved: CompiledSubset = {
+                            objectType: entry.subset.objectType,
+                            ...(whole ? { query: whole } : {}),
+                        };
+                        if (delivered.has(subsetKey(proved))) continue;
+                        yield* tx.put(coverage, subsetKey(proved), {
+                            subset: proved,
+                            complete: true,
+                            invalidated: false,
+                            snapshotCursor: batch.metadata.cursor,
+                            updatedAt: yield* Clock.currentTimeMillis,
+                        });
                     }
                     yield* tx.put(metadata, "head", {
                         ...current,
