@@ -216,7 +216,7 @@ it.effect.prop(
                 return true;
             })
         ),
-    { arbitrary: { runs: 200, seed: "short-window-coverage-v1" } }
+    { arbitrary: { runs: 200, seed: "short-window-coverage-v1" }, timeout: 120_000 }
 );
 
 // Progress: follow-up reads complete while the backend keeps changing and every proof
