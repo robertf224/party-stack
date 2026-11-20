@@ -103,6 +103,9 @@ const setup = Effect.fnUntraced(function* (execute: ReplicaOptions["execute"] = 
                         kind: "Unavailable",
                         message: "Keep pending while pulling changes",
                         retryable: true,
+                        // Rejected before committing: the action stays queued without an
+                        // unknown outcome, which would hold back the changes these tests pull.
+                        actionOutcome: "not-committed",
                     })
                 ),
         },

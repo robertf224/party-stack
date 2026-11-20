@@ -110,6 +110,10 @@ export const ReplicaStatusSchema = Schema.Struct({
                     reason: Schema.Literals(["collection", "query", "primary-key"]),
                     maintainedBy: Schema.Literals(["journal", "watch", "poll", "snapshot"]),
                     pollIntervalMs: Schema.optional(Schema.Number),
+                    /** Served under `maxStaleAgeMs` while a background refresh revalidates it. */
+                    stale: Schema.optional(Schema.Boolean),
+                    /** When the stale confirmation was taken. */
+                    confirmedAt: Schema.optional(Schema.Number),
                 })
             ),
         })

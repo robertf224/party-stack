@@ -640,7 +640,8 @@ test("load history stays bounded and cancellation does not leave running diagnos
                             }),
                     }),
                 });
-                yield* replica.demand({ objectType: "Item" });
+                const lease = yield* Scope.make();
+                yield* replica.demand({ objectType: "Item" }).pipe(Scope.provide(lease));
                 for (let index = 0; index < 102; index++) yield* replica.syncOnce;
                 const status = yield* replica.status;
                 expect(status.loadCount).toBe(102);
@@ -649,9 +650,13 @@ test("load history stays bounded and cancellation does not leave running diagnos
                 const working = yield* Effect.forkChild(replica.syncOnce);
                 yield* Deferred.await(entered);
                 yield* Fiber.interrupt(working);
+                // The load belongs to the demand's lease, not the checkpoint that started it.
                 const cancelled = yield* replica.status;
                 expect(cancelled.syncing).toBe(false);
-                expect(cancelled.loads.at(-1)?.outcome).toBe("interrupted");
+                expect(cancelled.loads.at(-1)?.outcome).toBe("running");
+                yield* Scope.close(lease, Exit.void);
+                yield* Effect.yieldNow;
+                expect((yield* replica.status).loads.at(-1)?.outcome).toBe("interrupted");
             })
         )
     );

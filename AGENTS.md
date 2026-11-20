@@ -14,6 +14,9 @@
 - After moving files or changing imports, run `vp run <project_name>#build` to verify checks and published outputs.
 - Add or update tests for code changes when appropriate.
 - Property tests use Effect `Arbitrary`, not fast-check. Use `@effect/vitest`'s `it.effect.prop` with test services or `it.live.prop` for real IO/time. Keep Effect test packages on `@party-stack/build-config/effect` so Vitest shares Vite+'s runner. Use `Arbitrary.checkEffect` inside an existing shared fixture; convert assertion defects into typed failures there so shrinking can run. Acquire fresh state per generated scenario, retain independent oracles, and preserve replay tokens for failures.
+- Pair each safety property ("nothing wrong is ever observed") with a progress property under continuous interference ("every read, load or action still completes while polls, invalidations, edits and slow responses keep arriving"). Model latency in clock time, not only as holds released all at once, and check progress before the interference stops: a convergence check after everything is released cannot detect starvation or livelock.
+- Mutation-check a new invariant: break the code it guards (by hand, temporarily) and confirm the property fails, then restore it.
+- Read a package's own `AGENTS.md` before changing it, when one exists (for example `packages/ontology-replica/AGENTS.md` for the replica's scheduling oracle).
 
 ## PR instructions
 

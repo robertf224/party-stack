@@ -198,8 +198,9 @@ test("a new disjoint reset preserves the healthy top-k proof while fencing its o
                 yield* f.hint(bw, "reset");
                 expect(yield* f.storage.read((tx) => f.replica.hasCoverage(tx, a))).toBe(true);
                 yield* Deferred.succeed(f.release, undefined);
+                // The fenced fetch never installs; its read waits for the refetch instead.
                 yield* Fiber.join(loading);
-                expect(yield* f.storage.read((tx) => f.replica.hasCoverage(tx, b))).toBe(false);
+                expect(yield* f.storage.read((tx) => f.replica.hasCoverage(tx, b))).toBe(true);
                 yield* f.replica.syncSubset(b);
                 expect((yield* f.replica.get("Item", "row-40"))?.rank).toBe(900);
                 expect(f.loads.filter((subset) => f.matches(subset, a))).toHaveLength(1);

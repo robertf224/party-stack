@@ -7,6 +7,16 @@ export interface DemandRefreshPolicy {
     readonly pollIntervalMs?: number | false;
     /** Maximum reuse age without a healthy live feed. Default 60 seconds; Infinity permits a quiet cache. */
     readonly maxCoverageAgeMs?: number;
+    /** Stale-while-revalidate bound for sources without a change journal. A complete
+     * confirmation younger than this is served immediately once it is no longer fresh
+     * (past `maxCoverageAgeMs`, or due after a poll tick or `revalidate()`), and its
+     * proof reports `stale: true` while a background refresh replaces it. Older or
+     * invalidated coverage is never served. Default ten times `maxCoverageAgeMs`
+     * (10 minutes with the default coverage age), or 0 for a one-shot replica that has
+     * no background sync to revalidate it. 0 disables stale serving, for data
+     * where a stale answer is wrong rather than late; Infinity serves any retained
+     * confirmation while revalidating. Offline, cached data is served regardless. */
+    readonly maxStaleAgeMs?: number;
 }
 
 export interface DemandPolicy {
@@ -15,6 +25,16 @@ export interface DemandPolicy {
     readonly idleRetentionMs?: number;
     /** Active plus idle distinct subsets; idle entries are evicted before rejecting new work. */
     readonly maxSubsets?: number;
+    /**
+     * Subset fetches in flight at once for backends without a change journal. Default 6.
+     *
+     * Six matches browsers' per-host connection limit over HTTP/1.1, beyond which extra
+     * fetches only queue, and Cloudflare Workers' limit on simultaneous outbound
+     * connections. Over HTTP/2 a higher value can help; the backend's own rate and
+     * concurrency limits still apply. Replicas fed by a parent `source`, such as tab
+     * replicas of a SharedWorker owner, do not fetch from the network and ignore it.
+     */
+    readonly maxConcurrentLoads?: number;
 }
 
 /** One lease owner for all replica consumers, including cached-proxy requests. */

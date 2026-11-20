@@ -58,7 +58,6 @@ const pending: PendingAction = {
     state: "queued",
     optimistic: false,
     attempts: 0,
-    touchedTypes: [],
 };
 
 const setup = Effect.gen(function* () {

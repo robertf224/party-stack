@@ -32,10 +32,10 @@ export interface PendingAction {
     readonly failureRetryable?: boolean;
     readonly receipt?: ActionReceipt;
     readonly failure?: BackendError["kind"];
-    readonly touchedTypes: readonly string[];
     readonly submission?: { readonly clientId: string; readonly sequence: number };
-    /** Whether the local prediction is reflected in visible state. `dropped` means the
-     * last replay failed: the action is still pending and sent, but not reflected locally.
+    /** Whether the local prediction is reflected in visible state. `dropped` means it is
+     * not reflected locally: its last replay failed (`predictionFailure` says why), or
+     * the queue is stopped at a blocked action (this one or an earlier one).
      * `none` means it was never predicted here (confirmed visibility or a source prediction).
      * Absent on entries stored before this field existed; treat as `optimistic ? "applied" : "none"`. */
     readonly prediction?: "applied" | "dropped" | "none";
@@ -190,7 +190,6 @@ export const PendingActionSchema = Schema.Struct({
     failureRetryable: Schema.optional(Schema.Boolean),
     receipt: Schema.optional(ActionReceiptSchema),
     failure: Schema.optional(BackendErrorKindSchema),
-    touchedTypes: Schema.Array(Schema.String),
     submission: Schema.optional(
         Schema.Struct({ clientId: Schema.NonEmptyString, sequence: PositiveCounter })
     ),

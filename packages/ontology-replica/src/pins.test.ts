@@ -771,7 +771,7 @@ test("caller refresh settings override adapter recommendations while healthy wat
                     namespace: "refresh-defaults",
                     ir,
                     cache: { objects: false },
-                    demand: { refresh: { pollIntervalMs: false, maxCoverageAgeMs: 2_000 } },
+                    demand: { refresh: { pollIntervalMs: false, maxCoverageAgeMs: 2_000, maxStaleAgeMs: 0 } },
                     backend: {
                         ...f.backend,
                         refresh: () => ({ pollIntervalMs: 100, maxCoverageAgeMs: 100 }),

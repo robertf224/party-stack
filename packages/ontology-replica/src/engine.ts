@@ -66,6 +66,7 @@ import {
     Deferred,
     Effect,
     Exit,
+    Fiber,
     PubSub,
     Queue,
     Redacted,
@@ -77,6 +78,7 @@ import {
 } from "effect";
 import { hasWindow, isWholeCollection, primaryKeyLookup } from "./coverage.js";
 import { cachedCopy, withCachedCopy, encryptedCacheCodec, preserveCachedCopies } from "./encryptedCache.js";
+import { guardBackend } from "./guardBackend.js";
 import { makeReplicaDiagnostics } from "./status.js";
 import type { ReplicaLoad, ReplicaStatus } from "./status.js";
 
@@ -166,6 +168,9 @@ interface Coverage {
     rowKeys?: readonly Key[];
     updatedAt: number;
     invalidated?: boolean;
+    /** Due for revalidation, but not known to have changed. Still servable within
+     * the stale-while-revalidate bound; `invalidated` always takes precedence. */
+    revalidate?: boolean;
 }
 interface Retention {
     objectType: string;
@@ -359,8 +364,9 @@ export interface ReplicaService extends OwnedReadTransaction {
     ) => Effect.Effect<void, BackendError>;
     readonly invalidate: (objectTypes?: readonly string[]) => Effect.Effect<void, BackendError>;
     /** Mark demanded coverage stale, including coverage a healthy watch maintains, so the
-     * next sync reloads it. Rows stay visible meanwhile. A change-feed backend or a
-     * protocol source is already exact after a sync, so this does nothing for them. */
+     * next sync reloads it. Rows stay visible meanwhile. Under `maxStaleAgeMs` the coverage
+     * stays servable within that bound until the reload replaces it. A change-feed backend
+     * or a protocol source is already exact after a sync, so this does nothing for them. */
     readonly markDemandedStale: Effect.Effect<void, BackendError>;
     readonly ensureIndex: (objectType: string, index: Index) => Effect.Effect<void, BackendError>;
     readonly collectGarbage: (options?: ObjectCacheSweepOptions) => Effect.Effect<number, BackendError>;
@@ -384,6 +390,9 @@ interface ReplicaCommonOptions {
     readonly connection?: ConnectionMonitor;
     /** Private controller scheduling switch for deterministic state-machine fixtures. */
     readonly startSync?: boolean;
+    /** Private reference scheduling for differential tests: every load and install
+     * runs under the sync gate, as before gate-free loading. */
+    readonly scheduling?: "serial";
     readonly live?: boolean;
     readonly clients?: ClientPolicy;
     readonly resultRetentionMs?: number;
@@ -473,6 +482,15 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const maxCoverageAge = options.demand?.refresh?.maxCoverageAgeMs ?? 60_000;
     if (Number.isNaN(maxCoverageAge) || maxCoverageAge < 0)
         return yield* fault("InvalidConfiguration", "Coverage age must be nonnegative or Infinity.");
+    // Offline reads already return cached data of any age, so a bounded stale window
+    // while online is strictly fresher than that. Ten coverage ages by default, when a
+    // background loop exists to revalidate what it serves; a one-shot replica never would.
+    const maxStaleAge =
+        options.demand?.refresh?.maxStaleAgeMs ?? (options.startSync === false ? 0 : maxCoverageAge * 10);
+    if (Number.isNaN(maxStaleAge) || maxStaleAge < 0)
+        return yield* fault("InvalidConfiguration", "Stale coverage age must be nonnegative or Infinity.");
+    // Age-based revalidation only. A change journal keeps coverage exact instead.
+    const serveStale = maxStaleAge > 0 && !options.source && !options.backend?.changes;
     const maxRetries = options.outbox?.maxRetries ?? 3;
     const retryDelayMs = options.outbox?.retryDelayMs ?? 1_000;
     if (
@@ -503,7 +521,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 frames: subscription.frames.pipe(Stream.provideService(Tracer.Tracer, deliveryTracer)),
             }))
         );
-    const adapter = options.backend;
+    // Backend defects fail as `Internal`, so every path handles them as failures.
+    const adapter = options.backend && guardBackend(options.backend);
     const sourceId = options.source?.sourceId ?? adapter!.sourceId;
     const backendEffect = adapter
         ? Effect.succeed(adapter)
@@ -715,6 +734,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     });
     const metadata = Table.make<Position>({ name: name("position") });
     const coverage = Table.make<Coverage>({ name: name("coverage") });
+    // The newest wall-clock time this replica has seen, starting from the newest stored
+    // confirmation; see `currentTime`.
+    let latestTime: number | undefined;
     const retention = Table.make<Retention>({ name: name("retention") });
     const touch = Effect.fnUntraced(function* (tx: Transaction, objectType: string, key: Key) {
         yield* tx.put(retention, identity(objectType, key), {
@@ -763,10 +785,62 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     const events = yield* PubSub.sliding<void>(1);
     const queue = yield* Queue.sliding<void>(1);
     const outboxWake = yield* Queue.sliding<void>(1);
+    const staleWake = yield* Queue.sliding<void>(1);
+    yield* Effect.addFinalizer(() => Queue.shutdown(staleWake).pipe(Effect.asVoid));
     yield* Effect.addFinalizer(() => PubSub.shutdown(events));
     yield* Effect.addFinalizer(() => Queue.shutdown(queue).pipe(Effect.asVoid));
     yield* Effect.addFinalizer(() => Queue.shutdown(outboxWake).pipe(Effect.asVoid));
     const gate = yield* Semaphore.make(1);
+    // Loads of age-maintained backends fetch outside `gate`; only their short install
+    // transactions take it. Journal, delivery and protocol replicas keep loads under
+    // the gate, where cursor barriers and parent state already order them.
+    const detachedLoads =
+        options.scheduling !== "serial" && !options.source && !deliveryActive && !options.backend?.changes;
+    // Plans passes one at a time; never held while a load runs.
+    const passGate = yield* Semaphore.make(1);
+    const replicaScope = yield* Effect.scope;
+    const maxConcurrentLoads = options.demand?.maxConcurrentLoads ?? 6;
+    if (!Number.isSafeInteger(maxConcurrentLoads) || maxConcurrentLoads < 1)
+        return yield* fault("InvalidConfiguration", "Concurrent loads must be a positive integer.");
+    const loadPermits = yield* Semaphore.make(maxConcurrentLoads);
+    // Loads no reader is waiting for (background passes, checkpoints, dependent reloads)
+    // also take one of these, leaving a fetch slot for reads.
+    const backgroundPermits = yield* Semaphore.make(Math.max(1, maxConcurrentLoads - 1));
+    // Fetches one load may repeat after mid-fetch invalidation before it completes anyway.
+    const maxLoadRefetches = 2;
+    // Detached loads install under `gate`, which the outbox also holds while it dispatches
+    // and confirms an action. The outbox then takes `gate` one action at a time and, between
+    // actions, lets the installs already waiting go first: `Semaphore` is not FIFO, so a
+    // drain that released and retook it would keep it, and a steady stream of edits would
+    // starve every install.
+    let installsIssued = 0;
+    let installsFinished = 0;
+    const installTurns: Array<{ readonly through: number; readonly done: Deferred.Deferred<void> }> = [];
+    const withInstallGate = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.suspend(() => {
+            installsIssued++;
+            return gate.withPermit(effect).pipe(
+                Effect.ensuring(
+                    Effect.suspend(() => {
+                        installsFinished++;
+                        const ready = installTurns.filter((turn) => turn.through <= installsFinished);
+                        for (const turn of ready) installTurns.splice(installTurns.indexOf(turn), 1);
+                        return Effect.forEach(ready, (turn) => Deferred.succeed(turn.done, undefined), {
+                            discard: true,
+                        });
+                    })
+                )
+            );
+        });
+    // Only one drain turn at a time waits on `gate`, so the installs waiting there are
+    // never behind more than the turn in progress.
+    const drainTurn = yield* Semaphore.make(1);
+    const afterWaitingInstalls = Effect.suspend(() => {
+        if (installsFinished >= installsIssued) return Effect.void;
+        const done = Deferred.makeUnsafe<void>();
+        installTurns.push({ through: installsIssued, done });
+        return Deferred.await(done);
+    });
     const demands = new Map<
         string,
         {
@@ -791,6 +865,57 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     // Transient IO fences, bounded by the definition's object types. Durable
     // completeness lives in coverage; these only identify overlapping fetches.
     const coverageGenerations = new Map(options.ir.objectTypes.map((type) => [type.name, Symbol()]));
+    // Explicit revalidation fences in-flight loads without invalidating: a snapshot
+    // fetched before the request installs as due, servable under `maxStaleAgeMs`.
+    const revalidateGenerations = new Map(options.ir.objectTypes.map((type) => [type.name, Symbol()]));
+    const wakeStale = Effect.suspend(() =>
+        closed ? Effect.void : Queue.offer(staleWake, undefined).pipe(Effect.asVoid)
+    );
+    // Row fetch order. Loads fetch outside the sync gate and can install in any
+    // order, so each fetch takes a sequence number when it starts, and each base
+    // row remembers the newest fetch (or watch change) that wrote it. An install
+    // skips rows a later-started fetch already wrote, so an older snapshot never
+    // replaces newer data. Only fetches of this session can be in flight, so the
+    // map is in memory. A stamp no newer than the oldest fetch in flight can no longer
+    // supersede anything and is dropped, so overlapping fetches keep it bounded.
+    let fetchSequence = 0;
+    const fetchesInFlight = new Set<number>();
+    const rowFetches = new Map<string, number>();
+    const beginFetch = () => {
+        const sequence = ++fetchSequence;
+        fetchesInFlight.add(sequence);
+        return sequence;
+    };
+    const endFetch = (sequence: number) => {
+        fetchesInFlight.delete(sequence);
+        if (fetchesInFlight.size === 0) return rowFetches.clear();
+        const oldest = Math.min(...fetchesInFlight);
+        if (sequence > oldest) return;
+        for (const [id, stamp] of rowFetches) if (stamp <= oldest) rowFetches.delete(id);
+    };
+    const rowWriter = (objectType: string) => {
+        const touched: Array<readonly [string, number | undefined, number]> = [];
+        return {
+            superseded: (key: Key, sequence: number) =>
+                (rowFetches.get(identity(objectType, key)) ?? 0) > sequence,
+            written: (key: Key, sequence: number) => {
+                if (fetchesInFlight.size === 0) return;
+                const id = identity(objectType, key);
+                const previous = rowFetches.get(id);
+                const next = Math.max(previous ?? 0, sequence);
+                rowFetches.set(id, next);
+                touched.push([id, previous, next]);
+            },
+            // A rolled-back transaction wrote nothing; restore what it claimed.
+            rollback: () => {
+                for (const [id, previous, next] of touched.reverse())
+                    if (rowFetches.get(id) === next)
+                        if (previous === undefined) rowFetches.delete(id);
+                        else rowFetches.set(id, previous);
+                touched.length = 0;
+            },
+        };
+    };
     const coverageFor = Effect.fnUntraced(function* (tx: ReadTransaction, subset: CompiledSubset) {
         const key = subsetKey(subset);
         const exact = yield* tx.get(coverage, key);
@@ -989,6 +1114,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         );
     });
 
+    // An action whose prediction is still replayed while the base may already contain
+    // its commit: in flight, committed but not yet read back, or queued to retry after an
+    // attempt whose outcome is unknown. A snapshot or change installed now could show it
+    // twice, so installs wait until it settles.
+    const unsettled = (entry: PendingAction) =>
+        entry.state === "sending" ||
+        entry.receipt?.outcome === "committed" ||
+        (entry.state === "queued" && entry.failureOutcome === "unknown");
     const pendingIn = (tx: ReadTransaction) =>
         tx
             .query(outbox, { orderBy: [{ field: field("sequence") }] })
@@ -1188,7 +1321,6 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         return {
             ...previous,
             invocation,
-            touchedTypes: [...new Set([...staged.values()].map((write) => write.type))],
             prediction: entry.optimistic ? ("applied" as const) : ("none" as const),
         };
     });
@@ -1259,6 +1391,28 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         yield* tx.put(outbox, entry.invocation.id, failed);
         // Discard means abandon local intent, not cancel a remote execution.
         if (!retry && options.outbox?.failureStrategy === "discard-all") yield* discardFailedTail(tx);
+        // A retry settles the outcome with a receipt; otherwise nothing will.
+        return ambiguous && !retry;
+    });
+    // An outcome that may have committed and will not be retried leaves no receipt to read
+    // back, and the action may have changed rows its prediction never touched. As with a
+    // receipt whose affected list is incomplete, every age-based confirmation is due: the
+    // subsets readers demand reload now (served stale meanwhile, within the bound) and
+    // stored ones reload on their next demand.
+    const revalidateAfterUnknownOutcome = Effect.suspend(() => {
+        if (options.source || adapter?.changes) return Effect.void;
+        const types = new Set(definitions.keys());
+        if (serveStale) return access(markRevalidate(types, true));
+        for (const type of types) coverageGenerations.set(type, Symbol());
+        return access(
+            tables.transaction((tx) =>
+                Effect.gen(function* () {
+                    for (const row of yield* tx.query(coverage))
+                        if (!row.value.invalidated)
+                            yield* tx.put(coverage, row.key, { ...row.value, invalidated: true });
+                })
+            )
+        ).pipe(Effect.andThen(wakeState));
     });
     const rebase = Effect.fn("Replica.rebase")(function* (tx: Transaction) {
         for (const [type, v] of views) {
@@ -1269,6 +1423,13 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         for (const entry of yield* pendingIn(tx)) {
             if (blocked || entry.state === "blocked") {
                 blocked = true;
+                // Not replayed while the queue is stopped at a blocked action: it is no
+                // longer reflected locally, whatever its last replay did.
+                // Entries stored before `prediction` existed default to their optimism.
+                if ((entry.prediction ?? (entry.optimistic ? "applied" : "none")) === "applied") {
+                    const { predictionFailure: _failure, predictionMessage: _message, ...rest } = entry;
+                    yield* tx.put(outbox, entry.invocation.id, { ...rest, prediction: "dropped" });
+                }
                 continue;
             }
             if (sourcePredicts) continue;
@@ -1326,8 +1487,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         return false;
                     }
                 };
-                for (const row of yield* tx.query(coverage))
+                for (const row of yield* tx.query(coverage)) {
                     if (!readable(row.value.subset)) yield* tx.delete(coverage, row.key);
+                    else latestTime = Math.max(latestTime ?? row.value.updatedAt, row.value.updatedAt);
+                }
                 for (const row of yield* tx.query(actionQueries))
                     if (!readable(row.value.subset)) yield* tx.delete(actionQueries, row.key);
                 for (const [type, v] of views) {
@@ -1394,15 +1557,51 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 complete: snapshot.snapshot.complete,
             })
         );
-    const prepareSnapshot = Effect.fn("Replica.loadSnapshot")(function* (
+    interface Settled {
+        /** Ends this fetch's sequence numbers; an uncommitted write releases its row claims. */
+        readonly settle: (committed: boolean) => void;
+    }
+    // Every prepared write must be settled once its transaction commits or fails.
+    const settleWrites =
+        (writes: readonly Settled[]) =>
+        <A, E, R>(self: Effect.Effect<A, E, R>) =>
+            self.pipe(
+                Effect.onExit((exit) =>
+                    Effect.sync(() => {
+                        for (const write of writes) write.settle(Exit.isSuccess(exit));
+                    })
+                )
+            );
+    const prepareSnapshot = (
         subset: CompiledSubset,
         keys?: readonly Key[],
         requireComplete = false,
         reason: ReplicaLoad["reason"] = "demand"
+    ) =>
+        Effect.suspend(() => {
+            const sequences = [beginFetch()];
+            return prepareSnapshotIn(sequences, subset, keys, requireComplete, reason).pipe(
+                Effect.onExit((exit) =>
+                    Exit.isSuccess(exit)
+                        ? Effect.void
+                        : Effect.sync(() => {
+                              for (const sequence of sequences) endFetch(sequence);
+                          })
+                )
+            );
+        });
+    const prepareSnapshotIn = Effect.fn("Replica.loadSnapshot")(function* (
+        sequences: number[],
+        subset: CompiledSubset,
+        keys: readonly Key[] | undefined,
+        requireComplete: boolean,
+        reason: ReplicaLoad["reason"]
     ) {
+        const sequence = sequences[0]!;
         const backend = yield* backendEffect;
         yield* Effect.annotateCurrentSpan("objectType", subset.objectType);
         const generation = coverageGenerations.get(subset.objectType);
+        const revalidation = revalidateGenerations.get(subset.objectType);
         const demandKey = subsetKey(subset);
         const capturedDemand = demands.get(demandKey);
         const demandRevision = capturedDemand?.revision;
@@ -1430,6 +1629,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             return yield* fault("Unavailable", "Action read-back was incomplete.");
         const v = yield* view(subset.objectType);
         const repaired = new Map<Key, ObjectValue | undefined>();
+        // Identity repairs fetch later than the snapshot, under their own sequence.
+        const repairedBy = new Map<Key, number>();
         // A filtered absence is not a deletion: an object can move out of a
         // filter or a top-k window. Watch-only sources must repair those cached
         // candidates by identity before the local query can be evaluated again.
@@ -1448,6 +1649,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             for (let offset = 0; offset < missing.length; offset += 128) {
                 const keys = missing.slice(offset, offset + 128);
                 repairRequests++;
+                const repairSequence = beginFetch();
+                sequences.push(repairSequence);
                 const repairResult = yield* loadSubset(
                     {
                         objectType: subset.objectType,
@@ -1461,7 +1664,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 repairRows += repair.rows.length;
                 if (!repair.complete)
                     return yield* fault("Unavailable", "Filtered snapshot repair was incomplete.");
-                for (const key of keys) repaired.set(key, undefined);
+                for (const key of keys) {
+                    repaired.set(key, undefined);
+                    repairedBy.set(key, repairSequence);
+                }
                 for (const row of repair.rows) {
                     if (!keys.includes(row.key))
                         return yield* fault(
@@ -1474,25 +1680,39 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         }
         yield* Effect.annotateCurrentSpan({ repairCandidates, repairRequests, repairRows });
         const now = yield* Clock.currentTimeMillis;
-        return (tx: Transaction) =>
+        const rows = rowWriter(subset.objectType);
+        const write = (tx: Transaction) =>
             Effect.gen(function* () {
+                const due = revalidateGenerations.get(subset.objectType) !== revalidation;
+                if (due) yield* wakeStale;
                 let inserted = 0;
                 let updated = 0;
                 let unchanged = 0;
                 let removed = 0;
                 let retentionRows = 0;
+                let superseded = 0;
+                const fetchedBy = (key: Key) => repairedBy.get(key) ?? sequence;
+                // Returned rows count as accessed; identity repairs only when they change.
                 const incoming = [
-                    ...storedRows,
-                    ...[...repaired].flatMap(([key, value]) => (value === undefined ? [] : [{ key, value }])),
-                ];
+                    ...storedRows.map((row) => ({ ...row, stored: true })),
+                    ...[...repaired].flatMap(([key, value]) =>
+                        value === undefined ? [] : [{ key, value, stored: false }]
+                    ),
+                ].filter((row) => {
+                    const skip = rows.superseded(row.key, row.stored ? sequence : fetchedBy(row.key));
+                    if (skip) superseded++;
+                    return !skip;
+                });
                 const properties = encryptedProperties.get(subset.objectType)!;
                 // Only an unfiltered complete snapshot can prove arbitrary cached keys were removed.
                 if (snapshot.complete && isWholeCollection(storedSubset.query)) {
-                    const returned = new Set(incoming.map((row) => row.key));
+                    const returned = new Set(storedRows.map((row) => row.key));
+                    for (const [key, value] of repaired) if (value !== undefined) returned.add(key);
                     yield* scanDeliveryRows(tx, v.base, {}, (row) =>
                         boundary(
                             Effect.gen(function* () {
-                                if (returned.has(row.key)) return;
+                                if (returned.has(row.key) || rows.superseded(row.key, sequence)) return;
+                                rows.written(row.key, sequence);
                                 removed++;
                                 yield* retainRowBlobs(tx, subset.objectType, row.key, undefined, "base");
                                 yield* tx.delete(v.base, row.key);
@@ -1503,6 +1723,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 }
                 for (const [key, value] of repaired) {
                     if (value !== undefined) continue;
+                    if (rows.superseded(key, fetchedBy(key))) {
+                        superseded++;
+                        continue;
+                    }
+                    rows.written(key, fetchedBy(key));
                     removed++;
                     yield* retainRowBlobs(tx, subset.objectType, key, undefined, "base");
                     yield* tx.delete(v.base, key);
@@ -1532,6 +1757,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                     "InvalidResponse",
                                     "Snapshot key does not match its row."
                                 );
+                            rows.written(row.key, row.stored ? sequence : fetchedBy(row.key));
                             const before = previous.get(row.key);
                             const value = preserveCachedCopies(before, row.value, properties);
                             // Watch invalidations can refresh a whole collection after an
@@ -1559,9 +1785,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     // unchanged repair must not renew an unrelated row's cache age.
                     // Changed/inserted repairs keep their existing write-access behavior.
                     const changedKeys = new Set(changed.map((row) => row.key));
-                    const accessed = page.filter(
-                        (row, index) => offset + index < storedRows.length || changedKeys.has(row.key)
-                    );
+                    const accessed = page.filter((row) => row.stored || changedKeys.has(row.key));
                     retentionRows += accessed.length;
                     yield* tx
                         .putMany(
@@ -1583,6 +1807,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                             snapshot.cursor !== (yield* position(tx)).cursor ? snapshot.cursor : undefined,
                         rowKeys: storedRows.map((row) => row.key),
                         updatedAt: now,
+                        ...(due ? { revalidate: true } : {}),
                     });
                 yield* tx.put(coverage, subsetKey(subset), {
                     subset,
@@ -1593,6 +1818,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         snapshot.cursor !== (yield* position(tx)).cursor ? snapshot.cursor : undefined,
                     rowKeys: snapshot.rows.map((row) => row.key),
                     updatedAt: now,
+                    ...(due ? { revalidate: true } : {}),
                 });
                 yield* Effect.annotateCurrentSpan({
                     rows: incoming.length,
@@ -1604,6 +1830,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     // Counts removal commands; a concurrently absent repair key
                     // is deliberately not re-read only for diagnostic accounting.
                     removed,
+                    superseded,
                     repairCandidates,
                     repairRequests,
                     repairRows,
@@ -1613,13 +1840,24 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     attributes: { objectType: subset.objectType, reason },
                 })
             );
+        let settled = false;
+        return Object.assign(write, {
+            settle: (committed: boolean) => {
+                if (settled) return;
+                settled = true;
+                if (!committed) rows.rollback();
+                for (const fetched of sequences) endFetch(fetched);
+            },
+        }) satisfies Settled;
     });
     const installSnapshot = Effect.fn("Replica.installSnapshot")(function* (
         subset: CompiledSubset,
         reason: ReplicaLoad["reason"]
     ) {
         const write = yield* prepareSnapshot(subset, undefined, false, reason);
-        yield* boundary(tables.transaction((tx) => Effect.andThen(write(tx), rebase(tx))));
+        yield* boundary(tables.transaction((tx) => Effect.andThen(write(tx), rebase(tx)))).pipe(
+            settleWrites([write])
+        );
         yield* notify;
     });
     const pullJournal = Effect.fn("Replica.pullChanges")(function* () {
@@ -1773,35 +2011,34 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 requests.set(subsetKey(subset), subset);
             }
         }
+        // Every demand and resident row is requested above, so the snapshots include
+        // whatever committed actions changed that a reader needs.
         const entries = yield* boundary(tables.read(pendingIn));
-        for (const entry of entries)
-            if (entry.receipt?.outcome === "committed")
-                // Demands and resident rows are already requested above; whole types are not.
-                for (const type of entry.touchedTypes)
-                    for (const subset of demandedSubsets(type)) requests.set(subsetKey(subset), subset);
         const writes: Array<Effect.Success<ReturnType<typeof prepareSnapshot>>> = [];
-        for (const subset of requests.values())
-            writes.push(yield* prepareSnapshot(subset, undefined, true, "refresh"));
-        yield* boundary(
-            tables.transaction((tx) =>
-                Effect.gen(function* () {
-                    const previous = yield* position(tx);
-                    yield* tx.put(metadata, "head", { ...previous, cursor: anchor.cursor });
-                    yield* tx.clear(coverage);
-                    for (const write of writes) yield* write(tx);
-                    for (const entry of entries)
-                        if (entry.receipt?.outcome === "committed") {
-                            yield* deletePending(tx, entry.invocation.id);
-                            yield* tx.put(completed, entry.invocation.id, {
-                                ...entry,
-                                completedAt: yield* Clock.currentTimeMillis,
-                                state: "acknowledged",
-                            });
-                        }
-                    yield* rebase(tx);
-                })
-            )
-        );
+        yield* Effect.gen(function* () {
+            for (const subset of requests.values())
+                writes.push(yield* prepareSnapshot(subset, undefined, true, "refresh"));
+            yield* boundary(
+                tables.transaction((tx) =>
+                    Effect.gen(function* () {
+                        const previous = yield* position(tx);
+                        yield* tx.put(metadata, "head", { ...previous, cursor: anchor.cursor });
+                        yield* tx.clear(coverage);
+                        for (const write of writes) yield* write(tx);
+                        for (const entry of entries)
+                            if (entry.receipt?.outcome === "committed") {
+                                yield* deletePending(tx, entry.invocation.id);
+                                yield* tx.put(completed, entry.invocation.id, {
+                                    ...entry,
+                                    completedAt: yield* Clock.currentTimeMillis,
+                                    state: "acknowledged",
+                                });
+                            }
+                        yield* rebase(tx);
+                    })
+                )
+            );
+        }).pipe(settleWrites(writes));
         for (const demand of demands.values()) demand.installed = 0;
         yield* notify;
     });
@@ -1853,56 +2090,61 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 );
         }
         const writes: Array<Effect.Success<ReturnType<typeof prepareSnapshot>>> = [];
-        // Types the receipt names without keys. A receipt never loads data no reader asked for
-        // (a broad ontology can hold types of hundreds of thousands of objects): these types'
-        // stored coverage is marked stale, so a later demand reloads it, and only the subsets
-        // readers demand right now are read back, so the action's effects show without a gap.
-        const unkeyed: string[] = [];
-        for (const [objectType, keys] of targets) {
-            if (!keys) {
-                unkeyed.push(objectType);
-                for (const subset of demandedSubsets(objectType))
-                    writes.push(yield* prepareSnapshot(subset, undefined, true, "receipt"));
-            } else {
-                const primaryKey = definitions.get(objectType)?.primaryKey;
-                if (!primaryKey)
-                    return yield* fault("InvalidResponse", "Receipt named an unknown object type.");
-                const values = [...keys];
-                for (let offset = 0; offset < values.length; offset += 128) {
-                    const batch = values.slice(offset, offset + 128);
-                    writes.push(
-                        yield* prepareSnapshot(
-                            { objectType, query: { where: inArray(field(primaryKey), batch) } },
-                            batch,
-                            true,
-                            "receipt"
-                        )
-                    );
+        yield* Effect.gen(function* () {
+            // Types the receipt names without keys. A receipt never loads data no reader asked for
+            // (a broad ontology can hold types of hundreds of thousands of objects): these types'
+            // stored coverage is marked stale, so a later demand reloads it, and only the subsets
+            // readers demand right now are read back, so the action's effects show without a gap.
+            const unkeyed: string[] = [];
+            for (const [objectType, keys] of targets) {
+                if (!keys) {
+                    unkeyed.push(objectType);
+                    for (const subset of demandedSubsets(objectType))
+                        writes.push(yield* prepareSnapshot(subset, undefined, true, "receipt"));
+                } else {
+                    const primaryKey = definitions.get(objectType)?.primaryKey;
+                    if (!primaryKey)
+                        return yield* fault("InvalidResponse", "Receipt named an unknown object type.");
+                    const values = [...keys];
+                    for (let offset = 0; offset < values.length; offset += 128) {
+                        const batch = values.slice(offset, offset + 128);
+                        writes.push(
+                            yield* prepareSnapshot(
+                                { objectType, query: { where: inArray(field(primaryKey), batch) } },
+                                batch,
+                                true,
+                                "receipt"
+                            )
+                        );
+                    }
                 }
             }
-        }
-        for (const objectType of unkeyed) coverageGenerations.set(objectType, Symbol());
-        yield* boundary(
-            tables.transaction((tx) =>
-                Effect.gen(function* () {
-                    for (const objectType of unkeyed)
-                        for (const cached of yield* tx.query(coverage, {
-                            where: eq(field("subset", "objectType"), objectType),
-                        }))
-                            if (!cached.value.invalidated)
-                                yield* tx.put(coverage, cached.key, { ...cached.value, invalidated: true });
-                    for (const write of writes) yield* write(tx);
-                    yield* deletePending(tx, head.invocation.id);
-                    yield* tx.put(completed, head.invocation.id, {
-                        ...head,
-                        completedAt: yield* Clock.currentTimeMillis,
-                        state: "acknowledged",
-                        receipt,
-                    });
-                    yield* rebase(tx);
-                })
-            )
-        );
+            for (const objectType of unkeyed) coverageGenerations.set(objectType, Symbol());
+            yield* boundary(
+                tables.transaction((tx) =>
+                    Effect.gen(function* () {
+                        for (const objectType of unkeyed)
+                            for (const cached of yield* tx.query(coverage, {
+                                where: eq(field("subset", "objectType"), objectType),
+                            }))
+                                if (!cached.value.invalidated)
+                                    yield* tx.put(coverage, cached.key, {
+                                        ...cached.value,
+                                        invalidated: true,
+                                    });
+                        for (const write of writes) yield* write(tx);
+                        yield* deletePending(tx, head.invocation.id);
+                        yield* tx.put(completed, head.invocation.id, {
+                            ...head,
+                            completedAt: yield* Clock.currentTimeMillis,
+                            state: "acknowledged",
+                            receipt,
+                        });
+                        yield* rebase(tx);
+                    })
+                )
+            );
+        }).pipe(settleWrites(writes));
         yield* notify;
     });
     // Apply the exact changes a watch reported instead of reloading its subset. Returns
@@ -1918,14 +2160,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 // change that already includes it would apply it twice. Hold the base;
                 // the reload after confirmation picks the change up.
                 const pending = yield* boundary(tables.read(pendingIn));
-                if (
-                    pending.some(
-                        (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
-                    )
-                )
-                    return false;
+                if (pending.some(unsettled)) return false;
                 const primaryKey = definitions.get(objectType)!.primaryKey;
                 const exits: Key[] = [];
+                // Newer than any fetch already in flight: those must not replace these rows.
+                const sequence = ++fetchSequence;
+                const rows = rowWriter(objectType);
                 yield* boundary(
                     tables.transaction((tx) =>
                         Effect.gen(function* () {
@@ -1942,6 +2182,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                             "InvalidResponse",
                                             "Watch change key does not match its row."
                                         );
+                                    rows.written(change.key, sequence);
                                     yield* retainRowBlobs(tx, objectType, change.key, change.value, "base");
                                     yield* putBase(tx, objectType, change.key, change.value);
                                     yield* tx.put(retention, identity(objectType, change.key), {
@@ -1951,6 +2192,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                     });
                                     continue;
                                 }
+                                rows.written(change.key, sequence);
                                 yield* retainRowBlobs(tx, objectType, change.key, undefined, "base");
                                 yield* tx.delete(v.base, change.key);
                                 yield* tx.delete(retention, identity(objectType, change.key));
@@ -1958,7 +2200,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                             yield* rebase(tx);
                         })
                     )
-                );
+                ).pipe(Effect.tapError(() => Effect.sync(rows.rollback)));
                 // An object that left the subset may have changed or been deleted. Read it
                 // back by primary key: present means changed, absent means deleted.
                 for (let offset = 0; offset < exits.length; offset += 128) {
@@ -1976,7 +2218,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 yield* rebase(tx);
                             })
                         )
-                    );
+                    ).pipe(settleWrites([write]));
                 }
                 return true;
             })
@@ -2118,7 +2360,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             yield* confirmReceipt(entry, entry.receipt);
         }
     });
-    const drainOutbox = Effect.fn("Replica.drainOutbox", { root: true })(function* (recover = true) {
+    // `single` settles at most one action and reports whether more may follow.
+    const drainOutbox = Effect.fn("Replica.drainOutbox", { root: true })(function* (
+        recover = true,
+        single = false
+    ) {
         yield* open;
         if (replicationError?.recovery === "stop")
             return yield* fault(replicationError.kind, replicationError.message);
@@ -2198,11 +2444,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 );
                 if (result._tag === "Failure") {
                     const error = result.failure;
-                    yield* boundary(
+                    const unresolved = yield* boundary(
                         tables.transaction((tx) =>
                             recordFailure(tx, head, error, backend.supportsIdempotency)
                         )
                     );
+                    if (unresolved) yield* revalidateAfterUnknownOutcome;
                     if (options.outbox?.failureStrategy === "discard-all")
                         yield* boundary(tables.transaction(rebase));
                     if (options.outbox?.failureStrategy === "discard-all") {
@@ -2263,9 +2510,523 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             } else {
                 yield* confirmReceipt(head, receipt);
             }
+            if (single) return { more: true as const };
         }
     });
-    const sync = Effect.fn("Replica.sync", { root: true })(function* (requested?: ReadonlySet<string>) {
+    // Under detached loads, drain one action per hold of `gate`, letting waiting installs
+    // in between. Between actions none is sending or awaiting confirmation, so an install
+    // then cannot show an action twice. The background worker and explicit checkpoints
+    // can drain at once; `drainTurn` keeps all but one of them off `gate`, and each turn
+    // first lets waiting installs go.
+    const drainInTurns = (recover = true) =>
+        Effect.gen(function* () {
+            for (;;) {
+                const result = yield* drainTurn.withPermit(
+                    afterWaitingInstalls.pipe(Effect.andThen(gate.withPermit(drainOutbox(recover, true))))
+                );
+                if (!result || !("more" in result)) return result;
+            }
+        });
+    type CoverageProof = NonNullable<ReplicaStatus["demands"][number]["coverageProof"]>;
+    // Coverage ages are wall-clock differences, so a clock moved backwards makes every
+    // earlier confirmation look younger by the correction. The replica keeps the newest
+    // time it has seen (starting from the newest stored confirmation); a clock reading
+    // more than `clockToleranceMs` earlier means the clock was corrected, and every
+    // age-based confirmation from before is invalidated and its in-flight loads fenced.
+    const clockToleranceMs = 1_000;
+    const currentTime = Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        if (adapter?.changes || options.source) return now;
+        if (latestTime !== undefined && now + clockToleranceMs < latestTime) {
+            for (const type of definitions.keys()) coverageGenerations.set(type, Symbol());
+            yield* access(
+                tables.transaction((tx) =>
+                    Effect.gen(function* () {
+                        for (const row of yield* tx.query(coverage))
+                            if (!row.value.invalidated)
+                                yield* tx.put(coverage, row.key, { ...row.value, invalidated: true });
+                    })
+                )
+            );
+            latestTime = now;
+            yield* notify;
+        } else latestTime = Math.max(latestTime ?? now, now);
+        return now;
+    });
+    // Under `maxStaleAgeMs`, a poll tick or explicit revalidation marks coverage
+    // due without invalidating it or fencing in-flight loads: the rows are not known
+    // to have changed, so they stay servable within the bound while the next pass
+    // reloads them. A refresh that outlasts the poll interval can still install.
+    // `subsets`, when given, limits marking to those coverage records: a poll tick says
+    // only that its own demand is due, not every subset of the type.
+    const markRevalidate = (
+        objectTypes: ReadonlySet<string>,
+        fence = false,
+        subsets?: readonly (CompiledSubset | undefined)[]
+    ) =>
+        Effect.sync(() => {
+            if (fence) for (const objectType of objectTypes) revalidateGenerations.set(objectType, Symbol());
+        }).pipe(
+            Effect.andThen(
+                boundary(
+                    tables.transaction((tx) =>
+                        Effect.gen(function* () {
+                            for (const objectType of objectTypes)
+                                for (const cached of yield* tx.query(coverage, {
+                                    where: eq(field("subset", "objectType"), objectType),
+                                }))
+                                    if (
+                                        !cached.value.invalidated &&
+                                        !cached.value.revalidate &&
+                                        (!subsets ||
+                                            subsets.some(
+                                                (subset) => subset && subsetKey(subset) === cached.key
+                                            ))
+                                    )
+                                        yield* tx.put(coverage, cached.key, {
+                                            ...cached.value,
+                                            revalidate: true,
+                                        });
+                        })
+                    )
+                )
+            ),
+            Effect.andThen(wakeStale),
+            Effect.andThen(wakeState),
+            Effect.withSpan("Replica.markRevalidate", { attributes: { objectTypes: [...objectTypes] } })
+        );
+    // One coverage rule for sync passes and gate-free admission. A fresh proof
+    // wins over a stale one; stale proofs exist only under `maxStaleAgeMs`.
+    const coverageProofIn = Effect.fnUntraced(function* (
+        tx: ReadTransaction,
+        backend: OntologyBackendService,
+        now: number,
+        subset: CompiledSubset,
+        records: readonly Row<Coverage>[],
+        cursor?: string
+    ) {
+        const requestedKey = subsetKey(subset);
+        const key = primaryKeyLookup(subset.query, definitions.get(subset.objectType)!.primaryKey);
+        let present: boolean | undefined;
+        let stale: { subset: CompiledSubset; proof: CoverageProof; stale: boolean } | undefined;
+        for (const { key: recordKey, value: record } of records) {
+            if (record.invalidated) continue;
+            const live = demands.get(String(recordKey));
+            const maxAge =
+                options.demand?.refresh?.maxCoverageAgeMs ??
+                backend.refresh?.(objectSubset(record.subset.objectType, record.subset.query))
+                    ?.maxCoverageAgeMs ??
+                60_000;
+            const liveWatch =
+                live &&
+                live.watchers > 0 &&
+                live.pollIntervalMs === undefined &&
+                !live.watchFailure &&
+                live.installed === live.revision;
+            // `now` comes from `currentTime`, which invalidates coverage confirmed before
+            // a clock correction.
+            const age = now - record.updatedAt;
+            const fresh = backend.changes
+                ? record.snapshotCursor !== undefined && record.barrierCursor === undefined
+                : !record.revalidate && (liveWatch || age < maxAge);
+            // Journal coverage is exact or absent; only age-based coverage can be stale.
+            const servable = fresh || (serveStale && age < maxStaleAge);
+            if (!servable || (!fresh && stale)) continue;
+            const proof = (reason: CoverageProof["reason"]) => {
+                const maintained: CoverageProof = {
+                    reason,
+                    maintainedBy: backend.changes
+                        ? "journal"
+                        : live?.pollIntervalMs !== undefined
+                          ? "poll"
+                          : liveWatch
+                            ? "watch"
+                            : "snapshot",
+                    pollIntervalMs: backend.changes ? undefined : live?.pollIntervalMs,
+                };
+                return {
+                    subset: record.subset,
+                    stale: !fresh,
+                    proof: fresh ? maintained : { ...maintained, stale: true, confirmedAt: record.updatedAt },
+                };
+            };
+            let found: ReturnType<typeof proof> | undefined;
+            if (record.complete && isWholeCollection(record.subset.query)) found = proof("collection");
+            else if (
+                record.complete &&
+                recordKey === requestedKey &&
+                (!backend.changes || !hasWindow(subset.query) || record.snapshotCursor === cursor)
+            )
+                found = proof("query");
+            else if (
+                record.complete &&
+                coversSubset(subset, record.subset) &&
+                (!hasWindow(record.subset.query) || !backend.changes || record.snapshotCursor === cursor)
+            )
+                found = proof("query");
+            else if (
+                record.complete &&
+                key !== undefined &&
+                primaryKeyLookup(record.subset.query, definitions.get(subset.objectType)!.primaryKey) === key
+            )
+                found = proof("query");
+            else if (key !== undefined && record.rowKeys?.includes(key)) {
+                present ??=
+                    (yield* boundary(tx.get((yield* view(subset.objectType)).base, key))) !== undefined;
+                if (present) found = proof("primary-key");
+            }
+            if (!found) continue;
+            if (fresh) return found;
+            stale = found;
+        }
+        return stale;
+    });
+    type DemandEntry = NonNullable<ReturnType<typeof demands.get>>;
+    type DemandRef = {
+        readonly key: string;
+        readonly demand: DemandEntry;
+        readonly revision: number;
+        readonly generation: symbol | undefined;
+    };
+    const demandRef = (key: string, demand: DemandEntry): DemandRef => ({
+        key,
+        demand,
+        revision: demand.revision,
+        generation: coverageGenerations.get(demand.subset.objectType),
+    });
+    // Prove demands from current coverage in one read transaction and record the
+    // proofs whose fences still hold. Installs nothing. Fresh proofs only, unless
+    // `acceptStale`. Callers capture refs before any asynchronous work.
+    const proveDemands = (selected: readonly DemandRef[], acceptStale: boolean) =>
+        Effect.gen(function* () {
+            const now = yield* currentTime;
+            const proofs = yield* access(
+                tables
+                    .read((tx) =>
+                        Effect.gen(function* () {
+                            const byType = new Map<string, readonly Row<Coverage>[]>();
+                            const found: Array<Effect.Success<ReturnType<typeof coverageProofIn>>> = [];
+                            for (const { demand } of selected) {
+                                const type = demand.subset.objectType;
+                                let records = byType.get(type);
+                                if (!records) {
+                                    records = yield* tx.query(coverage, {
+                                        where: eq(field("subset", "objectType"), type),
+                                    });
+                                    byType.set(type, records);
+                                }
+                                found.push(yield* coverageProofIn(tx, adapter!, now, demand.subset, records));
+                            }
+                            return found;
+                        })
+                    )
+                    .pipe(
+                        Effect.withSpan("Replica.proveDemands", { attributes: { demands: selected.length } })
+                    )
+            );
+            let changed = false;
+            let stale = false;
+            const proven = selected.map(({ key, demand, revision, generation }, index) => {
+                const covering = proofs[index];
+                if (
+                    !covering ||
+                    (covering.stale && !acceptStale) ||
+                    demands.get(key) !== demand ||
+                    demand.revision !== revision ||
+                    coverageGenerations.get(demand.subset.objectType) !== generation
+                )
+                    return false;
+                changed ||=
+                    demand.installed !== demand.revision ||
+                    !demand.coveredBy ||
+                    subsetKey(demand.coveredBy) !== subsetKey(covering.subset) ||
+                    demand.coverageProof?.stale !== covering.proof.stale;
+                demand.installed = demand.revision;
+                if (!covering.stale) demand.loadFailure = undefined;
+                demand.coveredBy = covering.subset;
+                demand.coverageProof = covering.proof;
+                stale ||= covering.stale;
+                return true;
+            });
+            // Delivery capture and status read these proofs; publish the transition.
+            if (changed) yield* notify;
+            return { proven, stale };
+        });
+    // After an install, renew proofs of the type's demands that are unproven or stale.
+    const renewProofs = (objectType: string, target?: DemandEntry) =>
+        Effect.suspend(() => {
+            const selected = [...demands]
+                .filter(
+                    ([, demand]) =>
+                        demand.subset.objectType === objectType &&
+                        (demand === target ||
+                            demand.installed !== demand.revision ||
+                            demand.coverageProof?.stale === true)
+                )
+                .map(([key, demand]) => demandRef(key, demand));
+            return selected.length === 0
+                ? Effect.succeed(false)
+                : proveDemands(selected, false).pipe(
+                      Effect.map(({ proven }) =>
+                          selected.some((ref, index) => ref.demand === target && proven[index])
+                      )
+                  );
+        });
+    // Install a prepared snapshot under the gate unless an action's prediction could be
+    // applied on top of it: while an action is sending, or committed but unconfirmed,
+    // a snapshot that already contains it would show it twice. Such a snapshot is
+    // dropped, as a pass steps aside then; the demand reloads after confirmation. The
+    // fetch itself never waits for actions, and actions never wait for a fetch.
+    const installUnlessUnsettled = (write: (tx: Transaction) => Effect.Effect<void, unknown>) =>
+        withInstallGate(
+            boundary(
+                tables.transaction((tx) =>
+                    Effect.gen(function* () {
+                        if ((yield* pendingIn(tx)).some(unsettled)) return false;
+                        yield* write(tx);
+                        yield* rebase(tx);
+                        return true;
+                    })
+                )
+            )
+        ).pipe(Effect.withSpan("Replica.installSnapshot"));
+    // One load per demand subset, outside the sync gate. Passes start or join these;
+    // readers await only the ones they asked for. A load first waits for earlier
+    // loads of subsets that contain it and reuses their result when that proves it.
+    type LoadTask = {
+        readonly order: number;
+        readonly demand: DemandEntry;
+        // The demand revision being fetched; a load refetches when its demand is invalidated.
+        revision: number;
+        // A fetch started before `revalidate()` cannot satisfy it.
+        revalidation: symbol | undefined;
+        readonly subset: CompiledSubset;
+        readonly done: Deferred.Deferred<void, BackendError>;
+        phase: "waiting" | "fetching" | "installing";
+        // Installed rows, reused another load, or stepped aside for an action. Its readers
+        // then return, as after a serial pass; only a load cancelled before any of these
+        // hands its readers to its replacement.
+        settled: boolean;
+        // A reader is waiting for it; set when one joins, for its later fetches.
+        foreground: boolean;
+        fiber?: Fiber.Fiber<unknown>;
+    };
+    const loadTasks = new Map<string, LoadTask>();
+    let loadOrder = 0;
+    const runLoad = (
+        key: string,
+        demand: DemandEntry,
+        task: LoadTask,
+        before: readonly LoadTask[]
+    ): Effect.Effect<void, BackendError> =>
+        Effect.gen(function* () {
+            const type = demand.subset.objectType;
+            if (before.length) {
+                yield* Effect.annotateCurrentSpan("stage", "waiting-for-covering-load");
+                yield* Effect.forEach(before, (other) => Effect.exit(Deferred.await(other.done)), {
+                    discard: true,
+                });
+                if (yield* renewProofs(type, demand)) {
+                    task.settled = true;
+                    return;
+                }
+            }
+            const install = (write: Effect.Success<ReturnType<typeof prepareSnapshot>>) => {
+                task.phase = "installing";
+                return installUnlessUnsettled(write).pipe(
+                    Effect.onExit((exit) =>
+                        Effect.sync(() => {
+                            write.settle(Exit.isSuccess(exit) && exit.value);
+                            if (Exit.isSuccess(exit)) task.settled = true;
+                        })
+                    )
+                );
+            };
+            let write: Effect.Success<ReturnType<typeof prepareSnapshot>>;
+            for (let refetches = 0; ; refetches++) {
+                task.phase = "fetching";
+                task.revision = demand.revision;
+                task.revalidation = revalidateGenerations.get(type);
+                const fetch = loadPermits.withPermit(
+                    prepareSnapshot(
+                        demand.subset,
+                        undefined,
+                        false,
+                        demand.installed === 0 ? "demand" : "refresh"
+                    )
+                );
+                write = yield* task.foreground ? fetch : backgroundPermits.withPermit(fetch);
+                if (
+                    demands.get(key) !== demand ||
+                    (demand.revision === task.revision &&
+                        revalidateGenerations.get(type) === task.revalidation) ||
+                    refetches === maxLoadRefetches
+                )
+                    break;
+                // Invalidated while fetching. Its rows are still at least as new as the
+                // cache's, and row stamps keep newer writes: show them, leave coverage
+                // unproven, and fetch again. Bounded, so constant invalidation cannot
+                // starve the install.
+                yield* Effect.annotateCurrentSpan("refetches", refetches + 1);
+                if (yield* install(write)) yield* notify;
+                // A pass replaced this load while it installed.
+                if (loadTasks.get(key) !== task) return;
+            }
+            const installed = yield* install(write);
+            if (!installed) return yield* Effect.annotateCurrentSpan("dropped", "unsettled-action");
+            yield* notify;
+            if (demands.get(key) === demand && demand.revision === task.revision) {
+                demand.installed = task.revision;
+                demand.loadFailure = undefined;
+            }
+            yield* renewProofs(type);
+            // Demands served stale through this subset that its refresh no longer proves
+            // (a row left the subset) revalidate themselves.
+            const orphans = [...demands].filter(
+                ([otherKey, other]) =>
+                    otherKey !== key &&
+                    other.coverageProof?.stale === true &&
+                    other.coveredBy !== undefined &&
+                    subsetKey(other.coveredBy) === key
+            );
+            if (orphans.length)
+                yield* passGate.withPermit(
+                    Effect.forEach(orphans, ([otherKey, other]) => startLoad(otherKey, other), {
+                        discard: true,
+                    })
+                );
+        });
+    const startLoad = (key: string, demand: DemandEntry, foreground = false): Effect.Effect<LoadTask> =>
+        Effect.gen(function* () {
+            const type = demand.subset.objectType;
+            const existing = loadTasks.get(key);
+            const join = (task: LoadTask) => {
+                if (foreground) task.foreground = true;
+                return task;
+            };
+            if (
+                existing?.revision === demand.revision &&
+                existing.revalidation === revalidateGenerations.get(type)
+            )
+                return join(existing);
+            // A fetch for an older revision of this demand refetches once it lands, after
+            // installing its rows; join it rather than discard them.
+            if (existing?.demand === demand && existing.phase !== "installing") return join(existing);
+            // A replaced demand's fetch is cancelled; one already installing finishes first.
+            const cancelled = existing && existing.phase !== "installing" ? existing : undefined;
+            // Earlier loads this one may reuse: its own older revision, a containing subset,
+            // or, for a primary-key lookup, any load of its type that may return that row.
+            const lookup =
+                primaryKeyLookup(demand.subset.query, definitions.get(type)!.primaryKey) !== undefined;
+            const before = [...loadTasks.entries()]
+                .filter(
+                    ([otherKey, other]) =>
+                        other !== cancelled &&
+                        other.subset.objectType === type &&
+                        // A stored broader fulfilment can cover any later subset of its type.
+                        (options.storeBroaderSubsets === true ||
+                            lookup ||
+                            otherKey === key ||
+                            coversSubset(demand.subset, other.subset))
+                )
+                .map(([, other]) => other);
+            const task: LoadTask = {
+                order: ++loadOrder,
+                demand,
+                revision: demand.revision,
+                revalidation: revalidateGenerations.get(type),
+                subset: demand.subset,
+                done: yield* Deferred.make<void, BackendError>(),
+                phase: "waiting",
+                settled: false,
+                foreground,
+            };
+            loadTasks.set(key, task);
+            const authenticationAtLoad = authenticationGeneration;
+            task.fiber = yield* Effect.forkIn(
+                Effect.result(
+                    // The aggregate lease owns this load: releasing its last consumer
+                    // cancels the IO, a single reader's interruption does not.
+                    Effect.raceFirst(
+                        // Backend defects already fail (`guardBackend`). A defect in the load
+                        // itself fails it too: left alone, it would skip the failure path and
+                        // the cleanup below would resolve its readers as if it had succeeded.
+                        runLoad(key, demand, task, before).pipe(
+                            Effect.catchDefect((defect) =>
+                                Effect.fail(fault("Internal", "The subset load failed unexpectedly.", defect))
+                            )
+                        ),
+                        Deferred.await(demand.released)
+                    )
+                ).pipe(
+                    Effect.flatMap((result) =>
+                        Effect.gen(function* () {
+                            // Leave the registry before waking waiters, so the next pass starts anew.
+                            if (loadTasks.get(key) === task) loadTasks.delete(key);
+                            if (result._tag === "Success")
+                                return yield* Deferred.succeed(task.done, undefined);
+                            const error = result.failure;
+                            if (demands.get(key) === demand) {
+                                if (
+                                    error.kind === "Unauthenticated" &&
+                                    authenticationGeneration > authenticationAtLoad &&
+                                    connection?.state.status === "active"
+                                ) {
+                                    demand.loadFailure = undefined;
+                                    if (demand.revision === task.revision) demand.revision++;
+                                    yield* wakeState;
+                                } else demand.loadFailure = { revision: task.revision, error };
+                                yield* diagnostics.changed;
+                            }
+                            yield* Deferred.fail(task.done, error);
+                        })
+                    ),
+                    Effect.ensuring(
+                        Effect.suspend(() => {
+                            if (loadTasks.get(key) === task) loadTasks.delete(key);
+                            return Deferred.succeed(task.done, undefined);
+                        })
+                    ),
+                    Effect.withSpan("Replica.load", {
+                        root: true,
+                        attributes: { objectType: demand.subset.objectType },
+                    })
+                ),
+                replicaScope
+            );
+            // Registered first, so a reader of the old load moves on to this one.
+            if (cancelled?.fiber) yield* Fiber.interrupt(cancelled.fiber);
+            return task;
+        });
+    // Wait until a demand's in-flight loads settle at its current revision.
+    const awaitLoad = (key: string, demand: DemandEntry) =>
+        Effect.gen(function* () {
+            for (;;) {
+                const task = loadTasks.get(key);
+                // A load that already finished has left the registry; its failure, if
+                // any, is still recorded against the revision it loaded.
+                if (!task) {
+                    const failure = demand.loadFailure;
+                    if (
+                        demands.get(key) === demand &&
+                        demand.installed !== demand.revision &&
+                        failure?.revision === demand.revision
+                    )
+                        return yield* Effect.fail(failure.error);
+                    return;
+                }
+                yield* Deferred.await(task.done);
+                if (task.settled || demands.get(key) !== demand || demand.installed === demand.revision)
+                    return;
+                if (loadTasks.get(key) === task) return;
+            }
+        });
+    // Returns, when loads run outside the gate, the wait for the loads this pass's
+    // caller needs; the pass gate is released before that wait.
+    const sync = Effect.fn("Replica.sync", { root: true })(function* (
+        requested?: ReadonlySet<string>,
+        background = false
+    ): Effect.fn.Return<Effect.Effect<void, BackendError> | undefined, BackendError> {
         yield* open;
         if (replicationError?.recovery === "stop")
             return yield* fault(replicationError.kind, replicationError.message);
@@ -2273,87 +3034,20 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         const backend = yield* backendEffect;
         if (!(yield* canSync)) return;
         // A committed receipt must settle its overlay before a new source snapshot.
-        // Recovery belongs to the outbox worker, never to a query acquisition.
-        if (
-            (yield* boundary(tables.read(pendingIn))).some(
-                (entry) => entry.state === "sending" || entry.receipt?.outcome === "committed"
-            )
-        )
-            return;
+        // Recovery belongs to the outbox worker, never to a query acquisition. Detached
+        // loads fetch regardless; their installs check this under the gate instead.
+        if (!detachedLoads && (yield* boundary(tables.read(pendingIn))).some(unsettled)) return;
         yield* Effect.annotateCurrentSpan("stage", "pulling-changes");
         yield* pull();
         yield* Effect.annotateCurrentSpan("stage", "reading-position");
-        const now = yield* Clock.currentTimeMillis;
+        const now = yield* currentTime;
 
-        const covered = Effect.fnUntraced(function* (
+        const covered = (
             tx: ReadTransaction,
             subset: CompiledSubset,
             records: readonly Row<Coverage>[],
             cursor?: string
-        ) {
-            const requestedKey = subsetKey(subset);
-            const key = primaryKeyLookup(subset.query, definitions.get(subset.objectType)!.primaryKey);
-            let present: boolean | undefined;
-            for (const { key: recordKey, value: record } of records) {
-                if (record.invalidated) continue;
-                const live = demands.get(String(recordKey));
-                const maxAge =
-                    options.demand?.refresh?.maxCoverageAgeMs ??
-                    backend.refresh?.(objectSubset(record.subset.objectType, record.subset.query))
-                        ?.maxCoverageAgeMs ??
-                    60_000;
-                const liveWatch =
-                    live &&
-                    live.watchers > 0 &&
-                    live.pollIntervalMs === undefined &&
-                    !live.watchFailure &&
-                    live.installed === live.revision;
-                const maintained = backend.changes
-                    ? record.snapshotCursor !== undefined && record.barrierCursor === undefined
-                    : liveWatch || now - record.updatedAt < maxAge;
-                if (!maintained) continue;
-                const proof = (reason: "collection" | "query" | "primary-key") => ({
-                    subset: record.subset,
-                    proof: {
-                        reason,
-                        maintainedBy: backend.changes
-                            ? ("journal" as const)
-                            : live?.pollIntervalMs !== undefined
-                              ? ("poll" as const)
-                              : liveWatch
-                                ? ("watch" as const)
-                                : ("snapshot" as const),
-                        pollIntervalMs: backend.changes ? undefined : live?.pollIntervalMs,
-                    },
-                });
-                if (record.complete && isWholeCollection(record.subset.query)) return proof("collection");
-                if (
-                    record.complete &&
-                    recordKey === requestedKey &&
-                    (!backend.changes || !hasWindow(subset.query) || record.snapshotCursor === cursor)
-                )
-                    return proof("query");
-                if (
-                    record.complete &&
-                    coversSubset(subset, record.subset) &&
-                    (!hasWindow(record.subset.query) || !backend.changes || record.snapshotCursor === cursor)
-                )
-                    return proof("query");
-                if (
-                    record.complete &&
-                    key !== undefined &&
-                    primaryKeyLookup(record.subset.query, definitions.get(subset.objectType)!.primaryKey) ===
-                        key
-                )
-                    return proof("query");
-                if (key !== undefined && record.rowKeys?.includes(key)) {
-                    present ??=
-                        (yield* boundary(tx.get((yield* view(subset.objectType)).base, key))) !== undefined;
-                    if (present) return proof("primary-key");
-                }
-            }
-            return undefined;
-        });
+        ) => coverageProofIn(tx, backend, now, subset, records, cursor);
         type CoverageCheck = {
             demand: NonNullable<ReturnType<typeof demands.get>>;
             generation: symbol | undefined;
@@ -2433,9 +3127,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             coverageChanged ||=
                 demand.installed !== demand.revision ||
                 !demand.coveredBy ||
-                subsetKey(demand.coveredBy) !== subsetKey(covering.subset);
+                subsetKey(demand.coveredBy) !== subsetKey(covering.subset) ||
+                demand.coverageProof?.stale !== covering.proof.stale;
             demand.installed = demand.revision;
-            demand.loadFailure = undefined;
+            // A stale proof keeps a failed revalidation visible in status.
+            if (!covering.stale) demand.loadFailure = undefined;
             demand.coveredBy = covering.subset;
             demand.coverageProof = covering.proof;
         };
@@ -2444,7 +3140,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         // satisfy the next demand of that type without another fetch.
         const pendingLoads = new Map<
             string,
-            Array<{ readonly demand: Demand; readonly relevant: boolean }>
+            Array<{ readonly demand: Demand; readonly relevant: boolean; readonly stale: boolean }>
         >();
         for (const demand of demands.values()) {
             if (deliveryActive) continue;
@@ -2474,30 +3170,71 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             }
             if (!check) continue; // A concurrently acquired demand has its own queued check.
             const cached = check.cached;
+            const stale = check.covering?.stale === true;
             if (check.covering) {
                 applyCoverage(demand, check.covering);
-                continue;
+                if (!stale) continue;
+                // Serve stale coverage now. Its owner revalidates it: the demand that
+                // requested the covering record, or this demand when that lease is gone.
+                const owner = subsetKey(check.covering.subset);
+                if (owner !== key && demands.has(owner)) continue;
+            } else {
+                demand.coveredBy = undefined;
+                demand.coverageProof = undefined;
+                if (
+                    demand.watchers > 0 &&
+                    demand.pollIntervalMs === undefined &&
+                    !demand.watchFailure &&
+                    cached?.complete &&
+                    !cached.invalidated &&
+                    demand.installed === demand.revision
+                )
+                    continue;
             }
-            demand.coveredBy = undefined;
-            demand.coverageProof = undefined;
-            if (
-                demand.watchers > 0 &&
-                demand.pollIntervalMs === undefined &&
-                !demand.watchFailure &&
-                cached?.complete &&
-                !cached.invalidated &&
-                demand.installed === demand.revision
-            )
-                continue;
             // A watch must be registered before a new snapshot starts. The
             // background pass skips opening watches rather than holding the
             // publication gate across network acquisition.
             if (demand.watchReady && !(yield* Deferred.isDone(demand.watchReady))) continue;
             const group = pendingLoads.get(demand.subset.objectType);
-            if (group) group.push({ demand, relevant });
-            else pendingLoads.set(demand.subset.objectType, [{ demand, relevant }]);
+            if (group) group.push({ demand, relevant, stale });
+            else pendingLoads.set(demand.subset.objectType, [{ demand, relevant, stale }]);
         }
-        const loadDemand = Effect.fnUntraced(function* (demand: Demand, relevant: boolean) {
+        if (detachedLoads) {
+            yield* Effect.annotateCurrentSpan("stage", "starting-loads");
+            // Whole collections first, so the subsets they contain wait and reuse them.
+            const planned = [...pendingLoads.values()]
+                .flat()
+                .sort(
+                    (a, b) =>
+                        Number(isWholeCollection(b.demand.subset.query)) -
+                        Number(isWholeCollection(a.demand.subset.query))
+                );
+            const awaited: typeof planned = [];
+            for (const entry of planned) {
+                const key = subsetKey(entry.demand.subset);
+                if (demands.get(key) !== entry.demand) continue;
+                yield* startLoad(key, entry.demand, !background && requested !== undefined && entry.relevant);
+                if (!background && entry.relevant) awaited.push(entry);
+            }
+            if (coverageChanged) yield* notify;
+            const failure = demandFailure;
+            return Effect.gen(function* () {
+                let first = failure;
+                for (const { demand, stale } of awaited) {
+                    const result = yield* Effect.result(awaitLoad(subsetKey(demand.subset), demand));
+                    // A reader served stale coverage is not failed by a retryable background
+                    // revalidation; an explicit full checkpoint still reports it.
+                    if (
+                        result._tag === "Failure" &&
+                        !(stale && result.failure.retryable && requested !== undefined)
+                    )
+                        first ??= result.failure;
+                }
+                if (first) return yield* first;
+            });
+        }
+        const refreshed = new Set<string>();
+        const loadDemand = Effect.fnUntraced(function* (demand: Demand, relevant: boolean, stale: boolean) {
             const revision = demand.revision;
             const authenticationAtLoad = authenticationGeneration;
             // Demand refresh belongs to the aggregate lease, not its first UI caller.
@@ -2520,11 +3257,15 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     if (demand.revision === revision) demand.revision++;
                     yield* wakeState;
                 } else demand.loadFailure = { revision, error: installed.failure };
-                if (relevant) demandFailure ??= installed.failure;
+                // A reader served stale coverage is not failed by a retryable background
+                // revalidation; an explicit full checkpoint still reports it.
+                if (relevant && !(stale && installed.failure.retryable && requested !== undefined))
+                    demandFailure ??= installed.failure;
                 return false;
             }
             if (!installed.success) return false;
             coverageChanged = true;
+            refreshed.add(subsetKey(demand.subset));
             demand.installed = revision;
             demand.loadFailure = undefined;
             // A newly loaded superset can satisfy later demands of this type.
@@ -2536,7 +3277,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             pendingLoads.values(),
             Effect.fnUntraced(function* (group) {
                 let loaded = false;
-                for (const { demand, relevant } of group) {
+                for (const { demand, relevant, stale } of group) {
                     const key = subsetKey(demand.subset);
                     if (demands.get(key) !== demand) continue;
                     if (loaded) {
@@ -2544,22 +3285,46 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         if (
                             check?.demand === demand &&
                             check.revision === demand.revision &&
-                            check.covering
+                            check.covering &&
+                            !check.covering.stale
                         ) {
                             applyCoverage(demand, check.covering);
                             continue;
                         }
                     }
-                    loaded = (yield* loadDemand(demand, relevant)) || loaded;
+                    loaded = (yield* loadDemand(demand, relevant, stale)) || loaded;
                 }
             }),
             { concurrency: "unbounded", discard: true }
         );
+        // A revalidation load refreshed its type's checks. Replace stale proofs it
+        // renewed, including demands served through another demand's coverage; one its
+        // refresh no longer proves (a row left that subset) revalidates itself.
+        for (const [key, demand] of demands) {
+            if (!demand.coverageProof?.stale) continue;
+            const check = checks.get(key);
+            if (
+                check?.demand === demand &&
+                check.revision === demand.revision &&
+                check.generation === coverageGenerations.get(demand.subset.objectType) &&
+                check.covering &&
+                !check.covering.stale
+            )
+                applyCoverage(demand, check.covering);
+            else if (demand.coveredBy && refreshed.has(subsetKey(demand.coveredBy)) && !refreshed.has(key)) {
+                const relevant = requested === undefined || requested.has(key);
+                if ((yield* loadDemand(demand, relevant, true)) && demand.coverageProof?.stale) {
+                    const renewed = checks.get(key)?.covering;
+                    if (renewed && !renewed.stale) applyCoverage(demand, renewed);
+                }
+            }
+        }
         // Snapshot writes notify before this in-memory readiness bookkeeping.
         // A child may have captured those rows with incomplete coverage already;
         // publish the readiness transition even when no additional rows changed.
         if (coverageChanged) yield* notify;
         if (demandFailure) return yield* demandFailure;
+        return undefined;
     });
     const parentStateIn = Effect.fnUntraced(function* (tx: ReadTransaction) {
         const head = yield* tx.get(imported, "head");
@@ -2701,20 +3466,22 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             state: "queued",
             optimistic: settings?.optimistic ?? true,
             attempts: 0,
-            touchedTypes: [],
         };
         const resolved = sourcePredicts ? yield* forwardOnly(tx, proposed) : yield* replay(tx, proposed);
         yield* tx.put(outbox, invocation.id, resolved);
         yield* tx.put(metadata, "head", { ...state, sequence: resolved.sequence });
         return resolved;
     });
-    const runStateSync = (requested?: ReadonlySet<string>) =>
-        gate
-            .withPermit(diagnostics.sync(sync(requested)))
-            .pipe(
-                Effect.withSpan("Replica.stateSyncWork", { attributes: { activity: "request" } }),
-                Effect.provideService(Tracer.Tracer, deliveryTracer)
-            );
+    const awaitPass = (pass: Effect.Effect<Effect.Effect<void, BackendError> | undefined, BackendError>) =>
+        Effect.flatMap(pass, (wait) => wait ?? Effect.void);
+    const runStateSync = (requested?: ReadonlySet<string>, background = false) =>
+        (detachedLoads
+            ? diagnostics.sync(awaitPass(passGate.withPermit(sync(requested, background))))
+            : gate.withPermit(diagnostics.sync(awaitPass(sync(requested))))
+        ).pipe(
+            Effect.withSpan("Replica.stateSyncWork", { attributes: { activity: "request" } }),
+            Effect.provideService(Tracer.Tracer, deliveryTracer)
+        );
     // Background sync waits for authentication silently, but an explicit checkpoint
     // that skipped the backend must not report success.
     const requireAuthentication = Effect.suspend(() => {
@@ -2736,22 +3503,28 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         Effect.andThen(requireAuthentication, maintain()),
         options.source
             ? Effect.suspend(() => service.syncParent(options.source!))
-            : gate
-                  .withPermit(
-                      diagnostics.sync(
-                          Effect.gen(function* () {
-                              yield* recoverOutbox();
-                              const state = yield* Effect.result(sync());
-                              yield* drainOutbox(false);
-                              if (state._tag === "Failure") return yield* state.failure;
-                          })
-                      )
-                  )
-                  .pipe(
-                      Effect.andThen(
-                          Effect.suspend(() => (openingWatches().length ? syncReady() : Effect.void))
-                      )
-                  )
+            : (detachedLoads
+                  ? diagnostics.sync(
+                        Effect.gen(function* () {
+                            yield* gate.withPermit(recoverOutbox());
+                            const state = yield* Effect.result(awaitPass(passGate.withPermit(sync())));
+                            yield* drainInTurns(false);
+                            if (state._tag === "Failure") return yield* state.failure;
+                        })
+                    )
+                  : gate.withPermit(
+                        diagnostics.sync(
+                            Effect.gen(function* () {
+                                yield* recoverOutbox();
+                                const state = yield* Effect.result(awaitPass(sync()));
+                                yield* drainOutbox(false);
+                                if (state._tag === "Failure") return yield* state.failure;
+                            })
+                        )
+                    )
+              ).pipe(
+                  Effect.andThen(Effect.suspend(() => (openingWatches().length ? syncReady() : Effect.void)))
+              )
     );
     const ownSourceId = (yield* boundary(tables.get(stateHead, "head")))!.sourceId;
     const clients = clientRegistry(options.namespace, ownSourceId, options.clients);
@@ -3766,6 +4539,15 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 return;
                             }
                         }
+                        if (serveStale && !watched) {
+                            // A poll tick says only that this demand is due.
+                            yield* markRevalidate(new Set([copy.objectType]), false, [
+                                copy,
+                                demand.coveredBy,
+                            ]);
+                            yield* diagnostics.changed;
+                            return;
+                        }
                         // Fence this watch's old request synchronously. A reset
                         // repairs its own missed events; unrelated healthy watches
                         // retain their proofs and their in-flight type generation.
@@ -3823,6 +4605,13 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                               yield* diagnostics.changed;
                               for (;;) {
                                   yield* Effect.sleep(configuredInterval);
+                                  if (serveStale) {
+                                      yield* markRevalidate(new Set([copy.objectType]), false, [
+                                          copy,
+                                          demand.coveredBy,
+                                      ]).pipe(Effect.catch(service.reportReplicationFailure));
+                                      continue;
+                                  }
                                   demand.revision++;
                                   yield* invalidateCoverage.pipe(
                                       Effect.catch(service.reportReplicationFailure)
@@ -3927,6 +4716,34 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 demand.watchReady !== undefined &&
                 !Deferred.isDoneUnsafe(demand.watchReady)
         );
+    // Admit demands their existing coverage already proves, from one read
+    // transaction and without the publication gate. Loads, refreshes and outbox
+    // dispatch keep the gate; admission installs no rows, it only records a proof
+    // that a sync pass would also accept. A stale proof wakes the state loop, which
+    // revalidates it in the background. Anything unproven takes the gated path.
+    const admitCovered = (subsets: readonly CompiledSubset[]) =>
+        Effect.gen(function* () {
+            // Journal-backed sources keep pull-before-serve; delivery and protocol
+            // children have their own readiness paths.
+            if (!adapter || adapter.changes || options.source || deliveryActive) return false;
+            if (replicationError?.recovery === "stop") return false;
+            const selected: DemandRef[] = [];
+            for (const subset of subsets) {
+                const key = subsetKey(subset);
+                const demand = demands.get(key);
+                // Unacquired subsets and terminal failures report through a sync pass.
+                if (
+                    !demand ||
+                    (demand.loadFailure?.revision === demand.revision && !demand.loadFailure.error.retryable)
+                )
+                    return false;
+                // Capture fences before the first asynchronous storage operation.
+                selected.push(demandRef(key, demand));
+            }
+            const { proven, stale } = yield* proveDemands(selected, true);
+            if (stale) yield* wakeState;
+            return proven.every(Boolean);
+        });
     // Only a fresh fetch needs the acquisition barrier. Recheck after taking the
     // gate, and wait outside it so a slow subscription cannot block other views
     // or action publication. Cached/offline reads keep their existing behavior.
@@ -3977,7 +4794,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     }
                     yield* service.refreshParent(options.source!);
                 })
-              : syncReady(new Set(subsets.map(subsetKey)));
+              : admitCovered(subsets).pipe(
+                    Effect.flatMap((admitted) =>
+                        admitted ? Effect.void : syncReady(new Set(subsets.map(subsetKey)))
+                    )
+                );
     };
     const visibleRevision = (tx: ReadTransaction) =>
         tx.get(stateHead, "head").pipe(Effect.map((head) => head?.visibleRevision ?? 0));
@@ -5095,6 +5916,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         markDemandedStale: Effect.suspend(() => {
             if (options.source || adapter?.changes) return Effect.void;
             const types = new Set([...demands.values()].map((demand) => demand.subset.objectType));
+            // Unlike a poll tick, an explicit request fences loads already in flight.
+            if (serveStale) return access(markRevalidate(types, true));
             // Fence snapshots already in flight, as a watch invalidation does.
             for (const type of types) coverageGenerations.set(type, Symbol());
             return access(
@@ -5352,7 +6175,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         yield* Effect.forkScoped(
             Effect.forever(
                 Effect.gen(function* () {
-                    yield* runStateSync().pipe(Effect.catch(() => Effect.void));
+                    yield* runStateSync(undefined, true).pipe(Effect.catch(() => Effect.void));
                     const now = yield* Clock.currentTimeMillis;
                     const delay =
                         syncRetry && syncRetry.at > now && replicationError?.recovery !== "stop"
@@ -5371,11 +6194,15 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     const result = yield* Effect.result(
                         Effect.annotateCurrentSpan("stage", "waiting-for-publication-gate").pipe(
                             Effect.andThen(
-                                gate.withPermit(
-                                    Effect.annotateCurrentSpan("stage", "processing").pipe(
-                                        Effect.andThen(drainOutbox())
-                                    )
-                                )
+                                detachedLoads
+                                    ? Effect.annotateCurrentSpan("stage", "processing").pipe(
+                                          Effect.andThen(drainInTurns())
+                                      )
+                                    : gate.withPermit(
+                                          Effect.annotateCurrentSpan("stage", "processing").pipe(
+                                              Effect.andThen(drainOutbox())
+                                          )
+                                      )
                             ),
                             Effect.withSpan("Replica.outboxWork", { root: true })
                         )
@@ -5438,6 +6265,46 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 )
             );
     }
+    // Enforce the stale-while-revalidate bound for readers that check only
+    // `invalidated` (delivery capture, hasCoverage): coverage still due at the
+    // bound becomes invalid, even when its revalidation keeps failing.
+    if (serveStale && Number.isFinite(maxStaleAge))
+        yield* Effect.forkScoped(
+            Effect.forever(
+                Effect.gen(function* () {
+                    const now = yield* currentTime;
+                    const swept = yield* boundary(
+                        tables.transaction((tx) =>
+                            Effect.gen(function* () {
+                                let next: number | undefined;
+                                let expired = 0;
+                                for (const row of yield* tx.query(coverage)) {
+                                    if (!row.value.revalidate || row.value.invalidated) continue;
+                                    const expiry = row.value.updatedAt + maxStaleAge;
+                                    if (expiry > now) next = Math.min(next ?? expiry, expiry);
+                                    else {
+                                        yield* tx.put(coverage, row.key, { ...row.value, invalidated: true });
+                                        expired++;
+                                    }
+                                }
+                                return { next, expired };
+                            })
+                        )
+                    );
+                    if (swept.expired) yield* notify;
+                    yield* swept.next === undefined
+                        ? Queue.take(staleWake)
+                        : Effect.raceFirst(Queue.take(staleWake), Effect.sleep(swept.next - now));
+                }).pipe(
+                    Effect.catch((error) =>
+                        Effect.logWarning("Replica stale coverage sweep failed", { kind: error.kind }).pipe(
+                            Effect.andThen(Effect.sleep(stateRetryDelayMs))
+                        )
+                    ),
+                    Effect.withSpan("Replica.expireStaleCoverage")
+                )
+            )
+        );
     if (options.startSync !== false)
         yield* Effect.forkScoped(
             Effect.forever(
