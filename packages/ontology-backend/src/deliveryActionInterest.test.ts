@@ -35,7 +35,6 @@ it.effect(
                     state: "queued",
                     optimistic: true,
                     attempts: 0,
-                    touchedTypes: [],
                 },
             };
             let captures = 0;

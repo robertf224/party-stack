@@ -2,7 +2,7 @@ import { Table } from "@party-stack/ontology-storage/tables";
 import { Schema } from "effect";
 import { expect, test } from "vitest";
 import { DeliveryFrameCodec } from "./delivery.js";
-import { ClientStateCodec, ClientViewCodec } from "./protocol.js";
+import { ClientStateCodec, ClientViewCodec, PendingActionSchema, protocolValueCodec } from "./protocol.js";
 import type { DeliveryFrame } from "./delivery.js";
 import type { ClientState } from "./protocol.js";
 
@@ -39,6 +39,21 @@ test("protocol codecs preserve storage values through an actual JSON round trip"
     const decoded = Schema.decodeUnknownSync(ClientStateCodec)(JSON.parse(JSON.stringify(encoded)));
     const restored = decoded.state.objects[0]!.base[0]!.value;
     expect(restored).toEqual(value);
+});
+
+test("a pending action from an older peer decodes without its removed touchedTypes field", () => {
+    const codec = protocolValueCodec(PendingActionSchema);
+    const action = {
+        invocation: { id: "a1", name: "write", parameters: {} },
+        requestIdentity: "a1",
+        createdAt: 1,
+        sequence: 1,
+        state: "queued" as const,
+        optimistic: true,
+        attempts: 0,
+    };
+    const older = Table.make({ name: "wire" }).encode({ ...action, touchedTypes: ["Item"] });
+    expect(Schema.decodeUnknownSync(codec)(older)).toEqual(action);
 });
 
 test("protocol decoding rejects invalid counters and unsupported query operators", () => {

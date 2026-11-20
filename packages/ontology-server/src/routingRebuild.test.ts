@@ -213,7 +213,6 @@ test("a pending-action rebuild refusal keeps the existing route and cached rows 
                     state: "queued",
                     optimistic: false,
                     attempts: 0,
-                    touchedTypes: [],
                 };
                 const outbox = Table.make<PendingAction>({
                     name: JSON.stringify(["replica", "notes", "outbox"]),
