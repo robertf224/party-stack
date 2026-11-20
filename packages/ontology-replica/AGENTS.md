@@ -54,6 +54,10 @@ the state involved. Each fact below cites where to verify it.
   (`revalidate`). In memory, each type has a coverage generation and each demand a
   revision. A fetch that sees either change while in flight installs its rows but records
   its coverage as invalidated.
+  A complete window with fewer rows than its limit also proves its whole filter
+  (`shortWindowFilter`), recorded both when a window loads (`prepareSnapshotIn`) and when a
+  child installs a delivered window (counting its local matches). Children find those
+  derived proofs through `coverageFor`, so a live query's follow-up reads stay local.
 - **Fetch stamps.** Loads outside the gate install in any order, so each fetch takes a
   sequence number when it starts and each base row remembers the newest fetch or watch
   change that wrote it (`rowFetches`). An install skips rows that a later fetch wrote.
