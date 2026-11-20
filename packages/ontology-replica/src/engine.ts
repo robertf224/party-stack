@@ -76,7 +76,7 @@ import {
     Stream,
     Tracer,
 } from "effect";
-import { hasWindow, isWholeCollection, primaryKeyLookup } from "./coverage.js";
+import { hasWindow, isWholeCollection, primaryKeyLookup, shortWindowFilter } from "./coverage.js";
 import { cachedCopy, withCachedCopy, encryptedCacheCodec, preserveCachedCopies } from "./encryptedCache.js";
 import { guardBackend } from "./guardBackend.js";
 import { makeReplicaDiagnostics } from "./status.js";
@@ -1615,8 +1615,21 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         const resolved = yield* loadSubset(request, reason);
         const snapshot = resolved.snapshot;
         const expanded = options.storeBroaderSubsets === true;
-        const storedSubset = expanded ? resolved.fulfilled : subset;
-        const storedRows = expanded ? resolved.fulfilledRows : snapshot.rows;
+        // A short complete window proves its whole filter: store every row it returned
+        // and record that proof as well as the window's own.
+        const whole = shortWindowFilter(
+            resolved.fulfilled.query,
+            snapshot.complete,
+            resolved.fulfilledRows.length
+        );
+        const broader: CompiledSubset | undefined =
+            whole !== false
+                ? { objectType: subset.objectType, ...(whole ? { query: whole } : {}) }
+                : expanded
+                  ? resolved.fulfilled
+                  : undefined;
+        const storedSubset = broader ?? subset;
+        const storedRows = broader ? resolved.fulfilledRows : snapshot.rows;
         yield* Effect.annotateCurrentSpan({
             rows: snapshot.rows.length,
             storedRows: storedRows.length,
@@ -1797,7 +1810,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         )
                         .pipe(Effect.withSpan("Replica.snapshot.putRetention", { attributes }));
                 }
-                if (expanded && subsetKey(storedSubset) !== subsetKey(subset))
+                if (broader && subsetKey(storedSubset) !== subsetKey(subset))
                     yield* tx.put(coverage, subsetKey(storedSubset), {
                         subset: storedSubset,
                         complete: snapshot.complete,
