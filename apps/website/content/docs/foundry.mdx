@@ -111,32 +111,34 @@ const server = Effect.gen(function* () {
     }).pipe(Effect.provideService(Runtime, runtime));
 
     return yield* makeOntologyServer({
-        dangerouslyAllowInternalAccess: true,
         enableRealtime: true,
         routes: {
             connect: connectDeviceRoute(connect),
-            "foundry/:connectionId": ({ connectionId }) =>
-                Effect.gen(function* () {
-                    const access = yield* connect.connections.acquire({
-                        objectType: "OAuthConnection",
-                        id: connectionId,
-                    });
-                    const context = { userId: access.userId };
-                    return {
-                        kind: "replica" as const,
-                        namespace: foundry.ontologyId,
-                        ir: ontology,
-                        context,
-                        authentication: access.authentication,
-                        backend: yield* makeFoundryBackend({
-                            baseUrl: access.serviceInstance.instanceUrl,
-                            ontologyId: foundry.ontologyId,
+            "foundry/:connectionId": {
+                dangerouslyAllowInternalAccess: true,
+                open: ({ connectionId }) =>
+                    Effect.gen(function* () {
+                        const access = yield* connect.connections.acquire({
+                            objectType: "OAuthConnection",
+                            id: connectionId,
+                        });
+                        const context = { userId: access.userId };
+                        return {
+                            kind: "replica" as const,
+                            namespace: foundry.ontologyId,
                             ir: ontology,
                             context,
-                            egress: access.egress,
-                        }),
-                    };
-                }),
+                            authentication: access.authentication,
+                            backend: yield* makeFoundryBackend({
+                                baseUrl: access.serviceInstance.instanceUrl,
+                                ontologyId: foundry.ontologyId,
+                                ir: ontology,
+                                context,
+                                egress: access.egress,
+                            }),
+                        };
+                    }),
+            },
         },
     });
 });

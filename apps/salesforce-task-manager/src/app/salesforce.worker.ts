@@ -92,12 +92,11 @@ const server = Effect.gen(function* () {
             };
         });
     return yield* makeOntologyServer({
-        dangerouslyAllowInternalAccess: true,
         enableRealtime: true,
         routes: {
             connect: connectDeviceRoute(manager),
-            "data/:type/:connection": route(false),
-            "metadata/:type/:connection": route(true),
+            "data/:type/:connection": { dangerouslyAllowInternalAccess: true, open: route(false) },
+            "metadata/:type/:connection": { dangerouslyAllowInternalAccess: true, open: route(true) },
         },
     });
 });

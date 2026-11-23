@@ -14,25 +14,27 @@ const deliveryStrategy =
         ? requestedDeliveryStrategy
         : "auto";
 export const notesServer = makeOntologyServer({
-    dangerouslyAllowInternalAccess: true,
     enableRealtime: true,
     routes: {
-        notes: () =>
-            Effect.gen(function* () {
-                const client = yield* makeOntologyHttpClient({
-                    url: new URL("/api/ontology/rpc", globalThis.location.origin).href,
-                }).pipe(Effect.provide(FetchHttpClient.layer));
-                return {
-                    kind: "replica" as const,
-                    deliveryStrategy,
-                    mutators: notesMutators,
-                    upstream: { client },
-                    context: { userId: "device" },
-                    namespace: "notes-v1",
-                    beforeOpen: (runtime: RuntimeService, ir: OntologyIR) =>
-                        migrateNotesReplica(runtime.tables, "notes-v1", ir),
-                    demand: { idleRetentionMs: 30_000 },
-                };
-            }),
+        notes: {
+            dangerouslyAllowInternalAccess: true,
+            open: () =>
+                Effect.gen(function* () {
+                    const client = yield* makeOntologyHttpClient({
+                        url: new URL("/api/ontology/rpc", globalThis.location.origin).href,
+                    }).pipe(Effect.provide(FetchHttpClient.layer));
+                    return {
+                        kind: "replica" as const,
+                        deliveryStrategy,
+                        mutators: notesMutators,
+                        upstream: { client },
+                        context: { userId: "device" },
+                        namespace: "notes-v1",
+                        beforeOpen: (runtime: RuntimeService, ir: OntologyIR) =>
+                            migrateNotesReplica(runtime.tables, "notes-v1", ir),
+                        demand: { idleRetentionMs: 30_000 },
+                    };
+                }),
+        },
     },
 });

@@ -80,16 +80,18 @@ const setup = Effect.fnUntraced(function* (bundled = false) {
     let selected = original,
         source = backend(original);
     const remote = yield* makeOntologyServer({
-        dangerouslyAllowInternalAccess: true,
         enableRealtime: true,
         routes: {
-            remote: () =>
-                Effect.succeed({
-                    kind: "proxy" as const,
-                    ir: selected,
-                    backend: source,
-                    context: {},
-                }),
+            remote: {
+                dangerouslyAllowInternalAccess: true,
+                open: () =>
+                    Effect.succeed({
+                        kind: "proxy" as const,
+                        ir: selected,
+                        backend: source,
+                        context: {},
+                    }),
+            },
         },
     });
     const transport = yield* makeOntologyLocalClient(remote);
@@ -111,7 +113,6 @@ const setup = Effect.fnUntraced(function* (bundled = false) {
             ),
     };
     const server = yield* makeOntologyServer({
-        dangerouslyAllowInternalAccess: true,
         enableRealtime: true,
         replicas: {},
         routes: {
@@ -121,6 +122,7 @@ const setup = Effect.fnUntraced(function* (bundled = false) {
                 context: {},
                 live: false,
                 definition: { onIncompatible: "rebuild", ...(bundled ? { ir: original } : {}) },
+                dangerouslyAllowInternalAccess: true,
             },
         },
     });

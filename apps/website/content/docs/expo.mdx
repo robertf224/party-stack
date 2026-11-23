@@ -140,49 +140,54 @@ const openDevice = Effect.gen(function* () {
             ],
         }).pipe(Effect.provideService(Runtime, credentialRuntime));
         const server = yield* makeOntologyServer({
-            dangerouslyAllowInternalAccess: true,
             enableRealtime: true,
             routes: {
                 connect: connectDeviceRoute(connect),
-                "accounts/:connectionId/platform": ({ connectionId }) =>
-                    Effect.gen(function* () {
-                        const access = yield* connect.connections.acquire({
-                            objectType: "OAuthConnection",
-                            id: connectionId,
-                        });
-                        return {
-                            kind: "replica" as const,
-                            ir: foundryPlatformOntology,
-                            context: { userId: access.userId },
-                            authentication: access.authentication,
-                            backend: yield* makeFoundryPlatformBackend({
+                "accounts/:connectionId/platform": {
+                    dangerouslyAllowInternalAccess: true,
+                    open: ({ connectionId }) =>
+                        Effect.gen(function* () {
+                            const access = yield* connect.connections.acquire({
+                                objectType: "OAuthConnection",
+                                id: connectionId,
+                            });
+                            return {
+                                kind: "replica" as const,
+                                ir: foundryPlatformOntology,
+                                context: { userId: access.userId },
+                                authentication: access.authentication,
+                                backend: yield* makeFoundryPlatformBackend({
+                                    baseUrl: access.serviceInstance.instanceUrl,
+                                    egress: access.egress,
+                                }),
+                            };
+                        }),
+                },
+                "accounts/:connectionId/ontologies/:ontologyId": {
+                    dangerouslyAllowInternalAccess: true,
+                    open: (params, route) =>
+                        Effect.gen(function* () {
+                            const access = yield* connect.connections.acquire({
+                                objectType: "OAuthConnection",
+                                id: params.connectionId,
+                            });
+                            const context = { userId: access.userId };
+                            const options = {
                                 baseUrl: access.serviceInstance.instanceUrl,
+                                ontologyId: params.ontologyId,
                                 egress: access.egress,
-                            }),
-                        };
-                    }),
-                "accounts/:connectionId/ontologies/:ontologyId": (params, route) =>
-                    Effect.gen(function* () {
-                        const access = yield* connect.connections.acquire({
-                            objectType: "OAuthConnection",
-                            id: params.connectionId,
-                        });
-                        const context = { userId: access.userId };
-                        const options = {
-                            baseUrl: access.serviceInstance.instanceUrl,
-                            ontologyId: params.ontologyId,
-                            egress: access.egress,
-                        };
-                        const metadata = yield* makeFoundryMetadataBackend(options);
-                        const ir = yield* route.definition({ context, load: loadDefinition(metadata) });
-                        return {
-                            kind: "replica" as const,
-                            ir,
-                            context,
-                            authentication: access.authentication,
-                            backend: yield* makeFoundryBackend({ ...options, ir, context }),
-                        };
-                    }),
+                            };
+                            const metadata = yield* makeFoundryMetadataBackend(options);
+                            const ir = yield* route.definition({ context, load: loadDefinition(metadata) });
+                            return {
+                                kind: "replica" as const,
+                                ir,
+                                context,
+                                authentication: access.authentication,
+                                backend: yield* makeFoundryBackend({ ...options, ir, context }),
+                            };
+                        }),
+                },
             },
         });
         return { connect, server };

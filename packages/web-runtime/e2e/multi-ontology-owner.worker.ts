@@ -110,7 +110,6 @@ const server = Effect.gen(function* () {
         },
     }).pipe(Effect.provideService(Runtime, runtime));
     server = yield* makeOntologyServer({
-        dangerouslyAllowInternalAccess: true,
         enableRealtime: true,
         replicas: { scope: identity },
         idleRetentionMs: identity.startsWith("fail:") ? -1 : 100,
@@ -121,38 +120,39 @@ const server = Effect.gen(function* () {
                 ir: publicIR,
                 context: {},
             },
-            "counters/:connectionId/:ontologyId": Effect.fnUntraced(function* (
-                params: Readonly<Record<string, string>>
-            ) {
-                const selection = yield* Schema.decodeUnknownEffect(Selection)(params).pipe(
-                    Effect.mapError(
-                        () =>
-                            new BackendError({
-                                operation: "resolve",
-                                kind: "NotFound",
-                                retryable: false,
-                                message: "Unknown ontology",
-                            })
-                    )
-                );
-                const session = yield* connect.connections.acquire({
-                    objectType: "ExternalSessionConnection",
-                    id: selection.connectionId,
-                });
-                return {
-                    kind: "replica" as const,
-                    ir,
-                    namespace: selection.ontologyId,
-                    context: { user: session.userId },
-                    authentication: session.authentication,
-                    backend: yield* makeOwnedBackend({
-                        namespace: selection.ontologyId,
+            "counters/:connectionId/:ontologyId": {
+                dangerouslyAllowInternalAccess: true,
+                open: Effect.fnUntraced(function* (params: Readonly<Record<string, string>>) {
+                    const selection = yield* Schema.decodeUnknownEffect(Selection)(params).pipe(
+                        Effect.mapError(
+                            () =>
+                                new BackendError({
+                                    operation: "resolve",
+                                    kind: "NotFound",
+                                    retryable: false,
+                                    message: "Unknown ontology",
+                                })
+                        )
+                    );
+                    const session = yield* connect.connections.acquire({
+                        objectType: "ExternalSessionConnection",
+                        id: selection.connectionId,
+                    });
+                    return {
+                        kind: "replica" as const,
                         ir,
-                        tables: authority,
-                        mutators: { increment },
-                    }),
-                };
-            }),
+                        namespace: selection.ontologyId,
+                        context: { user: session.userId },
+                        authentication: session.authentication,
+                        backend: yield* makeOwnedBackend({
+                            namespace: selection.ontologyId,
+                            ir,
+                            tables: authority,
+                            mutators: { increment },
+                        }),
+                    };
+                }),
+            },
         },
     });
     return server;

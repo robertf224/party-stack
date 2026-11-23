@@ -9,7 +9,7 @@ import { prepareOntologyServer, bindOntologyServer } from "./composition.js";
 import { errorProjectionLayer, errorContext, OntologyErrorProjection } from "./errorProjection.js";
 import { restoreReplicaRegistration } from "./replicaBootstrap.js";
 import { OntologyRpcs, ontologyRpcHandlers } from "./rpc.js";
-import type { OntologyBindingOptions, OntologyInternalAccess } from "./composition.js";
+import type { OntologyAuthenticate, OntologyBindingOptions, OntologyInternalAccess } from "./composition.js";
 import type { ErrorProjectionOptions } from "./errorProjection.js";
 import type { UpstreamReplicaRegistration } from "./replicaBootstrap.js";
 import type { OntologyRpcClient, OntologyRpcServerOptions } from "./rpc.js";
@@ -155,14 +155,22 @@ export type ManagedReplicaRoute<R = never> = (ReplicaRegistration | UpstreamRepl
         readonly kind: "replica";
         readonly replica?: never;
         readonly dangerouslyAllowInternalAccess?: never;
+        readonly authenticate?: never;
     };
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-/** A route's binding. Internal access is set once for the whole server, never on a route. */
-export type OntologyRouteBinding<R = never> = DistributiveOmit<
-    OntologyBindingOptions<R>,
-    "dangerouslyAllowInternalAccess"
-> & { readonly dangerouslyAllowInternalAccess?: never };
-export type OntologyRoute<R = never> = OntologyRouteBinding<R> | ManagedReplicaRoute<R>;
+/** What a route's `open` returns. Access and authentication are settings of the route itself. */
+export type OpenedOntologyRoute<R = never> =
+    | (DistributiveOmit<OntologyBindingOptions<R>, "dangerouslyAllowInternalAccess" | "authenticate"> & {
+          readonly dangerouslyAllowInternalAccess?: never;
+          readonly authenticate?: never;
+      })
+    | ManagedReplicaRoute<R>;
+/** A route that needs no opening: a ready binding, or a managed replica registration. */
+export type OntologyRoute<R = never> =
+    | OntologyBindingOptions<R>
+    | (DistributiveOmit<ManagedReplicaRoute<R>, "dangerouslyAllowInternalAccess"> & {
+          readonly dangerouslyAllowInternalAccess: true;
+      });
 type SegmentParameter<Segment extends string> = Segment extends `:${infer Name}` | `*${infer Name}`
     ? Name
     : never;
@@ -181,39 +189,54 @@ export interface OntologyRouteContext {
     }) => Effect.Effect<OntologyIR, BackendError, R | Runtimes>;
 }
 
+/**
+ * A route whose backend is acquired on demand. For each request the server authenticates the
+ * caller, opens the route (once per address, kept for `idleRetentionMs`), then binds.
+ */
+export interface OntologyRouteDeclaration<
+    R = never,
+    Path extends string = string,
+    Opened extends OpenedOntologyRoute<R> = OpenedOntologyRoute<R>,
+> {
+    /**
+     * Allow internal commands (replica status, traces, outbox recovery, local-data deletion, owner
+     * release) for every caller (`true`) or for callers whose context passes the predicate. A route
+     * without an IR policy requires it, and then exposes raw backend capabilities and full error
+     * messages. Replica routes require `true`.
+     *
+     * A caller allowed internal access also gets the original error when the route fails to open
+     * (for example because its definition failed to load). A predicate can only allow that when
+     * `authenticate` supplies the caller's context.
+     */
+    readonly dangerouslyAllowInternalAccess?: OntologyInternalAccess;
+    /** Establish each request's context before the route opens. Without it, `open` supplies a fixed context. */
+    readonly authenticate?: OntologyAuthenticate<R>;
+    /** Acquire the route's backend and binding. */
+    readonly open:
+        | Effect.Effect<Opened, BackendError, R | Scope.Scope>
+        | ((
+              params: OntologyRouteParams<Path>,
+              route: OntologyRouteContext
+          ) => Effect.Effect<Opened, BackendError, R | Scope.Scope>);
+}
 export type OntologyRouteFactory<
     R = never,
     Path extends string = string,
-    Route extends OntologyRoute<R> = OntologyRoute<R>,
+    Opened extends OpenedOntologyRoute<R> = OpenedOntologyRoute<R>,
 > =
-    | Route
-    | Effect.Effect<Route, BackendError, R | Scope.Scope>
-    | ((
-          params: OntologyRouteParams<Path>,
-          route: OntologyRouteContext
-      ) => Effect.Effect<Route, BackendError, R | Scope.Scope>);
+    | OntologyBindingOptions<R>
+    | (ManagedReplicaRoute<R> extends Opened ? OntologyRoute<R> : never)
+    | OntologyRouteDeclaration<R, Path, Opened>;
 export interface OntologyServerRoutes<
     R = never,
     Paths extends string = string,
-    Route extends OntologyRoute<R> = OntologyRoute<R>,
+    Opened extends OpenedOntologyRoute<R> = OpenedOntologyRoute<R>,
 > extends Omit<ErrorProjectionOptions, "errors"> {
     /** Opt into client watches and replication sessions. Individual routes may override this default. */
     readonly enableRealtime?: boolean;
-    /**
-     * Allow internal commands (replica status, traces, outbox recovery, local-data deletion, owner
-     * release) on every route of this server, for every caller (`true`) or for callers whose
-     * context passes the predicate. A route without an IR policy requires it, and then exposes raw
-     * backend capabilities and full error messages. Replica routes require `true`.
-     *
-     * With `true`, a request that fails before its route is ready (for example because the route's
-     * definition failed to load) also reports the original error instead of a generic message.
-     * Use it for servers whose callers are trusted: same-device servers, private worker ports or
-     * development servers.
-     */
-    readonly dangerouslyAllowInternalAccess?: OntologyInternalAccess;
-    readonly routes?: { readonly [Path in Paths]: OntologyRouteFactory<R, Path, Route> };
+    readonly routes?: { readonly [Path in Paths]: OntologyRouteFactory<R, Path, Opened> };
     /** Advanced resolution for addresses outside the declared route table. */
-    readonly resolve?: OntologyResolver<OntologyRouteBinding<R>, R>;
+    readonly resolve?: OntologyResolver<OntologyBindingOptions<R>, R>;
     /** Keep an opened route for this long after its last request. Default 60 seconds; zero
      * releases it immediately. A route that fails to open is not kept, so the next request
      * opens it again.
@@ -275,29 +298,30 @@ const compileRoutes = <R>(routes: Readonly<Record<string, OntologyRouteFactory<R
     return { exact, patterns };
 };
 
+const isRouteDeclaration = <R>(factory: OntologyRouteFactory<R>): factory is OntologyRouteDeclaration<R> =>
+    "open" in factory;
+
+const allowsInternalAccess = (
+    access: OntologyInternalAccess | undefined,
+    context: Record<string, unknown> | undefined
+) => {
+    if (access === true) return true;
+    if (typeof access !== "function" || context === undefined) return false;
+    try {
+        return access(context) === true;
+    } catch {
+        return false;
+    }
+};
+
 const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
     options: OntologyServerRoutes<R> | OntologyBindingOptions<R>
 ) {
     const single = "kind" in options;
     const settings: OntologyServerRoutes<R> = single ? {} : options;
-    const internalAccess = options.dangerouslyAllowInternalAccess;
-    /** Apply the server's internal access to a route's binding. */
-    const misconfigured = (message: string) =>
-        Effect.fail(
-            new BackendError({
-                operation: "server.configure",
-                kind: "InvalidConfiguration",
-                retryable: false,
-                message,
-            })
-        );
-    const withServerAccess = <B extends { readonly kind: string }>(binding: B) =>
-        binding.kind === "replica" && internalAccess !== true
-            ? misconfigured("Replica routes require a server with dangerouslyAllowInternalAccess: true.")
-            : Effect.succeed({
-                  ...binding,
-                  dangerouslyAllowInternalAccess: internalAccess,
-              } as unknown as OntologyBindingOptions<R>);
+    // Startup failures a route chose to show its caller in full; every other failure
+    // before a route is bound gets the generic projection.
+    const forwardedStartupErrors = new WeakSet<BackendError>();
     const ttl = settings.idleRetentionMs ?? 60_000;
     if (
         !Number.isFinite(ttl) ||
@@ -414,34 +438,41 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                 retryable: false,
                 message: "Unknown ontology.",
             });
-        const declaration =
-            typeof route.factory === "function"
-                ? yield* route.factory(route.params, {
-                      definition: (options) =>
-                          Effect.gen(function* () {
-                              const catalog = yield* getCatalog;
-                              const saved = yield* catalog.lookup(route.key);
-                              const retained = saved?.rebuild?.description.ir
-                                  ? {
-                                        ir: saved.rebuild.description.ir,
-                                        context: saved.rebuild.description.context ?? {},
-                                    }
-                                  : saved?.definition;
-                              if (
-                                  retained &&
-                                  contextPartition(retained.ir, options.context) === saved!.partition.owner
-                              )
-                                  return retained.ir;
-                              return yield* options.load;
-                          }),
-                  })
-                : Effect.isEffect(route.factory)
-                  ? yield* route.factory
-                  : route.factory;
+        const factory = route.factory;
+        const definition: OntologyRouteContext = {
+            definition: (options) =>
+                Effect.gen(function* () {
+                    const catalog = yield* getCatalog;
+                    const saved = yield* catalog.lookup(route.key);
+                    const retained = saved?.rebuild?.description.ir
+                        ? {
+                              ir: saved.rebuild.description.ir,
+                              context: saved.rebuild.description.context ?? {},
+                          }
+                        : saved?.definition;
+                    if (retained && contextPartition(retained.ir, options.context) === saved!.partition.owner)
+                        return retained.ir;
+                    return yield* options.load;
+                }),
+        };
+        const declaration = (
+            !isRouteDeclaration(factory)
+                ? factory
+                : typeof factory.open === "function"
+                  ? yield* factory.open(route.params, definition)
+                  : yield* factory.open
+        ) as OntologyRoute<R>;
+        const access = factory.dangerouslyAllowInternalAccess;
+        const settings = { dangerouslyAllowInternalAccess: access, authenticate: factory.authenticate };
+        if (declaration.kind === "replica" && access !== true)
+            return yield* new BackendError({
+                operation: "server.configure",
+                kind: "InvalidConfiguration",
+                retryable: false,
+                message: "Replica routes require dangerouslyAllowInternalAccess: true.",
+            });
         let binding: OntologyBindingOptions<R>;
         if (declaration.kind === "replica" && !declaration.replica) {
-            // Check before the catalog records the registration.
-            yield* withServerAccess(declaration);
             const catalog = yield* getCatalog;
             let rebuilding = false;
             const restored =
@@ -498,15 +529,16 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                 .open(route.key, registration)
                 .pipe(Effect.tapError((error) => (restored ? restored.failed(error) : Effect.void)));
             if (restored) yield* restored.opened;
-            binding = yield* withServerAccess({
+            binding = {
                 ...declaration,
+                ...settings,
                 ir: resource.ir,
                 replica: resource.replica,
                 backend: resource.backend,
                 traces: resource.traces,
                 deleteLocalData: forget(route.key),
-            });
-        } else binding = yield* withServerAccess(declaration);
+            } as unknown as OntologyBindingOptions<R>;
+        } else binding = { ...declaration, ...settings } as OntologyBindingOptions<R>;
         if (!binding.authenticate) {
             const context = binding.kind === "replica" ? binding.replica.context : binding.context;
             const bound = yield* RcMap.get(endpoints, new EndpointKey(route.key, binding, context));
@@ -555,25 +587,8 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
             }
             yield* RcMap.invalidate(resources, key);
         });
-    const bind = Effect.fn("OntologyServer.bind")(function* (ontology: string, request?: Request) {
-        if (!single) yield* name(ontology);
-        const route = single ? undefined : yield* matched(ontology);
-        const target = single
-            ? (options as OntologyBindingOptions<R>)
-            : route
-              ? yield* RcMap.get(resources, route.key)
-              : settings.resolve
-                ? yield* Effect.flatMap(settings.resolve(ontology), withServerAccess)
-                : yield* Effect.fail(
-                      new BackendError({
-                          operation: "ontology.route",
-                          kind: "NotFound",
-                          retryable: false,
-                          message: "Unknown ontology.",
-                      })
-                  );
-        let context = target.kind === "replica" ? target.replica.context : target.context;
-        if (target.authenticate) {
+    const authenticateRequest = (authenticate: OntologyAuthenticate<R>, request: Request | undefined) =>
+        Effect.gen(function* () {
             if (!request)
                 return yield* new BackendError({
                     operation: "ontology.authenticate",
@@ -581,7 +596,7 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                     retryable: false,
                     message: "This ontology requires an HTTP authentication binding.",
                 });
-            context = yield* target.authenticate(request);
+            const context = yield* authenticate(request);
             yield* Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Unknown))(context).pipe(
                 Effect.mapError(
                     () =>
@@ -593,7 +608,43 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                         })
                 )
             );
+            return context;
+        });
+    const bind = Effect.fn("OntologyServer.bind")(function* (ontology: string, request?: Request) {
+        if (!single) yield* name(ontology);
+        const route = single ? undefined : yield* matched(ontology);
+        if (route) {
+            // Authenticate before opening, so an unauthenticated request never opens a route
+            // and an open failure can be shown in full to a caller allowed internal access.
+            const { authenticate, dangerouslyAllowInternalAccess: access } = route.factory;
+            const caller = authenticate ? yield* authenticateRequest(authenticate, request) : undefined;
+            const target = yield* RcMap.get(resources, route.key).pipe(
+                Effect.tapError((error) =>
+                    Effect.sync(() => {
+                        if (allowsInternalAccess(access, caller)) forwardedStartupErrors.add(error);
+                    })
+                )
+            );
+            const context = caller ?? (target.kind === "replica" ? target.replica.context : target.context);
+            return yield* RcMap.get(endpoints, new EndpointKey(ontology, target, context));
         }
+        const target = single
+            ? (options as OntologyBindingOptions<R>)
+            : settings.resolve
+              ? yield* settings.resolve(ontology)
+              : yield* Effect.fail(
+                    new BackendError({
+                        operation: "ontology.route",
+                        kind: "NotFound",
+                        retryable: false,
+                        message: "Unknown ontology.",
+                    })
+                );
+        const context = target.authenticate
+            ? yield* authenticateRequest(target.authenticate, request)
+            : target.kind === "replica"
+              ? target.replica.context
+              : target.context;
         return yield* RcMap.get(endpoints, new EndpointKey(ontology, target, context));
     });
     const server: OntologyServer<R> = {
@@ -620,8 +671,9 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                     return { pin: yield* bound.replica.demand.pinStatus };
                 })
             ),
-        // Route settings, including any IR policy, are unknown until a route opens.
-        errors: internalAccess === true ? "forward" : "projected",
+        // Failures before a route is bound: its IR policy is not known yet.
+        errors: (error) =>
+            forwardedStartupErrors.has(error) ? error : projectBackendError(error, "projected"),
         ir: settings.ir,
         upstreamErrors: settings.upstreamErrors,
     };
@@ -636,7 +688,9 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
 
 export interface MakeOntologyServer {
     <R = never, const Paths extends string = string>(
-        options: OntologyServerRoutes<R, Paths, OntologyRouteBinding<R>> | OntologyBindingOptions<R>
+        options:
+            | OntologyServerRoutes<R, Paths, Exclude<OpenedOntologyRoute<R>, ManagedReplicaRoute<R>>>
+            | OntologyBindingOptions<R>
     ): Effect.Effect<OntologyServer<Exclude<R, Scope.Scope>>, BackendError, R | Scope.Scope>;
     <R = never, const Paths extends string = string>(
         options: OntologyServerRoutes<R, Paths>

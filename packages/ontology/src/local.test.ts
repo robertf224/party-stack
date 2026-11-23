@@ -49,7 +49,6 @@ test("localClient lazily owns a server and opens an SDK memory view over its man
         );
         const platform = yield* Layer.build(Runtimes.layer(MemoryRuntime.layer));
         return yield* makeOntologyServer({
-            dangerouslyAllowInternalAccess: true,
             enableRealtime: true,
             replicas: {},
             routes: {
@@ -57,6 +56,7 @@ test("localClient lazily owns a server and opens an SDK memory view over its man
                     kind: "replica",
                     ir,
                     backend: yield* makeBackend(),
+                    dangerouslyAllowInternalAccess: true,
                 },
             },
         }).pipe(Effect.provideContext(platform));
@@ -91,12 +91,12 @@ test("closing a local client leaves a borrowed server usable", async () => {
                 Effect.gen(function* () {
                     yield* Effect.addFinalizer(() => Effect.sync(() => (closed = true)));
                     return yield* makeOntologyServer({
-                        dangerouslyAllowInternalAccess: true,
                         enableRealtime: true,
                         routes: {
                             items: {
                                 kind: "owned",
                                 backend: yield* makeBackend(),
+                                dangerouslyAllowInternalAccess: true,
                             },
                         },
                     });

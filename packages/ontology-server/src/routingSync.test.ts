@@ -49,29 +49,31 @@ test("native checkpoints share the managed route owner and return its installed 
             Effect.gen(function* () {
                 const upstream = yield* backend("checkpoint-upstream");
                 const server = yield* makeOntologyServer({
-                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     replicas: {},
                     routes: {
-                        "workspaces/:workspaceId/issues": () =>
-                            Effect.gen(function* () {
-                                yield* Effect.acquireRelease(
-                                    Effect.sync(() => {
-                                        opened++;
-                                        active++;
-                                    }),
-                                    () =>
+                        "workspaces/:workspaceId/issues": {
+                            dangerouslyAllowInternalAccess: true,
+                            open: () =>
+                                Effect.gen(function* () {
+                                    yield* Effect.acquireRelease(
                                         Effect.sync(() => {
-                                            active--;
-                                        })
-                                );
-                                return {
-                                    kind: "replica" as const,
-                                    backend: upstream,
-                                    ir,
-                                    live: false,
-                                };
-                            }),
+                                            opened++;
+                                            active++;
+                                        }),
+                                        () =>
+                                            Effect.sync(() => {
+                                                active--;
+                                            })
+                                    );
+                                    return {
+                                        kind: "replica" as const,
+                                        backend: upstream,
+                                        ir,
+                                        live: false,
+                                    };
+                                }),
+                        },
                     },
                 });
                 const target = "workspaces/first/issues";
@@ -101,12 +103,12 @@ test("native checkpoints reject routes without a replica", async () => {
         Effect.scoped(
             Effect.gen(function* () {
                 const server = yield* makeOntologyServer({
-                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     routes: {
                         issues: {
                             kind: "owned",
                             backend: yield* backend("checkpoint-owned"),
+                            dangerouslyAllowInternalAccess: true,
                         },
                     },
                 });

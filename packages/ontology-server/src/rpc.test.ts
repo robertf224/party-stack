@@ -1756,18 +1756,19 @@ test.each([undefined, false, true])(
                     const backend = { ...owned, watchSubset: watched };
                     const selected = vi.spyOn(backend, "subscribeSelection");
                     const server = yield* makeOntologyServer({
-                        dangerouslyAllowInternalAccess: true,
                         enableRealtime,
                         routes: {
-                            default: { kind: "owned", backend },
+                            default: { kind: "owned", backend, dangerouslyAllowInternalAccess: true },
                             finite: {
                                 kind: "owned",
                                 backend,
+                                dangerouslyAllowInternalAccess: true,
                                 enableRealtime: false,
                             },
                             live: {
                                 kind: "owned",
                                 backend,
+                                dangerouslyAllowInternalAccess: true,
                                 enableRealtime: true,
                             },
                         },
@@ -1846,9 +1847,8 @@ test("server errors follow each route's policy boundary automatically", async ()
                     actions: [{ actionType: "increment", check: q.literal(true) }],
                 };
                 const server = yield* makeOntologyServer({
-                    dangerouslyAllowInternalAccess: true,
                     routes: {
-                        private: { kind: "proxy", backend, ir },
+                        private: { kind: "proxy", backend, ir, dangerouslyAllowInternalAccess: true },
                         public: { kind: "proxy", backend, ir: { ...ir, policy }, context: {} },
                     },
                 });

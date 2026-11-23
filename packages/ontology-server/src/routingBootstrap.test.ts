@@ -75,7 +75,6 @@ test("managed routes reopen retained data without a Describe preflight", async (
                         }),
                 };
                 const open = makeOntologyServer({
-                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     replicas: {},
                     routes: {
@@ -84,6 +83,7 @@ test("managed routes reopen retained data without a Describe preflight", async (
                             upstream: { client: upstream },
                             context,
                             live: false,
+                            dangerouslyAllowInternalAccess: true,
                         },
                     },
                 });
@@ -110,7 +110,6 @@ test("managed routes reopen retained data without a Describe preflight", async (
                 );
                 expect(descriptions).toBe(1);
                 const other = yield* makeOntologyServer({
-                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     replicas: {},
                     routes: {
@@ -119,6 +118,7 @@ test("managed routes reopen retained data without a Describe preflight", async (
                             upstream: { client: upstream },
                             context: { userId: "bob" },
                             live: false,
+                            dangerouslyAllowInternalAccess: true,
                         },
                     },
                 });
@@ -148,27 +148,29 @@ test("native backend routes reuse their account's definition before backend cons
                 let loads = 0;
                 let selected = context;
                 const open = makeOntologyServer({
-                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     replicas: {},
                     routes: {
-                        notes: (_, route) =>
-                            Effect.gen(function* () {
-                                const definition = yield* route.definition({
-                                    context: selected,
-                                    load: Effect.sync(() => {
-                                        loads++;
-                                        return ir;
-                                    }),
-                                });
-                                return {
-                                    kind: "replica" as const,
-                                    ir: definition,
-                                    backend,
-                                    context: selected,
-                                    live: false,
-                                };
-                            }),
+                        notes: {
+                            dangerouslyAllowInternalAccess: true,
+                            open: (_, route) =>
+                                Effect.gen(function* () {
+                                    const definition = yield* route.definition({
+                                        context: selected,
+                                        load: Effect.sync(() => {
+                                            loads++;
+                                            return ir;
+                                        }),
+                                    });
+                                    return {
+                                        kind: "replica" as const,
+                                        ir: definition,
+                                        backend,
+                                        context: selected,
+                                        live: false,
+                                    };
+                                }),
+                        },
                     },
                 });
                 const acquire = Effect.scoped(
