@@ -100,6 +100,7 @@ export const makeTrackerOntologyServer = Effect.fn("Tracker.server")(function* (
     const connections = authority.connections;
     const users = createFoundryUsersIntegration({ objectType: "User", lens: foundryUserToUser });
     return yield* makeOntologyServer({
+        dangerouslyAllowInternalAccess: true,
         enableRealtime: true,
         routes: {
             connect: {
@@ -134,7 +135,6 @@ export const makeTrackerOntologyServer = Effect.fn("Tracker.server")(function* (
                       );
                 return {
                     kind: "replica" as const,
-                    dangerouslyAllowInternalAccess: true as const,
                     ir: ontology,
                     context,
                     backend,

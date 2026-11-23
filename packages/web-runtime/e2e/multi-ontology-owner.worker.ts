@@ -110,6 +110,7 @@ const server = Effect.gen(function* () {
         },
     }).pipe(Effect.provideService(Runtime, runtime));
     server = yield* makeOntologyServer({
+        dangerouslyAllowInternalAccess: true,
         enableRealtime: true,
         replicas: { scope: identity },
         idleRetentionMs: identity.startsWith("fail:") ? -1 : 100,
@@ -140,7 +141,6 @@ const server = Effect.gen(function* () {
                 });
                 return {
                     kind: "replica" as const,
-                    dangerouslyAllowInternalAccess: true as const,
                     ir,
                     namespace: selection.ontologyId,
                     context: { user: session.userId },

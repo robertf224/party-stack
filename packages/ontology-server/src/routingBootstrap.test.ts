@@ -75,6 +75,7 @@ test("managed routes reopen retained data without a Describe preflight", async (
                         }),
                 };
                 const open = makeOntologyServer({
+                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     replicas: {},
                     routes: {
@@ -83,7 +84,6 @@ test("managed routes reopen retained data without a Describe preflight", async (
                             upstream: { client: upstream },
                             context,
                             live: false,
-                            dangerouslyAllowInternalAccess: true,
                         },
                     },
                 });
@@ -110,6 +110,7 @@ test("managed routes reopen retained data without a Describe preflight", async (
                 );
                 expect(descriptions).toBe(1);
                 const other = yield* makeOntologyServer({
+                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     replicas: {},
                     routes: {
@@ -118,7 +119,6 @@ test("managed routes reopen retained data without a Describe preflight", async (
                             upstream: { client: upstream },
                             context: { userId: "bob" },
                             live: false,
-                            dangerouslyAllowInternalAccess: true,
                         },
                     },
                 });
@@ -148,6 +148,7 @@ test("native backend routes reuse their account's definition before backend cons
                 let loads = 0;
                 let selected = context;
                 const open = makeOntologyServer({
+                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     replicas: {},
                     routes: {
@@ -166,7 +167,6 @@ test("native backend routes reuse their account's definition before backend cons
                                     backend,
                                     context: selected,
                                     live: false,
-                                    dangerouslyAllowInternalAccess: true as const,
                                 };
                             }),
                     },

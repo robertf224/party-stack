@@ -111,6 +111,7 @@ const server = Effect.gen(function* () {
     }).pipe(Effect.provideService(Runtime, runtime));
 
     return yield* makeOntologyServer({
+        dangerouslyAllowInternalAccess: true,
         enableRealtime: true,
         routes: {
             connect: connectDeviceRoute(connect),
@@ -123,7 +124,6 @@ const server = Effect.gen(function* () {
                     const context = { userId: access.userId };
                     return {
                         kind: "replica" as const,
-                        dangerouslyAllowInternalAccess: true as const,
                         namespace: foundry.ontologyId,
                         ir: ontology,
                         context,

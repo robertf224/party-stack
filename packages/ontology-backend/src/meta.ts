@@ -65,6 +65,8 @@ export interface PullOptions {
     queryFunctionTypeNames?: string[];
     /** App-specific definition edits, applied before invalid definitions are omitted. */
     transformPulledOntology?: (ontology: OntologyIR) => OntologyIR | Promise<OntologyIR>;
+    /** Resolve to `{ ontology, omitted }` instead of the IR alone. */
+    includeOmitted?: boolean;
 }
 
 export interface PullResult {
@@ -77,8 +79,7 @@ export interface PullResult {
     readonly omitted: readonly OmittedDefinition[];
 }
 
-/** Pull selected definitions directly from a metadata backend, without a replica or UI collections. */
-export const pull = Effect.fn("Metadata.pull")(function* (
+const pullDefinitions = Effect.fn("Metadata.pull")(function* (
     backend: Pick<OntologyBackendService, "query">,
     options: PullOptions = {}
 ) {
@@ -225,11 +226,32 @@ export const pull = Effect.fn("Metadata.pull")(function* (
     return pulledResult;
 });
 
+/**
+ * Pull selected definitions directly from a metadata backend, without a replica or UI collections.
+ *
+ * Definitions the IR cannot represent are omitted (see `omitInvalid`) and logged as a warning,
+ * rather than failing the pull. Pass `includeOmitted: true` to also receive what was omitted.
+ */
+export function pull(
+    backend: Pick<OntologyBackendService, "query">,
+    options: PullOptions & { readonly includeOmitted: true }
+): Effect.Effect<PullResult, BackendError>;
+export function pull(
+    backend: Pick<OntologyBackendService, "query">,
+    options?: PullOptions
+): Effect.Effect<OntologyIR, BackendError>;
+export function pull(
+    backend: Pick<OntologyBackendService, "query">,
+    options: PullOptions = {}
+): Effect.Effect<OntologyIR | PullResult, BackendError> {
+    const result = pullDefinitions(backend, options);
+    return options.includeOmitted ? result : Effect.map(result, (pulled) => pulled.ontology);
+}
+
 /** Assemble a runtime definition through ordinary metadata queries. Completeness
  * is the adapter's query contract; this does not invent an atomic provider revision.
  */
-export const loadDefinition = (backend: Pick<OntologyBackendService, "query">) =>
-    Effect.map(pull(backend), (result) => result.ontology);
+export const loadDefinition = (backend: Pick<OntologyBackendService, "query">) => pull(backend);
 
 function localId(kind: "ActionType" | "ObjectType" | "Property", name: string): string {
     return `local:${kind}:${encodeURIComponent(name)}`;

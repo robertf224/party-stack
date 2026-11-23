@@ -49,6 +49,7 @@ test("native checkpoints share the managed route owner and return its installed 
             Effect.gen(function* () {
                 const upstream = yield* backend("checkpoint-upstream");
                 const server = yield* makeOntologyServer({
+                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     replicas: {},
                     routes: {
@@ -69,7 +70,6 @@ test("native checkpoints share the managed route owner and return its installed 
                                     backend: upstream,
                                     ir,
                                     live: false,
-                                    dangerouslyAllowInternalAccess: true as const,
                                 };
                             }),
                     },
@@ -101,12 +101,12 @@ test("native checkpoints reject routes without a replica", async () => {
         Effect.scoped(
             Effect.gen(function* () {
                 const server = yield* makeOntologyServer({
+                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     routes: {
                         issues: {
                             kind: "owned",
                             backend: yield* backend("checkpoint-owned"),
-                            dangerouslyAllowInternalAccess: true,
                         },
                     },
                 });

@@ -113,6 +113,7 @@ test("one ontology server uses ordinary Connect actions to acquire OAuth and ext
                 });
                 yield* data.storage.transaction((tx) => tx.put("Issue", { id: "issue-1" }));
                 const server = yield* makeOntologyServer({
+                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     resolve: Effect.fnUntraced(function* (name) {
                         if (name === "connect")
@@ -137,7 +138,6 @@ test("one ontology server uses ordinary Connect actions to acquire OAuth and ext
                             backend: data,
                             ir: issuesIR,
                             context: { user: session.userId },
-                            dangerouslyAllowInternalAccess: true as const,
                         };
                     }),
                 }).pipe(

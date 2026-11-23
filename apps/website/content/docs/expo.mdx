@@ -140,6 +140,7 @@ const openDevice = Effect.gen(function* () {
             ],
         }).pipe(Effect.provideService(Runtime, credentialRuntime));
         const server = yield* makeOntologyServer({
+            dangerouslyAllowInternalAccess: true,
             enableRealtime: true,
             routes: {
                 connect: connectDeviceRoute(connect),
@@ -158,7 +159,6 @@ const openDevice = Effect.gen(function* () {
                                 baseUrl: access.serviceInstance.instanceUrl,
                                 egress: access.egress,
                             }),
-                            dangerouslyAllowInternalAccess: true as const,
                         };
                     }),
                 "accounts/:connectionId/ontologies/:ontologyId": (params, route) =>
@@ -181,7 +181,6 @@ const openDevice = Effect.gen(function* () {
                             context,
                             authentication: access.authentication,
                             backend: yield* makeFoundryBackend({ ...options, ir, context }),
-                            dangerouslyAllowInternalAccess: true as const,
                         };
                     }),
             },

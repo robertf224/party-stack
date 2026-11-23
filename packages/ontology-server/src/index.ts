@@ -5,6 +5,7 @@ export type {
     OntologyServerRoutes,
     OntologyServerOptions,
     OntologyRoute,
+    OntologyRouteBinding,
     OntologyRouteFactory,
     OntologyRouteParams,
     OntologyRouteContext,

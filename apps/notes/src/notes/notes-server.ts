@@ -14,6 +14,7 @@ const deliveryStrategy =
         ? requestedDeliveryStrategy
         : "auto";
 export const notesServer = makeOntologyServer({
+    dangerouslyAllowInternalAccess: true,
     enableRealtime: true,
     routes: {
         notes: () =>
@@ -30,7 +31,6 @@ export const notesServer = makeOntologyServer({
                     namespace: "notes-v1",
                     beforeOpen: (runtime: RuntimeService, ir: OntologyIR) =>
                         migrateNotesReplica(runtime.tables, "notes-v1", ir),
-                    dangerouslyAllowInternalAccess: true as const,
                     demand: { idleRetentionMs: 30_000 },
                 };
             }),

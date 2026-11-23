@@ -84,7 +84,6 @@ const server = Effect.gen(function* () {
                   });
             return {
                 kind: "replica" as const,
-                dangerouslyAllowInternalAccess: true as const,
                 ir: meta ? metadata : ontology,
                 namespace: `${SALESFORCE_TASK_MANAGER_ONTOLOGY_ID}:${meta ? "metadata" : "data"}`,
                 context,
@@ -93,6 +92,7 @@ const server = Effect.gen(function* () {
             };
         });
     return yield* makeOntologyServer({
+        dangerouslyAllowInternalAccess: true,
         enableRealtime: true,
         routes: {
             connect: connectDeviceRoute(manager),

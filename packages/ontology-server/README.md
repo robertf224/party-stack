@@ -263,6 +263,11 @@ Use `true` for a private endpoint, or a synchronous predicate over validated con
 dangerouslyAllowInternalAccess: (context) => context.role === "internal-admin",
 ```
 
+Set it once on the server: with routes it applies to every route, and a route that sets
+its own fails to open. Replica routes need `true`. With `true`, a request that fails before
+its route is ready (for example a definition that doesn't load) reports the original error
+instead of a generic message.
+
 Authentication still runs per request. A predicate must return a boolean; session
 and database checks belong in `authenticate`. Worker helpers enable internal access
 for private app ports. Without an IR policy, explicit internal access grants the raw

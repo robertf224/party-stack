@@ -63,6 +63,7 @@ export async function writePulledOntology(
             Effect.gen(function* () {
                 const backend = yield* config.backend;
                 return yield* pull(backend, {
+                    includeOmitted: true,
                     objectTypeNames: config.objectTypeNames,
                     actionTypeNames: config.actionTypeNames,
                     queryFunctionTypeNames: config.queryFunctionTypeNames ?? [],

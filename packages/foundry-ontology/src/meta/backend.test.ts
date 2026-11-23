@@ -33,7 +33,7 @@ test("pull declares the known Foundry current-user context without an app transf
             queryFunctionTypeNames: [],
         })
     );
-    expect(result.ontology.context).toEqual({
+    expect(result.context).toEqual({
         type: o.struct({ fields: [{ name: "userId", displayName: "User ID", type: o.string({}) }] }),
         partition: [["userId"]],
     });

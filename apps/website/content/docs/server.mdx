@@ -309,6 +309,7 @@ export const openDeviceServer = Effect.fn("App.openDeviceServer")(function* (
     userId: string
 ) {
     return yield* makeOntologyServer({
+        dangerouslyAllowInternalAccess: true,
         enableRealtime: true,
         routes: {
             "workspaces/:workspaceId": ({ workspaceId }) =>
@@ -320,7 +321,6 @@ export const openDeviceServer = Effect.fn("App.openDeviceServer")(function* (
                     },
                     context: { userId },
                     definition: { onIncompatible: "rebuild" as const },
-                    dangerouslyAllowInternalAccess: true as const,
                 }),
         },
     });
@@ -432,6 +432,12 @@ dangerouslyAllowInternalAccess: (context) => context.role === "internal-admin",
 Declare `role` in the context type and return it from `authenticate`. The predicate
 must return a boolean synchronously; session/database checks belong in `authenticate`.
 Use `true` only when all callers may run internal commands. Trace recording is separate.
+
+Set it once on the server; with routes it applies to every route, and a route that sets
+its own fails to open. Replica routes need `true`. With `true`, a request that fails
+before its route is ready, such as a definition that doesn't load, also reports the
+original error instead of a generic message. Use it for servers whose callers are
+trusted: same-device servers, private worker ports and development servers.
 
 The SharedWorker helpers enable internal access for private app ports. Without an
 IR policy, this also exposes raw backend/replica capabilities. With a policy, raw

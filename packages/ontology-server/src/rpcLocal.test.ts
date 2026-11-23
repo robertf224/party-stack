@@ -331,8 +331,9 @@ test("local clients share the server's validated definition instead of copying i
             Effect.gen(function* () {
                 const backend = yield* owned();
                 const server = yield* makeOntologyServer({
+                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
-                    routes: { items: { kind: "owned", ir, backend, dangerouslyAllowInternalAccess: true } },
+                    routes: { items: { kind: "owned", ir, backend } },
                 });
                 const local = yield* makeOntologyLocalClient(server);
                 const first = yield* local.ontology("items");
@@ -352,6 +353,7 @@ test("managed replica routes resolve action parameters from the replica without 
                 const upstream = yield* owned();
                 const { resolveActionParameters: _, ...withoutResolver } = upstream;
                 const server = yield* makeOntologyServer({
+                    dangerouslyAllowInternalAccess: true,
                     enableRealtime: true,
                     replicas: {},
                     routes: {
@@ -360,7 +362,6 @@ test("managed replica routes resolve action parameters from the replica without 
                             ir,
                             backend: withoutResolver,
                             live: false,
-                            dangerouslyAllowInternalAccess: true,
                         },
                     },
                 });
