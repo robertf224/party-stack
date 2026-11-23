@@ -3,7 +3,10 @@ import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect } from "effect";
+import type { PinState } from "./pins.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { BlobStorageService } from "@party-stack/ontology-storage/blobs";
+import type { Transaction } from "@party-stack/ontology-storage/tables";
 import type { RuntimeService } from "@party-stack/runtime";
 
 export const assertReplicaRebuildSafe = Effect.fnUntraced(function* (
@@ -80,57 +83,76 @@ export const resetReplicaCache = Effect.fn("Replica.resetCache")(function* (opti
                 // A crash may leave the catalog marker after this transaction committed.
                 // Never repeat the reset, including when a new action now exists.
                 if (stored?.signature === signature) return;
-                for (const part of ["outbox", "parent-pending"])
-                    if ((yield* tx.query(Table.make({ name: name(part) }), { limit: 1 })).length > 0)
-                        return yield* new BackendError({
-                            operation: "replica.rebuild",
-                            kind: "Conflict",
-                            retryable: false,
-                            message: "The replica has pending actions; its cache cannot be rebuilt safely.",
-                        });
-                const types = new Set(
-                    [...options.previous.objectTypes, ...options.ir.objectTypes].map((type) => type.name)
-                );
-                for (const type of types) {
-                    for (const layer of ["base", "parent-base", "parent-overlay", "overlay"])
-                        yield* tx.clear(Table.make({ name: name(`${layer}:${type}`) }));
-                    for (const layer of ["base", "overlay"])
-                        yield* blobs
-                            .in(tx)
-                            .releaseGroup(JSON.stringify(["replica-row", namespace, layer, type]));
-                }
-                for (const part of [
-                    "coverage",
-                    "retention",
-                    "roots",
-                    "action-rows",
-                    "action-queries",
-                    "pins",
-                    "sweep",
-                    "delivery-seen",
-                    "parent-head",
-                ])
-                    yield* tx.clear(Table.make({ name: name(part) }));
-                for (const part of ["state", "changes", "frames"])
-                    yield* tx.clear(
-                        Table.make({ name: JSON.stringify([name("upstream"), "incoming-delivery", part]) })
-                    );
-                const pin = Table.make<{ desired: unknown }>({ name: name("query-pin") });
-                const desired = yield* tx.get(pin, "head");
-                if (desired) yield* tx.put(pin, "head", { desired: desired.desired });
-                yield* blobs.in(tx).release(name("query-pin-bytes"));
-                yield* blobs.in(tx).release(name("query-pin-pending-bytes"));
-                if (stored)
-                    yield* tx.put(position, "head", {
-                        ...stored,
-                        signature,
-                        cursor: undefined,
-                        parentViewIdentity: undefined,
-                        deliverySelection: undefined,
-                        deliveryMembershipVersion: undefined,
-                        deliveryResident: false,
-                    });
+                const reset = yield* rebuildReplicaData(tx, { ...options, blobs, signature });
+                if (stored) yield* tx.put(position, "head", { ...stored, ...reset });
             })
         )
         .pipe(Effect.mapError((cause) => classifyBackendFailure("replica.rebuild", cause)));
+});
+
+/** The caller guards source identity and installs the returned position fields in this transaction. */
+export const rebuildReplicaData = Effect.fnUntraced(function* (
+    tx: Transaction,
+    options: {
+        namespace: string;
+        previous: OntologyIR;
+        ir: OntologyIR;
+        blobs: BlobStorageService;
+        signature: string;
+    }
+) {
+    const { namespace, blobs } = options;
+    const name = (part: string) => JSON.stringify(["replica", namespace, part]);
+    for (const part of ["outbox", "parent-pending"])
+        if ((yield* tx.query(Table.make({ name: name(part) }), { limit: 1 })).length > 0)
+            return yield* new BackendError({
+                operation: "replica.rebuild",
+                kind: "Conflict",
+                retryable: false,
+                message: "The replica has pending actions; its cache cannot be rebuilt safely.",
+            });
+    const types = new Set(
+        [...options.previous.objectTypes, ...options.ir.objectTypes].map((type) => type.name)
+    );
+    for (const type of types) {
+        for (const layer of ["base", "parent-base", "parent-overlay", "overlay"])
+            yield* tx.clear(Table.make({ name: name(`${layer}:${type}`) }));
+        for (const layer of ["base", "overlay"])
+            yield* blobs.in(tx).releaseGroup(JSON.stringify(["replica-row", namespace, layer, type]));
+    }
+    for (const part of [
+        "coverage",
+        "retention",
+        "roots",
+        "action-rows",
+        "action-queries",
+        "pins",
+        "sweep",
+        "delivery-seen",
+        "parent-head",
+    ])
+        yield* tx.clear(Table.make({ name: name(part) }));
+    for (const part of ["state", "changes", "frames"])
+        yield* tx.clear(Table.make({ name: JSON.stringify([name("upstream"), "incoming-delivery", part]) }));
+    const pin = Table.make<PinState>({ name: name("query-pin") });
+    for (const { key, value } of yield* tx.query(pin)) {
+        // The aggregate ownership table and each pin's members must be rebuilt together.
+        yield* tx.clear(Table.make({ name: JSON.stringify(["replica", namespace, "pin-members", key]) }));
+        if (value.removed) yield* tx.delete(pin, key);
+        else yield* tx.put(pin, key, { desired: value.desired });
+        if (key !== "head") {
+            yield* blobs.in(tx).release(name(`query-pin-bytes:${key}`));
+            yield* blobs.in(tx).release(name(`query-pin-pending-bytes:${key}`));
+        }
+    }
+    yield* blobs.in(tx).release(name("query-pin-bytes"));
+    yield* blobs.in(tx).release(name("query-pin-pending-bytes"));
+    return {
+        signature: options.signature,
+        cursor: undefined,
+        parentViewIdentity: undefined,
+        deliverySelection: undefined,
+        deliveryMembershipVersion: undefined,
+        deliveryResident: false,
+    };
 });

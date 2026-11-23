@@ -10,12 +10,20 @@ import { evaluateQuery } from "@party-stack/ontology-storage";
 import { makeBlobStorage, byteSource } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { makeNetworkConnectivity, MemoryBlobBytesStore, RuntimeError } from "@party-stack/runtime";
+import {
+    makeNetworkConnectivity,
+    MemoryBlobBytesStore,
+    RuntimeError,
+    Runtime,
+    Runtimes,
+    MemoryRuntime,
+} from "@party-stack/runtime";
 import { Effect, Exit, Scope, Stream, Deferred, Schema, PubSub } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { makeReplicaKernel } from "./engine.js";
 import { replicaStateSource } from "./infrastructure.js";
+import { makeReplica as openReplica } from "./make.js";
 import { pinRecordKey } from "./pinModel.js";
 import { makeQueryPin } from "./pins.js";
 import { makeReplica } from "./service.js";
@@ -184,6 +192,63 @@ test("named pins keep overlapping graphs across removal and resume every revisio
                 expect(yield* replica.get("Issue", "one")).toBeUndefined();
                 expect(yield* replica.demand.pins.list).toEqual([]);
             })
+        )
+    );
+});
+
+test("a direct rebuild restores named pins and their shared row ownership across a second restart", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const namespace = "direct-cache";
+                const runtime = yield* (yield* Runtimes).acquire({ owner: "owner", namespace });
+                const open = (definition: OntologyIR) =>
+                    openReplica({
+                        ir: definition,
+                        backend: f.backend,
+                        live: false,
+                        onIncompatible: "rebuild",
+                    }).pipe(Effect.provideService(Runtime, runtime));
+                const first = { name: "folders", query: document("a") };
+                const second = { name: "favorites", query: document("a") };
+                const original = yield* Effect.scoped(
+                    Effect.gen(function* () {
+                        const replica = yield* open(ir);
+                        yield* replica.demand.pins.update({ set: [first, second] });
+                        return yield* replica.demand.pins.list;
+                    })
+                );
+                expect(original).toHaveLength(2);
+                expect(original.every((pin) => pin.ready)).toBe(true);
+                const next = {
+                    ...ir,
+                    actionTypes: [{ name: "newAction", displayName: "New", parameters: [], logic: [] }],
+                };
+                f.data.Issue!.push({ id: "new", project: "a" });
+                for (let launch = 0; launch < 2; launch++) {
+                    yield* Effect.scoped(
+                        Effect.gen(function* () {
+                            const replica = yield* open(next);
+                            expect(yield* replica.demand.pins.list).toEqual(original);
+                            expect(yield* replica.get("Issue", "new")).toMatchObject({ id: "new" });
+                            const rows = Table.make<{ owners: string[] }>({
+                                name: JSON.stringify(["replica", namespace, "pins"]),
+                            });
+                            const key = JSON.stringify(["Issue", "one"]);
+                            expect(new Set((yield* runtime.tables.get(rows, key))?.owners)).toEqual(
+                                new Set(original.map((pin) => pin.id))
+                            );
+                            if (launch === 1) {
+                                yield* replica.demand.pins.remove(pinRecordKey(first));
+                                expect((yield* runtime.tables.get(rows, key))?.owners).toEqual([
+                                    pinRecordKey(second),
+                                ]);
+                            }
+                        })
+                    );
+                }
+            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );
 });

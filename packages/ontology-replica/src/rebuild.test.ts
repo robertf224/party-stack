@@ -12,6 +12,7 @@ import {
 } from "@party-stack/runtime";
 import { Effect, Layer } from "effect";
 import { expect, test } from "vite-plus/test";
+import { makeReplica } from "./make.js";
 import { makeReplicaPartitionCatalog } from "./registry.js";
 import type { OntologyDescription } from "@party-stack/ontology-backend/description";
 import type { PendingAction } from "@party-stack/ontology-backend/protocol";
@@ -80,6 +81,66 @@ const setup = Effect.gen(function* () {
     const opened = yield* catalog.open("issues", { ir, backend, bootstrap, live: false });
     const replacement = { ...bootstrap, ir: next };
     return { catalog, runtime, backend, opened, replacement };
+});
+
+test("direct startup rejects unsafe rebuilds and leaves the old cache reopenable", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const runtime = yield* (yield* Runtimes).acquire({ owner: "direct", namespace: "issues" });
+                const backend = yield* makeOwnedBackend({
+                    ir,
+                    namespace: "upstream",
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                const open = (definition: OntologyIR, policy?: "rebuild", source = backend) =>
+                    Effect.scoped(
+                        makeReplica({ ir: definition, backend: source, live: false, onIncompatible: policy })
+                    ).pipe(Effect.provideService(Runtime, runtime), Effect.asVoid);
+                yield* open(ir);
+                const position = table<{ source: string; signature: string }>("position");
+                const head = (yield* runtime.tables.get(position, "head"))!;
+                const rows = table("base:Item");
+                const row = { id: "old", count: 1 };
+                yield* runtime.tables.put(rows, "old", row);
+                expect(yield* Effect.result(open(next))).toMatchObject({
+                    failure: { kind: "SchemaMismatch" },
+                });
+                expect(
+                    yield* Effect.result(open(next, "rebuild", { ...backend, sourceId: "other" }))
+                ).toMatchObject({ failure: { kind: "SourceMismatch" } });
+                for (const part of ["outbox", "parent-pending"]) {
+                    yield* runtime.tables.put(table(part), "pending", pending);
+                    expect(yield* Effect.result(open(next, "rebuild"))).toMatchObject({
+                        failure: { kind: "Conflict" },
+                    });
+                    expect(yield* runtime.tables.get(table(part), "pending")).toEqual(pending);
+                    yield* runtime.tables.delete(table(part), "pending");
+                }
+                const indexChange = {
+                    ...next,
+                    objectTypes: [{ ...next.objectTypes[0]!, primaryKey: "count" }],
+                };
+                expect(yield* Effect.result(open(indexChange, "rebuild"))).toMatchObject({
+                    failure: { kind: "InvalidConfiguration" },
+                });
+                expect(yield* runtime.tables.get(position, "head")).toEqual(head);
+                const corrupt = { ...head, signature: "invalid-stamp" };
+                yield* runtime.tables.put(position, "head", corrupt);
+                expect(yield* Effect.result(open(next, "rebuild"))).toMatchObject({
+                    failure: { kind: "SchemaMismatch" },
+                });
+                expect(yield* runtime.tables.get(position, "head")).toEqual(corrupt);
+                expect(yield* runtime.tables.get(rows, "old")).toEqual(row);
+                yield* runtime.tables.put(position, "head", head);
+                yield* open(ir);
+                expect(yield* runtime.tables.get(rows, "old")).toEqual(row);
+                yield* open(next, "rebuild");
+                expect(yield* runtime.tables.get(rows, "old")).toBeUndefined();
+            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
+        )
+    );
 });
 
 test("rebuild atomically drops disposable data while preserving outcomes, source identity and desired pin", async () => {

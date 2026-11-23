@@ -27,7 +27,7 @@ import {
     type DeliverySubscription,
 } from "@party-stack/ontology-backend/delivery";
 import { stateIdentity } from "@party-stack/ontology-backend/protocol";
-import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
+import { compileEffectSchemas, OntologyIRSchema } from "@party-stack/ontology-spec/effect";
 import { resolveType } from "@party-stack/ontology-spec/utils";
 import { setAtPath } from "@party-stack/ontology-spec/utils";
 import {
@@ -99,6 +99,7 @@ import { putIncomingRow, putIncomingBaseRows } from "./incoming.js";
 import { connectReplicaParent, connectReplicaDelivery } from "./parent.js";
 import { primaryKeyQueries, primaryKeyTableQuery } from "./primaryKeyOrder.js";
 import { deliveryRecovery } from "./recovery.js";
+import { rebuildReplicaData } from "./reset.js";
 import { superviseWatch } from "./watch.js";
 export type { DemandPolicy } from "./demandCache.js";
 import { affectsCoverage, markQuery, retentionQuery } from "./retention.js";
@@ -389,6 +390,7 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly wake: Effect.Effect<void>;
 }
 interface ReplicaCommonOptions {
+    readonly onIncompatible?: "error" | "rebuild";
     readonly namespace: string;
     readonly ir: OntologyIR;
     readonly context?: Record<string, unknown>;
@@ -589,11 +591,11 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             closed = true;
         })
     );
-    const tables: TablesService = {
+    const tables = {
         ...options.tables,
         query: primaryKeyTableQuery(options.tables.query, primaryKeys),
         read: (body) => options.tables.read((tx) => body(primaryKeyQueries(tx, primaryKeys))),
-        transaction: (body) =>
+        transaction: <A, E, R>(body: (tx: ReturnType<typeof trackVisible>["tx"]) => Effect.Effect<A, E, R>) =>
             options.tables
                 .transaction((tx) =>
                     Effect.gen(function* () {
@@ -649,7 +651,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     ),
                     Effect.map(({ result }) => result)
                 ),
-    };
+    } satisfies TablesService;
     const objectCacheGc =
         options.objectCacheGc === false
             ? undefined
@@ -1159,31 +1161,30 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     rows.filter((row) => !row.value.includedInBase).map((row) => publicAction(row.value))
                 )
             );
+    const checkedPosition = Effect.fnUntraced(function* (
+        stored: Position | undefined,
+        rebuild?: (stored: Position) => Effect.Effect<Position, BackendError>
+    ) {
+        if (stored && (stored.source !== sourceId || (stored.mode === "parent") !== Boolean(options.source)))
+            return yield* fault("SourceMismatch", "Replica source changed; reset this namespace explicitly.");
+        if (stored && !sameDefinitionContract(stored.signature)) {
+            if (rebuild) return yield* rebuild(stored);
+            return yield* fault(
+                "SchemaMismatch",
+                "Replica definition changed; migrate or reset this namespace explicitly."
+            );
+        }
+        return stored
+            ? { ...stored, signature }
+            : {
+                  sequence: 0,
+                  source: sourceId,
+                  signature,
+                  ...(options.source ? { mode: "parent" as const } : {}),
+              };
+    });
     const position = (tx: ReadTransaction) =>
-        Effect.gen(function* () {
-            const stored = yield* tx.get(metadata, "head");
-            if (
-                stored &&
-                (stored.source !== sourceId || (stored.mode === "parent") !== Boolean(options.source))
-            )
-                return yield* fault(
-                    "SourceMismatch",
-                    "Replica source changed; reset this namespace explicitly."
-                );
-            if (stored && !sameDefinitionContract(stored.signature))
-                return yield* fault(
-                    "SchemaMismatch",
-                    "Replica definition changed; migrate or reset this namespace explicitly."
-                );
-            return stored
-                ? { ...stored, signature }
-                : {
-                      sequence: 0,
-                      source: sourceId,
-                      signature,
-                      ...(options.source ? { mode: "parent" as const } : {}),
-                  };
-        });
+        tx.get(metadata, "head").pipe(Effect.flatMap((stored) => checkedPosition(stored)));
     const reader = (tx: ReadTransaction, confirmed: boolean): OwnedReadTransaction => ({
         get: (type, key) =>
             boundary(
@@ -1483,10 +1484,47 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             });
         }
     });
-    yield* boundary(
+    const rebuiltFrom = yield* boundary(
         tables.transaction((tx) =>
             Effect.gen(function* () {
-                yield* tx.put(metadata, "head", yield* position(tx));
+                const stored = yield* tx.get(metadata, "head", { forUpdate: true });
+                let previousSchemaHash: string | undefined;
+                const rebuild = Effect.fnUntraced(function* (head: Position) {
+                    const previous = yield* Effect.try({
+                        try: () =>
+                            Schema.decodeUnknownSync(OntologyIRSchema, { onExcessProperty: "error" })(
+                                Table.make({ name: "replica-definition" }).decode(head.signature)
+                            ),
+                        catch: (cause) =>
+                            fault(
+                                "SchemaMismatch",
+                                "Cannot rebuild from an unreadable retained definition.",
+                                cause
+                            ),
+                    });
+                    previousSchemaHash = yield* boundary(ontologyDefinitionContractHash(previous));
+                    if (!options.blobs)
+                        return yield* fault(
+                            "InvalidConfiguration",
+                            "A replica rebuild requires its blob store."
+                        );
+                    tx.resetVisible();
+                    const reset = yield* boundary(
+                        rebuildReplicaData(tx, {
+                            namespace: options.namespace,
+                            previous,
+                            ir: options.ir,
+                            blobs: options.blobs,
+                            signature,
+                        })
+                    );
+                    return { ...head, ...reset };
+                });
+                yield* tx.put(
+                    metadata,
+                    "head",
+                    yield* checkedPosition(stored, options.onIncompatible === "rebuild" ? rebuild : undefined)
+                );
                 // One designated owner opens this namespace. Query/read leases from
                 // a previous incarnation are volatile; pins and outbox roots are separate.
                 yield* tx.clear(roots);
@@ -1530,9 +1568,16 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     });
                 }
                 yield* rebase(tx);
+                return previousSchemaHash;
             })
         )
     );
+    if (rebuiltFrom)
+        yield* Effect.logWarning("Replica cache rebuilt", {
+            namespace: options.namespace,
+            previousSchemaHash: rebuiltFrom,
+            schemaHash,
+        });
     const publicRow = (type: string, object: ObjectValue, key?: Key) =>
         withObjectSources({
             ir: options.ir,

@@ -20,6 +20,8 @@ export interface ReplicaOptions extends Omit<
     | "encrypted"
     | "encryptionKeyring"
 > {
+    /** On a definition change, rebuild cached data and restore desired pins. Requires the same source and no pending actions. Defaults to "error". */
+    readonly onIncompatible?: "error" | "rebuild";
     readonly id?: string;
     readonly backend: OntologyBackendService;
     readonly source?: OntologySource;

@@ -52,8 +52,13 @@ export function trackVisible(tx: Transaction, views: ReadonlyMap<string, Overlay
         if (reset || !objectType || before.has(JSON.stringify([objectType, key]))) return;
         remember(objectType, key, yield* getVisible(tx, views.get(objectType)!, key));
     });
-    const wrapped: Transaction = {
+    const wrapped: Transaction & { resetVisible: () => void } = {
         ...tx,
+        // A schema rebuild cannot compare old rows with the new codecs.
+        resetVisible: () => {
+            reset = true;
+            before.clear();
+        },
         insert: (table, key, value) =>
             touch(table as Table<unknown>, key).pipe(Effect.andThen(tx.insert(table, key, value))),
         put: (table, key, value) =>
