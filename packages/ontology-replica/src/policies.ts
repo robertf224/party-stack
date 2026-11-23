@@ -7,6 +7,9 @@ export interface ReplicaOutboxPolicy {
     readonly maxRetries?: number;
     /** Exponential retry delay, capped at 60 seconds. Defaults to 1 second. */
     readonly retryDelayMs?: number;
+    /** Backend dispatch deadline in milliseconds. Defaults to 30 seconds. Infinity disables it.
+     * A timeout has an unknown outcome and follows the configured retry and failure policies. */
+    readonly dispatchTimeoutMs?: number;
     /** Abandon pending intent on terminal failure, including unknown remote outcomes. */
     readonly failureStrategy?: "pause" | "discard-all";
     /** See ReplicaConfiguration.outbox.prediction. */

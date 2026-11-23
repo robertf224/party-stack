@@ -34,6 +34,8 @@ import {
     evaluateQuery,
     withObjectSources,
     field,
+    and,
+    isUndefined,
     eq,
     inArray,
     inValues,
@@ -331,6 +333,7 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly actionStatus: (id: string) => Effect.Effect<
         {
             readonly pending?: PendingAction;
+            readonly blockedBy?: BackendError["blockedBy"];
             readonly receipt?: ActionReceipt;
             /** A retained terminal rejection, separate from the pending outbox. */
             readonly error?: BackendError;
@@ -517,6 +520,26 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         retryDelayMs > 60_000
     )
         return yield* fault("InvalidConfiguration", "Invalid outbox retry policy.");
+    const dispatchTimeoutMs = options.outbox?.dispatchTimeoutMs ?? 30_000;
+    if (!(dispatchTimeoutMs > 0))
+        return yield* fault("InvalidConfiguration", "Dispatch timeout must be positive or Infinity.");
+    // A lost reply may follow a commit. Let recordFailure decide whether a resend is safe.
+    const withDispatchTimeout = <A>(dispatch: Effect.Effect<A, BackendError>) =>
+        Number.isFinite(dispatchTimeoutMs)
+            ? Effect.timeoutOrElse(dispatch, {
+                  duration: dispatchTimeoutMs,
+                  orElse: () =>
+                      Effect.fail(
+                          new BackendError({
+                              operation: "applyAction",
+                              kind: "Unavailable",
+                              message: "The action dispatch timed out and may have committed.",
+                              retryable: true,
+                              actionOutcome: "unknown",
+                          })
+                      ),
+              })
+            : dispatch;
     if (
         options.resultRetentionMs !== undefined &&
         (options.resultRetentionMs <= 0 || Number.isNaN(options.resultRetentionMs))
@@ -1159,6 +1182,33 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     rows.filter((row) => !row.value.includedInBase).map((row) => publicAction(row.value))
                 )
             );
+    const firstBlockedIn = Effect.fnUntraced(function* (tx: ReadTransaction) {
+        const [first] = yield* tx.query(outbox, {
+            where: and(eq(field("state"), "blocked"), isUndefined(field("includedInBase"))),
+            orderBy: [{ field: field("sequence") }],
+            limit: 1,
+        });
+        return first?.value;
+    });
+    // Only the queue owner can compare sequence numbers. Carry its answer with the selected
+    // pending action, including through intermediate replicas with their own forwarding queue.
+    const pendingForView = (entry: LocalAction, first?: PendingAction, view?: ClientView): PendingAction => {
+        const pending = publicAction(entry);
+        const blocker =
+            first && entry.state === "queued" && first.sequence < entry.sequence
+                ? first.invocation.id
+                : entry.blockedBy;
+        if (!blocker) return pending;
+        return {
+            ...pending,
+            blockedBy:
+                view &&
+                !view.selection.inspectActions &&
+                (blocker === true || !view.selection.actionIds.includes(blocker))
+                    ? true
+                    : blocker,
+        };
+    };
     const position = (tx: ReadTransaction) =>
         Effect.gen(function* () {
             const stored = yield* tx.get(metadata, "head");
@@ -1492,6 +1542,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 yield* tx.clear(roots);
                 yield* tx.ensureIndex(roots, { name: "objectType", field: field("objectType") });
                 yield* tx.ensureIndex(retention, { name: "accessedAt", field: field("accessedAt") });
+                yield* tx.ensureIndex(outbox, { name: "state", field: field("state") });
                 yield* tx.ensureIndex(outbox, { name: "sequence", field: field("sequence") });
                 if (options.source)
                     yield* tx.ensureIndex(outbox, { name: "includedInBase", field: field("includedInBase") });
@@ -2454,6 +2505,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 yield* notify;
                 const result = yield* Effect.result(
                     backend.applyAction(head.invocation).pipe(
+                        withDispatchTimeout,
                         Effect.flatMap((receipt) =>
                             Schema.decodeUnknownEffect(ActionReceiptSchema)(receipt).pipe(
                                 Effect.mapError(
@@ -3452,11 +3504,13 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             }
             return entries;
         });
-        const pending = new Map(
-            (parent ? yield* actions(importedPending, true) : []).map((entry) => [entry.invocation.id, entry])
-        );
-        for (const entry of yield* actions(outbox, true))
-            if (!(entry as LocalAction).includedInBase) pending.set(entry.invocation.id, publicAction(entry));
+        const pending = new Map<string, PendingAction>();
+        if (parent)
+            for (const entry of yield* actions(importedPending, true))
+                pending.set(entry.invocation.id, pendingForView(entry, undefined, selected));
+        const owned = (yield* actions(outbox, true)).filter((entry: LocalAction) => !entry.includedInBase);
+        const first = owned.length ? yield* firstBlockedIn(tx) : undefined;
+        for (const entry of owned) pending.set(entry.invocation.id, pendingForView(entry, first, selected));
         const done = new Map(
             (parent ? yield* actions(importedCompleted) : []).map((entry) => [entry.invocation.id, entry])
         );
@@ -3946,6 +4000,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             );
         }
         if (speculative) {
+            const first =
+                selected.selection.inspectActions || selected.selection.actionIds.length
+                    ? yield* boundary(firstBlockedIn(tx))
+                    : undefined;
             const send = (table: Table<PendingAction>, kind: "pending" | "completed", own = false) =>
                 selected.selection.inspectActions && kind === "pending"
                     ? boundary(
@@ -3955,7 +4013,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                   : emit({
                                         kind,
                                         id: row.value.invocation.id,
-                                        value: publicAction(row.value),
+                                        value: pendingForView(row.value, own ? first : undefined, selected),
                                     })
                           )
                       )
@@ -3965,7 +4023,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                               Effect.gen(function* () {
                                   const entry = yield* boundary(tx.get(table, id));
                                   if (entry && !(own && (entry as LocalAction).includedInBase))
-                                      yield* emit({ kind, id, value: publicAction(entry) });
+                                      yield* emit({
+                                          kind,
+                                          id,
+                                          value:
+                                              kind === "pending"
+                                                  ? pendingForView(entry, own ? first : undefined, selected)
+                                                  : publicAction(entry),
+                                      });
                               }),
                           { discard: true }
                       );
@@ -5853,20 +5918,31 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 tables.read((tx) =>
                     Effect.gen(function* () {
                         const parent = yield* tx.get(imported, "head");
-                        const observed =
-                            (yield* tx.get(importedPending, id)) ?? (yield* tx.get(importedCompleted, id));
-                        const terminal =
-                            (yield* tx.get(completed, id)) ?? (yield* tx.get(importedCompleted, id));
+                        const upstream = yield* tx.get(importedPending, id);
+                        const upstreamResult = yield* tx.get(importedCompleted, id);
+                        const result = yield* tx.get(completed, id);
+                        const terminal = result ?? upstreamResult;
                         const local = yield* tx.get(outbox, id);
+                        const owned = local && !local.includedInBase;
+                        const first =
+                            owned && local.state === "queued" ? yield* firstBlockedIn(tx) : undefined;
+                        const pending = owned
+                            ? pendingForView(local, first)
+                            : (upstream ?? (local && publicAction(local)));
+                        const blocker =
+                            typeof pending?.blockedBy === "string"
+                                ? (first ?? (yield* tx.get(importedPending, pending.blockedBy)))
+                                : undefined;
                         return {
-                            pending: local?.includedInBase
-                                ? ((yield* tx.get(importedPending, id)) ?? publicAction(local))
-                                : local
-                                  ? publicAction(local)
-                                  : yield* tx.get(importedPending, id),
-                            receipt:
-                                (yield* tx.get(completed, id))?.receipt ??
-                                (yield* tx.get(importedCompleted, id))?.receipt,
+                            pending,
+                            blockedBy: blocker
+                                ? {
+                                      id: blocker.invocation.id,
+                                      name: blocker.invocation.name,
+                                      failure: blocker.failure,
+                                  }
+                                : undefined,
+                            receipt: result?.receipt ?? upstreamResult?.receipt,
                             error: terminal?.failure
                                 ? new BackendError({
                                       operation: "action.wait",
@@ -5881,7 +5957,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 // A successful Accept response is durable evidence even
                                 // before the parent's selected state includes the action.
                                 (options.source && local?.state === "acknowledged") ||
-                                (parent && (observed || local?.includedInBase))
+                                (parent && (upstream || upstreamResult || local?.includedInBase))
                                     ? { sourceId: parent?.sourceId ?? sourceId }
                                     : undefined,
                         };
@@ -5926,6 +6002,19 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                                 actionOutcome: entry.failureOutcome,
                                 issues: entry.failureIssues,
                             });
+                        if (entry.blockedBy) {
+                            const blocker = status.blockedBy;
+                            const earlier = blocker
+                                ? `action ${blocker.name} (${blocker.id})`
+                                : "an earlier action";
+                            return yield* new BackendError({
+                                operation: "action.wait",
+                                kind: "Conflict",
+                                message: `This action remains queued until ${earlier} is retried, reconciled or removed.`,
+                                retryable: false,
+                                blockedBy: blocker,
+                            });
+                        }
                         yield* pull.pipe(
                             Effect.mapError((cause) =>
                                 fault("Unavailable", "Action observation failed.", cause)

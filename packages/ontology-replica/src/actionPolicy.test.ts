@@ -1,11 +1,13 @@
+import { it } from "@effect/vitest";
 import { makeOntologyBackend } from "@party-stack/ontology-backend";
 import { BackendError, type OntologyBackendService } from "@party-stack/ontology-backend";
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { Effect, Exit, Fiber, Scope, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
+import { makeReplica as makePublicReplica } from "./service.js";
 import { makeReplica, replicaStateSource } from "./testing.js";
 
 const ir: OntologyIR = {
@@ -428,3 +430,268 @@ test("unknown outcome is separate from pause and explicit retry/discard acknowle
             )
         );
 });
+
+test("a wait behind a blocked action fails naming it, and the action is sent once the block is resolved", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const sent: string[] = [];
+                const replica = yield* makeReplica({
+                    namespace: "blocked-ahead",
+                    ir,
+                    tables: yield* Memory.make(),
+                    // The first dispatch's outcome is unknown and cannot be deduplicated.
+                    backend: backend(
+                        (action) =>
+                            Effect.suspend(() => {
+                                sent.push(action.id);
+                                return action.id === "one"
+                                    ? Effect.fail(fail())
+                                    : Effect.succeed({
+                                          operationId: action.id,
+                                          outcome: "committed" as const,
+                                          affected: [],
+                                      });
+                            }),
+                        false
+                    ),
+                    execute: () => Effect.void,
+                    startSync: false,
+                });
+                yield* replica.enqueue(invocation("one"));
+                yield* replica.enqueue(invocation("two"));
+                // A wait already under way ends when the block happens.
+                const waiting = yield* Effect.forkScoped(replica.awaitAction("two"));
+                yield* Effect.result(replica.syncOnce);
+                const behind = yield* Effect.flip(Fiber.join(waiting));
+                expect(behind).toMatchObject({
+                    kind: "Conflict",
+                    retryable: false,
+                    blockedBy: { id: "one", name: "write", failure: "Unavailable" },
+                });
+                expect(behind.actionOutcome).toBeUndefined();
+                // The blocked action's own wait reports its own failure, not a block ahead.
+                const own = yield* Effect.flip(replica.awaitAction("one"));
+                expect(own.blockedBy).toBeUndefined();
+                expect(own.actionOutcome).toBe("unknown");
+                // A wait started later ends at once, and the action keeps its place.
+                yield* replica.enqueue(invocation("three"));
+                expect((yield* Effect.flip(replica.awaitAction("three"))).blockedBy?.id).toBe("one");
+                expect((yield* replica.pending).map((a) => [a.invocation.id, a.state])).toEqual([
+                    ["one", "blocked"],
+                    ["two", "queued"],
+                    ["three", "queued"],
+                ]);
+                expect(sent).toEqual(["one"]);
+                yield* replica.reconcile("one", { operationId: "one", outcome: "committed", affected: [] });
+                yield* replica.syncOnce;
+                expect((yield* replica.awaitAction("two"))?.outcome).toBe("committed");
+                expect((yield* replica.awaitAction("three"))?.outcome).toBe("committed");
+                expect(sent).toEqual(["one", "two", "three"]);
+            })
+        )
+    );
+});
+
+test.each(["snapshot", "delivery"] as const)(
+    "a child observes a queue block through a selected %s",
+    async (mode) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const parent = yield* makeReplica({
+                        namespace: "parent-blocked",
+                        ir,
+                        tables: yield* Memory.make(),
+                        backend: backend(
+                            (action) =>
+                                action.id === "one"
+                                    ? Effect.fail(fail())
+                                    : Effect.succeed({
+                                          operationId: action.id,
+                                          outcome: "committed",
+                                          affected: [],
+                                      }),
+                            false
+                        ),
+                        execute: () => Effect.void,
+                        startSync: false,
+                    });
+                    const source = replicaStateSource(parent);
+                    const child = yield* makeReplica({
+                        namespace: "child-blocked",
+                        ir,
+                        tables: yield* Memory.make(),
+                        source,
+                        execute: () => Effect.void,
+                        startSync: false,
+                        objectCacheGc: false,
+                    });
+                    // Simulate a different tab submitting the first action.
+                    yield* parent.enqueue(invocation("one"));
+                    yield* child.enqueue(invocation("two"));
+                    yield* child.syncOnce;
+                    yield* Effect.result(parent.syncOnce);
+                    if (mode === "snapshot") yield* child.refreshParent(source);
+                    else {
+                        const opened = yield* child.openParentDelivery(source);
+                        yield* opened.subscription.frames.pipe(
+                            Stream.takeUntil((frame) => frame.end),
+                            Stream.runForEach((frame) => child.receiveDelivery(frame, opened.generation))
+                        );
+                    }
+                    expect((yield* child.parentState)?.pending.map((entry) => entry.invocation.id)).toEqual([
+                        "two",
+                    ]);
+                    const hidden = yield* Effect.flip(child.awaitAction("two"));
+                    expect(hidden.kind).toBe("Conflict");
+                    expect(hidden.blockedBy).toBeUndefined();
+                    expect(yield* child.awaitAction("two", { until: "accepted" })).toBeUndefined();
+
+                    yield* child.retainActions(["one"]);
+                    yield* child.refreshParent(source);
+                    expect((yield* Effect.flip(child.awaitAction("two"))).blockedBy).toEqual({
+                        id: "one",
+                        name: "write",
+                        failure: "Unavailable",
+                    });
+                    expect((yield* parent.pending).map((a) => [a.invocation.id, a.state])).toEqual([
+                        ["one", "blocked"],
+                        ["two", "queued"],
+                    ]);
+                })
+            )
+        );
+    }
+);
+
+test("a dispatch that never answers times out as an unknown outcome", async () => {
+    for (const idempotent of [false, true]) {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    let calls = 0;
+                    const replica = yield* makeReplica({
+                        namespace: `dispatch-timeout-${idempotent}`,
+                        ir,
+                        tables: yield* Memory.make(),
+                        // The first dispatch hangs; a resend answers.
+                        backend: backend(
+                            (action) =>
+                                Effect.suspend(() =>
+                                    ++calls === 1
+                                        ? Effect.never
+                                        : Effect.succeed({
+                                              operationId: action.id,
+                                              outcome: "committed" as const,
+                                              affected: [],
+                                          })
+                                ),
+                            idempotent
+                        ),
+                        execute: () => Effect.void,
+                        startSync: false,
+                        outbox: { dispatchTimeoutMs: 5_000 },
+                    });
+                    yield* replica.enqueue(invocation("one"));
+                    const pass = yield* Effect.forkScoped(Effect.result(replica.syncOnce));
+                    while (calls === 0) yield* Effect.yieldNow;
+                    yield* TestClock.adjust(4_999);
+                    expect(pass.pollUnsafe()).toBeUndefined();
+                    yield* TestClock.adjust(1);
+                    const result = yield* Fiber.join(pass);
+                    expect(result._tag).toBe("Failure");
+                    if (result._tag === "Failure")
+                        expect(result.failure).toMatchObject({
+                            kind: "Unavailable",
+                            actionOutcome: "unknown",
+                        });
+                    expect((yield* replica.pending)[0]).toMatchObject({
+                        state: idempotent ? "queued" : "blocked",
+                        failureOutcome: "unknown",
+                        retryRequiresAcknowledgement: !idempotent,
+                    });
+                    if (!idempotent) return;
+                    yield* TestClock.adjust(1_000);
+                    yield* replica.syncOnce;
+                    expect(calls).toBe(2);
+                    expect((yield* replica.receipt("one"))?.outcome).toBe("committed");
+                })
+            ).pipe(Effect.provide(TestClock.layer()))
+        );
+    }
+});
+
+it.effect("invalid dispatch deadlines fail when opening the replica", () =>
+    Effect.gen(function* () {
+        for (const dispatchTimeoutMs of [0, -1, NaN, -Infinity]) {
+            const error = yield* Effect.flip(
+                makeReplica({
+                    namespace: "dispatch-timeout-invalid",
+                    ir,
+                    tables: yield* Memory.make(),
+                    backend: backend(() => Effect.never),
+                    execute: () => Effect.void,
+                    startSync: false,
+                    outbox: { dispatchTimeoutMs },
+                })
+            );
+            expect(error.kind).toBe("InvalidConfiguration");
+        }
+    })
+);
+
+it.effect(
+    "the public outbox applies its configured timeout and discard policy, including the Infinity opt-out",
+    () =>
+        Effect.gen(function* () {
+            for (const dispatchTimeoutMs of [1_000, Infinity]) {
+                const started = yield* Deferred.make<void>();
+                const release = yield* Deferred.make<void>();
+                const sent: string[] = [];
+                const replica = yield* makePublicReplica({
+                    namespace: "public-dispatch-timeout",
+                    ir,
+                    tables: yield* Memory.make(),
+                    outbox: { dispatchTimeoutMs, failureStrategy: "discard-all" },
+                    backend: backend(
+                        (request) =>
+                            Effect.gen(function* () {
+                                sent.push(request.id);
+                                yield* Deferred.succeed(started, undefined);
+                                yield* Deferred.await(release);
+                                return {
+                                    operationId: request.id,
+                                    outcome: "committed" as const,
+                                    affected: [],
+                                };
+                            }),
+                        false
+                    ),
+                });
+                const first = yield* Effect.forkScoped(replica.actions.apply(invocation("one")));
+                yield* Deferred.await(started);
+                yield* replica.outbox.enqueue(invocation("two"));
+                if (dispatchTimeoutMs === Infinity) {
+                    yield* TestClock.adjust(60_000);
+                    expect(first.pollUnsafe()).toBeUndefined();
+                    yield* Deferred.succeed(release, undefined);
+                    expect((yield* Fiber.join(first)).outcome).toBe("committed");
+                    expect((yield* replica.outbox.wait("two"))?.outcome).toBe("committed");
+                    expect(sent).toEqual(["one", "two"]);
+                } else {
+                    yield* TestClock.adjust(dispatchTimeoutMs);
+                    expect(yield* Effect.flip(Fiber.join(first))).toMatchObject({
+                        kind: "Unavailable",
+                        actionOutcome: "unknown",
+                    });
+                    expect(yield* Effect.flip(replica.outbox.wait("two"))).toMatchObject({
+                        kind: "Conflict",
+                        actionOutcome: "not-committed",
+                    });
+                    expect(sent).toEqual(["one"]);
+                }
+                expect(yield* replica.outbox.entries).toEqual([]);
+            }
+        })
+);

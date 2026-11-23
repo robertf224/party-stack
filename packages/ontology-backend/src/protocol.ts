@@ -20,6 +20,8 @@ export interface PendingAction {
     readonly state: "queued" | "sending" | "acknowledged" | "blocked";
     readonly optimistic: boolean;
     readonly attempts: number;
+    /** Earlier action stopping this queue. A selected view carries true when it omits that action. */
+    readonly blockedBy?: string | true;
     /** Total attempts at the last explicit retry; automatic retry budgets start here. */
     readonly retryFromAttempt?: number;
     readonly nextAttemptAt?: number;
@@ -185,6 +187,7 @@ export const PendingActionSchema = Schema.Struct({
     state: Schema.Literals(["queued", "sending", "acknowledged", "blocked"]),
     optimistic: Schema.Boolean,
     attempts: Counter,
+    blockedBy: Schema.optional(Schema.Union([Schema.NonEmptyString, Schema.Literal(true)])),
     retryFromAttempt: Schema.optional(Counter),
     nextAttemptAt: Schema.optional(Schema.Finite),
     failureMessage: Schema.optional(Schema.String),

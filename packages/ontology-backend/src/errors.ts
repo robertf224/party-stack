@@ -56,6 +56,16 @@ const Fields = {
     actionOutcome: Schema.optional(Schema.Literals(["not-committed", "unknown"])),
     retryAfterMs: Schema.optional(Schema.Finite),
     issues: Schema.optional(Schema.Array(ValidationIssueSchema)),
+    /** Set when an action is still pending behind an earlier blocked action: its queue
+     * stopped there and sends nothing after it until that action is retried, reconciled
+     * or removed. The waiting action keeps its place in the queue. */
+    blockedBy: Schema.optional(
+        Schema.Struct({
+            id: Schema.String,
+            name: Schema.String,
+            failure: Schema.optional(BackendErrorKindSchema),
+        })
+    ),
     cause: Schema.optional(Schema.Defect()),
 };
 /** Shared wire schema; hooks narrow the kind without duplicating error classes. */

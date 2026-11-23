@@ -22,7 +22,11 @@ the state involved. Each fact below cites where to verify it.
   receipt saved (`acknowledged` with `receipt.outcome === "committed"`) → `confirmReceipt`
   reads back the affected rows, then in one transaction writes them to base, deletes the
   outbox entry and rebases. A failed dispatch goes back to `queued` (with
-  `failureOutcome: "unknown"` when it may have committed) or to `blocked`.
+  `failureOutcome: "unknown"` when it may have committed) or to `blocked`. A dispatch
+  that outlasts `outbox.dispatchTimeoutMs` fails as an unknown outcome. The queue sends
+  nothing past a `blocked` action. A confirmed wait behind it fails and leaves the action
+  queued. The owner supplies the blocker in `pendingForView` because sequence numbers are
+  local to each queue. A selected view omitting the blocker carries only a boolean.
 - **The double-apply hazard.** A prediction must never be replayed over a base that
   already contains its commit. That is possible while an action is `sending`, committed
   but unconfirmed, or queued to retry after an attempt whose outcome is unknown (a
@@ -120,8 +124,10 @@ example tests:
   dispatches, lost read-backs, `revalidate()`, `invalidate()`, explicit and background
   passes, a steady stream of edits, consumers leaving and returning, cache collection,
   retryable, terminal and crashing (defect) fetches, dispatches that commit and then
-  crash or time out (with and without a deduplicating backend), and restarts on the same storage with the
-  device clock corrected forwards or backwards. Deadlines for progress scale with every wait a load can legitimately incur
+  crash, time out or never answer (with and without a deduplicating backend), and restarts on the same storage with the
+  device clock corrected forwards or backwards. Every enqueued action is awaited: a
+  wait at or behind a blocked action must end within one step, and every wait must
+  settle once everything is released. Deadlines for progress scale with every wait a load can legitimately incur
   (fetch latency and an action's turn), so they flag starvation rather than slowness.
 - The oracle judges freshness by the source's clock; the replica runs on a device
   clock that a restart may find corrected. Coverage ages are wall-clock differences, so
