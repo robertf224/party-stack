@@ -346,17 +346,16 @@ test.each([["issues/:id", "issues/:other"], ["issues/*rest/more"], ["issues/:id/
                 Effect.gen(function* () {
                     const backend = yield* setup("invalid");
                     const routes = Object.fromEntries(
-                        patterns.map((pattern) => [
-                            pattern,
-                            {
-                                kind: "owned" as const,
-                                backend,
-                                dangerouslyAllowInternalAccess: true as const,
-                            },
-                        ])
+                        patterns.map((pattern) => [pattern, { kind: "owned" as const, backend }])
                     );
                     expect(
-                        yield* Effect.result(makeOntologyServer({ enableRealtime: true, routes }))
+                        yield* Effect.result(
+                            makeOntologyServer({
+                                dangerouslyAllowInternalAccess: true,
+                                enableRealtime: true,
+                                routes,
+                            })
+                        )
                     ).toMatchObject({
                         _tag: "Failure",
                         failure: { kind: "InvalidConfiguration" },
@@ -504,33 +503,23 @@ test.each([
     }
 );
 
-test("a route may not set its own internal access", async () => {
-    const result = await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                const backend = yield* setup("route-access");
-                const server = yield* makeOntologyServer({
-                    dangerouslyAllowInternalAccess: true,
-                    routes: {
-                        items: () =>
-                            Effect.succeed({
-                                kind: "owned" as const,
-                                backend,
-                                dangerouslyAllowInternalAccess: true as const,
-                            }),
-                    },
-                });
-                return yield* Effect.result(server.bind("items"));
-            })
-        )
-    );
-    expect(result).toMatchObject({
-        _tag: "Failure",
-        failure: {
-            kind: "InvalidConfiguration",
-            message: "Set dangerouslyAllowInternalAccess on the server, not on a route.",
-        },
-    });
+test("a route may not set its own internal access", () => {
+    const backend = undefined as unknown as Effect.Success<ReturnType<typeof makeOwnedBackend>>;
+    void (() =>
+        makeOntologyServer({
+            dangerouslyAllowInternalAccess: true,
+            routes: {
+                // @ts-expect-error Internal access belongs to the server.
+                literal: { kind: "owned", backend, dangerouslyAllowInternalAccess: true },
+                // @ts-expect-error A route function cannot return it either.
+                opened: () =>
+                    Effect.succeed({
+                        kind: "owned" as const,
+                        backend,
+                        dangerouslyAllowInternalAccess: true as const,
+                    }),
+            },
+        }));
 });
 
 test("inferred route parameters preserve Effect service requirements", async () => {

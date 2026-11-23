@@ -263,8 +263,8 @@ Use `true` for a private endpoint, or a synchronous predicate over validated con
 dangerouslyAllowInternalAccess: (context) => context.role === "internal-admin",
 ```
 
-Set it once on the server: with routes it applies to every route, and a route that sets
-its own fails to open. Replica routes need `true`. With `true`, a request that fails before
+Set it once on the server: with routes it applies to every route, and routes cannot
+set it. A server with replica routes must set `true`. With `true`, a request that fails before
 its route is ready (for example a definition that doesn't load) reports the original error
 instead of a generic message.
 

@@ -154,13 +154,14 @@ export type ManagedReplicaRoute<R = never> = (ReplicaRegistration | UpstreamRepl
     > & {
         readonly kind: "replica";
         readonly replica?: never;
+        readonly dangerouslyAllowInternalAccess?: never;
     };
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-/** A route's binding. Internal access is set once for the whole server. */
+/** A route's binding. Internal access is set once for the whole server, never on a route. */
 export type OntologyRouteBinding<R = never> = DistributiveOmit<
     OntologyBindingOptions<R>,
     "dangerouslyAllowInternalAccess"
->;
+> & { readonly dangerouslyAllowInternalAccess?: never };
 export type OntologyRoute<R = never> = OntologyRouteBinding<R> | ManagedReplicaRoute<R>;
 type SegmentParameter<Segment extends string> = Segment extends `:${infer Name}` | `*${infer Name}`
     ? Name
@@ -291,14 +292,12 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
             })
         );
     const withServerAccess = <B extends { readonly kind: string }>(binding: B) =>
-        "dangerouslyAllowInternalAccess" in binding && binding.dangerouslyAllowInternalAccess !== undefined
-            ? misconfigured("Set dangerouslyAllowInternalAccess on the server, not on a route.")
-            : binding.kind === "replica" && internalAccess !== true
-              ? misconfigured("Replica routes require a server with dangerouslyAllowInternalAccess: true.")
-              : Effect.succeed({
-                    ...binding,
-                    dangerouslyAllowInternalAccess: internalAccess,
-                } as unknown as OntologyBindingOptions<R>);
+        binding.kind === "replica" && internalAccess !== true
+            ? misconfigured("Replica routes require a server with dangerouslyAllowInternalAccess: true.")
+            : Effect.succeed({
+                  ...binding,
+                  dangerouslyAllowInternalAccess: internalAccess,
+              } as unknown as OntologyBindingOptions<R>);
     const ttl = settings.idleRetentionMs ?? 60_000;
     if (
         !Number.isFinite(ttl) ||
