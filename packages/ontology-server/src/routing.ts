@@ -13,6 +13,7 @@ import type { OntologyBindingOptions } from "./composition.js";
 import type { ErrorProjectionOptions } from "./errorProjection.js";
 import type { UpstreamReplicaRegistration } from "./replicaBootstrap.js";
 import type { OntologyRpcClient, OntologyRpcServerOptions } from "./rpc.js";
+import type { ErrorProjection } from "@party-stack/ontology-backend";
 import type { PinStatus } from "@party-stack/ontology-replica";
 import type { ReplicaRegistration, StoredReplicaPartition } from "@party-stack/ontology-replica/registry";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -193,6 +194,13 @@ export interface OntologyServerRoutes<
 > extends Omit<ErrorProjectionOptions, "errors"> {
     /** Opt into client watches and replication sessions. Individual routes may override this default. */
     readonly enableRealtime?: boolean;
+    /**
+     * How to report a request that fails before its route is ready, for example because the route's
+     * definition failed to load. The route's own settings (including internal access) are not known
+     * at that point, so this applies server-wide. Default `"projected"`; an in-process server whose
+     * callers are trusted can use `"forward"` to keep the original message.
+     */
+    readonly startupErrors?: ErrorProjection;
     readonly routes?: { readonly [Path in Paths]: OntologyRouteFactory<R, Path, Route> };
     /** Advanced resolution for addresses outside the declared route table. */
     readonly resolve?: OntologyResolver<OntologyBindingOptions<R>, R>;
@@ -582,7 +590,7 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                     return { pin: yield* bound.replica.demand.pinStatus };
                 })
             ),
-        errors: "projected",
+        errors: settings.startupErrors ?? "projected",
         ir: settings.ir,
         upstreamErrors: settings.upstreamErrors,
     };

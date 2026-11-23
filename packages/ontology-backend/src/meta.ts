@@ -1,4 +1,4 @@
-import { omitIncompatibleActionDefaults, validate } from "@party-stack/ontology-spec";
+import { omitInvalid } from "@party-stack/ontology-spec";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import * as q from "@party-stack/ontology-spec/query";
 import { and, inArray, field, evaluateQuery } from "@party-stack/ontology-storage";
@@ -7,7 +7,7 @@ import { makeOntologyBackend } from "./query.js";
 import { compileObjectSubset, objectSubset } from "./subset.js";
 import { BackendError } from "./index.js";
 import type { OntologyBackendService } from "./index.js";
-import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { OmittedDefinition, OntologyIR } from "@party-stack/ontology-spec";
 import type {
     ActionType,
     ObjectType,
@@ -63,8 +63,18 @@ export interface PullOptions {
     objectTypeNames?: string[];
     actionTypeNames?: string[];
     queryFunctionTypeNames?: string[];
-    /** App-specific definition edits, applied before the final IR validation. */
+    /** App-specific definition edits, applied before invalid definitions are omitted. */
     transformPulledOntology?: (ontology: OntologyIR) => OntologyIR | Promise<OntologyIR>;
+}
+
+export interface PullResult {
+    /** A valid Ontology. */
+    readonly ontology: OntologyIR;
+    /**
+     * Definitions (or action parameter defaults) the provider exposes but the IR could not
+     * represent, and why. A caller that needs the complete Ontology treats any entry as a failure.
+     */
+    readonly omitted: readonly OmittedDefinition[];
 }
 
 /** Pull selected definitions directly from a metadata backend, without a replica or UI collections. */
@@ -180,17 +190,9 @@ export const pull = Effect.fn("Metadata.pull")(function* (
         ...(descriptor?.context === undefined ? {} : { context: descriptor.context }),
         ...(descriptor?.policy === undefined ? {} : { policy: descriptor.policy }),
     };
-    // Provider prefills the IR cannot type are dropped, not the whole Ontology.
-    const repaired = omitIncompatibleActionDefaults(pulled);
-    if (repaired.omitted.length)
-        yield* Effect.logWarning("Omitted action parameter defaults with incompatible types.").pipe(
-            Effect.annotateLogs({
-                parameters: repaired.omitted.map((entry) => `${entry.actionType}.${entry.parameter}`),
-            })
-        );
     const definition = options.transformPulledOntology
         ? yield* Effect.tryPromise({
-              try: async () => options.transformPulledOntology!(repaired.ontology),
+              try: async () => options.transformPulledOntology!(pulled),
               catch: (cause) =>
                   new BackendError({
                       operation: "metadata.pull.transform",
@@ -200,22 +202,34 @@ export const pull = Effect.fn("Metadata.pull")(function* (
                       cause,
                   }),
           })
-        : repaired.ontology;
-    const valid = validate(definition);
-    if (valid.kind === "err")
+        : pulled;
+    // One definition the IR cannot represent should not make the whole Ontology unusable.
+    const repaired = omitInvalid(definition);
+    if (repaired.issues.length)
         return yield* new BackendError({
             operation: "metadata.pull",
             kind: options.transformPulledOntology ? "InvalidConfiguration" : "InvalidResponse",
             retryable: false,
-            message: `Pulled ontology is incomplete or invalid: ${valid.value.map((issue) => issue.message).join(" ")}`,
+            message: `Pulled ontology is invalid: ${repaired.issues.map((issue) => issue.message).join(" ")}`,
+            issues: repaired.issues,
         });
-    return definition;
+    if (repaired.omitted.length)
+        yield* Effect.logWarning("Omitted definitions the Ontology IR cannot represent.").pipe(
+            Effect.annotateLogs({
+                omitted: repaired.omitted.map(
+                    (entry) => `${entry.name}${entry.parameter ? `.${entry.parameter}` : ""}`
+                ),
+            })
+        );
+    const pulledResult: PullResult = { ontology: repaired.ontology, omitted: repaired.omitted };
+    return pulledResult;
 });
 
 /** Assemble a runtime definition through ordinary metadata queries. Completeness
  * is the adapter's query contract; this does not invent an atomic provider revision.
  */
-export const loadDefinition = (backend: Pick<OntologyBackendService, "query">) => pull(backend);
+export const loadDefinition = (backend: Pick<OntologyBackendService, "query">) =>
+    Effect.map(pull(backend), (result) => result.ontology);
 
 function localId(kind: "ActionType" | "ObjectType" | "Property", name: string): string {
     return `local:${kind}:${encodeURIComponent(name)}`;

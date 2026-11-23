@@ -45,11 +45,12 @@ test("metadata pull preserves the descriptor contract and transitive context/val
         },
     };
     const backend = makeMetadataBackend(ir);
-    const result = await pull(backend, {
+    const { ontology: result, omitted } = await pull(backend, {
         objectTypeNames: ["Item"],
         actionTypeNames: [],
         queryFunctionTypeNames: [],
     });
+    expect(omitted).toEqual([]);
     expect(result.displayName).toBe(ir.displayName);
     expect(result.description).toBe(ir.description);
     expect(result.context).toEqual(ir.context);

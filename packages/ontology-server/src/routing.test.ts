@@ -461,6 +461,47 @@ test("a route that fails to open is opened again by the next request, not served
     );
 });
 
+test.each([
+    [undefined, "The operation could not be completed."],
+    ["forward" as const, "Pulled ontology is invalid: Unknown property."],
+])("startupErrors=%s decides how a route that fails to open is reported", async (startupErrors, message) => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const server = yield* makeOntologyServer({
+                    startupErrors,
+                    routes: {
+                        broken: () =>
+                            new BackendError({
+                                operation: "metadata.pull",
+                                kind: "InvalidConfiguration",
+                                retryable: false,
+                                message: "Pulled ontology is invalid: Unknown property.",
+                            }),
+                    },
+                }).pipe(
+                    Effect.flatMap((router) => makeOntologyHttpHandler(router)),
+                    Effect.map((handleRequest) => ({ handleRequest }))
+                );
+                const result = yield* Effect.result(
+                    makeOntologyHttpClient({ url: "https://ontology.test/rpc", ontology: "broken" }).pipe(
+                        Effect.flatMap((client) => client.ontology())
+                    )
+                ).pipe(
+                    Effect.provide(FetchHttpClient.layer),
+                    Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                        server.handleRequest(new Request(input, init))
+                    )
+                );
+                expect(result).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "InvalidConfiguration", message },
+                });
+            })
+        )
+    );
+});
+
 test("inferred route parameters preserve Effect service requirements", async () => {
     class Label extends Context.Service<Label, string>()("routing-test/Label") {}
     const open = makeOntologyServer({

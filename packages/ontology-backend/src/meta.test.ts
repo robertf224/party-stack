@@ -114,9 +114,9 @@ test("pull accepts duplicate requested names without requiring duplicate definit
             queryFunctionTypeNames: ["echo", "echo"],
         })
     );
-    expect(result.objectTypes.map((type) => type.name)).toEqual(["Item"]);
-    expect(result.actionTypes.map((type) => type.name)).toEqual(["begin"]);
-    expect(result.queryFunctionTypes.map((type) => type.name)).toEqual(["echo"]);
+    expect(result.ontology.objectTypes.map((type) => type.name)).toEqual(["Item"]);
+    expect(result.ontology.actionTypes.map((type) => type.name)).toEqual(["begin"]);
+    expect(result.ontology.queryFunctionTypes.map((type) => type.name)).toEqual(["echo"]);
 });
 
 test("pull accepts a legitimate empty selection", async () => {
@@ -134,7 +134,7 @@ test("pull accepts a legitimate empty selection", async () => {
             queryFunctionTypeNames: [],
         })
     );
-    expect(result).toEqual(empty);
+    expect(result).toEqual({ ontology: empty, omitted: [] });
 });
 
 test("native pull needs no replica and includes transitive context and action result types", async () => {
@@ -145,10 +145,12 @@ test("native pull needs no replica and includes transitive context and action re
             queryFunctionTypeNames: [],
         })
     );
-    expect(result.context).toEqual(ir.context);
-    expect(result.displayName).toBe(ir.displayName);
-    expect(result.actionTypes[0]?.returnType).toEqual(ir.actionTypes[0]?.returnType);
-    expect(new Set(result.types.map((type) => type.name))).toEqual(new Set(["Identity", "Return", "Leaf"]));
+    expect(result.ontology.context).toEqual(ir.context);
+    expect(result.ontology.displayName).toBe(ir.displayName);
+    expect(result.ontology.actionTypes[0]?.returnType).toEqual(ir.actionTypes[0]?.returnType);
+    expect(new Set(result.ontology.types.map((type) => type.name))).toEqual(
+        new Set(["Identity", "Return", "Leaf"])
+    );
 });
 
 test("native pull rejects incomplete metadata and missing descriptors as typed errors", async () => {
@@ -188,8 +190,8 @@ test("pull validates after an app transform and rejects invalid transformed defi
             transformPulledOntology: async (pulled) => ({ ...pulled, context: ir.context, types: ir.types }),
         })
     );
-    expect(result.context).toEqual(ir.context);
-    expect(result.types).toEqual(ir.types);
+    expect(result.ontology.context).toEqual(ir.context);
+    expect(result.ontology.types).toEqual(ir.types);
     const invalid = await Effect.runPromise(
         pull(backend, {
             ...options,
@@ -199,7 +201,7 @@ test("pull validates after an app transform and rejects invalid transformed defi
     expect(invalid).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidConfiguration" } });
 });
 
-test("pull drops a parameter default whose type does not fit instead of failing the Ontology", async () => {
+test("pull omits definitions the IR cannot represent and reports them, instead of failing the Ontology", async () => {
     const withPrefill: OntologyIR = {
         types: [],
         linkTypes: [],
@@ -249,9 +251,42 @@ test("pull drops a parameter default whose type does not fit instead of failing 
 
     const result = await Effect.runPromise(pull(makeMetadataBackend(withPrefill)));
 
-    expect(result.actionTypes[0]?.parameters[1]).toEqual({
+    expect(result.ontology.actionTypes[0]?.parameters[1]).toEqual({
         name: "coordinates",
         displayName: "Coordinates",
         type: o.string({}),
     });
+    expect(result.omitted).toMatchObject([
+        { kind: "defaultValue", section: "actionTypes", name: "editFacility", parameter: "coordinates" },
+    ]);
+
+    // Writing that string into the geopoint property is not representable either: the action goes.
+    const withWrite: OntologyIR = {
+        ...withPrefill,
+        actionTypes: withPrefill.actionTypes.map((action) => ({
+            ...action,
+            logic: [
+                o.ActionLogicStep.updateObject({
+                    object: { name: "facility" },
+                    values: [
+                        {
+                            property: ["coordinates"],
+                            value: o.Expression.inputReference({ name: "coordinates" }),
+                        },
+                    ],
+                }),
+            ],
+        })),
+    };
+    const dropped = await Effect.runPromise(pull(makeMetadataBackend(withWrite)));
+    expect(dropped.ontology.actionTypes).toEqual([]);
+    expect(dropped.ontology.objectTypes.map((type) => type.name)).toEqual(["Facility"]);
+    expect(dropped.omitted).toMatchObject([
+        {
+            kind: "definition",
+            section: "actionTypes",
+            name: "editFacility",
+            issues: expect.arrayContaining([expect.objectContaining({ code: "IncompatibleAssignment" })]),
+        },
+    ]);
 });
