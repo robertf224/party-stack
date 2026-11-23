@@ -481,6 +481,33 @@ describe("convertFoundryMetaActionType mutation targets", () => {
         });
     });
 
+    it("keeps an object-list delete target as a list of references", () => {
+        const metadata = actionType({
+            surveys: {
+                displayName: "Surveys",
+                dataType: {
+                    type: "array",
+                    subType: {
+                        type: "object",
+                        objectTypeApiName: "HospitalSurveyDev",
+                        objectApiName: "HospitalSurveyDev",
+                    },
+                },
+                required: false,
+                typeClasses: [],
+            },
+        });
+        metadata.fullLogicRules = [{ type: "deleteObject", objectToDelete: "surveys" } as never];
+
+        const result = convertFoundryMetaActionType(metadata);
+
+        expect(result.parameters[0]?.type).toEqual({
+            kind: "list",
+            value: { elementType: { kind: "objectReference", value: { objectType: "HospitalSurveyDev" } } },
+        });
+        expect(result.logic[0]).toEqual({ kind: "deleteObject", value: { object: { name: "surveys" } } });
+    });
+
     it("leaves an already-required mutation target unchanged", () => {
         const metadata = actionType({
             survey: objectParameter("HospitalSurveyDev", true),

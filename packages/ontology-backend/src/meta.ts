@@ -1,4 +1,4 @@
-import { validate } from "@party-stack/ontology-spec";
+import { omitIncompatibleActionDefaults, validate } from "@party-stack/ontology-spec";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import * as q from "@party-stack/ontology-spec/query";
 import { and, inArray, field, evaluateQuery } from "@party-stack/ontology-storage";
@@ -180,9 +180,17 @@ export const pull = Effect.fn("Metadata.pull")(function* (
         ...(descriptor?.context === undefined ? {} : { context: descriptor.context }),
         ...(descriptor?.policy === undefined ? {} : { policy: descriptor.policy }),
     };
+    // Provider prefills the IR cannot type are dropped, not the whole Ontology.
+    const repaired = omitIncompatibleActionDefaults(pulled);
+    if (repaired.omitted.length)
+        yield* Effect.logWarning("Omitted action parameter defaults with incompatible types.").pipe(
+            Effect.annotateLogs({
+                parameters: repaired.omitted.map((entry) => `${entry.actionType}.${entry.parameter}`),
+            })
+        );
     const definition = options.transformPulledOntology
         ? yield* Effect.tryPromise({
-              try: async () => options.transformPulledOntology!(pulled),
+              try: async () => options.transformPulledOntology!(repaired.ontology),
               catch: (cause) =>
                   new BackendError({
                       operation: "metadata.pull.transform",
@@ -192,7 +200,7 @@ export const pull = Effect.fn("Metadata.pull")(function* (
                       cause,
                   }),
           })
-        : pulled;
+        : repaired.ontology;
     const valid = validate(definition);
     if (valid.kind === "err")
         return yield* new BackendError({

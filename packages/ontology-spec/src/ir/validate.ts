@@ -431,12 +431,15 @@ function validateActionObjectReference(
         };
     }
 
-    const resolved = resolveType(parameter.type, valueTypes);
+    const declared = resolveType(parameter.type, valueTypes);
+    // A list of references applies the step to each object, like Foundry's object-list parameters.
+    const resolved =
+        declared?.kind === "list" ? resolveType(declared.value.elementType, valueTypes) : declared;
     if (!resolved || resolved.kind !== "objectReference") {
         return {
             errors: [
                 {
-                    message: `Action target parameter "${parameterName}" must be an object reference.`,
+                    message: `Action target parameter "${parameterName}" must be an object reference or a list of object references.`,
                     path: [...path, "name"],
                 },
             ],
@@ -561,6 +564,7 @@ function validateAction(
                 errors.push({
                     message: `Default value for "${parameter.name}" has an incompatible type.`,
                     path: [...parameterPath, "defaultValue"],
+                    code: INCOMPATIBLE_DEFAULT,
                 });
             }
         }
@@ -677,6 +681,54 @@ function validateQueryFunctionType(
     );
 
     return errors;
+}
+
+/** Issue code for an action parameter default whose expression type does not fit the parameter. */
+export const INCOMPATIBLE_DEFAULT = "IncompatibleDefault";
+
+/**
+ * Drop action parameter defaults whose type does not fit their parameter.
+ *
+ * A default only prefills a form, so a provider prefill the IR cannot express (for example a
+ * Foundry string parameter prefilled from a geopoint property) is omitted rather than coerced:
+ * the parameter keeps its type and the user enters the value. Every other issue is left for
+ * `validate` to report.
+ */
+export function omitIncompatibleActionDefaults(ontology: OntologyIR): {
+    readonly ontology: OntologyIR;
+    readonly omitted: readonly { readonly actionType: string; readonly parameter: string }[];
+} {
+    const result = validate(ontology);
+    if (result.kind === "ok") return { ontology, omitted: [] };
+    const drop = new Map<number, Set<number>>();
+    for (const issue of result.value) {
+        const [root, actionIndex, section, parameterIndex] = issue.path ?? [];
+        if (
+            issue.code !== INCOMPATIBLE_DEFAULT ||
+            root !== "actionTypes" ||
+            section !== "parameters" ||
+            typeof actionIndex !== "number" ||
+            typeof parameterIndex !== "number"
+        )
+            continue;
+        drop.set(actionIndex, (drop.get(actionIndex) ?? new Set()).add(parameterIndex));
+    }
+    if (drop.size === 0) return { ontology, omitted: [] };
+    const omitted: { actionType: string; parameter: string }[] = [];
+    const actionTypes = ontology.actionTypes.map((action, actionIndex) => {
+        const parameters = drop.get(actionIndex);
+        if (!parameters) return action;
+        return {
+            ...action,
+            parameters: action.parameters.map((parameter, parameterIndex) => {
+                if (!parameters.has(parameterIndex)) return parameter;
+                omitted.push({ actionType: action.name, parameter: parameter.name });
+                const { defaultValue: _, ...rest } = parameter;
+                return rest;
+            }),
+        };
+    });
+    return { ontology: { ...ontology, actionTypes }, omitted };
 }
 
 export function validate(ontology: OntologyIR): ValidationResult {

@@ -1,4 +1,5 @@
 import {
+    getActionTargetType,
     isRelatedFromForeignKeySource,
     resolveRelatedLink,
     resolveLookupReference,
@@ -64,11 +65,11 @@ function getObjectReferenceObjectType(
     if (!parameter) {
         throw new Error(`Unknown action parameter "${reference.name}".`);
     }
-    const type = resolveType(ir, parameter.type);
-    if (type.kind !== "objectReference") {
+    const target = getActionTargetType(ir, parameter.type);
+    if (!target) {
         throw new Error(`Action parameter "${parameter.name}" is not an object reference.`);
     }
-    return type.value.objectType;
+    return target.objectType;
 }
 
 function getFixedActionParameterValues(

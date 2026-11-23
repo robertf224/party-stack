@@ -198,3 +198,60 @@ test("pull validates after an app transform and rejects invalid transformed defi
     );
     expect(invalid).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidConfiguration" } });
 });
+
+test("pull drops a parameter default whose type does not fit instead of failing the Ontology", async () => {
+    const withPrefill: OntologyIR = {
+        types: [],
+        linkTypes: [],
+        queryFunctionTypes: [],
+        objectTypes: [
+            {
+                name: "Facility",
+                displayName: "Facility",
+                pluralDisplayName: "Facilities",
+                primaryKey: "id",
+                properties: [
+                    { name: "id", displayName: "ID", type: o.string({}) },
+                    {
+                        name: "coordinates",
+                        displayName: "Coordinates",
+                        type: o.optional({ type: o.geopoint({}) }),
+                    },
+                ],
+            },
+        ],
+        actionTypes: [
+            {
+                name: "editFacility",
+                displayName: "Edit Facility",
+                parameters: [
+                    {
+                        name: "facility",
+                        displayName: "Facility",
+                        type: o.objectReference({ objectType: "Facility" }),
+                    },
+                    {
+                        name: "coordinates",
+                        displayName: "Coordinates",
+                        type: o.string({}),
+                        defaultValue: o.Expression.getAt({
+                            source: o.Expression.lookup({
+                                reference: o.Expression.inputReference({ name: "facility" }),
+                            }),
+                            path: ["coordinates"],
+                        }),
+                    },
+                ],
+                logic: [],
+            },
+        ],
+    };
+
+    const result = await Effect.runPromise(pull(makeMetadataBackend(withPrefill)));
+
+    expect(result.actionTypes[0]?.parameters[1]).toEqual({
+        name: "coordinates",
+        displayName: "Coordinates",
+        type: o.string({}),
+    });
+});

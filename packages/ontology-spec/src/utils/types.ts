@@ -18,6 +18,23 @@ export function resolveType(ir: OntologyIR, type: TypeDef): TypeDef {
     return resolveType(ir, resolvedType);
 }
 
+/**
+ * The object type an `updateObject`/`deleteObject` step changes through a parameter of this type.
+ * A target is one object reference, or a list of them that the step applies to one by one.
+ */
+export function getActionTargetType(
+    ir: OntologyIR,
+    type: TypeDef
+): { objectType: string; many: boolean } | undefined {
+    const resolved = resolveType(ir, type);
+    if (resolved.kind === "objectReference") return { objectType: resolved.value.objectType, many: false };
+    if (resolved.kind !== "list") return undefined;
+    const element = resolveType(ir, resolved.value.elementType);
+    return element.kind === "objectReference"
+        ? { objectType: element.value.objectType, many: true }
+        : undefined;
+}
+
 export function unwrapValueType(ir: OntologyIR, type: TypeDef): TypeDef {
     if (type.kind === "optional") {
         return unwrapValueType(ir, type.value.type);

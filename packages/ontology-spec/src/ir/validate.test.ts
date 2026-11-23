@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { o } from "./generated/builders.js";
-import { validate, ValidationResult } from "./validate.js";
+import { omitIncompatibleActionDefaults, validate, ValidationResult } from "./validate.js";
 import type { OntologyIR, TypeDef } from "./generated/types.js";
 
 function expectOk(result: ValidationResult): void {
@@ -692,6 +692,97 @@ describe("Ontology Validation", () => {
 
             expect(getErrors(validate(ontology))).toContain(
                 'Default value for "count" has an incompatible type.'
+            );
+        });
+
+        it("should omit only incompatible defaults, keeping the parameter", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType()],
+                actionTypes: [
+                    {
+                        name: "updateEmployee",
+                        displayName: "Update Employee",
+                        parameters: [
+                            {
+                                name: "employee",
+                                displayName: "Employee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                            },
+                            {
+                                name: "count",
+                                displayName: "Count",
+                                type: o.integer({}),
+                                defaultValue: o.Expression.getAt({
+                                    source: o.Expression.lookup({
+                                        reference: o.Expression.inputReference({ name: "employee" }),
+                                    }),
+                                    path: ["name"],
+                                }),
+                            },
+                        ],
+                        logic: [],
+                    },
+                ],
+            };
+
+            const repaired = omitIncompatibleActionDefaults(ontology);
+
+            expect(repaired.omitted).toEqual([{ actionType: "updateEmployee", parameter: "count" }]);
+            expect(repaired.ontology.actionTypes[0]!.parameters[1]).toEqual({
+                name: "count",
+                displayName: "Count",
+                type: o.integer({}),
+            });
+            expectOk(validate(repaired.ontology));
+            expect(omitIncompatibleActionDefaults(repaired.ontology).ontology).toBe(repaired.ontology);
+        });
+
+        it("should accept a list of object references as an action target", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType()],
+                actionTypes: [
+                    {
+                        name: "deleteEmployees",
+                        displayName: "Delete Employees",
+                        parameters: [
+                            {
+                                name: "employees",
+                                displayName: "Employees",
+                                type: o.list({ elementType: o.objectReference({ objectType: "Employee" }) }),
+                            },
+                        ],
+                        logic: [o.ActionLogicStep.deleteObject({ object: { name: "employees" } })],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
+
+        it("should reject a list of non-references as an action target", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType()],
+                actionTypes: [
+                    {
+                        name: "deleteEmployees",
+                        displayName: "Delete Employees",
+                        parameters: [
+                            {
+                                name: "ids",
+                                displayName: "IDs",
+                                type: o.list({ elementType: o.string({}) }),
+                            },
+                        ],
+                        logic: [o.ActionLogicStep.deleteObject({ object: { name: "ids" } })],
+                    },
+                ],
+            };
+
+            expect(getErrors(validate(ontology))).toContain(
+                'Action target parameter "ids" must be an object reference or a list of object references.'
             );
         });
 
