@@ -1,5 +1,15 @@
 # AGENTS instructions
 
+## This repository is public
+
+party-stack is open source. Everything committed or posted here is public: code, comments, tests, fixtures, changesets, commit messages, PR titles and descriptions, and review comments.
+
+- Keep internal and customer details out. Don't name a customer's or a private Ontology's object types, action types, properties, rows or counts, and don't include their URLs, hostnames, RIDs, IDs, tokens, screenshots or logs.
+- Describe a problem by its shape instead: "a delete action whose target is an object-list parameter", "a string parameter written into a geopoint property".
+- Apps that use party-stack, such as Streamline, can be named, and their issues described in general terms.
+- Use made-up names in tests and examples (`Task`, `Facility`, `Employee`), not names copied from a real Ontology.
+- If something internal was already pushed, tell the user. Rewriting history doesn't remove it from GitHub's PR timeline or from forks.
+
 ## Development environment instructions
 
 - Run `vp install --filter <project_name>` to add a project to your workspace. Without the global Vite+ CLI, use `pnpm install --filter <project_name>`.
