@@ -2,7 +2,7 @@ import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o } from "@party-stack/ontology-spec";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Table } from "@party-stack/ontology-storage/tables";
+import { ConfigurationError, OntologyStorageError, Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Exit, Scope } from "effect";
 import { expect, test } from "vite-plus/test";
 import { makeReplica } from "./testing.js";
@@ -200,12 +200,34 @@ test("a definition reset keeps queued actions and replays their predictions agai
     );
 });
 
-test("a reset that cannot open rolls back, a changed source is refused, and an unreadable stored definition resets everything", async () => {
+test("a reset rolls back with a failed open, a changed source is refused, an unreadable stored definition resets everything, and a new primary key opens", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const ir = definition("Old");
-                const tables = yield* Memory.make();
+                const storage = yield* Memory.make();
+                // Fail index setup while the replica opens, when asked, to force a rollback.
+                let failIndexes = false;
+                const tables: typeof storage = {
+                    ...storage,
+                    transaction: (body) =>
+                        storage.transaction((tx) =>
+                            body({
+                                ...tx,
+                                ensureIndex: (table, index) =>
+                                    failIndexes
+                                        ? Effect.fail(
+                                              new OntologyStorageError({
+                                                  operation: "test",
+                                                  reason: new ConfigurationError({
+                                                      message: "Index setup failed.",
+                                                  }),
+                                              })
+                                          )
+                                        : tx.ensureIndex(table, index),
+                            })
+                        ),
+                };
                 const backend = yield* makeOwnedBackend({
                     ir,
                     namespace: "rollback-source",
@@ -234,13 +256,15 @@ test("a reset that cannot open rolls back, a changed source is refused, and an u
                 const head = (yield* tables.get(position, "head"))!;
                 yield* tables.put(rows, "item", { id: "item", count: 1 });
 
-                // A new primary key needs an index the old table cannot reuse: opening fails and
-                // the reset rolls back with it, leaving the old cache usable.
+                // The reset runs in the startup transaction: when opening fails after it, the
+                // reset rolls back too and the old cache stays as it was.
                 const rekeyed = definition("New");
                 rekeyed.objectTypes[0]!.primaryKey = "count";
+                failIndexes = true;
                 expect(
                     yield* Effect.result(open({ ir: rekeyed, onDefinitionChange: "reset" }))
                 ).toMatchObject({ _tag: "Failure" });
+                failIndexes = false;
                 expect(yield* tables.get(position, "head")).toEqual(head);
                 expect(yield* tables.get(rows, "item")).toEqual({ id: "item", count: 1 });
 
@@ -263,6 +287,14 @@ test("a reset that cannot open rolls back, a changed source is refused, and an u
                 yield* open({ onDefinitionChange: "reset" });
                 expect(yield* tables.get(rows, "item")).toBeUndefined();
                 expect((yield* tables.get(position, "head"))?.signature).toBe(head.signature);
+
+                // A new primary key opens: the reset drops the type's old indexes, including the
+                // unique primary-key index, and opening ensures them on the new field.
+                yield* tables.put(rows, "item", { id: "item", count: 1 });
+                yield* open({ ir: rekeyed, onDefinitionChange: "reset" });
+                expect(yield* tables.get(rows, "item")).toBeUndefined();
+                const indexes = yield* storage.read((tx) => tx.indexes(rows));
+                expect(indexes.find((index) => index.name === "primaryKey")?.field.path).toEqual(["count"]);
             })
         )
     );

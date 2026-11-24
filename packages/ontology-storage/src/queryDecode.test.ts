@@ -126,6 +126,7 @@ const rawTables = (stored: readonly StoredRow[], complete: boolean, carryDecoded
         put: unused,
         delete: unused,
         putIndex: unused,
+        deleteIndex: unused,
         putEntry: unused,
         deleteEntries: unused,
     };

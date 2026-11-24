@@ -30,6 +30,7 @@ function writeRecorder(nativeWrite: boolean, nativeIndexes = false) {
             Effect.sync(() => {
                 definitions.set(index.name, index);
             }),
+        deleteIndex: unused,
         put: (row) =>
             Effect.sync(() => {
                 rows.set(row.key, row);

@@ -55,7 +55,8 @@ export interface ReplicaConfiguration {
      * Every download keeps its desired query; one that lost rows reinstalls. Queued actions stay
      * queued: their predictions are replayed against the new definition, a prediction that no
      * longer applies is dropped (the action is still sent), and failures follow the outbox's
-     * `failureStrategy`. A changed primary key cannot reuse its stored index, so that open fails.
+     * `failureStrategy`. A cleared type's indexes are dropped and ensured again for the new
+     * definition, so a changed primary key also opens.
      */
     readonly onDefinitionChange?: "reset" | "error";
     readonly context?: Record<string, unknown>;

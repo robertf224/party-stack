@@ -59,6 +59,50 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
                 storageError("sql", "sql", cause, isSqlError(cause) && cause.isRetryable)
             )
         );
+    const nativePrefix = `${prefix.slice(0, 20)}_i_`;
+    // putIndex gives native indexes random names. Find a logical index's native
+    // indexes by the projection keys they cover and their partial-index table.
+    const nativeIndexes = Effect.fnUntraced(function* (table: string, keys: readonly string[]) {
+        if (dialect === "sqlite") {
+            // SQLite keeps CREATE INDEX text verbatim from the index name onward.
+            const predicate = `WHERE table_name=${literal(dialect, table)}`;
+            const candidates = yield* run(
+                sql<{
+                    name: string;
+                    sql: string | null;
+                }>`SELECT name,sql FROM sqlite_master WHERE type='index' AND tbl_name=${rows}`
+            );
+            return candidates.flatMap(({ name, sql: statement }) =>
+                name.startsWith(nativePrefix) &&
+                statement?.endsWith(predicate) &&
+                keys.some((key) => statement.includes(`'$.${key}'`))
+                    ? [q(name)]
+                    : []
+            );
+        }
+        const candidates = yield* run(
+            sql<{
+                namespace: string;
+                name: string;
+                expressions: string;
+                predicate: string;
+            }>`SELECT n.nspname AS namespace,c.relname AS name,pg_get_expr(i.indexprs,i.indrelid) AS expressions,pg_get_expr(i.indpred,i.indrelid) AS predicate FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE i.indrelid=to_regclass(${rows}) AND i.indexprs IS NOT NULL AND i.indpred IS NOT NULL`
+        );
+        const matches: string[] = [];
+        for (const { namespace, name, expressions, predicate } of candidates) {
+            if (!name.startsWith(nativePrefix) || !keys.some((key) => expressions.includes(`'${key}'`)))
+                continue;
+            // PostgreSQL evaluates its own deparsed predicate; no literal-escaping comparison.
+            const applies = yield* run(
+                sql.unsafe(
+                    `SELECT 1 AS applies FROM (SELECT CAST($1 AS TEXT) COLLATE "C" AS table_name) AS candidate WHERE ${predicate}`,
+                    [table]
+                )
+            );
+            if (applies.length) matches.push(`${q(namespace)}.${q(name)}`);
+        }
+        return matches;
+    });
     yield* run(
         sql.unsafe(
             `CREATE TABLE IF NOT EXISTS ${q(rows)} (table_name ${text} NOT NULL, row_key ${text} NOT NULL, data TEXT NOT NULL, projection ${dialect === "pg" ? "JSONB" : "TEXT"} NOT NULL, PRIMARY KEY (table_name, row_key))`
@@ -387,7 +431,7 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
                                         Effect.gen(function* () {
                                             if (index.field.path.length) {
                                                 if (index.multiEntry && dialect === "pg") {
-                                                    const name = `${prefix.slice(0, 20)}_i_${crypto.randomUUID().replaceAll("-", "")}`;
+                                                    const name = `${nativePrefix}${crypto.randomUUID().replaceAll("-", "")}`;
                                                     yield* run(
                                                         sql.unsafe(
                                                             `CREATE INDEX ${q(name)} ON ${q(rows)} USING GIN ((${arrayIndexExpression(dialect, index.name)})) WHERE table_name=${literal(dialect, index.table)}`
@@ -399,7 +443,7 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
                                                     : index.size
                                                       ? [index.name]
                                                       : [index.name, caseInsensitiveIndex(index.name)]) {
-                                                    const name = `${prefix.slice(0, 20)}_i_${crypto.randomUUID().replaceAll("-", "")}`;
+                                                    const name = `${nativePrefix}${crypto.randomUUID().replaceAll("-", "")}`;
                                                     const expr = indexExpression(dialect, variant);
                                                     const unique = index.unique && variant === index.name;
                                                     yield* run(
@@ -415,6 +459,27 @@ export const make = Effect.fnUntraced(function* (options: { readonly prefix?: st
                                         })
                                     );
                                 })
+                            ),
+                        deleteIndex: (table, name) =>
+                            write(
+                                coordinate(
+                                    coordination?.predicate(table),
+                                    Effect.gen(function* () {
+                                        const keys = [name, caseInsensitiveIndex(name)].map(projectionKey);
+                                        for (const index of yield* nativeIndexes(table, keys))
+                                            yield* run(sql.unsafe(`DROP INDEX ${index}`));
+                                        const projection =
+                                            dialect === "sqlite"
+                                                ? sql`json_remove(projection, ${`$.${keys[0]}`}, ${`$.${keys[1]}`})`
+                                                : sql`projection - ${keys[0]}::text - ${keys[1]}::text`;
+                                        yield* run(
+                                            sql`UPDATE ${sql(rows)} SET projection=${projection} WHERE table_name=${table}`
+                                        );
+                                        yield* run(
+                                            sql`DELETE FROM ${sql(definitions)} WHERE table_name=${table} AND index_name=${name}`
+                                        );
+                                    })
+                                )
                             ),
                         // Backfill projections before installing native indexes.
                         putEntry: (entry) =>

@@ -84,6 +84,8 @@ export interface ReadTransaction {
         partition: Field,
         query: Query
     ) => Effect.Effect<Row<A>[] | undefined, OntologyStorageError>;
+    /** The table's current index definitions, as passed to `ensureIndex`, in no particular order. */
+    readonly indexes: <A>(table: ReadTable<A>) => Effect.Effect<Index[], OntologyStorageError>;
 }
 export interface Transaction extends ReadTransaction {
     /** Request write intent before reading to avoid shared-lock upgrade deadlocks. */
@@ -121,6 +123,9 @@ export interface Transaction extends ReadTransaction {
     readonly delete: <A>(table: Table<A>, key: Key) => Effect.Effect<void, OntologyStorageError>;
     readonly clear: <A>(table: Table<A>) => Effect.Effect<void, OntologyStorageError>;
     readonly ensureIndex: <A>(table: Table<A>, index: Index) => Effect.Effect<void, OntologyStorageError>;
+    /** Remove an index with its entries in this transaction; a missing name is a no-op.
+     * The same name may then be ensured with a different definition. */
+    readonly dropIndex: <A>(table: Table<A>, name: string) => Effect.Effect<void, OntologyStorageError>;
 }
 export interface TablesService extends Transaction {
     readonly [TransactionIdentity]?: symbol;
@@ -931,6 +936,19 @@ function transaction(
                 })
             );
         }),
+        dropIndex: Effect.fnUntraced(function* <A>(table: Table<A>, name: string) {
+            yield* assertWrite();
+            if (name === schemaIndex)
+                return yield* Effect.fail(indexError("The table schema stamp cannot be dropped."));
+            if (!(yield* definitions(table)).some((index) => index.name === name)) return;
+            yield* raw.deleteIndex(table.name, name);
+            knownDefinitions.delete(table.name);
+        }),
+        indexes: Effect.fnUntraced(function* <A>(table: ReadTable<A>) {
+            return (yield* definitions(table)).map(
+                ({ table: _table, version: _version, ...index }): Index => index
+            );
+        }),
     };
     function guardedQuery(
         document: QueryDocument,
@@ -963,6 +981,8 @@ function transaction(
         delete: (table, key) => guarded(api.delete(table, key)),
         clear: (table) => guarded(api.clear(table)),
         ensureIndex: (table, index) => guarded(api.ensureIndex(table, index)),
+        dropIndex: (table, name) => guarded(api.dropIndex(table, name)),
+        indexes: (table) => guarded(api.indexes(table)),
     };
 }
 export function makeTables(driver: Driver): TablesService {
@@ -1030,5 +1050,7 @@ export function makeTables(driver: Driver): TablesService {
         delete: (table, key) => operation("readwrite", (tx) => tx.delete(table, key)),
         clear: (table) => operation("readwrite", (tx) => tx.clear(table)),
         ensureIndex: (table, index) => operation("readwrite", (tx) => tx.ensureIndex(table, index)),
+        dropIndex: (table, name) => operation("readwrite", (tx) => tx.dropIndex(table, name)),
+        indexes: (table) => operation("readonly", (tx) => tx.indexes(table)),
     };
 }

@@ -5,7 +5,7 @@ import { evaluateQuery, ontologyDefinitionContractSignature } from "@party-stack
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { MemoryRuntime, Runtimes } from "@party-stack/runtime";
-import { Deferred, Effect } from "effect";
+import { Deferred, Effect, Fiber } from "effect";
 import { expect, test } from "vite-plus/test";
 import { makeOntologyServer } from "./routing.js";
 import { makeOntologyLocalClient } from "./rpcLocal.js";
@@ -112,18 +112,24 @@ const setup = Effect.fnUntraced(function* (bundled = false) {
                 )
             ),
     };
+    let opens = 0;
     const server = yield* makeOntologyServer({
         enableRealtime: true,
         replicas: {},
         routes: {
             notes: {
-                kind: "replica",
-                upstream: { client: upstream },
-                context: {},
-                live: false,
-                onDefinitionChange: "reset",
-                ...(bundled ? { ir: original } : {}),
                 dangerouslyAllowInternalAccess: true,
+                open: Effect.sync(() => {
+                    opens++;
+                    return {
+                        kind: "replica" as const,
+                        upstream: { client: upstream },
+                        context: {},
+                        live: false,
+                        onDefinitionChange: "reset" as const,
+                        ...(bundled ? { ir: original } : {}),
+                    };
+                }),
             },
         },
     });
@@ -139,6 +145,7 @@ const setup = Effect.fnUntraced(function* (bundled = false) {
         replica,
         fresh,
         freshRequests: () => freshRequests,
+        opens: () => opens,
         change: Effect.sync(() => {
             selected = replacement;
             source = backend(replacement);
@@ -215,6 +222,53 @@ test("a rebuild keeps queued actions and the next route bind replays them on the
                 const kept = yield* f.runtime.tables.get(outbox, "offline");
                 expect(kept?.invocation).toEqual(pending.invocation);
                 expect(kept?.prediction).toBeDefined();
+            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
+        )
+    );
+});
+
+test("a definition change swaps the route's replica in place, and binds during the swap wait instead of failing", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* setup();
+                // Keep binding the route and reading through it, as requests do, for the whole swap.
+                let binding = true;
+                const failures: unknown[] = [];
+                const binds = yield* Effect.forkScoped(
+                    Effect.gen(function* () {
+                        while (binding) {
+                            const exit = yield* Effect.exit(
+                                Effect.scoped(
+                                    Effect.flatMap(f.server.bind("notes"), (bound) =>
+                                        bound.options.replica!.confirmed.get("Item", "row")
+                                    )
+                                )
+                            );
+                            if (exit._tag === "Failure") failures.push(exit.cause);
+                            yield* Effect.yieldNow;
+                        }
+                    })
+                );
+                yield* f.change;
+                expect(yield* Effect.result(f.refresh)).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "SchemaMismatch" },
+                });
+                const rebound = yield* until(f.server.bind("notes"), (bound) =>
+                    same(bound.options.ir, replacement)
+                );
+                binding = false;
+                yield* Fiber.join(binds);
+                expect(failures).toEqual([]);
+                // The route was not dropped and reopened: its replica was replaced behind it.
+                expect(f.opens()).toBe(1);
+                expect(rebound.options.replica).not.toBe(f.replica);
+                yield* rebound.options.replica!.demand.acquire(objectSubset("Item"));
+                expect(yield* rebound.options.replica!.confirmed.get("Item", "row")).toEqual({
+                    id: "row",
+                    count: "new",
+                });
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );

@@ -1,6 +1,17 @@
 import { Arbitrary, Effect, Schema } from "effect";
 import { expect, test } from "vitest";
-import { Table, and, applyQuery, cursorOf, eq, field, gte, type Key, type Query } from "../table-api.js";
+import {
+    Table,
+    and,
+    applyQuery,
+    cursorOf,
+    eq,
+    field,
+    gte,
+    ilike,
+    type Key,
+    type Query,
+} from "../table-api.js";
 import { runContract, runBlobContract } from "../testing/index.js";
 import { runOntologyContract } from "../testing/ontology.js";
 import * as Memory from "./tables.js";
@@ -60,6 +71,40 @@ test("key-ordered scans hydrate only their selected values, once", async () => {
     );
 });
 
+test("a dropped index leaves no entries to widen a same-name index's candidates", async () => {
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const tables = yield* Memory.make();
+            let decodes = 0;
+            const rows = Table.make<{ badge: string; desk: string }>({
+                name: "index-drop-candidates",
+                codec: {
+                    encode: (value) => value,
+                    decode: (value) => {
+                        decodes++;
+                        return value as { badge: string; desk: string };
+                    },
+                },
+            });
+            yield* tables.putMany(
+                rows,
+                Array.from({ length: 40 }, (_, key) => ({
+                    key,
+                    value: { badge: "MATCH", desk: key === 7 ? "MATCH" : `desk-${key}` },
+                }))
+            );
+            yield* tables.ensureIndex(rows, { name: "lookup", field: field("badge") });
+            yield* tables.dropIndex(rows, "lookup");
+            yield* tables.ensureIndex(rows, { name: "lookup", field: field("desk") });
+            // Exact and folded entries of the old definition would each add 40 candidates.
+            for (const where of [eq(field("desk"), "MATCH"), ilike(field("desk"), "match")]) {
+                decodes = 0;
+                expect((yield* tables.query(rows, { where })).map((row) => row.key)).toEqual([7]);
+                expect(decodes).toBe(1);
+            }
+        })
+    );
+});
 test("native primary-key pages do not decode discarded row values", async () => {
     await Effect.runPromise(
         Effect.gen(function* () {

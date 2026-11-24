@@ -91,6 +91,15 @@ export const resetReplicaCache = Effect.fn("Replica.resetCache")(function* (opti
         .pipe(Effect.mapError((cause) => classifyBackendFailure("replica.rebuild", cause)));
 });
 
+/** Empty a cached table and drop its indexes: they were built for the old definition (for
+ * example on a primary key that moved), and the replica ensures them again when it opens. */
+const clearTable = (tx: Transaction, tableName: string) =>
+    Effect.gen(function* () {
+        const table = Table.make({ name: tableName });
+        yield* tx.clear(table);
+        for (const index of yield* tx.indexes(table)) yield* tx.dropIndex(table, index.name);
+    });
+
 /** Which cached data a definition change invalidates. */
 export type DefinitionResetPlan =
     | { readonly kind: "none" }
@@ -171,7 +180,7 @@ export const resetObjectTypes = (
         const name = (part: string) => JSON.stringify(["replica", namespace, part]);
         for (const type of types) {
             for (const layer of ["base", "parent-base", "parent-overlay", "overlay"])
-                yield* tx.clear(Table.make({ name: name(`${layer}:${type}`) }));
+                yield* clearTable(tx, name(`${layer}:${type}`));
             for (const layer of ["base", "overlay"])
                 if (blobs)
                     yield* blobs.in(tx).releaseGroup(JSON.stringify(["replica-row", namespace, layer, type]));
@@ -235,7 +244,7 @@ export const resetReplicaHead = <Stored extends object>(
         ]);
         for (const type of types) {
             for (const layer of ["base", "parent-base", "parent-overlay", "overlay"])
-                yield* tx.clear(Table.make({ name: name(`${layer}:${type}`) }));
+                yield* clearTable(tx, name(`${layer}:${type}`));
             for (const layer of ["base", "overlay"])
                 if (blobs)
                     yield* blobs.in(tx).releaseGroup(JSON.stringify(["replica-row", namespace, layer, type]));

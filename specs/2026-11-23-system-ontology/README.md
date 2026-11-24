@@ -87,8 +87,13 @@ startup transaction:
 The outbox, receipts and every download's desired query are kept; downloads that lost rows
 reinstall. Queued actions are replayed against the new definition; a prediction that no
 longer applies is dropped and the action is still sent, with failures handled by the outbox's
-`failureStrategy`. A changed primary key needs a new index that storage cannot yet replace, so
-that open fails and rolls back. Server-managed rebuilds still reset everything.
+`failureStrategy`. A cleared type's indexes are dropped (`Transaction.dropIndex`) and ensured
+again when the replica opens, so a changed primary key opens too. Server-managed rebuilds still
+reset everything, and replace the replica behind a route that stays open.
+
+**Index cleanup.** Storage can list and drop indexes. Still to do: drop indexes nothing ensures
+any more (TanStack DB's SQLite persistence records usage but never sweeps, and documents the
+orphans), and record each index's compiled definition so drift is caught without a reset.
 
 **Without reconnecting.** A server rebuild today retires the replica: clients lose their
 binding and reconnect, which risks a thundering herd when every client reconnects at once. The

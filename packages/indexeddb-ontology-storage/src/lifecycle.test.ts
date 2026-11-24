@@ -81,3 +81,55 @@ test("An indexed finite ordered query hydrates a bounded page of rows", async ()
         ).pipe(Effect.provideService(IndexedDb.IndexedDb, platform))
     );
 });
+test("Dropping an index removes its definition and exact and folded entries from the stores", async () => {
+    const databaseName = crypto.randomUUID();
+    const rows = Table.make<{ code: string; region: string }>({ name: "Facility" });
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* make({ databaseName });
+                yield* tables.put(rows, "north", { code: "N1", region: "East" });
+                yield* tables.ensureIndex(rows, { name: "code", field: field("code"), unique: true });
+                yield* tables.ensureIndex(rows, { name: "region", field: field("region") });
+                const failed = yield* Effect.exit(
+                    tables.transaction((tx) =>
+                        Effect.andThen(tx.dropIndex(rows, "code"), Effect.fail("rollback"))
+                    )
+                );
+                expect(Exit.isFailure(failed)).toBe(true);
+                expect((yield* tables.indexes(rows)).map((index) => index.name).sort()).toEqual([
+                    "code",
+                    "region",
+                ]);
+                yield* tables.dropIndex(rows, "code");
+            })
+        ).pipe(Effect.provideService(IndexedDb.IndexedDb, platform))
+    );
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(databaseName, 1);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+    try {
+        const read = <A>(make: (tx: IDBTransaction) => IDBRequest<A>) =>
+            new Promise<A>((resolve, reject) => {
+                const request = make(db.transaction(["definitions", "entries"], "readonly"));
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        const entries = (index: string) =>
+            read((tx) =>
+                tx.objectStore("entries").count(IDBKeyRange.bound([rows.name, index], [rows.name, index, []]))
+            );
+        const definitions = await read(
+            (tx) => tx.objectStore("definitions").getAll() as IDBRequest<{ readonly name: string }[]>
+        );
+        expect(definitions.map((index) => index.name).sort()).toEqual(["__party_tables_schema__", "region"]);
+        expect(await entries("code")).toBe(0);
+        expect(await entries("\0code")).toBe(0);
+        expect(await entries("region")).toBe(1);
+        expect(await entries("\0region")).toBe(1);
+    } finally {
+        db.close();
+    }
+});

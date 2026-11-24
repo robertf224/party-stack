@@ -356,6 +356,12 @@ afterward. A bundled `ir` remains a fixed contract and is never silently replace
 Existing views also have a fixed IR: reopen them against the reset route to use its
 new schema.
 
+The route itself stays open through the reset. The server replaces the replica behind
+it: requests that bind the route while the replacement opens wait for it rather than
+failing, and the route is not reopened. Streams served by the old replica end, and their
+clients subscribe again on the same connection. Delivery frames carry the definition's
+hash, so a child replica learns of the change from the next frame it receives.
+
 `onDefinitionChange` is a replica setting, so it also applies to replicas fed by a
 backend and to `makeReplica`: with `"reset"`, a replica opened with a definition whose
 contract differs from its stored cache resets that cache instead of failing with

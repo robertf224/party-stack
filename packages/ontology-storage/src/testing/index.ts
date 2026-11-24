@@ -4,6 +4,7 @@ import { Temporal } from "temporal-polyfill";
 import { overlay, loadVisible, getVisible, putVisible, deleteVisible } from "../overlay/index.js";
 import { applyQuery } from "../query/evaluate.js";
 import { Table, field, where, type Query, type Row } from "../table-api.js";
+import { runIndexRemovalContract } from "./indexes.js";
 import type { TablesService, Transaction } from "../tables.js";
 
 const assert = (value: unknown, message: string): void => {
@@ -686,7 +687,9 @@ export const runContract = Effect.fnUntraced(function* (tables: TablesService) {
         (yield* tables.get(counter, "key")) === 12,
         "Concurrent transactions serialize without lost updates"
     );
+    yield* runIndexRemovalContract(tables);
 });
 
+export { runIndexRemovalContract } from "./indexes.js";
 export { runOntologyContract } from "./ontology.js";
 export { runBlobContract } from "./blobs.js";

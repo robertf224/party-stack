@@ -3,7 +3,20 @@ import { CurrentExecutionContext } from "@party-stack/ontology-backend/policy";
 import { makeReplicaPartitionCatalog } from "@party-stack/ontology-replica/registry";
 import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { Runtimes } from "@party-stack/runtime";
-import { Context, Effect, Equal, Exit, Hash, Layer, Option, RcMap, Schema, Scope, Stream } from "effect";
+import {
+    Context,
+    Deferred,
+    Effect,
+    Equal,
+    Exit,
+    Hash,
+    Layer,
+    Option,
+    RcMap,
+    Schema,
+    Scope,
+    Stream,
+} from "effect";
 import { Rpc, RpcGroup, RpcSchema } from "effect/rpc";
 import { prepareOntologyServer, bindOntologyServer } from "./composition.js";
 import { errorProjectionLayer, errorContext, OntologyErrorProjection } from "./errorProjection.js";
@@ -68,6 +81,14 @@ export function ontologyUrl(url: string, ontology?: string): string {
  * Binding settings stay stable for one native owner's lifetime; command Effects
  * are deliberately not identities (resolvers commonly construct them per call).
  */
+/** A managed replica route's current binding, replaced in place when its definition changes. */
+const routeGeneration = Symbol("party-stack.routeGeneration");
+interface RouteGeneration<R> {
+    readonly current: () => OntologyBindingOptions<R>;
+}
+const currentBinding = <R>(target: OntologyBindingOptions<R>): OntologyBindingOptions<R> =>
+    (target as { readonly [routeGeneration]?: RouteGeneration<R> })[routeGeneration]?.current() ?? target;
+
 class EndpointKey<T extends OntologyBindingOptions<unknown>> implements Equal.Equal {
     readonly identity;
     constructor(
@@ -437,6 +458,8 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                     cause,
                 }),
         });
+    // Routes whose replica is being replaced: requests binding them wait for the new generation.
+    const switching = new Map<string, Deferred.Deferred<void>>();
     const openRoute = Effect.fn("OntologyServer.openRoute")(function* (target: string) {
         const route = yield* matched(target);
         if (!route)
@@ -482,70 +505,114 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
         let binding: OntologyBindingOptions<R>;
         if (declaration.kind === "replica" && !declaration.replica) {
             const catalog = yield* getCatalog;
+            const routeScope = yield* Effect.scope;
+            const services = yield* Effect.context<R>();
+            // The route's current generation: its upstream client, replica and binding, in a
+            // scope of their own. A definition change replaces the generation behind the
+            // route instead of dropping the route, so requests and connections stay put.
+            let current: { readonly binding: OntologyBindingOptions<R>; readonly scope: Scope.Closeable };
             let rebuilding = false;
-            const restored =
-                "upstream" in declaration
-                    ? yield* restoreReplicaRegistration(route.key, declaration, catalog, (_client, error) =>
-                          Effect.gen(function* () {
-                              if (
-                                  error.kind !== "SchemaMismatch" ||
-                                  declaration.onDefinitionChange !== "reset" ||
-                                  rebuilding
+            const onIncompatible = (_client: unknown, error: BackendError): Effect.Effect<void> =>
+                Effect.gen(function* () {
+                    if (
+                        !("upstream" in declaration) ||
+                        error.kind !== "SchemaMismatch" ||
+                        declaration.onDefinitionChange !== "reset" ||
+                        rebuilding
+                    )
+                        return;
+                    rebuilding = true;
+                    // A protocol error is evidence, not a startup prerequisite.
+                    // Resolve the replacement only after such evidence arrives.
+                    yield* Effect.gen(function* () {
+                        const fresh = yield* declaration.upstream.client.ontology(
+                            declaration.upstream.ontology
+                        );
+                        if (!fresh.ir) return;
+                        // A bundled application cannot silently acquire a different contract.
+                        if (declaration.ir) return;
+                        const switched = yield* Deferred.make<void>();
+                        switching.set(route.key, switched);
+                        let retired = false;
+                        yield* Effect.gen(function* () {
+                            yield* catalog.rebuild(route.key, fresh.description, {
+                                onRetire: Effect.sync(() => {
+                                    retired = true;
+                                }),
+                            });
+                            const previous = current;
+                            current = yield* openGeneration;
+                            yield* Scope.close(previous.scope, Exit.void);
+                        }).pipe(
+                            // If the reset happened but the next generation could not open, fall
+                            // back to dropping the route so the next request opens it afresh.
+                            Effect.onError(() => (retired ? retire(route.key) : Effect.void)),
+                            Effect.ensuring(
+                                Effect.suspend(() => {
+                                    if (switching.get(route.key) === switched) switching.delete(route.key);
+                                    return Deferred.succeed(switched, undefined);
+                                })
+                            )
+                        );
+                    }).pipe(
+                        Effect.scoped,
+                        Effect.ensuring(
+                            Effect.sync(() => {
+                                rebuilding = false;
+                            })
+                        ),
+                        Effect.catch((failure) =>
+                            Effect.logWarning("Replica definition rebuild blocked", failure)
+                        ),
+                        Effect.forkIn(serverScope)
+                    );
+                }).pipe(Effect.asVoid);
+            const openGeneration = Effect.gen(function* () {
+                const scope = yield* Scope.fork(routeScope);
+                return yield* Effect.gen(function* () {
+                    const restored =
+                        "upstream" in declaration
+                            ? yield* restoreReplicaRegistration(
+                                  route.key,
+                                  declaration,
+                                  catalog,
+                                  onIncompatible
                               )
-                                  return;
-                              rebuilding = true;
-                              // A protocol error is evidence, not a startup prerequisite.
-                              // Resolve the replacement only after such evidence arrives.
-                              yield* Effect.gen(function* () {
-                                  const fresh = yield* declaration.upstream.client.ontology(
-                                      declaration.upstream.ontology
-                                  );
-                                  if (!fresh.ir) return;
-                                  // A bundled application cannot silently acquire a different contract.
-                                  if (declaration.ir) return;
-                                  let retired = false;
-                                  yield* catalog
-                                      .rebuild(route.key, fresh.description, {
-                                          onRetire: Effect.sync(() => {
-                                              retired = true;
-                                          }),
-                                      })
-                                      .pipe(
-                                          Effect.ensuring(
-                                              Effect.suspend(() =>
-                                                  retired ? retire(route.key) : Effect.void
-                                              )
-                                          )
-                                      );
-                              }).pipe(
-                                  Effect.scoped,
-                                  Effect.ensuring(
-                                      Effect.sync(() => {
-                                          rebuilding = false;
-                                      })
-                                  ),
-                                  Effect.catch((failure) =>
-                                      Effect.logWarning("Replica definition rebuild blocked", failure)
-                                  ),
-                                  Effect.forkIn(serverScope)
-                              );
-                          }).pipe(Effect.asVoid)
-                      )
-                    : undefined;
-            const registration = restored?.registration ?? (declaration as ReplicaRegistration);
-            const resource = yield* catalog
-                .open(route.key, registration)
-                .pipe(Effect.tapError((error) => (restored ? restored.failed(error) : Effect.void)));
-            if (restored) yield* restored.opened;
-            binding = {
-                ...declaration,
-                ...settings,
-                ir: resource.ir,
-                replica: resource.replica,
-                backend: resource.backend,
-                traces: resource.traces,
-                deleteLocalData: forget(route.key),
-            } as unknown as OntologyBindingOptions<R>;
+                            : undefined;
+                    const registration = restored?.registration ?? (declaration as ReplicaRegistration);
+                    const resource = yield* catalog
+                        .open(route.key, registration)
+                        .pipe(Effect.tapError((error) => (restored ? restored.failed(error) : Effect.void)));
+                    if (restored) yield* restored.opened;
+                    let opened = {
+                        ...declaration,
+                        ...settings,
+                        ir: resource.ir,
+                        replica: resource.replica,
+                        backend: resource.backend,
+                        traces: resource.traces,
+                        deleteLocalData: forget(route.key),
+                    } as unknown as OntologyBindingOptions<R>;
+                    if (!opened.authenticate) {
+                        // A fixed route owns its handler resources, including chunk-transfer
+                        // registries, for the same lifetime as its replica generation.
+                        const context = opened.kind === "replica" ? opened.replica.context : opened.context;
+                        const bound = yield* RcMap.get(
+                            endpoints,
+                            new EndpointKey(route.key, opened, context)
+                        );
+                        opened = { ...opened, context: bound.options.context } as OntologyBindingOptions<R>;
+                    }
+                    return { binding: opened, scope };
+                }).pipe(
+                    Scope.provide(scope),
+                    Effect.onError(() => Scope.close(scope, Exit.void))
+                );
+            }).pipe(Effect.provideContext(services));
+            current = yield* openGeneration;
+            const handle: RouteGeneration<R> = { current: () => current.binding };
+            binding = Object.assign({ ...current.binding }, { [routeGeneration]: handle });
+            return binding;
         } else binding = { ...declaration, ...settings } as OntologyBindingOptions<R>;
         if (!binding.authenticate) {
             const context = binding.kind === "replica" ? binding.replica.context : binding.context;
@@ -626,13 +693,16 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
             // and an open failure can be shown in full to a caller allowed internal access.
             const { authenticate, dangerouslyAllowInternalAccess: access } = route.factory;
             const caller = authenticate ? yield* authenticateRequest(authenticate, request) : undefined;
-            const target = yield* RcMap.get(resources, route.key).pipe(
+            const opened = yield* RcMap.get(resources, route.key).pipe(
                 Effect.tapError((error) =>
                     Effect.sync(() => {
                         if (allowsInternalAccess(access, caller)) forwardedStartupErrors.add(error);
                     })
                 )
             );
+            const replacing = switching.get(route.key);
+            if (replacing) yield* Deferred.await(replacing);
+            const target = currentBinding(opened);
             const context = caller ?? (target.kind === "replica" ? target.replica.context : target.context);
             return yield* RcMap.get(endpoints, new EndpointKey(ontology, target, context));
         }
