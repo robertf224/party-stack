@@ -2,10 +2,9 @@ import { BackendError, makeOntologyBackend } from "@party-stack/ontology-backend
 import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
 import { evaluateQuery, ontologyDefinitionContractSignature } from "@party-stack/ontology-storage";
-import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { MemoryRuntime, Runtimes } from "@party-stack/runtime";
-import { Deferred, Effect, Fiber } from "effect";
+import { Effect, Fiber } from "effect";
 import { expect, test } from "vite-plus/test";
 import { makeOntologyServer } from "./routing.js";
 import { makeOntologyLocalClient } from "./rpcLocal.js";
@@ -42,7 +41,7 @@ const until = <A, E, R>(read: Effect.Effect<A, E, R>, ready: (value: A) => boole
         for (;;) {
             const value = yield* read;
             if (ready(value)) return value;
-            if (Date.now() > deadline) throw new Error("Automatic route rebuild did not settle");
+            if (Date.now() > deadline) throw new Error("The route did not follow the new definition");
             yield* Effect.yieldNow;
         }
     });
@@ -96,18 +95,15 @@ const setup = Effect.fnUntraced(function* (bundled = false) {
     });
     const transport = yield* makeOntologyLocalClient(remote);
     let acquired: OntologyClient | undefined;
-    let freshRequests = 0;
-    const fresh = yield* Deferred.make<void>();
+    let describes = 0;
     const upstream: OntologyServerClient = {
         ontology: (_name, options) =>
             transport.ontology("remote", options).pipe(
                 Effect.tap((client) =>
-                    Effect.gen(function* () {
-                        if (options?.onIncompatible) acquired = client;
-                        else {
-                            freshRequests++;
-                            yield* Deferred.succeed(fresh, undefined);
-                        }
+                    Effect.sync(() => {
+                        // The replica's own client; the first open also describes the upstream once.
+                        if (options?.validate) acquired ??= client;
+                        else describes++;
                     })
                 )
             ),
@@ -143,8 +139,7 @@ const setup = Effect.fnUntraced(function* (bundled = false) {
         runtime,
         first,
         replica,
-        fresh,
-        freshRequests: () => freshRequests,
+        describes: () => describes,
         opens: () => opens,
         change: Effect.sync(() => {
             selected = replacement;
@@ -154,85 +149,13 @@ const setup = Effect.fnUntraced(function* (bundled = false) {
     };
 });
 
-test("an automatic rebuild adopts a fresh descriptor and the next route bind uses its native definition", async () => {
+test("an upstream definition change reopens the route's replica in place, without failing binds", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const f = yield* setup();
                 expect(yield* f.replica.confirmed.get("Item", "row")).toEqual({ id: "row", count: 1 });
-                yield* f.change;
-                expect(yield* Effect.result(f.refresh)).toMatchObject({
-                    _tag: "Failure",
-                    failure: { kind: "SchemaMismatch" },
-                });
-                yield* until(
-                    f.server.partitions,
-                    (entries) => same(entries[0]?.definition?.ir, replacement) && !entries[0]?.rebuild
-                );
-                const rebound = yield* until(f.server.bind("notes"), (bound) =>
-                    same(bound.options.ir, replacement)
-                );
-                expect(rebound.options.replica).not.toBe(f.replica);
-                expect(yield* rebound.options.replica!.confirmed.get("Item", "row")).toBeUndefined();
-                yield* rebound.options.replica!.demand.acquire(objectSubset("Item"));
-                expect(yield* rebound.options.replica!.confirmed.get("Item", "row")).toEqual({
-                    id: "row",
-                    count: "new",
-                });
-                expect(f.freshRequests()).toBe(1);
-            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
-        )
-    );
-});
-
-test("a rebuild keeps queued actions and the next route bind replays them on the new definition", async () => {
-    await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                const f = yield* setup();
-                const pending: PendingAction = {
-                    invocation: { id: "offline", name: "write", parameters: {} },
-                    requestIdentity: "fixture",
-                    createdAt: 0,
-                    sequence: 1,
-                    state: "queued",
-                    optimistic: false,
-                    attempts: 0,
-                };
-                const outbox = Table.make<PendingAction>({
-                    name: JSON.stringify(["replica", "notes", "outbox"]),
-                });
-                yield* f.runtime.tables.put(outbox, "offline", pending);
-                yield* f.change;
-                expect(yield* Effect.result(f.refresh)).toMatchObject({
-                    _tag: "Failure",
-                    failure: { kind: "SchemaMismatch" },
-                });
-                yield* until(
-                    f.server.partitions,
-                    (entries) => same(entries[0]?.definition?.ir, replacement) && !entries[0]?.rebuild
-                );
-                const rebound = yield* until(f.server.bind("notes"), (bound) =>
-                    same(bound.options.ir, replacement)
-                );
-                expect(rebound.options.replica).not.toBe(f.replica);
-                expect(yield* rebound.options.replica!.confirmed.get("Item", "row")).toBeUndefined();
-                // Rebinding opened the replica under the new definition, which replayed the
-                // queued action and recorded its prediction status.
-                const kept = yield* f.runtime.tables.get(outbox, "offline");
-                expect(kept?.invocation).toEqual(pending.invocation);
-                expect(kept?.prediction).toBeDefined();
-            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
-        )
-    );
-});
-
-test("a definition change swaps the route's replica in place, and binds during the swap wait instead of failing", async () => {
-    await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                const f = yield* setup();
-                // Keep binding the route and reading through it, as requests do, for the whole swap.
+                // Keep binding the route and reading through it, as requests do, for the whole change.
                 let binding = true;
                 const failures: unknown[] = [];
                 const binds = yield* Effect.forkScoped(
@@ -251,30 +174,63 @@ test("a definition change swaps the route's replica in place, and binds during t
                     })
                 );
                 yield* f.change;
-                expect(yield* Effect.result(f.refresh)).toMatchObject({
-                    _tag: "Failure",
-                    failure: { kind: "SchemaMismatch" },
-                });
+                // The client describes the upstream again after a mismatch; following, it adopts it.
+                yield* f.refresh;
                 const rebound = yield* until(f.server.bind("notes"), (bound) =>
                     same(bound.options.ir, replacement)
                 );
                 binding = false;
                 yield* Fiber.join(binds);
                 expect(failures).toEqual([]);
-                // The route was not dropped and reopened: its replica was replaced behind it.
+                // One route, one replica handle: the replica reopened behind it.
                 expect(f.opens()).toBe(1);
-                expect(rebound.options.replica).not.toBe(f.replica);
-                yield* rebound.options.replica!.demand.acquire(objectSubset("Item"));
-                expect(yield* rebound.options.replica!.confirmed.get("Item", "row")).toEqual({
-                    id: "row",
-                    count: "new",
-                });
+                expect(rebound.options.replica).toBe(f.replica);
+                expect(f.describes()).toBe(1);
+                // The demand held across the reopen loads the changed type in its new shape.
+                yield* until(f.replica.confirmed.get("Item", "row"), (row) => row?.count === "new");
+                const [saved] = yield* until(f.server.partitions, (entries) =>
+                    same(entries[0]?.bootstrap?.ir, replacement)
+                );
+                expect(same(saved?.definition?.ir, replacement)).toBe(true);
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );
 });
 
-test("a bundled application contract is never automatically rebuilt to a different upstream contract", async () => {
+test("queued actions are kept and replayed when the replica follows a new upstream definition", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* setup();
+                const pending: PendingAction = {
+                    invocation: { id: "offline", name: "write", parameters: {} },
+                    requestIdentity: "fixture",
+                    createdAt: 0,
+                    sequence: 1,
+                    state: "queued",
+                    optimistic: false,
+                    attempts: 0,
+                };
+                const outbox = Table.make<PendingAction>({
+                    name: JSON.stringify(["replica", "notes", "outbox"]),
+                });
+                yield* f.runtime.tables.put(outbox, "offline", pending);
+                yield* f.change;
+                yield* f.refresh;
+                yield* until(f.server.bind("notes"), (bound) => same(bound.options.ir, replacement));
+                // Opening under the new definition replayed the queued action and recorded its
+                // prediction status.
+                const kept = yield* until(
+                    f.runtime.tables.get(outbox, "offline"),
+                    (row) => row?.prediction !== undefined
+                );
+                expect(kept?.invocation).toEqual(pending.invocation);
+            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
+        )
+    );
+});
+
+test("a bundled application contract is never replaced by a different upstream contract", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -284,11 +240,11 @@ test("a bundled application contract is never automatically rebuilt to a differe
                     _tag: "Failure",
                     failure: { kind: "SchemaMismatch" },
                 });
-                yield* Deferred.await(f.fresh);
-                expect((yield* f.server.bind("notes")).options.replica).toBe(f.replica);
+                const bound = yield* f.server.bind("notes");
+                expect(bound.options.replica).toBe(f.replica);
+                expect(same(bound.options.ir, original)).toBe(true);
                 expect(yield* f.replica.confirmed.get("Item", "row")).toEqual({ id: "row", count: 1 });
                 expect(same((yield* f.server.partitions)[0]?.definition?.ir, original)).toBe(true);
-                expect((yield* f.server.partitions)[0]?.rebuild).toBeUndefined();
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );

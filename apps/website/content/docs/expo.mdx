@@ -100,10 +100,11 @@ import {
 } from "@party-stack/foundry-ontology";
 import { localClient } from "@party-stack/ontology/local";
 import { classifyBackendFailure } from "@party-stack/ontology-backend";
-import { loadDefinition } from "@party-stack/ontology-backend/meta";
+import { metaDefinition } from "@party-stack/ontology-backend/meta";
 import { makeOntologyServer } from "@party-stack/ontology-server";
 import { Runtime, Runtimes } from "@party-stack/runtime";
 import { Context, Effect, Layer, ManagedRuntime } from "effect";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 import { foundry } from "./foundry-config";
 
 const openDevice = Effect.gen(function* () {
@@ -165,7 +166,7 @@ const openDevice = Effect.gen(function* () {
                 },
                 "accounts/:connectionId/ontologies/:ontologyId": {
                     dangerouslyAllowInternalAccess: true,
-                    open: (params, route) =>
+                    open: (params) =>
                         Effect.gen(function* () {
                             const access = yield* connect.connections.acquire({
                                 objectType: "OAuthConnection",
@@ -178,13 +179,14 @@ const openDevice = Effect.gen(function* () {
                                 egress: access.egress,
                             };
                             const metadata = yield* makeFoundryMetadataBackend(options);
-                            const ir = yield* route.definition({ context, load: loadDefinition(metadata) });
                             return {
                                 kind: "replica" as const,
-                                ir,
+                                // Follow the ontology's definition as its metadata changes.
+                                definition: yield* metaDefinition(metadata),
+                                backend: (ir: OntologyIR) => makeFoundryBackend({ ...options, ir, context }),
+                                onDefinitionChange: "reset" as const,
                                 context,
                                 authentication: access.authentication,
-                                backend: yield* makeFoundryBackend({ ...options, ir, context }),
                             };
                         }),
                 },
@@ -213,11 +215,12 @@ The picker below automatically pins its small discovery list. That keeps both
 the list and its availability proof for offline navigation; it does not download
 the selected ontologies' object data.
 
-`route.definition` uses retained IR for this account and target, loading metadata
-only when no usable definition is saved. It adds no startup refresh barrier.
-The first open of a new ontology requires its definition from Foundry; later
-starts can use its retained definition and downloaded rows offline. A schema
-incompatibility is surfaced rather than silently discarding pending actions.
+The replica opens under the definition it last had open for this account and target, so
+later starts work offline; the first open of a new ontology reads its definition from
+Foundry. When the definition changes, or Foundry rejects a request for referencing
+something it no longer knows, the replica reopens under the new definition behind the same
+handle. It clears only the object types whose contract changed and keeps queued actions.
+Views built on a `LiveOntology` see the new definition when they open it again.
 
 The persistent runtime belongs to the device server. `uiRuntime` keeps React
 views in memory while preserving Expo's native browser-authentication capability.

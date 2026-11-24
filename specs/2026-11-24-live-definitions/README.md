@@ -2,11 +2,14 @@
 
 ## Status
 
-Partly built. A replica fed by a backend follows its definition, servers and managed routes
-serve whatever definition their replica is open under, definitions can come from the meta
-ontology, schema errors trigger a recheck, and children resume after a reopen with only the
-changed types sent again. Replicas fed by another server (browser workers, in-app clients,
-`upstream` routes) do not follow their parent yet; see "Next".
+Built for replicas the server manages. A replica follows its definition, whether it comes
+from a backend's metadata or from a parent server (`upstream` routes); servers serve whatever
+definition their replica is open under; schema errors trigger a recheck; a managed replica
+starts offline under the definition it last had open; and children resume after a reopen
+with only the changed types sent again. Reopening is the only way a replica changes
+definition: the route-level swap and the catalog's `rebuild` are gone. An in-app
+`LiveOntology` and a browser worker's replica still open under one definition; the app opens
+them again, as it does today.
 
 ## BLUF
 
@@ -18,8 +21,8 @@ definition the replica has now.
 ## Replica construction
 
 ```ts
-// Fixed, as before.
-yield* makeReplica({ ir, backend, context });
+// Fixed. `ir` still works but is deprecated.
+yield* makeReplica({ definition: ir, backend, context });
 
 // Followed.
 const replica = yield* makeReplica({
@@ -34,6 +37,9 @@ replica.ir; // the definition it is open under now
 replica.definition.current; // Effect<OntologyIR>
 replica.definition.changes; // Stream<OntologyIR>, current first
 ```
+
+```ts
+`definition` is an `OntologyIR` or a source:
 
 ```ts
 interface ReplicaDefinition {
@@ -53,6 +59,9 @@ differs. `meta` is anything that answers queries: a metadata backend, or a cache
 meta replica so the definition is available offline. `options.changes` says when to read again
 (a live query over the meta replica, a timer); `options.revalidate` refreshes the metadata itself
 before a requested read.
+
+`backend` may be a function of the definition. It returns a backend, or `{ backend, source }`
+for a replica fed by another server.
 
 ### Reopening
 
@@ -112,6 +121,13 @@ makeOntologyServer({
   This applies to managed routes and to a replica passed in directly (as `serveOntologyWorker`
   does).
 - Clients notice a new definition through the definition hash on frames, as today.
+- A managed replica opens under the definition it last had open (recorded on each reopen),
+  then follows its source, so it starts offline. `route.definition` is deprecated.
+- An `upstream` route is a followed replica too. Its source is the parent's description: it
+  starts from the retained one without a `Describe`, opens a protocol client per definition,
+  and when the parent reports a mismatch the client describes it again; with
+  `onDefinitionChange: "reset"` a different definition reopens the replica. With a bundled
+  `ir`, a different contract stays an error.
 
 ## Delivery to children
 
@@ -128,13 +144,12 @@ makeOntologyServer({
 
 ## Next
 
-- **Children follow their parent.** An `upstreamDefinition(serverClient, ontology)` source opens
-  a new client per definition (a client is bound to one description) and emits its definition;
-  `backend` for such a replica returns the client's backend and source. That covers browser
-  workers, in-app clients and `upstream` routes, and replaces the route catalog's
-  rebuild-on-mismatch path, keeping the retained description for offline starts. Open
-  question: how an in-app `LiveOntology` exposes a new definition (its typed collections are
-  built from one).
+- **Live ontologies follow too.** An in-app `LiveOntology` builds typed collections from one
+  definition, so the app opens it again on a new one. A browser worker's replica is made the
+  same way. Both could take a definition source later.
+- **Persist delivery state.** Children's delivered hashes are in memory per stream; a parent
+  restart, or eviction, means a full resend. Storing them in the parent's tables (one row per
+  delivered ref per stream, as Zero's CVR does) bounds memory and survives restarts.
 - **Describe as a manifest.** Serve the definition as meta rows plus a `definition` query
   function returning the whole definition in one read, for when a client needs it
   transactionally. A provider can implement it with its whole-ontology metadata endpoint.

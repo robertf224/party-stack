@@ -110,6 +110,8 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
     const owner = yield* Effect.scope;
     const state = yield* SubscriptionRef.make<State>({ _tag: "opening" });
     let current: Generation | undefined;
+    // What synchronous getters report while the next engine opens: the last one that opened.
+    let latest: Generation | undefined;
 
     const close = Effect.fnUntraced(function* (generation: Generation) {
         yield* generation.writes.withPermits(WRITE_PERMITS)(
@@ -147,7 +149,7 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
         }
         const opened = yield* Effect.exit(openGeneration(ir));
         if (Exit.isSuccess(opened)) {
-            current = opened.value;
+            current = latest = opened.value;
             yield* SubscriptionRef.set(state, { _tag: "open", generation: opened.value });
             return;
         }
@@ -168,7 +170,7 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
         if (previous) {
             const restored = yield* Effect.exit(openGeneration(previous.ir));
             if (Exit.isSuccess(restored)) {
-                current = restored.value;
+                current = latest = restored.value;
                 yield* SubscriptionRef.set(state, { _tag: "open", generation: restored.value });
                 return;
             }
@@ -272,7 +274,7 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
     const generationValue =
         <A>(pick: (service: ReplicaService) => A) =>
         () =>
-            pick(current!.service);
+            pick(latest!.service);
 
     const acquire: ReplicaService["demand"]["acquire"] = (subset, settings) =>
         Effect.gen(function* () {
@@ -316,22 +318,22 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
 
     const handle: ReplicaService = {
         get ir() {
-            return current!.ir;
+            return latest!.ir;
         },
         get context() {
-            return current!.service.context;
+            return latest!.service.context;
         },
         get sourceId() {
-            return current!.service.sourceId;
+            return latest!.service.sourceId;
         },
         get upstreamKind() {
-            return current!.service.upstreamKind;
+            return latest!.service.upstreamKind;
         },
         get network() {
-            return current!.service.network;
+            return latest!.service.network;
         },
         get authentication() {
-            return current!.service.authentication;
+            return latest!.service.authentication;
         },
         definition: {
             current: Effect.map(ready, (generation) => generation.ir),

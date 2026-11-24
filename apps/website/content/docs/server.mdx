@@ -341,8 +341,12 @@ address. Later opens restore that binding locally. They can answer from retained
 data without a startup `Describe` request or a validation gate. Normal requests
 still verify source and context; they cannot silently use another account's data.
 
-Omit `onDefinitionChange` (or set `"error"`) to preserve retained data and report
-incompatible definitions. For an app generated from a fixed schema, supply `ir: appIR`.
+With `onDefinitionChange: "reset"`, the replica follows the parent's definition. When the
+parent reports a mismatch, the client describes it again and the replica reopens behind the
+same handle under the new definition (see below). Omit `onDefinitionChange` (or set
+`"error"`) to preserve retained data and report incompatible definitions. For an app
+generated from a fixed schema, supply `ir: appIR`; the parent's definition must then match
+it and is never adopted.
 This checks the retained/remote contract against the bundled application contract;
 it does not make a first-ever remote connection possible offline.
 
@@ -372,9 +376,8 @@ of the contract. Changes to named value types, context or policy clear everythin
 
 ### Follow a changing definition
 
-A replica fed by a backend can follow its definition instead of being opened with a fixed
-one. Pass `definition` in place of `ir`, and a `backend` built for each definition when the
-adapter compiles the IR:
+`definition` is either a fixed `OntologyIR` or a source the replica follows. To follow one,
+pass a source, and a `backend` built for each definition when the adapter compiles the IR:
 
 ```ts
 import { metaDefinition } from "@party-stack/ontology-backend/meta";
@@ -397,6 +400,10 @@ held demand move to the new engine, and the server serves the new definition. Ch
 resume their delivery stream receive only the changed types' rows again. When the backend
 rejects a request with `SchemaMismatch`, the replica asks the definition to look again.
 
+A managed replica starts under the definition it last had open, so it opens offline, then
+follows its source. Routes fed through `upstream` follow the same way, with the parent's
+description as the source.
+
 Display names, descriptions, and other presentation metadata do not force a cache
 reset. Other contract changes are conservatively incompatible for now, including
 property additions. Migrating retained rows and queued declarative actions is
@@ -412,9 +419,8 @@ Selected delivery checks the schema hash already carried in each batch. A
 finite-only adapter that does not report typed `SchemaMismatch` errors needs an
 explicit definition refresh to discover upstream schema changes.
 
-Native adapters that need IR before construction can use `route.definition` to
-restore it from the same catalog. The [Expo Foundry example](/docs/expo) shows this
-with `loadDefinition(metadataBackend)`.
+`route.definition` is deprecated: return a definition source and a `backend` built per
+definition instead.
 
 ## Use separate HTTP endpoints
 

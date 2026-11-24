@@ -143,16 +143,14 @@ const Operation = Schema.Union([
     }),
     // The app restarts on the same storage, under its old definition or the source's.
     Schema.Struct({ kind: Schema.Literal("reopen"), adopt: Schema.Boolean }),
-    // A server-managed rebuild to the source's definition, as after an upstream schema
-    // mismatch: the catalog retires the open replica, resets it and records the new
-    // definition, and the next open uses it.
+    // A restart that adopts the source's definition, as a server does after an upstream
+    // schema mismatch. Kept as its own operation so recorded scenarios still decode.
     Schema.Struct({ kind: Schema.Literal("rebuild") }),
 ]);
 const Scenario = Schema.Struct({
     downloads: Schema.Boolean,
-    // "open": replicas reset themselves when opened under a new definition. "rebuild": they
-    // open with `"error"`, so only a catalog rebuild moves them to a new definition (an
-    // adopting restart rebuilds first).
+    // Replicas always reset themselves when opened under a new definition; there is no
+    // separate rebuild. Both values run the same path and remain so recorded scenarios decode.
     resetBy: Schema.Literals(["open", "rebuild"]),
     operations: Schema.Array(Operation).check(Schema.isMinLength(6), Schema.isMaxLength(24)),
     // Progress under continuous change: after the operations, the source changes its
@@ -281,7 +279,7 @@ const run = (scenario: typeof Scenario.Type) =>
                             ir: definition(replicaShape),
                             backend: backendFor(replicaShape),
                             bootstrap: description(replicaShape),
-                            onDefinitionChange: scenario.resetBy === "open" ? "reset" : "error",
+                            onDefinitionChange: "reset",
                             mutators: { increment },
                         })
                         .pipe(Scope.provide(scope))
@@ -421,21 +419,14 @@ const run = (scenario: typeof Scenario.Type) =>
                         yield* Deferred.succeed(hold, undefined);
                         hold = undefined;
                     }
-                    if (how === "rebuild") {
-                        const rebuilt = yield* Effect.exit(
-                            catalog.rebuild("definition-oracle", description(sourceShape))
-                        );
-                        if (rebuilt._tag === "Failure")
-                            fail(`rebuild failed: ${Cause.pretty(rebuilt.cause).split("\n")[0]}`);
-                    }
                     yield* Scope.close(opened!.scope, Exit.void);
                     const previous = replicaShape;
                     const cachedBefore = { Item: yield* cachedKeys("Item"), Tag: yield* cachedKeys("Tag") };
                     if (how !== "reopen") replicaShape = sourceShape;
                     opened = yield* open;
                     // A reset when opening clears only types whose own definition changed: every
-                    // other type keeps exactly the rows it had cached. (A rebuild resets everything.)
-                    if (opened && how === "adopt" && scenario.resetBy === "open") {
+                    // other type keeps exactly the rows it had cached.
+                    if (opened && how !== "reopen") {
                         const kept = {
                             Item:
                                 previous.label === replicaShape.label && previous.note === replicaShape.note,

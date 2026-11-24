@@ -22,7 +22,7 @@ import {
 } from "effect";
 import { replicaBackend } from "./internal.js";
 import { makeReplica } from "./make.js";
-import { assertReplicaRebuildSafe, resetReplicaCache } from "./reset.js";
+import { isReplicaDefinition } from "./service.js";
 import type { ReplicaBackendFactory } from "./make.js";
 import type { ReplicaConfiguration, ReplicaDefinition, ReplicaService } from "./service.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
@@ -39,23 +39,26 @@ export interface ReplicaRegistrationCommon extends Omit<ReplicaConfiguration, "i
      * definition it opens under. */
     readonly beforeOpen?: (runtime: RuntimeService, ir: OntologyIR) => Effect.Effect<void, BackendError>;
 }
-export type ReplicaRegistration = ReplicaRegistrationCommon &
-    (
+export type ReplicaRegistration = ReplicaRegistrationCommon & {
+    readonly source?: OntologySource;
+    /** Accepted protocol binding for the first definition, retained for an offline restart. */
+    readonly bootstrap?: OntologyDescription;
+} & (
         | {
+              /**
+               * A fixed `OntologyIR`, or a source the replica follows (see `makeReplica`). A
+               * followed replica reopens under the definition it last had open, then follows the
+               * source, so it starts offline.
+               */
+              readonly definition: OntologyIR | ReplicaDefinition;
+              readonly ir?: never;
+              readonly backend: OntologyBackendService | ReplicaBackendFactory;
+          }
+        | {
+              /** @deprecated Use `definition`. */
               readonly ir: OntologyIR;
               readonly definition?: never;
               readonly backend: OntologyBackendService;
-              readonly source?: OntologySource;
-              /** Accepted protocol binding to retain for an offline process restart. */
-              readonly bootstrap?: OntologyDescription;
-          }
-        | {
-              /** A definition the replica follows; see `makeReplica`. */
-              readonly definition: ReplicaDefinition;
-              readonly ir?: never;
-              readonly backend: OntologyBackendService | ReplicaBackendFactory;
-              readonly source?: never;
-              readonly bootstrap?: never;
           }
     );
 export interface RegisteredReplica {
@@ -71,7 +74,7 @@ export interface StoredReplicaPartition {
     readonly partition: RuntimePartition["Service"];
     readonly bootstrap?: OntologyDescription;
     readonly definition?: { readonly ir: OntologyIR; readonly context: Record<string, unknown> };
-    /** Accepted replacement intent. Kept until the data transaction and manifest save finish. */
+    /** @deprecated Written by older versions as a pending replacement; read as the bootstrap. */
     readonly rebuild?: { readonly description: OntologyDescription };
 }
 /** Partition inventory and native acquisition for a host that owns resource lifetimes. */
@@ -185,39 +188,6 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
             });
         return ir;
     });
-    const finishRebuild = Effect.fnUntraced(function* (stored: StoredReplicaPartition) {
-        const description = stored.rebuild?.description;
-        if (!description) return;
-        const ir = yield* checkBootstrap(stored.partition, description, stored.bootstrap);
-        const previous = stored.definition?.ir ?? stored.bootstrap?.ir;
-        if (!previous)
-            return yield* new BackendError({
-                operation: "replica.rebuild",
-                kind: "InvalidConfiguration",
-                retryable: false,
-                message: "The saved replica has no definition from which to rebuild.",
-            });
-        yield* Effect.scoped(
-            Effect.gen(function* () {
-                const runtime = yield* protect(runtimes.acquire(stored.partition));
-                yield* resetReplicaCache({
-                    runtime,
-                    namespace: stored.partition.namespace,
-                    previous,
-                    ir,
-                    sourceId: description.sourceId,
-                });
-            })
-        );
-        yield* protect(
-            metadata.tables.put(table, stored.ontology, {
-                ontology: stored.ontology,
-                partition: stored.partition,
-                bootstrap: description,
-                definition: { ir, context: description.context ?? {} },
-            })
-        );
-    });
     const open = Effect.fn("ReplicaPartitions.open")(function* (
         ontology: string,
         configuration: ReplicaRegistration
@@ -240,10 +210,37 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
         );
         return yield* Scope.provide(
             Effect.gen(function* () {
-                // A followed definition places the partition by the definition it opens under.
-                const ir =
-                    configuration.ir ??
-                    Option.getOrUndefined(yield* Stream.runHead(configuration.definition.changes));
+                const source = configuration.definition ?? configuration.ir;
+                const followed = isReplicaDefinition(source) ? source : undefined;
+                const stored = yield* protect(metadata.tables.get(table, ontology));
+                // A followed replica reopens under the definition it last had open (or the
+                // accepted bootstrap), then follows its source: it starts without the network.
+                const namespace = partitionNamespace(configuration.namespace ?? ontology);
+                const retained = followed
+                    ? (configuration.bootstrap?.ir ??
+                      (stored?.partition.namespace === namespace &&
+                      stored.definition &&
+                      contextPartition(stored.definition.ir, configuration.context ?? {}) ===
+                          stored.partition.owner
+                          ? stored.definition.ir
+                          : undefined))
+                    : undefined;
+                const ir = !followed
+                    ? (source as OntologyIR)
+                    : (retained ?? Option.getOrUndefined(yield* Stream.runHead(followed.changes)));
+                let primed = false;
+                const definition: ReplicaDefinition | undefined =
+                    followed && retained
+                        ? {
+                              ...followed,
+                              // Once only: the follower subscribes again after a source failure.
+                              changes: Stream.suspend(() => {
+                                  if (primed) return followed.changes;
+                                  primed = true;
+                                  return Stream.concat(Stream.make(retained), followed.changes);
+                              }),
+                          }
+                        : followed;
                 if (!ir)
                     return yield* new BackendError({
                         operation: "replica.definition",
@@ -254,7 +251,7 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                 const partition = yield* Effect.try({
                     try: () => ({
                         owner: contextPartition(ir, configuration.context ?? {}),
-                        namespace: partitionNamespace(configuration.namespace ?? ontology),
+                        namespace,
                     }),
                     catch: (cause) => classifyBackendFailure("replica-registry.partition", cause),
                 });
@@ -275,23 +272,7 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                             partitionOwners.delete(partitionKey);
                     })
                 );
-                const rebuilding = yield* protect(metadata.tables.get(table, ontology));
-                if (rebuilding?.rebuild) {
-                    const target = rebuilding.rebuild.description;
-                    if (
-                        rebuilding.partition.owner !== partition.owner ||
-                        rebuilding.partition.namespace !== partition.namespace ||
-                        !target.ir ||
-                        ontologyDefinitionSignature(target.ir) !== ontologyDefinitionSignature(ir)
-                    )
-                        return yield* new BackendError({
-                            operation: "replica.rebuild",
-                            kind: "SchemaMismatch",
-                            retryable: false,
-                            message: "Replica acquisition must use its accepted rebuild definition.",
-                        });
-                    yield* finishRebuild(rebuilding);
-                }
+                const rebuilding = stored;
                 if (configuration.bootstrap) {
                     const bootstrap = configuration.bootstrap;
                     const bootstrapIR = yield* checkBootstrap(partition, bootstrap);
@@ -316,7 +297,10 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                                 message: "The bootstrap does not describe the selected replica definition.",
                             });
                     }
-                    if (bootstrap.sourceId !== configuration.backend.sourceId)
+                    if (
+                        typeof configuration.backend !== "function" &&
+                        bootstrap.sourceId !== configuration.backend.sourceId
+                    )
                         return yield* new BackendError({
                             operation: "replica.bootstrap",
                             kind: "SourceMismatch",
@@ -327,7 +311,11 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                 const runtime = yield* protect(runtimes.acquire(partition));
                 if (configuration.beforeOpen) yield* configuration.beforeOpen(runtime, ir);
                 const traces = yield* makeTraceCapture();
-                const work = makeReplica(configuration).pipe(Effect.provideService(Runtime, runtime));
+                const work = makeReplica({
+                    ...configuration,
+                    ir: undefined,
+                    definition: definition ?? ir,
+                } as Parameters<typeof makeReplica>[0]).pipe(Effect.provideService(Runtime, runtime));
                 const replica = yield* traces
                     ? work.pipe(Effect.provideService(Tracer.Tracer, traces.tracer))
                     : work;
@@ -351,6 +339,36 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                             definition: { ir, context: configuration.context ?? {} },
                             ...(configuration.bootstrap ? { bootstrap: configuration.bootstrap } : {}),
                         })
+                    );
+                // Remember each definition a followed replica reopens under, so the next start
+                // opens under it without its source.
+                if (followed)
+                    yield* replica.definition.changes.pipe(
+                        // The replica may already have reopened by the time this subscribes.
+                        Stream.filter((next) => next !== ir),
+                        Stream.runForEach((next) =>
+                            gate.withPermit(
+                                protect(
+                                    metadata.tables.transaction((tx) =>
+                                        Effect.gen(function* () {
+                                            const saved = yield* tx.get(table, ontology);
+                                            if (!saved || saved.definition?.ir === next) return;
+                                            yield* tx.put(table, ontology, {
+                                                ...saved,
+                                                definition: {
+                                                    ir: next,
+                                                    context: configuration.context ?? {},
+                                                },
+                                            });
+                                        })
+                                    )
+                                )
+                            )
+                        ),
+                        Effect.catch((error) =>
+                            Effect.logWarning("Could not record the new definition", error)
+                        ),
+                        Effect.forkScoped
                     );
                 return {
                     ir: replica.ir,
@@ -400,57 +418,6 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                         })
                     )
                 )
-            ),
-        rebuild: (
-            ontology: string,
-            description: OntologyDescription,
-            settings?: {
-                /** Host bindings must retire their reference after this notification,
-                 * including when a later safety check blocks the rebuild. */
-                readonly onRetire?: Effect.Effect<void>;
-            }
-        ) =>
-            gate.withPermit(
-                Effect.gen(function* () {
-                    const stored = yield* protect(metadata.tables.get(table, ontology));
-                    if (!stored)
-                        return yield* new BackendError({
-                            operation: "replica.rebuild",
-                            kind: "NotFound",
-                            retryable: false,
-                            message: "The replica partition has not been opened.",
-                        });
-                    const ir = yield* checkBootstrap(stored.partition, description, stored.bootstrap);
-                    yield* Effect.scoped(
-                        Effect.gen(function* () {
-                            const runtime = yield* protect(runtimes.acquire(stored.partition));
-                            // Fail on an unusable definition before retiring the cached owner.
-                            yield* Effect.try({
-                                try: () => ontologyDefinitionSignature(ir),
-                                catch: (cause) => classifyBackendFailure("replica.rebuild.definition", cause),
-                            });
-                            yield* assertReplicaRebuildSafe(
-                                runtime,
-                                stored.partition.namespace,
-                                description.sourceId
-                            );
-                            // Refuse a rebuild that would change the source without
-                            // retiring a usable cached owner. Closure fences any write
-                            // that races this preflight; reset checks again atomically.
-                            if (settings?.onRetire) yield* settings.onRetire;
-                            const entry = active.get(ontology);
-                            if (entry) yield* Scope.close(entry.scope, Exit.void);
-                            yield* assertReplicaRebuildSafe(
-                                runtime,
-                                stored.partition.namespace,
-                                description.sourceId
-                            );
-                            const pending = { ...stored, rebuild: { description } };
-                            yield* protect(metadata.tables.put(table, ontology, pending));
-                            yield* finishRebuild(pending);
-                        })
-                    );
-                })
             ),
         open: (ontology: string, configuration: ReplicaRegistration) =>
             gate.withPermit(open(ontology, configuration)),

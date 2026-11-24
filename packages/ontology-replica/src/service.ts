@@ -50,6 +50,9 @@ export interface ReplicaDefinition {
         readonly objectTypes: readonly string[];
     }) => Effect.Effect<void, BackendError>;
 }
+/** A definition source, as opposed to a fixed `OntologyIR`. */
+export const isReplicaDefinition = (value: OntologyIR | ReplicaDefinition): value is ReplicaDefinition =>
+    "changes" in value;
 /** The definition a replica is open under. */
 export interface ReplicaDefinitionState {
     readonly current: Effect.Effect<OntologyIR, BackendError>;
@@ -61,13 +64,12 @@ export interface ReplicaConfiguration {
     /**
      * What to do when the stored cache was written under a different definition contract.
      * `"error"` (default) fails with `SchemaMismatch`. `"reset"` clears cached data when the
-     * replica opens, inside its startup transaction so a failed open rolls it back:
-     * - A replica fed by a backend clears only object types whose own contract (properties,
-     *   primary key, constraints) changed or that were removed. Other types keep their rows and
-     *   coverage; action, link and query-function changes clear nothing. A change to named value
-     *   types, context or policy, or an unreadable stored definition, clears everything.
-     * - A replica fed by a protocol source clears everything, since its delivery position spans
-     *   all types.
+     * replica opens, inside its startup transaction so a failed open rolls it back. It clears
+     * only object types whose own contract (properties, primary key, constraints) changed or
+     * that were removed. Other types keep their rows and coverage; action, link and
+     * query-function changes clear nothing. A change to named value types, context or policy,
+     * or an unreadable stored definition, clears everything. A replica fed by another server
+     * resumes its delivery stream, and its parent sends only the cleared types again.
      * Every download keeps its desired query; one that lost rows reinstalls. Queued actions stay
      * queued: their predictions are replayed against the new definition, a prediction that no
      * longer applies is dropped (the action is still sent), and failures follow the outbox's
