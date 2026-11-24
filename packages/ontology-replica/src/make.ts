@@ -2,8 +2,11 @@ import { classifyBackendFailure } from "@party-stack/ontology-backend";
 import { makeBlobStorage, exclusiveOwnerLiveness } from "@party-stack/ontology-storage/blobs";
 import { Runtime } from "@party-stack/runtime";
 import { Effect } from "effect";
+import { makeReplicaDeliveries } from "./engine.js";
 import { followReplicaDefinition, revalidateOnMismatch } from "./follow.js";
+import { planDefinitionReset } from "./reset.js";
 import { makeReplica as makeReplicaFromStorage } from "./service.js";
+import type { ReplicaDeliveries } from "./engine.js";
 import type { ReplicaDefinition, ReplicaOptions as StorageReplicaOptions } from "./service.js";
 import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
@@ -23,6 +26,7 @@ type Common = Omit<
     | "attachments"
     | "encrypted"
     | "encryptionKeyring"
+    | "deliveries"
 > & {
     readonly id?: string;
     readonly source?: OntologySource;
@@ -61,11 +65,12 @@ export const makeReplica = Effect.fn("Replica.open")(function* (options: Replica
         bytes: runtime.bytes,
         ...exclusiveOwnerLiveness(runtime.tables),
     }).pipe(Effect.mapError((cause) => classifyBackendFailure("attachment.storage", cause)));
-    const open = (ir: OntologyIR, backend: OntologyBackendService) =>
+    const open = (ir: OntologyIR, backend: OntologyBackendService, deliveries?: ReplicaDeliveries) =>
         makeReplicaFromStorage({
             ...options,
             ir,
             backend,
+            deliveries,
             namespace: options.id ?? runtime.namespace,
             tables: runtime.tables,
             blobs,
@@ -77,13 +82,29 @@ export const makeReplica = Effect.fn("Replica.open")(function* (options: Replica
         });
     if (!options.definition) return yield* open(options.ir, options.backend);
     const { backend, definition } = options;
+    // Children's delivery state outlives each engine, so a child resumes after a reopen and
+    // receives only the object types whose rows changed shape.
+    const deliveries = yield* makeReplicaDeliveries({
+        tables: runtime.tables,
+        namespace: options.id ?? runtime.namespace,
+    });
     const watched = (built: OntologyBackendService) =>
         definition.revalidate ? revalidateOnMismatch(built, definition.revalidate) : built;
     return yield* followReplicaDefinition({
         definition,
         open: (ir) =>
             typeof backend === "function"
-                ? Effect.flatMap(backend(ir), (built) => open(ir, watched(built)))
-                : open(ir, watched(backend)),
+                ? Effect.flatMap(backend(ir), (built) => open(ir, watched(built), deliveries))
+                : open(ir, watched(backend), deliveries),
+        changed: (previous, next) => {
+            const plan = planDefinitionReset(previous, next);
+            const types = plan.kind === "all" ? "all" : plan.kind === "types" ? plan.types : undefined;
+            return types
+                ? Effect.andThen(
+                      deliveries.committed.invalidate(types),
+                      deliveries.speculative.invalidate(types)
+                  )
+                : Effect.void;
+        },
     });
 });

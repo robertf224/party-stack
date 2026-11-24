@@ -263,6 +263,9 @@ interface DeliveryMemory {
     producer: string;
     expiresAt: number;
     witnesses: Map<string, { readonly ref: DeliveryRef; readonly hash: string }>;
+    /** The unacknowledged frame holds rows in a shape the definition no longer has: never
+     * replay it. A client that did not install it gets its rows from the next capture. */
+    redefined?: boolean;
     pending?: {
         readonly sequence: number;
         readonly changes: readonly string[];
@@ -294,6 +297,14 @@ export interface DeliveryManager {
     ) => Effect.Effect<DeliverySubscription, BackendError, Scope.Scope>;
     readonly acknowledge: (position: DeliveryPosition) => Effect.Effect<void, BackendError>;
     readonly collectGarbage: Effect.Effect<number, BackendError>;
+    /**
+     * The source's definition changed and these object types' rows changed shape (`"all"`:
+     * every type, or rows a reader may see). Each retained stream sends those types' rows again
+     * on its next capture, and removes the ones that are gone, while every other type keeps
+     * its delivered state. A stream whose unacknowledged frame holds rows of those types starts
+     * over from a snapshot.
+     */
+    readonly invalidate: (objectTypes: ReadonlySet<string> | "all") => Effect.Effect<void>;
 }
 
 /** One source owner retains bounded view buffers. Losing this scope requires a new
@@ -308,6 +319,16 @@ export const makeDeliveryManager = Effect.fnUntraced(function* (options: {
     const { tables, namespace } = options;
     const sessions = sessionTable(namespace);
     const memories = new Map<string, DeliveryMemory>();
+    // Unacknowledged frames hold encoded changes.
+    const refOf = (encoded: string): DeliveryRef | undefined => {
+        try {
+            const change = valueCodec.decode(encoded) as DeliveryChange;
+            return change.kind === "put" ? deliveryRef(change.record) : change.ref;
+        } catch {
+            return undefined;
+        }
+    };
+
     const admission = Semaphore.makeUnsafe(1);
     let closed = false;
     const forget = Effect.fnUntraced(function* (
@@ -399,6 +420,40 @@ export const makeDeliveryManager = Effect.fnUntraced(function* (options: {
                                         yield* clearLegacy(tx, streamId);
                                         yield* tx.delete(sessions, streamId);
                                         return { kind: "expired" as const, streamId };
+                                    }
+                                    if (
+                                        priorMemory.redefined &&
+                                        prior.pending &&
+                                        options.resume.sequence === prior.installed
+                                    ) {
+                                        // The client never installed a frame captured under the
+                                        // previous definition. Drop it instead of replaying it, and
+                                        // blank its rows' witnesses: the next capture puts the ones
+                                        // that exist and removes the rest.
+                                        for (const encoded of priorMemory.pending?.changes ?? []) {
+                                            const ref = refOf(encoded);
+                                            if (ref)
+                                                priorMemory.witnesses.set(deliveryKey(ref), {
+                                                    ref,
+                                                    hash: "",
+                                                });
+                                        }
+                                        const header = {
+                                            ...prior,
+                                            identity: options.identity,
+                                            rowSelection: options.rowSelection,
+                                            producer,
+                                            expected: prior.installed,
+                                            pending: undefined,
+                                            expiresAt: now + activeRetentionMs,
+                                        };
+                                        yield* tx.put(sessions, streamId, header);
+                                        return {
+                                            kind: "promoted" as const,
+                                            streamId,
+                                            memory: priorMemory,
+                                            header,
+                                        };
                                     }
                                     if (prior.identity === options.identity) {
                                         const position = options.resume.sequence;
@@ -531,7 +586,10 @@ export const makeDeliveryManager = Effect.fnUntraced(function* (options: {
                     memory.gone = gone;
                     memory.producer = producer;
                     memory.expiresAt = outcome.header.expiresAt;
-                    if (outcome.kind === "promoted") memory.pending = undefined;
+                    if (outcome.kind === "promoted") {
+                        memory.pending = undefined;
+                        memory.redefined = false;
+                    }
                     memories.set(outcome.streamId, memory);
                     return { streamId: outcome.streamId, memory, gone };
                 });
@@ -932,12 +990,39 @@ export const makeDeliveryManager = Effect.fnUntraced(function* (options: {
                     : Effect.fail(failure("Invalid delivery acknowledgment.", "Conflict")),
         };
     });
+    const invalidate = (types: ReadonlySet<string> | "all") =>
+        admission.withPermits(1)(
+            Effect.gen(function* () {
+                for (const [stream, memory] of [...memories]) {
+                    if (types === "all") {
+                        yield* forget(stream);
+                        continue;
+                    }
+                    const pending = memory.pending?.changes.map(refOf) ?? [];
+                    // An unreadable change might hold rows of a changed type.
+                    if (pending.includes(undefined)) {
+                        yield* forget(stream);
+                        continue;
+                    }
+                    const changed = (ref: DeliveryRef) => "objectType" in ref && types.has(ref.objectType);
+                    yield* memory.gate.withPermits(1)(
+                        Effect.sync(() => {
+                            for (const [key, witness] of memory.witnesses)
+                                if (changed(witness.ref))
+                                    memory.witnesses.set(key, { ref: witness.ref, hash: "" });
+                            if (pending.some((ref) => changed(ref!))) memory.redefined = true;
+                        })
+                    );
+                }
+            })
+        );
     return {
         open,
         acknowledge,
         collectGarbage: admission.withPermits(1)(
             prune().pipe(Effect.andThen(collectDeliveryGarbage(tables, namespace)))
         ),
+        invalidate,
     };
 });
 

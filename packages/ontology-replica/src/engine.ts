@@ -8,7 +8,7 @@ import {
 import { tableUsage } from "@party-stack/ontology-storage/tables";
 import { alwaysOnlineConnectivity } from "@party-stack/runtime";
 import type { ConnectionLifecycle, ConnectionMonitor } from "@party-stack/connect";
-import type { DeliveryPosition } from "@party-stack/ontology-backend/delivery";
+import type { DeliveryManager, DeliveryPosition } from "@party-stack/ontology-backend/delivery";
 import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { NetworkConnectivity } from "@party-stack/runtime";
 export { makeCachedProxy } from "./proxy.js";
@@ -397,6 +397,9 @@ export interface ReplicaService extends OwnedReadTransaction {
 interface ReplicaCommonOptions {
     readonly namespace: string;
     readonly ir: OntologyIR;
+    /** Children's delivery state, kept by a replica that reopens under a new definition so its
+     * children resume and receive only the object types that changed. */
+    readonly deliveries?: ReplicaDeliveries;
     /** See `ReplicaConfiguration.onDefinitionChange`. Applied once, when the replica opens. */
     readonly onDefinitionChange?: "reset" | "error";
     readonly context?: Record<string, unknown>;
@@ -486,6 +489,21 @@ const snapshotDigest = Effect.fnUntraced(function* (snapshot: ReplicaStateSnapsh
 });
 
 /** A scoped persistent Replica. Its replay capability cannot reach the backend. */
+export interface ReplicaDeliveries {
+    readonly committed: DeliveryManager;
+    readonly speculative: DeliveryManager;
+}
+/** Delivery state for a replica's children, owned by the caller's Scope. */
+export const makeReplicaDeliveries = Effect.fnUntraced(function* (options: {
+    readonly tables: TablesService;
+    readonly namespace: string;
+}) {
+    const name = (part: string) => JSON.stringify(["replica", options.namespace, part]);
+    return {
+        committed: yield* makeDeliveryManager({ tables: options.tables, namespace: name("committed") }),
+        speculative: yield* makeDeliveryManager({ tables: options.tables, namespace: name("speculative") }),
+    } satisfies ReplicaDeliveries;
+});
 export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: ReplicaOptions) {
     const connectivity = options.connectivity ?? alwaysOnlineConnectivity;
     const connection = options.connection;
@@ -552,14 +570,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         ? Effect.succeed(adapter)
         : Effect.fail(fault("NotImplemented", "This Replica receives state through its protocol source."));
     const name = (part: string) => JSON.stringify(["replica", options.namespace, part]);
-    const committedDeliveries = yield* makeDeliveryManager({
-        tables: options.tables,
-        namespace: name("committed"),
-    });
-    const speculativeDeliveries = yield* makeDeliveryManager({
-        tables: options.tables,
-        namespace: name("speculative"),
-    });
+    const { committed: committedDeliveries, speculative: speculativeDeliveries } =
+        options.deliveries ?? (yield* makeReplicaDeliveries(options));
     const stateHead = Table.make<{ sourceId: string; revision: number; visibleRevision?: number }>({
         name: name("state-head"),
     });
@@ -1226,11 +1238,13 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             const stored = yield* tx.get(metadata, "head");
             if (!stored || stored.source !== sourceId || sameDefinitionContract(stored.signature))
                 return undefined;
-            // A replica fed by a protocol source shares one delivery position across every
-            // type, so it resets everything; a backend-fed replica resets only what changed.
-            const plan: DefinitionResetPlan = options.source
-                ? { kind: "all" }
-                : planDefinitionReset(storedDefinition(stored.signature), options.ir);
+            // Only what changed, for a backend-fed replica and for one fed by a protocol source:
+            // its parent sends the changed types' rows again on the same delivery stream, or
+            // starts the stream over when it cannot.
+            const plan: DefinitionResetPlan = planDefinitionReset(
+                storedDefinition(stored.signature),
+                options.ir
+            );
             // Cleared rows were written under another schema; the visible-change tracker must
             // not read them back with the new codecs.
             (tx as Transaction & { readonly resetVisible?: () => void }).resetVisible?.();
@@ -5063,7 +5077,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     return yield* committedDeliveries.open({
                         policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
                         resume,
-                        binding: JSON.stringify([ownSourceId, schemaHash]),
+                        // Not the definition: a stream outlives a reopen under a new one, which
+                        // invalidates only the changed types' delivered rows.
+                        binding: JSON.stringify([ownSourceId]),
                         identity: JSON.stringify(selection),
                         changes: service.subscribeChanges,
                         capture: (tx, emit) =>
@@ -5148,7 +5164,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     const delivery = yield* speculativeDeliveries.open({
                         policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
                         resume,
-                        binding: JSON.stringify([ownSourceId, schemaHash, session.client.clientId]),
+                        binding: JSON.stringify([ownSourceId, session.client.clientId]),
                         identity: JSON.stringify(selected),
                         rowSelection: JSON.stringify(selected.selection.subsets),
                         changes: Effect.map(service.subscribeChanges, (changes) =>

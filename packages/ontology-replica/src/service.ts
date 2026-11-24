@@ -117,6 +117,8 @@ export type ReplicaOptions = ReplicaConfiguration & {
     readonly encryptionKeyring?: EncryptionKeyringService;
     readonly network?: NetworkConnectivity;
     readonly capacity?: ResourceCapacity;
+    /** @internal Children's delivery state, kept across reopens by a replica that follows its definition. */
+    readonly deliveries?: import("./engine.js").ReplicaDeliveries;
     /** The connection this replica syncs through. Pass Connect's ConnectionLifecycle
      * (ConnectionAccess.authentication) so a watch the source rejects can renew its
      * credential; a plain monitor only waits for the connection to change. */

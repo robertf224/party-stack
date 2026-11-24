@@ -104,6 +104,8 @@ const signature = (ir: OntologyIR) => {
 export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
     readonly definition: ReplicaDefinition;
     readonly open: (ir: OntologyIR) => Effect.Effect<ReplicaService, BackendError, Scope.Scope>;
+    /** Runs between closing the engine for `previous` and opening the one for `next`. */
+    readonly changed?: (previous: OntologyIR, next: OntologyIR) => Effect.Effect<void>;
 }): Effect.fn.Return<ReplicaService, BackendError, Scope.Scope> {
     const owner = yield* Effect.scope;
     const state = yield* SubscriptionRef.make<State>({ _tag: "opening" });
@@ -141,6 +143,7 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
             yield* SubscriptionRef.set(state, { _tag: "opening" });
             current = undefined;
             yield* close(previous);
+            if (options.changed) yield* options.changed(previous.ir, ir);
         }
         const opened = yield* Effect.exit(openGeneration(ir));
         if (Exit.isSuccess(opened)) {
