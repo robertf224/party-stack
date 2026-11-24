@@ -10,13 +10,6 @@ import type {
 } from "@party-stack/ontology-replica/registry";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
-export interface ReplicaDefinitionOptions {
-    /** Optional application contract. Cached remote metadata can otherwise supply the IR. */
-    readonly ir?: OntologyIR;
-    /** Pending actions are preserved; rebuilding waits for explicit migration/resolution of them. */
-    readonly onIncompatible?: "error" | "rebuild";
-}
-
 export interface ReplicaUpstream {
     readonly client: OntologyServerClient;
     readonly ontology?: string;
@@ -26,7 +19,12 @@ export type UpstreamReplicaRegistration = Omit<ReplicaRegistration, "ir" | "back
     readonly upstream: ReplicaUpstream;
     /** Select the local account before opening its retained definition or data. */
     readonly context: Record<string, unknown>;
-    readonly definition?: ReplicaDefinitionOptions;
+    /**
+     * The application's contract, when it has one. The upstream's definition must match it, and
+     * `onDefinitionChange` never replaces it. Without it, the replica takes the upstream's
+     * definition and, with `onDefinitionChange: "reset"`, follows it when it changes.
+     */
+    readonly ir?: OntologyIR;
 };
 
 const mismatch = (message: string) =>
@@ -63,7 +61,7 @@ export const restoreReplicaRegistration = Effect.fn("OntologyServer.restoreRepli
                     return yield* mismatch(
                         "The upstream ontology definition is incompatible with this replica."
                     );
-                if (declaration.definition?.ir && !sameContract(declaration.definition.ir, fresh.ir))
+                if (declaration.ir && !sameContract(declaration.ir, fresh.ir))
                     return yield* mismatch(
                         "The upstream definition is incompatible with the application contract."
                     );
@@ -81,7 +79,7 @@ export const restoreReplicaRegistration = Effect.fn("OntologyServer.restoreRepli
             retryable: false,
             message: "The upstream belongs to a different context partition.",
         });
-    if (declaration.definition?.ir && !sameContract(declaration.definition.ir, client.ir))
+    if (declaration.ir && !sameContract(declaration.ir, client.ir))
         return yield* mismatch("The retained definition is incompatible with the application contract.");
     const registration: ReplicaRegistration = {
         ...declaration,

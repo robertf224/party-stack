@@ -1,9 +1,10 @@
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
 import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
-import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
+import { makeBlobStorage, type BlobStorageService } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect } from "effect";
 import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { Transaction } from "@party-stack/ontology-storage/tables";
 import type { RuntimeService } from "@party-stack/runtime";
 
 export const assertReplicaRebuildSafe = Effect.fnUntraced(function* (
@@ -80,57 +81,106 @@ export const resetReplicaCache = Effect.fn("Replica.resetCache")(function* (opti
                 // A crash may leave the catalog marker after this transaction committed.
                 // Never repeat the reset, including when a new action now exists.
                 if (stored?.signature === signature) return;
-                for (const part of ["outbox", "parent-pending"])
-                    if ((yield* tx.query(Table.make({ name: name(part) }), { limit: 1 })).length > 0)
-                        return yield* new BackendError({
-                            operation: "replica.rebuild",
-                            kind: "Conflict",
-                            retryable: false,
-                            message: "The replica has pending actions; its cache cannot be rebuilt safely.",
-                        });
-                const types = new Set(
-                    [...options.previous.objectTypes, ...options.ir.objectTypes].map((type) => type.name)
-                );
-                for (const type of types) {
-                    for (const layer of ["base", "parent-base", "parent-overlay", "overlay"])
-                        yield* tx.clear(Table.make({ name: name(`${layer}:${type}`) }));
-                    for (const layer of ["base", "overlay"])
-                        yield* blobs
-                            .in(tx)
-                            .releaseGroup(JSON.stringify(["replica-row", namespace, layer, type]));
-                }
-                for (const part of [
-                    "coverage",
-                    "retention",
-                    "roots",
-                    "action-rows",
-                    "action-queries",
-                    "pins",
-                    "sweep",
-                    "delivery-seen",
-                    "parent-head",
-                ])
-                    yield* tx.clear(Table.make({ name: name(part) }));
-                for (const part of ["state", "changes", "frames"])
-                    yield* tx.clear(
-                        Table.make({ name: JSON.stringify([name("upstream"), "incoming-delivery", part]) })
-                    );
-                const pin = Table.make<{ desired: unknown }>({ name: name("query-pin") });
-                const desired = yield* tx.get(pin, "head");
-                if (desired) yield* tx.put(pin, "head", { desired: desired.desired });
-                yield* blobs.in(tx).release(name("query-pin-bytes"));
-                yield* blobs.in(tx).release(name("query-pin-pending-bytes"));
-                if (stored)
-                    yield* tx.put(position, "head", {
-                        ...stored,
+                const next = yield* resetReplicaHead(
+                    tx,
+                    {
+                        namespace,
+                        blobs,
+                        previousObjectTypes: options.previous.objectTypes.map((type) => type.name),
+                        ir: options.ir,
                         signature,
-                        cursor: undefined,
-                        parentViewIdentity: undefined,
-                        deliverySelection: undefined,
-                        deliveryMembershipVersion: undefined,
-                        deliveryResident: false,
-                    });
+                    },
+                    stored
+                );
+                if (next) yield* tx.put(position, "head", next);
             })
         )
         .pipe(Effect.mapError((cause) => classifyBackendFailure("replica.rebuild", cause)));
 });
+
+/**
+ * Clear a replica's cached data for a new definition inside the caller's transaction, and
+ * return the position row to store (undefined when there was none). Keeps the outbox, session
+ * ledgers and every named pin's desired query, so pinned downloads are fetched again. Fails
+ * with `Conflict` while actions are pending. The caller has checked the source and owns the
+ * position row in this transaction.
+ */
+export const resetReplicaHead = <Stored extends object>(
+    tx: Transaction,
+    options: {
+        readonly namespace: string;
+        readonly blobs?: BlobStorageService;
+        /** Object types of the definition being replaced; their tables are cleared too. */
+        readonly previousObjectTypes: Iterable<string>;
+        readonly ir: OntologyIR;
+        readonly signature: string;
+    },
+    stored: Stored | undefined
+) =>
+    Effect.gen(function* () {
+        const { namespace, blobs } = options;
+        const name = (part: string) => JSON.stringify(["replica", namespace, part]);
+        for (const part of ["outbox", "parent-pending"])
+            if ((yield* tx.query(Table.make({ name: name(part) }), { limit: 1 })).length > 0)
+                return yield* new BackendError({
+                    operation: "replica.rebuild",
+                    kind: "Conflict",
+                    retryable: false,
+                    message: "The replica has pending actions; its cache cannot be rebuilt safely.",
+                });
+        const types = new Set([
+            ...options.previousObjectTypes,
+            ...options.ir.objectTypes.map((type) => type.name),
+        ]);
+        for (const type of types) {
+            for (const layer of ["base", "parent-base", "parent-overlay", "overlay"])
+                yield* tx.clear(Table.make({ name: name(`${layer}:${type}`) }));
+            for (const layer of ["base", "overlay"])
+                if (blobs)
+                    yield* blobs.in(tx).releaseGroup(JSON.stringify(["replica-row", namespace, layer, type]));
+        }
+        for (const part of [
+            "coverage",
+            "retention",
+            "roots",
+            "action-rows",
+            "action-queries",
+            "pins",
+            "sweep",
+            "delivery-seen",
+            "parent-head",
+        ])
+            yield* tx.clear(Table.make({ name: name(part) }));
+        for (const part of ["state", "changes", "frames"])
+            yield* tx.clear(
+                Table.make({ name: JSON.stringify([name("upstream"), "incoming-delivery", part]) })
+            );
+        // Each named pin has its own member table and byte owners. Clear them and keep only the
+        // desired query (with its generation), so every pin installs again against the new data.
+        const pins = Table.make<{ desired: unknown; removed?: boolean }>({ name: name("query-pin") });
+        for (const { key, value } of yield* tx.query(pins)) {
+            const id = String(key);
+            yield* tx.clear(Table.make({ name: JSON.stringify(["replica", namespace, "pin-members", id]) }));
+            if (value.removed) yield* tx.delete(pins, id);
+            else yield* tx.put(pins, id, { desired: value.desired });
+            if (blobs && id !== "head") {
+                yield* blobs.in(tx).release(name(`query-pin-bytes:${id}`));
+                yield* blobs.in(tx).release(name(`query-pin-pending-bytes:${id}`));
+            }
+        }
+        if (blobs) {
+            yield* blobs.in(tx).release(name("query-pin-bytes"));
+            yield* blobs.in(tx).release(name("query-pin-pending-bytes"));
+        }
+        return stored
+            ? {
+                  ...stored,
+                  signature: options.signature,
+                  cursor: undefined,
+                  parentViewIdentity: undefined,
+                  deliverySelection: undefined,
+                  deliveryMembershipVersion: undefined,
+                  deliveryResident: false,
+              }
+            : undefined;
+    });

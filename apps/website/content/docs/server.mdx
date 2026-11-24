@@ -323,7 +323,7 @@ export const openDeviceServer = Effect.fn("App.openDeviceServer")(function* (
                             ontology: `workspaces/${workspaceId}`,
                         },
                         context: { userId },
-                        definition: { onIncompatible: "rebuild" as const },
+                        onDefinitionChange: "reset" as const,
                     }),
             },
         },
@@ -341,18 +341,23 @@ address. Later opens restore that binding locally. They can answer from retained
 data without a startup `Describe` request or a validation gate. Normal requests
 still verify source and context; they cannot silently use another account's data.
 
-Omit `definition` to preserve retained data and report incompatible definitions.
-For an app generated from a fixed schema, supply `definition: { ir: appIR }`.
+Omit `onDefinitionChange` (or set `"error"`) to preserve retained data and report
+incompatible definitions. For an app generated from a fixed schema, supply `ir: appIR`.
 This checks the retained/remote contract against the bundled application contract;
 it does not make a first-ever remote connection possible offline.
 
-With `onIncompatible: "rebuild"`, a typed schema mismatch triggers acquisition of
-the new definition and rebuilding of the downloaded cache. Pending or accepted
-actions block that rebuild. Completed receipts, submission identities, keys, and
-desired offline pins survive; compatible pins reacquire their data afterward.
+With `onDefinitionChange: "reset"`, a typed schema mismatch triggers acquisition of
+the new definition and a reset of the downloaded cache. Pending or accepted
+actions block that reset. Completed receipts, submission identities, keys, and
+every pin's desired query survive; pins reacquire their data afterward.
 A bundled `ir` remains a fixed contract and is never silently replaced. Existing
-views also have a fixed IR: reopen them against the rebuilt route to use its new
+views also have a fixed IR: reopen them against the reset route to use its new
 schema.
+
+`onDefinitionChange` is a replica setting, so it also applies to replicas fed by a
+backend and to `makeReplica`: with `"reset"`, a replica opened with a definition whose
+contract differs from its stored cache resets that cache instead of failing with
+`SchemaMismatch`.
 
 Display names, descriptions, and other presentation metadata do not force a cache
 reset. Other contract changes are conservatively incompatible for now, including

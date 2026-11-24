@@ -937,3 +937,76 @@ test("cache pressure releases idle demand before reclaiming its rows", async () 
         )
     );
 });
+
+test("a definition reset clears named downloads and reinstalls them from their desired queries", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const options = { ...f, namespace: "reset-named-pins", ir, live: false };
+                const scope = yield* Scope.make();
+                const original = yield* Scope.provide(makeReplica(options), scope);
+                yield* original.demand.pins.set({ name: "folders", query: document("a") });
+                yield* original.syncOnce;
+                expect(yield* original.demand.pins.list).toMatchObject([{ name: "folders", ready: true }]);
+                const cached = (type: string) =>
+                    f.tables.query(
+                        Table.make({ name: JSON.stringify(["replica", "reset-named-pins", `base:${type}`]) })
+                    );
+                expect((yield* cached("Issue")).length).toBeGreaterThan(0);
+                // Each named pin keeps its members in its own table, keyed like its state row.
+                const pinMembers = Effect.gen(function* () {
+                    const table = (part: string) =>
+                        Table.make({
+                            name: JSON.stringify(["replica", "reset-named-pins", ...part.split("/")]),
+                        });
+                    let count = 0;
+                    for (const { key } of yield* f.tables.query(table("query-pin")))
+                        count += (yield* f.tables.query(table(`pin-members/${String(key)}`))).length;
+                    return count;
+                });
+                expect(yield* pinMembers).toBeGreaterThan(0);
+                yield* Scope.close(scope, Exit.void);
+
+                const changed: OntologyIR = {
+                    ...ir,
+                    objectTypes: ir.objectTypes.map((type) =>
+                        type.name === "Project"
+                            ? {
+                                  ...type,
+                                  properties: [
+                                      ...type.properties,
+                                      {
+                                          name: "title",
+                                          displayName: "Title",
+                                          type: o.optional({ type: o.string({}) }),
+                                      },
+                                  ],
+                              }
+                            : type
+                    ),
+                };
+                expect(yield* Effect.result(makeReplica({ ...options, ir: changed }))).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "SchemaMismatch" },
+                });
+
+                yield* f.network.set(false);
+                const reset = yield* makeReplica({ ...options, ir: changed, onDefinitionChange: "reset" });
+                // The download is still wanted, but nothing from the old definition counts as installed.
+                expect(yield* reset.demand.pins.list).toMatchObject([{ name: "folders", ready: false }]);
+                expect(yield* cached("Project")).toEqual([]);
+                // Membership and the shared ownership table are cleared together; a named pin's
+                // members must not outlive the rows and owners they referred to.
+                expect(yield* pinMembers).toBe(0);
+                expect(yield* cached("Issue")).toEqual([]);
+                yield* f.network.set(true);
+                yield* reset.syncOnce;
+                expect(yield* reset.demand.pins.list).toMatchObject([{ name: "folders", ready: true }]);
+                // Installed again locally, not just readable through the backend.
+                expect((yield* cached("Issue")).length).toBeGreaterThan(0);
+                expect(yield* reset.get("Issue", "one")).toBeDefined();
+            })
+        )
+    );
+});

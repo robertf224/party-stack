@@ -99,6 +99,7 @@ import { putIncomingRow, putIncomingBaseRows } from "./incoming.js";
 import { connectReplicaParent, connectReplicaDelivery } from "./parent.js";
 import { primaryKeyQueries, primaryKeyTableQuery } from "./primaryKeyOrder.js";
 import { deliveryRecovery } from "./recovery.js";
+import { resetReplicaHead } from "./reset.js";
 import { superviseWatch } from "./watch.js";
 export type { DemandPolicy } from "./demandCache.js";
 import { affectsCoverage, markQuery, retentionQuery } from "./retention.js";
@@ -391,6 +392,8 @@ export interface ReplicaService extends OwnedReadTransaction {
 interface ReplicaCommonOptions {
     readonly namespace: string;
     readonly ir: OntologyIR;
+    /** See `ReplicaConfiguration.onDefinitionChange`. Applied once, when the replica opens. */
+    readonly onDefinitionChange?: "reset" | "error";
     readonly context?: Record<string, unknown>;
     readonly tables: TablesService;
     readonly blobs?: BlobStorageService;
@@ -795,6 +798,24 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             return false;
         }
     };
+    /** Object type names of a stored definition, read without decoding it against the current
+     * IR schema: the stored definition may predate a format change. */
+    const storedObjectTypes = (stored: string): string[] => {
+        try {
+            const definition: unknown = Table.make<unknown>({ name: "replica-definition" }).decode(stored);
+            const types = (definition as { objectTypes?: unknown } | undefined)?.objectTypes;
+            return Array.isArray(types)
+                ? types.flatMap((type) =>
+                      typeof (type as { name?: unknown })?.name === "string"
+                          ? [(type as { name: string }).name]
+                          : []
+                  )
+                : [];
+        } catch {
+            return [];
+        }
+    };
+    let resetFrom: string | undefined;
     const schemaHash = yield* boundary(ontologyDefinitionContractHash(options.ir));
     const deliveryActive =
         options.startSync !== false && Boolean(options.source?.subscribe || adapter?.subscribeSelection);
@@ -1184,6 +1205,28 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                       ...(options.source ? { mode: "parent" as const } : {}),
                   };
         });
+    /** With `onDefinitionChange: "reset"`, clear a cache stored under another definition
+     * contract before the position check; returns the replaced stored signature. */
+    const resetChangedDefinition = (tx: Transaction) =>
+        Effect.gen(function* () {
+            if (options.onDefinitionChange !== "reset") return undefined;
+            const stored = yield* tx.get(metadata, "head");
+            if (!stored || stored.source !== sourceId || sameDefinitionContract(stored.signature))
+                return undefined;
+            const next = yield* resetReplicaHead(
+                tx,
+                {
+                    namespace: options.namespace,
+                    blobs: options.blobs,
+                    previousObjectTypes: storedObjectTypes(stored.signature),
+                    ir: options.ir,
+                    signature,
+                },
+                stored
+            );
+            if (next) yield* tx.put(metadata, "head", next);
+            return stored.signature;
+        });
     const reader = (tx: ReadTransaction, confirmed: boolean): OwnedReadTransaction => ({
         get: (type, key) =>
             boundary(
@@ -1486,6 +1529,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     yield* boundary(
         tables.transaction((tx) =>
             Effect.gen(function* () {
+                resetFrom = yield* resetChangedDefinition(tx);
                 yield* tx.put(metadata, "head", yield* position(tx));
                 // One designated owner opens this namespace. Query/read leases from
                 // a previous incarnation are volatile; pins and outbox roots are separate.
@@ -1533,6 +1577,13 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             })
         )
     );
+    if (resetFrom !== undefined) {
+        resetFrom = undefined;
+        yield* Effect.logWarning("Replica cache reset for a changed definition", {
+            namespace: options.namespace,
+            schemaHash,
+        });
+    }
     const publicRow = (type: string, object: ObjectValue, key?: Key) =>
         withObjectSources({
             ir: options.ir,

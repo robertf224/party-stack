@@ -44,6 +44,13 @@ import type { NetworkConnectivity, ResourceCapacity } from "@party-stack/runtime
 
 export interface ReplicaConfiguration {
     readonly ir: OntologyIR;
+    /**
+     * What to do when the stored cache was written under a different definition contract.
+     * `"error"` (default) fails with `SchemaMismatch`. `"reset"` clears cached rows, coverage and
+     * delivery state when the replica opens, keeps every pin's desired query so pinned data is
+     * fetched again, and fails with `Conflict` while actions are pending.
+     */
+    readonly onDefinitionChange?: "reset" | "error";
     readonly context?: Record<string, unknown>;
     readonly mutators?: ActionMutatorRegistry;
     /** False acquires one-shot demand without background workers or new application outbox submissions. */

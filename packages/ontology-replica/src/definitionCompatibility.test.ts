@@ -93,6 +93,12 @@ test("cosmetic definition updates preserve rows, coverage, pin retention and que
                     _tag: "Failure",
                     failure: { kind: "SchemaMismatch" },
                 });
+                // Resetting would discard the queued action's optimistic effects, so it is refused.
+                expect(
+                    yield* Effect.result(
+                        makeReplica({ ...options, ir: changed, onDefinitionChange: "reset" })
+                    )
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "Conflict" } });
                 const preserved = yield* makeReplica({ ...options, ir: definition("Newest") });
                 expect((yield* preserved.pending).map((entry) => entry.invocation.id)).toEqual(["offline"]);
                 expect((yield* preserved.loadSubset("Item"))[0]?.value.count).toBe(2);

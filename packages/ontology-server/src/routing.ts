@@ -481,7 +481,7 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                           Effect.gen(function* () {
                               if (
                                   error.kind !== "SchemaMismatch" ||
-                                  declaration.definition?.onIncompatible !== "rebuild" ||
+                                  declaration.onDefinitionChange !== "reset" ||
                                   rebuilding
                               )
                                   return;
@@ -494,7 +494,7 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                                   );
                                   if (!fresh.ir) return;
                                   // A bundled application cannot silently acquire a different contract.
-                                  if (declaration.definition?.ir) return;
+                                  if (declaration.ir) return;
                                   let retired = false;
                                   yield* catalog
                                       .rebuild(route.key, fresh.description, {

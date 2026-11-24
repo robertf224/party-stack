@@ -2,6 +2,7 @@
 "@party-stack/ontology-spec": minor
 "@party-stack/ontology-backend": minor
 "@party-stack/ontology-server": minor
+"@party-stack/ontology-replica": minor
 "@party-stack/foundry-ontology": patch
 "@party-stack/ontology": patch
 ---
@@ -15,3 +16,7 @@ New `omitInvalid(ontology)` in `@party-stack/ontology-spec` drops whatever `vali
 `pull` from `@party-stack/ontology-backend/meta` (and the `@party-stack/ontology` Promise facade) runs `transformPulledOntology`, then `omitInvalid`, and fails only when issues remain. It still resolves to the IR and logs what it omitted; pass `includeOmitted: true` to resolve to `{ ontology, omitted }` instead. The `ontology pull` CLI prints a warning for each omitted definition.
 
 **Breaking:** a route that acquires its backend is now declared as `{ authenticate?, dangerouslyAllowInternalAccess?, open }` instead of a bare function or Effect. `open` returns the backend and binding, and can no longer return `authenticate` or `dangerouslyAllowInternalAccess` (a type error). Static bindings are unchanged. Each request is authenticated before the route opens, so unauthenticated requests no longer open routes. When opening fails (for example a definition load failure), a caller allowed internal access (`true`, or a predicate over the context from `authenticate`) gets the original error; others get the generic message. Replica routes require `true`.
+
+Replicas take `onDefinitionChange: "reset" | "error"` (default `"error"`). With `"reset"`, a replica opened with a definition whose contract differs from its stored cache clears the cached rows, coverage and delivery state instead of failing with `SchemaMismatch`; the outbox, receipts and every pin's desired query are kept, so pinned data is fetched again. It fails with `Conflict` while actions are pending. A reset (including a server-managed rebuild) now also clears each named pin's membership and bytes, not only the default pin's.
+
+**Breaking:** managed replica routes drop `definition: { ir?, onIncompatible? }`. Use the replica's `onDefinitionChange: "reset"` in place of `onIncompatible: "rebuild"`, and, on an upstream route, a top-level `ir` for the application contract. `ReplicaDefinitionOptions` is no longer exported.
