@@ -44,15 +44,23 @@ same model.
    `Ontology` row's hash. The typed `SchemaMismatch` error on operations stays.
 4. **Replica status.** Read-only `Replica`, `Demand` and `Load` objects for devtools. Load
    changes constantly, so watch the delivery traffic.
+5. **Traces as an OpenTelemetry ontology.** Replace the `Traces` RPC (a stream of the replica's
+   in-memory trace store, read by devtools) with a standard OpenTelemetry ontology: span, trace
+   and service types aligned with OTLP, later logs and metrics. The replica's tracer exports
+   spans into it, and devtools reads them with ordinary live queries. An OTLP-aligned trace
+   ontology with an Effect tracer that writes into it is being built separately. Before it can
+   carry high-volume telemetry it needs an append-only mode for owned storage (no full-row
+   change journal, compact receipts) and aggregate queries, so spans aren't copied to clients
+   to be counted.
 
-Generalizing the `pins` resource header to named system resources (`pins`, `meta`, `system`)
-is the shared mechanism for 2 and 4. Once those move, the internal-access RPC allowlist
+Generalizing the `pins` resource header to named system resources (`pins`, `meta`, `system`,
+`telemetry`) is the shared mechanism for 2, 4 and 5. Once those move, the internal-access RPC allowlist
 becomes a policy on that resource.
 
 **Keep as protocol:** delivery selection and the client handshake (results and actions travel
 over them, so modelling them as actions would be circular), local data deletion (it destroys
-the store that would record its receipt), attachment byte transfer. Traces are possible but
-low value.
+the store that would record its receipt), owner release (a worker handing storage ownership
+to its replacement), attachment byte transfer.
 
 ## Definition changes and migrations
 
@@ -61,6 +69,26 @@ coverage and delivery state when a replica opens under a different definition co
 keeps the outbox, receipts and every pin's desired query. Queued actions are replayed against
 the new definition; a prediction that no longer applies is dropped and the action is still
 sent, with failures handled by the outbox's `failureStrategy`.
+
+A reset compares the definition _contract_, which ignores presentation (display names,
+descriptions, icons, colors, titles, deprecation) but includes every property, link, action
+(including its logic and defaults), query function, type constraint and policy. Any contract
+change clears every object type's cached rows, so an action edit or one added property costs
+a device its whole cache.
+
+**Soon: reset only what changed.** Before full migration, `"reset"` can compare per object
+type: clear only types whose own contract changed or that were removed, keep every other
+type's rows and coverage, and leave rows untouched for changes to actions, links and query
+functions. Policy changes still reset everything, since they can change which rows a reader may
+see. Downloads touching a cleared type reinstall.
+
+**Without reconnecting.** A server rebuild today retires the replica: clients lose their
+binding and reconnect, which risks a thundering herd when every client reconnects at once. The
+route should instead keep its replica handle and treat a definition change as a lifecycle
+event: hold new calls, close and reset (or migrate) the replica behind the handle, reopen it,
+resubscribe streams, and tell clients the definition changed so they re-describe and rerun
+their live queries. Switching the running engine in place is not required; reopening behind a
+stable handle is enough.
 
 **Next: `"migrate"`.** Compare definitions per object type instead of resetting everything:
 
