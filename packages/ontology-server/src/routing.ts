@@ -147,7 +147,16 @@ export interface OntologyServer<R = never> extends ErrorProjectionOptions {
     ) => Effect.Effect<BoundOntology<R>, BackendError, R | Scope.Scope>;
 }
 
-export type ManagedReplicaRoute<R = never> = (ReplicaRegistration | UpstreamReplicaRegistration) &
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+/**
+ * A replica the server's partition catalog creates, stores and reopens: fed by a `backend`, or by
+ * another party-stack server through `upstream`. The protocol source and saved bootstrap are
+ * filled in by the server and are not part of a route.
+ */
+export type ManagedReplicaRoute<R = never> = DistributiveOmit<
+    ReplicaRegistration | UpstreamReplicaRegistration,
+    "source" | "bootstrap"
+> &
     Omit<
         OntologyRpcServerOptions<R>,
         "source" | "replica" | "backend" | "authorize" | "context" | "ir" | "errors"
@@ -157,7 +166,6 @@ export type ManagedReplicaRoute<R = never> = (ReplicaRegistration | UpstreamRepl
         readonly dangerouslyAllowInternalAccess?: never;
         readonly authenticate?: never;
     };
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 /** What a route's `open` returns. Access and authentication are settings of the route itself. */
 export type OpenedOntologyRoute<R = never> =
     | (DistributiveOmit<OntologyBindingOptions<R>, "dangerouslyAllowInternalAccess" | "authenticate"> & {

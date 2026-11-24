@@ -14,6 +14,7 @@ import { makeReplica } from "../../ontology-replica/lib/service.js";
 import { makeOntologyServer } from "./routing.js";
 import { makeOntologyHttpClient, makeOntologyHttpHandler } from "./rpcHttp.js";
 import { makeOntologyWorkerClient, serveOntologyWorker } from "./rpcWorker.js";
+import type { ManagedReplicaRoute } from "./routing.js";
 import type { Scope } from "effect";
 
 const ir = {
@@ -620,6 +621,18 @@ test("access and authentication are settings of the route, not of what it opens"
                 },
             },
         }));
+});
+
+test("managed replica routes leave the protocol source and bootstrap to the server", () => {
+    type Keys = ManagedReplicaRoute extends infer Route
+        ? Route extends unknown
+            ? keyof Route
+            : never
+        : never;
+    expectTypeOf<Extract<Keys, "source" | "bootstrap">>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<Keys, "onDefinitionChange" | "ir" | "upstream">>().toEqualTypeOf<
+        "onDefinitionChange" | "ir" | "upstream"
+    >();
 });
 
 test("inferred route parameters preserve Effect service requirements", async () => {
