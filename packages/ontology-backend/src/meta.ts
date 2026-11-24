@@ -1,8 +1,14 @@
 import { omitInvalid } from "@party-stack/ontology-spec";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import * as q from "@party-stack/ontology-spec/query";
-import { and, inArray, field, evaluateQuery } from "@party-stack/ontology-storage";
-import { Effect } from "effect";
+import {
+    and,
+    inArray,
+    field,
+    evaluateQuery,
+    ontologyDefinitionSignature,
+} from "@party-stack/ontology-storage";
+import { Effect, Stream, SubscriptionRef } from "effect";
 import { makeOntologyBackend } from "./query.js";
 import { compileObjectSubset, objectSubset } from "./subset.js";
 import { BackendError } from "./index.js";
@@ -247,6 +253,59 @@ export function pull(
     const result = pullDefinitions(backend, options);
     return options.includeOmitted ? result : Effect.map(result, (pulled) => pulled.ontology);
 }
+
+export interface MetaDefinitionOptions extends Omit<PullOptions, "includeOmitted"> {
+    /** Emits whenever the metadata may have changed, for example a live query over a meta
+     * replica or a timer. Each emission reads the definition again. */
+    readonly changes?: Stream.Stream<unknown, BackendError>;
+    /** Refresh the metadata itself (for example revalidate a meta replica's cached rows) before
+     * the definition is read again on request. */
+    readonly revalidate?: (hint: {
+        readonly objectTypes: readonly string[];
+    }) => Effect.Effect<void, BackendError>;
+}
+/** A definition a replica can follow, read from the meta ontology. */
+export interface MetaDefinition {
+    /** The current definition first, then each one that differs. */
+    readonly changes: Stream.Stream<OntologyIR, BackendError>;
+    /** Read the definition again, after refreshing the named types' metadata. */
+    readonly revalidate: (hint: {
+        readonly objectTypes: readonly string[];
+    }) => Effect.Effect<void, BackendError>;
+}
+/**
+ * Follow a definition through ordinary metadata queries, with the same compilation as `pull`.
+ * `meta` is anything that answers queries: a metadata backend, or a cached proxy over a meta
+ * replica so the definition is available offline.
+ */
+export const metaDefinition = Effect.fnUntraced(function* (
+    meta: Pick<OntologyBackendService, "query">,
+    options: MetaDefinitionOptions = {}
+): Effect.fn.Return<MetaDefinition> {
+    // Each request bumps the counter; its changes start with the current value, so a request
+    // made before the stream is consumed is never lost.
+    const requests = yield* SubscriptionRef.make(0);
+    // Pulled metadata may carry fields the signature's schema rejects; compare it whole then.
+    const signature = (ir: OntologyIR) => {
+        try {
+            return ontologyDefinitionSignature(ir);
+        } catch {
+            return JSON.stringify(ir);
+        }
+    };
+    return {
+        changes: SubscriptionRef.changes(requests).pipe(
+            Stream.merge(options.changes ?? Stream.never),
+            Stream.mapEffect(() => pull(meta, options)),
+            Stream.changesWith((left, right) => signature(left) === signature(right))
+        ),
+        revalidate: (hint) =>
+            Effect.andThen(
+                options.revalidate?.(hint) ?? Effect.void,
+                SubscriptionRef.update(requests, (count) => count + 1)
+            ),
+    };
+});
 
 /** Assemble a runtime definition through ordinary metadata queries. Completeness
  * is the adapter's query contract; this does not invent an atomic provider revision.

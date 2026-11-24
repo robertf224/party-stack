@@ -1,4 +1,4 @@
-import { makeOntologyBackend } from "@party-stack/ontology-backend";
+import { BackendError, makeOntologyBackend } from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
 import { evaluateQuery } from "@party-stack/ontology-storage";
@@ -135,6 +135,71 @@ test("a replica that follows its definition reopens behind the same handle", asy
                 yield* SubscriptionRef.set(definition, { ...v2 });
                 expect(yield* replica.get("Item", "a")).toMatchObject({ id: "a" });
                 expect(built).toEqual([v1, v2]);
+            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
+        )
+    );
+});
+
+test("a schema mismatch from the backend makes the definition source look again", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const definition = yield* SubscriptionRef.make(v1);
+                const hints: (readonly string[])[] = [];
+                const backendFor = (ir: OntologyIR) =>
+                    makeOntologyBackend({
+                        ir,
+                        name: "mismatch",
+                        sourceId: "mismatch",
+                        supportsIdempotency: true,
+                        queryFunction: () => Effect.void,
+                        // The provider has moved on: it rejects the old definition's reads.
+                        loadSubset: () =>
+                            ir === v2
+                                ? Effect.succeed({
+                                      complete: true,
+                                      rows: [{ key: "a", value: { id: "a", count: 1, label: "x" } }],
+                                  })
+                                : Effect.fail(
+                                      new BackendError({
+                                          operation: "load",
+                                          kind: "SchemaMismatch",
+                                          retryable: false,
+                                          message: "Unknown property.",
+                                      })
+                                  ),
+                        applyAction: (request) =>
+                            Effect.succeed({ operationId: request.id, outcome: "committed" as const }),
+                    });
+                const runtime = yield* (yield* Runtimes).acquire({
+                    owner: "anonymous",
+                    namespace: "mismatch",
+                });
+                const replica = yield* makeReplica({
+                    definition: {
+                        changes: SubscriptionRef.changes(definition),
+                        revalidate: (hint) =>
+                            Effect.andThen(
+                                Effect.sync(() => hints.push(hint.objectTypes)),
+                                SubscriptionRef.set(definition, v2)
+                            ),
+                    },
+                    backend: (ir) => Effect.sync(() => backendFor(ir)),
+                    onDefinitionChange: "reset",
+                }).pipe(Effect.provideService(Runtime, runtime));
+                const item = { from: { source: { objectType: "Item" }, binding: "item" } };
+                expect(
+                    yield* Effect.result(
+                        Effect.scoped(replica.demand.acquire(item, { resultType: "complete" }))
+                    )
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "SchemaMismatch" } });
+                yield* replica.definition.changes.pipe(
+                    Stream.filter((ir) => ir === v2),
+                    Stream.runHead
+                );
+                expect(hints[0]).toEqual(["Item"]);
+                yield* replica.demand.acquire(item, { resultType: "complete" });
+                expect(yield* replica.get("Item", "a")).toEqual({ id: "a", count: 1, label: "x" });
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );

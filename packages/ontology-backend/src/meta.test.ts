@@ -1,8 +1,8 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
 import metaOntology from "@party-stack/ontology-spec/meta";
-import { Effect } from "effect";
+import { Effect, Queue, Stream } from "effect";
 import { expect, test } from "vitest";
-import { loadDefinition, makeMetadataBackend, pull } from "./meta.js";
+import { loadDefinition, makeMetadataBackend, metaDefinition, pull } from "./meta.js";
 import { makeOntologyBackend } from "./query.js";
 
 const ir: OntologyIR = {
@@ -287,4 +287,53 @@ test("pull omits definitions the IR cannot represent and reports them, instead o
             issues: expect.arrayContaining([expect.objectContaining({ code: "IncompatibleAssignment" })]),
         },
     ]);
+});
+
+test("a meta definition emits the current definition, then each one that differs", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                let current = named;
+                const refreshed: string[][] = [];
+                const definition = yield* metaDefinition(
+                    { query: (document, settings) => makeMetadataBackend(current).query(document, settings) },
+                    {
+                        revalidate: (hint) =>
+                            Effect.sync(() => {
+                                refreshed.push([...hint.objectTypes]);
+                            }),
+                    }
+                );
+                const seen = yield* Queue.unbounded<OntologyIR>();
+                yield* definition.changes.pipe(
+                    Stream.runForEach((value) => Queue.offer(seen, value)),
+                    Effect.forkScoped
+                );
+                expect((yield* Queue.take(seen)).objectTypes.map((type) => type.name)).toEqual(["Item"]);
+
+                // Revalidating unchanged metadata emits nothing.
+                yield* definition.revalidate({ objectTypes: ["Item"] });
+                current = {
+                    ...named,
+                    objectTypes: [
+                        ...named.objectTypes,
+                        {
+                            name: "Note",
+                            displayName: "Note",
+                            pluralDisplayName: "Notes",
+                            primaryKey: "id",
+                            properties: [{ name: "id", displayName: "Id", type: o.string({}) }],
+                        },
+                    ],
+                };
+                yield* definition.revalidate({ objectTypes: ["Note"] });
+                expect((yield* Queue.take(seen)).objectTypes.map((type) => type.name)).toEqual([
+                    "Item",
+                    "Note",
+                ]);
+                expect(yield* Queue.size(seen)).toBe(0);
+                expect(refreshed).toEqual([["Item"], ["Note"]]);
+            })
+        )
+    );
 });

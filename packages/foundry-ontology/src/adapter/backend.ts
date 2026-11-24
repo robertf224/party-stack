@@ -1,10 +1,11 @@
 import { makeObjectSetWatcher } from "@party-stack/foundry-object-set-watcher";
 import { makeOntologyBackend } from "@party-stack/ontology-backend";
-import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { BackendError } from "@party-stack/ontology-backend";
 import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import { QuerySchema } from "@party-stack/ontology-storage";
 import { fieldValues } from "@party-stack/ontology-storage/tables";
 import { Deferred, Effect, Queue, Schema, Stream, Redacted } from "effect";
+import { classifyFoundryFailure } from "./foundryErrors.js";
 import { searchFoundryObjects } from "./foundryObjectSearch.js";
 import { analyzeSubsetFilter, arrayProperties, subsetFilter } from "./subsetFilter.js";
 import type { Actions } from "@osdk/foundry.ontologies";
@@ -61,7 +62,7 @@ const invalidResponse = (operation: string, cause: unknown) =>
         actionOutcome: "unknown",
         cause: Redacted.make(cause),
     });
-const unavailable = (cause: unknown) => classifyBackendFailure("foundry.sync", cause);
+const unavailable = (cause: unknown) => classifyFoundryFailure("foundry.sync", cause);
 
 /** Each logical object set has its own acknowledgement. Pump before returning so
  * changes between that acknowledgement and the snapshot read remain observable.
@@ -349,7 +350,7 @@ export const makeFoundryBackend = Effect.fn("FoundryBackend.make")(function* (op
         applyAction: Effect.fn("Foundry.applyAction")(function* (invocation: ActionRequest) {
             const { result: rawResult, attachmentIdMappings } = yield* Effect.tryPromise({
                 try: (signal) => options.submitAction(invocation, signal),
-                catch: (cause) => classifyBackendFailure("foundry.applyAction", cause),
+                catch: (cause) => classifyFoundryFailure("foundry.applyAction", cause),
             });
             const result = yield* Schema.decodeUnknownEffect(ActionResult)(rawResult).pipe(
                 Effect.mapError((cause) => invalidResponse("foundry.applyAction", cause))

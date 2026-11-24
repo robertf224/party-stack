@@ -15,7 +15,56 @@ import {
 import { kernel, upstream } from "./internal.js";
 import type { ReplicaService as KernelService } from "./engine.js";
 import type { ReplicaDefinition, ReplicaService } from "./service.js";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
+
+const subsetType = (subset: unknown) => {
+    const value = subset as
+        | { objectType?: unknown; from?: { source?: { objectType?: unknown } } }
+        | undefined;
+    const type = value?.objectType ?? value?.from?.source?.objectType;
+    return typeof type === "string" ? [type] : [];
+};
+/**
+ * A backend that asks the definition source to look again when a request fails with
+ * `SchemaMismatch`: the provider no longer knows something this definition references. If the
+ * definition changed, the replica reopens under it; if not, the error stands. The request's
+ * error is returned unchanged either way.
+ */
+export const revalidateOnMismatch = (
+    backend: OntologyBackendService,
+    revalidate: NonNullable<ReplicaDefinition["revalidate"]>
+): OntologyBackendService => {
+    const check =
+        (objectTypes: readonly string[]) =>
+        <A, R>(effect: Effect.Effect<A, BackendError, R>) =>
+            Effect.tapError(effect, (error) =>
+                error.kind === "SchemaMismatch"
+                    ? Effect.forkDetach(
+                          revalidate({ objectTypes }).pipe(
+                              Effect.catch((failure) =>
+                                  Effect.logWarning("Definition recheck failed", failure)
+                              )
+                          )
+                      )
+                    : Effect.void
+            );
+    return {
+        ...backend,
+        loadSubset: (subset) => check(subsetType(subset))(backend.loadSubset(subset)),
+        query: (document, settings) => check([])(backend.query(document, settings)),
+        applyAction: (request) => check([])(backend.applyAction(request)),
+        queryFunction: (name, parameters) => check([])(backend.queryFunction(name, parameters)),
+        ...(backend.validateAction && {
+            validateAction: (name, parameters, settings) =>
+                check([])(backend.validateAction!(name, parameters, settings)),
+        }),
+        ...(backend.resolveActionParameters && {
+            resolveActionParameters: (name, parameters) =>
+                check([])(backend.resolveActionParameters!(name, parameters)),
+        }),
+    };
+};
 
 /** One engine opened under one definition. Replaced, never mutated, when the definition changes. */
 interface Generation {
@@ -39,8 +88,9 @@ const signature = (ir: OntologyIR) => {
     try {
         return ontologyDefinitionSignature(ir);
     } catch {
-        // An unreadable definition is never the same as another; opening it reports the error.
-        return Symbol("unreadable");
+        // Definitions read from metadata may carry fields the signature's schema rejects;
+        // compare those whole. Opening an unusable definition reports its own error.
+        return JSON.stringify(ir);
     }
 };
 

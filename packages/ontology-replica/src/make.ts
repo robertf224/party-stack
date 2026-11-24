@@ -2,7 +2,7 @@ import { classifyBackendFailure } from "@party-stack/ontology-backend";
 import { makeBlobStorage, exclusiveOwnerLiveness } from "@party-stack/ontology-storage/blobs";
 import { Runtime } from "@party-stack/runtime";
 import { Effect } from "effect";
-import { followReplicaDefinition } from "./follow.js";
+import { followReplicaDefinition, revalidateOnMismatch } from "./follow.js";
 import { makeReplica as makeReplicaFromStorage } from "./service.js";
 import type { ReplicaDefinition, ReplicaOptions as StorageReplicaOptions } from "./service.js";
 import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
@@ -76,12 +76,14 @@ export const makeReplica = Effect.fn("Replica.open")(function* (options: Replica
             clientSessions: options.clientSessions ?? { sessionIdleTimeoutMs: 10 * 60_000 },
         });
     if (!options.definition) return yield* open(options.ir, options.backend);
-    const { backend } = options;
+    const { backend, definition } = options;
+    const watched = (built: OntologyBackendService) =>
+        definition.revalidate ? revalidateOnMismatch(built, definition.revalidate) : built;
     return yield* followReplicaDefinition({
-        definition: options.definition,
+        definition,
         open: (ir) =>
             typeof backend === "function"
-                ? Effect.flatMap(backend(ir), (built) => open(ir, built))
-                : open(ir, backend),
+                ? Effect.flatMap(backend(ir), (built) => open(ir, watched(built)))
+                : open(ir, watched(backend)),
     });
 });
