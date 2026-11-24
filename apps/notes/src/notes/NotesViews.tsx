@@ -81,14 +81,6 @@ export function NotesLayout() {
     const ontology = useOntology<NotesOntology>();
     const { data: folders } = useLiveSuspenseQuery(sidebarQuery);
     const [error, reportError] = useState<string>();
-    useEffect(() => {
-        // Folder downloads replace the retired whole-device setting. Release its
-        // legacy retention only; named folder downloads are independent.
-        void ontology.pins
-            .get()
-            .then((legacy) => legacy && ontology.pins.clear())
-            .catch((cause) => reportError(textError(cause)));
-    }, [ontology]);
     const panels = usePanels(reportError);
     const compact = useCompactLayout();
     const { noteId, folderId } = useParams({ strict: false });

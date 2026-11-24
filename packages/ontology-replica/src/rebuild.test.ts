@@ -95,7 +95,8 @@ test("rebuild atomically drops disposable data while preserving outcomes, source
                     inputs: { label: "saved" },
                     attachments: "all",
                 };
-                yield* runtime.tables.put(table("query-pin"), "head", {
+                // A named download's saved intent; its id is the state row key.
+                yield* runtime.tables.put(table("query-pin"), "download", {
                     desired,
                     installed: desired,
                     error: { kind: "Unavailable", message: "old" },
@@ -113,7 +114,7 @@ test("rebuild atomically drops disposable data while preserving outcomes, source
                 yield* catalog.rebuild("issues", replacement);
                 expect(yield* runtime.tables.query(table("base:Item"))).toEqual([]);
                 expect(yield* runtime.tables.query(table("coverage"))).toEqual([]);
-                expect(yield* runtime.tables.get(table("query-pin"), "head")).toEqual({ desired });
+                expect(yield* runtime.tables.get(table("query-pin"), "download")).toEqual({ desired });
                 expect(yield* runtime.tables.get(table("state-head"), "head")).toEqual(head);
                 for (const part of [
                     "completed",
@@ -125,7 +126,8 @@ test("rebuild atomically drops disposable data while preserving outcomes, source
                     expect(yield* runtime.tables.get(table(part), "retained")).toEqual(outcome);
                 expect((yield* catalog.lookup("issues"))?.rebuild).toBeUndefined();
                 expect((yield* catalog.lookup("issues"))?.definition?.ir).toEqual(next);
-                expect(yield* Effect.result(opened.replica.demand.clearPin)).toMatchObject({
+                // The rebuild retired the replica that was open.
+                expect(yield* Effect.result(opened.replica.confirmed.get("Item", "old"))).toMatchObject({
                     _tag: "Failure",
                 });
                 const reopened = yield* catalog.open("issues", {

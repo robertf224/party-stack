@@ -17,7 +17,6 @@ import type { ReplicaAttachments } from "./attachments/service.js";
 import type { DemandPolicy } from "./demandCache.js";
 import type { ReplicaService as KernelService } from "./engine.js";
 import type { ReplicaPins } from "./pinManager.js";
-import type { PinOptions, PinStatus } from "./pins.js";
 import type { ObjectCachePolicy, ObjectCacheSweepOptions } from "./policies.js";
 import type { ReplicaStatus } from "./status.js";
 import type { ReplicaRowsBatch } from "./visible.js";
@@ -32,7 +31,6 @@ import type {
 import type { ActionMutatorRegistry } from "@party-stack/ontology-backend/actions";
 import type { ClientPolicy } from "@party-stack/ontology-backend/clients";
 import type { OntologySource, PendingAction, ClientSubmission } from "@party-stack/ontology-backend/protocol";
-import type { QueryDocument } from "@party-stack/ontology-spec";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { Encrypted, attachment } from "@party-stack/ontology-spec/values";
@@ -179,11 +177,6 @@ export interface ReplicaService extends ReplicaReads {
     readonly observeSubset: (subset: ObjectSubset) => Stream.Stream<ReplicaRowsBatch, BackendError>;
     readonly demand: {
         readonly pins: ReplicaPins;
-        readonly setPin: (query: QueryDocument, options?: PinOptions) => Effect.Effect<void, BackendError>;
-        readonly clearPin: Effect.Effect<void, BackendError>;
-        readonly pinStatus: Effect.Effect<PinStatus | undefined, BackendError>;
-        /** Emits the current pin status, then status after each saved intent/readiness change. */
-        readonly pinStatusChanges: Stream.Stream<PinStatus | undefined, BackendError>;
         /** Live demand defaults to cached availability while freshness repairs
          * continue. One-shot replicas and explicit complete reads await current coverage. */
         readonly acquire: (
@@ -205,10 +198,6 @@ export interface ReplicaService extends ReplicaReads {
     readonly collectGarbage: (options?: ObjectCacheSweepOptions) => Effect.Effect<number, BackendError>;
 }
 /** Pin operations may be delegated to the device's persistent replica owner. */
-export type ReplicaPinControls = Pick<
-    ReplicaService["demand"],
-    "setPin" | "clearPin" | "pinStatus" | "pinStatusChanges"
->;
 
 export const makeReplica = Effect.fn("Replica.open")(function* (
     options: ReplicaOptions
@@ -416,12 +405,28 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
             encrypted: options.encrypted ?? options.backend?.encrypted,
         },
     });
-    const pin = yield* makeQueryPin({
-        ...options,
-        engine,
-        live: options.live !== false,
-        attachments: remoteAttachments,
+    // Release a download left by the removed single-pin API (stored as the "head" pin) once:
+    // nothing reconciles it any more, so its rows and bytes would otherwise stay retained.
+    const pinState = Table.make<unknown>({
+        name: JSON.stringify(["replica", options.namespace, "query-pin"]),
     });
+    if (
+        (yield* options.tables
+            .get(pinState, "head")
+            .pipe(Effect.mapError((cause) => classifyBackendFailure("replica.pins", cause)))) !== undefined
+    )
+        yield* Effect.scoped(
+            Effect.flatMap(
+                makeQueryPin({
+                    ...options,
+                    engine,
+                    id: "head",
+                    live: false,
+                    attachments: remoteAttachments,
+                }),
+                (legacy) => legacy.clearPin()
+            )
+        );
     const pinOwner = yield* Effect.scope;
     let pinManagerOpened = false;
     const pinManager = yield* Effect.cached(
@@ -461,7 +466,6 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         yield* pinManager;
     const status = Effect.gen(function* () {
         const current = yield* engine.status;
-        const pinned = yield* pin.pinStatus;
         const memory = options.capacity && (yield* Effect.result(options.capacity.memory));
         const storage = options.capacity && (yield* Effect.result(options.capacity.storage));
         return {
@@ -490,11 +494,6 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                                   ? undefined
                                   : Math.floor(options.cache.attachments.maxBytes * 0.8))),
                 },
-            },
-            pin: pinned && {
-                ready: pinned.ready,
-                previousGraphRetained: pinned.previousGraphRetained,
-                error: pinned.error,
             },
         };
     }).pipe(Effect.withSpan("Replica.status"));
@@ -556,7 +555,6 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         );
     });
     const checkpoint = engine.syncOnce.pipe(
-        Effect.andThen(pin.refresh),
         Effect.andThen(
             Effect.suspend(() =>
                 pinManagerOpened ? Effect.flatMap(pinManager, (manager) => manager.refresh) : Effect.void
@@ -615,15 +613,6 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
             ),
         demand: {
             pins,
-            setPin: pin.setPin,
-            clearPin: pin.clearPin(),
-            pinStatus: pin.pinStatus,
-            // The pin's replaying notification source covers changes between the
-            // initial read and subscription; no polling or additional status store.
-            pinStatusChanges: pin.changes.pipe(
-                Stream.prepend([undefined]),
-                Stream.mapEffect(() => pin.pinStatus)
-            ),
             acquire: Effect.fn("Replica.demand")(function* (
                 subset: ObjectSubset,
                 settings?: { readonly localOnly?: boolean; readonly resultType?: "cached" | "complete" }
@@ -697,9 +686,7 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         },
         status: {
             get: status,
-            changes: Stream.merge(engine.statuses.pipe(Stream.as(undefined)), pin.changes).pipe(
-                Stream.mapEffect(() => status)
-            ),
+            changes: engine.statuses.pipe(Stream.mapEffect(() => status)),
         },
         syncOnce: checkpoint,
         revalidate: Effect.andThen(engine.markDemandedStale, checkpoint),

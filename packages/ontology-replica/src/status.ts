@@ -64,13 +64,6 @@ export const ReplicaStatusSchema = Schema.Struct({
             }),
         })
     ),
-    pin: Schema.optional(
-        Schema.Struct({
-            ready: Schema.Boolean,
-            previousGraphRetained: Schema.Boolean,
-            error: Schema.optional(Failure),
-        })
-    ),
     sourceId: Schema.String,
     upstreamId: Schema.String,
     mode: Schema.Literals(["adapter", "protocol"]),

@@ -215,7 +215,7 @@ test("pin inventories share ordinary ontology RPCs and require parent administra
                             ir,
                             enableRealtime: true,
                             authorize: (request) =>
-                                request.operation === "ReadPin" && !allowed
+                                request.operation === "Pins" && !allowed
                                     ? Effect.fail(
                                           new BackendError({
                                               operation: "pins",

@@ -126,7 +126,6 @@ export const makeOntologyResource = Effect.fn("Ontology.acquire")(function* <
                             replica: host.replica,
                             writes: opts.writes,
                             attachments: host.attachments,
-                            pins: client?.pins,
                             pinBackend: client?.pinBackend,
                             diagnosticLabel: opts.label,
                             parentDiagnostics:

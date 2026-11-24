@@ -3,8 +3,10 @@
 "@party-stack/ontology-backend": minor
 "@party-stack/ontology-server": minor
 "@party-stack/ontology-replica": minor
+"@party-stack/ontology-react": minor
+"@party-stack/ontology-devtools": patch
 "@party-stack/foundry-ontology": patch
-"@party-stack/ontology": patch
+"@party-stack/ontology": minor
 ---
 
 Update and delete action logic can target a list of object references and applies the step to each referenced object, as Foundry's modify and delete rules do with object-list parameters.
@@ -20,3 +22,5 @@ New `omitInvalid(ontology)` in `@party-stack/ontology-spec` drops whatever `vali
 Replicas take `onDefinitionChange: "reset" | "error"` (default `"error"`). With `"reset"`, a replica opened with a definition whose contract differs from its stored cache clears the cached rows, coverage and delivery state instead of failing with `SchemaMismatch`; the outbox, receipts and every pin's desired query are kept, so pinned data is fetched again. Queued actions stay queued: their predictions are replayed against the new definition, one that no longer applies is dropped (the action is still sent), and send failures follow the outbox's `failureStrategy`. Server-managed rebuilds no longer refuse while actions are pending either. A reset now also clears each named pin's membership and bytes, not only the default pin's.
 
 **Breaking:** managed replica routes drop `definition: { ir?, onIncompatible? }`. Use the replica's `onDefinitionChange: "reset"` in place of `onIncompatible: "rebuild"`, and, on an upstream route, a top-level `ir` for the application contract. `ReplicaDefinitionOptions` is no longer exported. Managed replica routes no longer accept `source` or `bootstrap`; the server fills those in.
+
+**Breaking:** the single-pin API is removed; downloads are named pins only (`ontology.pins(definePin(name, { query, attachments })).set(inputs)`, status in its `.collection`). Removed: the `ReadPin`, `WatchPin`, `SetPin` and `ClearPin` RPCs; the replica's `demand.setPin`, `clearPin`, `pinStatus` and `pinStatusChanges` and the `pin` field of replica status; `ReplicaPinControls`, `PinStatus`, `PinGraph`, `PinOptions` and their schemas; `LiveOntology.pins.get`, `set`, `clear()` and `subscribe`; the `pins` option and client field; and React's `useOfflinePin`. The `pins` resource is now authorized as the `Pins` operation. `OntologyServer.syncOnce` resolves to `{ pins }`, every named download with its readiness and error. A replica releases a download left by the old API once when it opens.

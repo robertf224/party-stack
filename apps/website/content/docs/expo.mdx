@@ -233,7 +233,8 @@ ordinary collections; authentication runs only when a button calls `signIn`.
 import { foundryPlatformObjects } from "@party-stack/foundry-ontology/platform/collections";
 import { authenticationObjects } from "@party-stack/ontology/authentication";
 import { sub } from "@party-stack/ontology-spec/query";
-import { OntologyEnvironmentProvider, OntologyProvider, useOfflinePin } from "@party-stack/ontology-react";
+import { definePin } from "@party-stack/ontology";
+import { OntologyEnvironmentProvider, OntologyProvider, useOntology } from "@party-stack/ontology-react";
 import { AuthenticationProvider, useAuthentication } from "@party-stack/ontology-react/authentication";
 import { useLiveSuspenseQuery } from "@tanstack/react-db";
 import { Suspense, useEffect, useState } from "react";
@@ -250,6 +251,7 @@ const discoveryDownload = {
         }),
     ],
 };
+const discovery = definePin("discovery", { query: discoveryDownload });
 
 export function App() {
     const [account, setAccount] = useState<string>();
@@ -327,22 +329,23 @@ function Ontologies({ onSelect }: { onSelect: (id: string) => void }) {
     const { data } = useLiveSuspenseQuery((q) =>
         q.from({ ontology: foundryPlatformObjects.Ontology }).orderBy(({ ontology }) => ontology.displayName)
     );
-    const pin = useOfflinePin();
+    const downloads = useOntology().pins(discovery);
+    const { data: pins } = useLiveSuspenseQuery((q) => q.from({ pin: downloads.collection }), [downloads]);
     const [error, setError] = useState<string>();
     useEffect(() => {
-        if (pin.isLoading || pin.status) return;
+        if (pins.length) return;
         let active = true;
-        void pin.set(discoveryDownload).catch((cause) => {
+        void downloads.set().catch((cause) => {
             if (active) setError(String(cause));
         });
         return () => {
             active = false;
         };
-    }, [pin.isLoading, pin.status, pin.set]);
+    }, [pins.length, downloads]);
     return (
         <View>
             {error && <Text accessibilityRole="alert">{error}</Text>}
-            {pin.status?.error && <Text accessibilityRole="alert">{pin.status.error.message}</Text>}
+            {pins[0]?.error && <Text accessibilityRole="alert">{pins[0].error.message}</Text>}
             {data.map((ontology) => (
                 <Button
                     key={ontology.id}
@@ -379,7 +382,8 @@ collection descriptors instead.
 
 ```tsx title="src/ObjectBrowser.tsx"
 import { sub } from "@party-stack/ontology-spec/query";
-import { useOfflinePin, useOntology } from "@party-stack/ontology-react";
+import { definePin } from "@party-stack/ontology";
+import { useOntology } from "@party-stack/ontology-react";
 import { useLiveSuspenseQuery } from "@tanstack/react-db";
 import { Suspense, useMemo, useState } from "react";
 import { ActivityIndicator, Button, Text, View } from "react-native";
@@ -388,37 +392,43 @@ export function ObjectBrowser() {
     const view = useOntology();
     const [selected, setSelected] = useState<string>();
     const [error, setError] = useState<string>();
-    const pin = useOfflinePin();
     const type = view.ir.objectTypes.find((type) => type.name === selected) ?? view.ir.objectTypes[0];
-    const download = useMemo(
-        () => ({
-            select: view.ir.objectTypes.map((type) =>
-                sub(type.name, {
-                    from: { source: { objectType: type.name }, binding: "row" },
-                    select: [],
+    // One named download of every object type, attachments included.
+    const downloads = useMemo(
+        () =>
+            view.pins(
+                definePin("everything", {
+                    query: {
+                        select: view.ir.objectTypes.map((type) =>
+                            sub(type.name, {
+                                from: { source: { objectType: type.name }, binding: "row" },
+                                select: [],
+                            })
+                        ),
+                    },
+                    attachments: "all",
                 })
             ),
-        }),
-        [view.ir]
+        [view]
     );
+    const { data: pins } = useLiveSuspenseQuery((q) => q.from({ pin: downloads.collection }), [downloads]);
+    const pin = pins[0];
     return (
         <View>
             {view.ir.objectTypes.map((type) => (
                 <Button key={type.name} title={type.displayName} onPress={() => setSelected(type.name)} />
             ))}
             <Button
-                title={pin.status?.ready ? "Downloaded" : "Download ontology"}
-                onPress={() =>
-                    void pin.set(download, { attachments: "all" }).catch((cause) => setError(String(cause)))
-                }
+                title={pin?.ready ? "Downloaded" : "Download ontology"}
+                onPress={() => void downloads.set().catch((cause) => setError(String(cause)))}
             />
-            {pin.status && (
+            {pin && (
                 <Button
                     title="Remove download"
-                    onPress={() => void pin.clear().catch((cause) => setError(String(cause)))}
+                    onPress={() => void downloads.clear().catch((cause) => setError(String(cause)))}
                 />
             )}
-            {pin.status?.error && <Text>{pin.status.error.message}</Text>}
+            {pin?.error && <Text>{pin.error.message}</Text>}
             {error && <Text accessibilityRole="alert">{error}</Text>}
             {type && (
                 <Suspense fallback={<ActivityIndicator accessibilityLabel="Loading objects" />}>
@@ -492,7 +502,11 @@ export const refreshOntologies = Effect.fn("App.refreshOntologies")(function* (t
         [...new Set(targets)],
         (target) =>
             server.syncOnce(target).pipe(
-                Effect.map(({ pin }) => ({ target, ok: !pin || pin.ready, error: pin?.error })),
+                Effect.map(({ pins }) => ({
+                    target,
+                    ok: pins.every((pin) => pin.ready),
+                    error: pins.find((pin) => pin.error)?.error,
+                })),
                 Effect.catch((error) =>
                     Effect.succeed({ target, ok: false, error: { kind: error.kind, message: error.message } })
                 )

@@ -1,11 +1,20 @@
 import { PartyStackLogomark } from "@party-stack/design-system/brand";
 import { useLiveSuspenseQuery } from "@tanstack/react-db";
 import { CircleAlert, CircleCheck, LoaderCircle, Paperclip, Pin } from "lucide-react";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense } from "react";
 import { DisclosureSummary } from "./DisclosureSummary.js";
 import { PinnedFamily, groupPinDownloads } from "./PinnedFamily.js";
 import { QueryDocumentView, QueryExpression } from "./QueryView.js";
-import type { LiveOntology, OntologyIR, PinStatus } from "@party-stack/ontology";
+import type { LiveOntology, OntologyIR, QueryDocument } from "@party-stack/ontology";
+
+/** One download's definition and readiness, as the inspector shows it. */
+export interface DownloadStatus {
+    readonly query: QueryDocument;
+    readonly inputs?: Readonly<Record<string, unknown>>;
+    readonly attachments: "none" | "all";
+    readonly ready: boolean;
+    readonly error?: { readonly kind: string; readonly message: string };
+}
 
 export function Pinned({ ontology }: { ontology: LiveOntology }) {
     return (
@@ -25,35 +34,7 @@ function PinInventory({ ontology }: { ontology: LiveOntology }) {
             .orderBy(({ pin }) => pin.name, "asc")
             .orderBy(({ pin }) => pin.id, "asc")
     );
-    const [snapshot, setSnapshot] = useState<{ pins: typeof pins; status?: PinStatus; error?: unknown }>();
-    useEffect(() => {
-        let active = true;
-        let unsubscribe = () => {};
-        const onError = (error: unknown) => {
-            if (active) setSnapshot({ pins, error });
-        };
-        try {
-            unsubscribe = pins.subscribe((status) => {
-                if (active) setSnapshot({ pins, status });
-            }, onError);
-        } catch (error) {
-            onError(error);
-        }
-        return () => {
-            active = false;
-            unsubscribe();
-        };
-    }, [pins]);
-    const current = snapshot?.pins === pins ? snapshot : undefined;
-    if (!downloads.length)
-        return (
-            <PinnedContent
-                ir={ontology.ir}
-                status={current?.status}
-                loading={!current}
-                error={current?.error}
-            />
-        );
+    if (!downloads.length) return <PinnedContent ir={ontology.ir} />;
     return (
         <>
             {groupPinDownloads(downloads).map((family) => (
@@ -64,9 +45,6 @@ function PinInventory({ ontology }: { ontology: LiveOntology }) {
                     remove={ontology.pins.remove}
                 />
             ))}
-            {current?.status && (
-                <PinnedContent ir={ontology.ir} status={current.status} title="Legacy application download" />
-            )}
         </>
     );
 }
@@ -79,7 +57,7 @@ export function PinnedContent({
     title = "Pinned graph",
 }: {
     ir: OntologyIR;
-    status?: PinStatus;
+    status?: DownloadStatus;
     loading?: boolean;
     error?: unknown;
     title?: string;
@@ -135,11 +113,6 @@ export function PinnedContent({
             {failure && (
                 <p className="ps-replication-error" role="alert">
                     {failure}
-                </p>
-            )}
-            {status.previousGraphRetained && (
-                <p className="ps-pinned-retained">
-                    The previous graph is retained until this replacement is ready.
                 </p>
             )}
             {status.inputs && Object.keys(status.inputs).length > 0 && (

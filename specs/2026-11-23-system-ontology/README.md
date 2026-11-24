@@ -21,34 +21,32 @@ same model.
   through the `pins` resource header (`packages/ontology-server/src/rpc.ts`).
 - **Account inventory.** Signed-in accounts are the Connect ontology, read with ordinary
   queries (`packages/ontology/src/authentication.ts`, `packages/connect`).
+- **Single-pin API removed.** `ReadPin`, `WatchPin`, `SetPin` and `ClearPin`, the replica's
+  `setPin`/`clearPin`/`pinStatus`, `LiveOntology.pins.get/set/clear()/subscribe` and React's
+  `useOfflinePin` are gone; downloads are named pins only, read and changed through the `pins`
+  resource. A replica releases a download left by the old API once when it opens.
 - **Ontology metadata.** The meta ontology (`@party-stack/ontology-spec/meta`) describes
   object, link, action and value types as rows. `pull` builds IR from any backend that
   answers its queries, including a replica of a metadata backend.
 
 ## Candidates, in rough order
 
-1. **Retire the single-pin RPCs.** `ReadPin`, `WatchPin`, `SetPin` and `ClearPin`
-   (`packages/ontology-server/src/operations.ts`) and `LiveOntology.pins.get/set/clear/subscribe`
-   predate named pins. Remaining callers: the Notes app (clearing a legacy pin), a homepage
-   code sample and a web-runtime e2e test. An app with one notion of downloaded data can use
-   one named pin. `PinStatus` reports `previousGraphRetained`/`retainedGraph`, which the `Pin`
-   row would need to gain.
-2. **Outbox controls as objects.** A `PendingAction` object type with remove, retry and edit
+1. **Outbox controls as objects.** A `PendingAction` object type with remove, retry and edit
    actions would replace `ControlOutbox` and `OntologySource.outbox`. Pending and completed
    actions already travel as delivery records. These control actions must not go through the
    outbox themselves, and need a privileged policy.
-3. **Definitions from the meta ontology.** Serve a route's IR and context as meta rows on a
+2. **Definitions from the meta ontology.** Serve a route's IR and context as meta rows on a
    `meta` resource and shrink `Describe` to a manifest (version, source id, definition hash,
    capabilities). Open questions: a definition read spans several queries, so it needs a hash
    or revision check to avoid mixing revisions; per-principal definition projection must apply
    to meta rows.
-4. **Definition status.** Retained, current or incompatible becomes a subscription to the meta
+3. **Definition status.** Retained, current or incompatible becomes a subscription to the meta
    `Ontology` row's hash. The typed `SchemaMismatch` error on operations stays.
-5. **Replica status.** Read-only `Replica`, `Demand` and `Load` objects for devtools. Load
+4. **Replica status.** Read-only `Replica`, `Demand` and `Load` objects for devtools. Load
    changes constantly, so watch the delivery traffic.
 
 Generalizing the `pins` resource header to named system resources (`pins`, `meta`, `system`)
-is the shared mechanism for 1, 3 and 5. Once those move, the internal-access RPC allowlist
+is the shared mechanism for 2 and 4. Once those move, the internal-access RPC allowlist
 becomes a policy on that resource.
 
 **Keep as protocol:** delivery selection and the client handshake (results and actions travel

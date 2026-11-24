@@ -1,7 +1,7 @@
 import { DbClient } from "@tanstack/db";
 import { Component, StrictMode, Suspense, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { OntologyProvider, useAttachmentMetadata, useAttachmentUrl, useOfflinePin } from "../src/index.js";
+import { OntologyProvider, useAttachmentMetadata, useAttachmentUrl } from "../src/index.js";
 import type { LiveOntology } from "@party-stack/ontology";
 import type { attachment } from "@party-stack/ontology/values";
 import type { ReactNode } from "react";
@@ -15,8 +15,6 @@ const reads: {
 const revoked: string[] = [];
 const created: string[] = [];
 const fields: string[][] = [];
-const pinCommands: string[] = [];
-let listeners = 0;
 const revoke = URL.revokeObjectURL.bind(URL);
 const create = URL.createObjectURL.bind(URL);
 URL.revokeObjectURL = (url) => {
@@ -38,23 +36,6 @@ const ontology = {
             return Promise.resolve({ name: "photo.png", size: 123 });
         },
     },
-    pins: {
-        subscribe: (notify: (value: undefined) => void) => {
-            listeners++;
-            notify(undefined);
-            return () => {
-                listeners--;
-            };
-        },
-        set: () => {
-            pinCommands.push("set");
-            return Promise.resolve();
-        },
-        clear: () => {
-            pinCommands.push("clear");
-            return Promise.resolve();
-        },
-    },
 } as unknown as LiveOntology;
 function Hooks({ enabled, slot, source }: { enabled: boolean; slot: string; source: number }) {
     // Fresh equivalent handles and reversed field order must still share requests.
@@ -64,17 +45,10 @@ function Hooks({ enabled, slot, source }: { enabled: boolean; slot: string; sour
         select: slot === "first" ? ["name", "size"] : ["size", "name"],
         enabled,
     });
-    const pin = useOfflinePin();
     return (
         <>
             <span data-testid={`url-${slot}`}>{image}</span>
             <span data-testid={`metadata-${slot}`}>{metadata?.name}</span>
-            {slot === "first" && (
-                <>
-                    <button onClick={() => void pin.set({ select: [] })}>Pin</button>
-                    <button onClick={() => void pin.clear()}>Unpin</button>
-                </>
-            )}
         </>
     );
 }
@@ -134,8 +108,6 @@ Reflect.set(window, "attachmentFixture", {
         revoked,
         created,
         fields,
-        pinCommands,
-        listeners,
     }),
     resolve: (index: number) => reads[index]!.resolve(new Blob(["image"], { type: "image/png" })),
     reject: (index: number) => reads[index]!.reject(new Error("Unavailable")),

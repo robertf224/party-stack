@@ -84,7 +84,7 @@ const capabilities = [
         heading: "The party doesn't stop at the door.",
         description:
             "Keep a graph of objects and its files on the device. Read retained data and queue changes without a connection.",
-        code: `await ontology.pins.set(projectGraph, {\n  inputs: { projectId },\n  attachments: "all",\n});`,
+        code: `await ontology.pins(projectGraph).set({ projectId });`,
         href: "offline",
     },
     {

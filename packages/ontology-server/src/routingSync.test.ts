@@ -77,17 +77,17 @@ test("native checkpoints share the managed route owner and return its installed 
                     },
                 });
                 const target = "workspaces/first/issues";
-                expect(yield* server.syncOnce(target)).toEqual({ pin: undefined });
+                expect(yield* server.syncOnce(target)).toEqual({ pins: [] });
                 expect(opened).toBe(1);
                 expect(active).toBe(1);
                 yield* Effect.scoped(
                     Effect.gen(function* () {
                         const bound = yield* server.bind(target);
-                        yield* bound.options.replica!.demand.setPin(query);
+                        yield* bound.options.replica!.demand.pins.set({ name: "issues", query });
                     })
                 );
                 expect(yield* server.syncOnce(target)).toMatchObject({
-                    pin: { query, ready: true, attachments: "none", previousGraphRetained: false },
+                    pins: [{ name: "issues", ready: true }],
                 });
                 expect(opened).toBe(1);
                 expect(active).toBe(1);

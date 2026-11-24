@@ -211,7 +211,7 @@ test("routing resolves a replacement native owner while an old subscription is s
     );
 });
 
-test("one worker routes ordinary clients and pin controls to the selected replica", async () => {
+test("one worker routes ordinary clients and download controls to the selected replica", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -255,13 +255,24 @@ test("one worker routes ordinary clients and pin controls to the selected replic
                     })
                 );
                 expect(yield* client.backend.query(query)).toEqual({ issues: [{ id: "issues" }] });
-                expect(client.pins).toBeDefined();
-                expect(yield* client.pins!.pinStatus).toBeUndefined();
-                yield* client.pins!.setPin(query);
-                expect(yield* replica.demand.pinStatus).toMatchObject({ query, attachments: "none" });
-                expect(yield* client.pins!.pinStatus).toMatchObject({ query, attachments: "none" });
-                yield* client.pins!.clearPin;
-                expect(yield* replica.demand.pinStatus).toBeUndefined();
+                expect(client.pinBackend).toBeDefined();
+                const downloads = yield* client.pinBackend!;
+                expect((yield* downloads.loadSubset(objectSubset("Pin"))).rows).toEqual([]);
+                yield* downloads.applyAction({
+                    id: "download",
+                    name: "updatePins",
+                    parameters: { change: { set: [{ name: "issues", query }] } },
+                });
+                expect(yield* replica.demand.pins.list).toMatchObject([
+                    { name: "issues", attachments: "none" },
+                ]);
+                expect((yield* downloads.loadSubset(objectSubset("Pin"))).rows).toHaveLength(1);
+                yield* downloads.applyAction({
+                    id: "clear",
+                    name: "updatePins",
+                    parameters: { change: { clearName: "issues" } },
+                });
+                expect(yield* replica.demand.pins.list).toEqual([]);
             })
         )
     );

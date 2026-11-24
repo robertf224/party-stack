@@ -13,7 +13,7 @@ import type { OntologyAuthenticate, OntologyBindingOptions, OntologyInternalAcce
 import type { ErrorProjectionOptions } from "./errorProjection.js";
 import type { UpstreamReplicaRegistration } from "./replicaBootstrap.js";
 import type { OntologyRpcClient, OntologyRpcServerOptions } from "./rpc.js";
-import type { PinStatus } from "@party-stack/ontology-replica";
+import type { PinRecord } from "@party-stack/ontology-replica";
 import type { ReplicaRegistration, StoredReplicaPartition } from "@party-stack/ontology-replica/registry";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
@@ -93,7 +93,6 @@ class EndpointKey<T extends OntologyBindingOptions<unknown>> implements Equal.Eq
             options.deliveryStrategy,
             options.delivery,
             options.attachmentTransfers,
-            options.pins,
             options.traces,
         ];
     }
@@ -136,11 +135,12 @@ export interface OntologyServer<R = never> extends ErrorProjectionOptions {
     readonly partitions: Effect.Effect<readonly StoredReplicaPartition[], BackendError>;
     /** Run a bounded native checkpoint through the route's existing replica owner. */
     /** Checkpoint one ontology. `revalidate` reloads demanded data even when a realtime
-     * watch reports it current; use it for user-initiated refresh. */
+     * watch reports it current; use it for user-initiated refresh. Resolves to the
+     * replica's named downloads, each with its readiness and error after the checkpoint. */
     readonly syncOnce: (
         ontology: string,
         options?: { readonly revalidate?: boolean }
-    ) => Effect.Effect<{ readonly pin?: PinStatus }, BackendError, R>;
+    ) => Effect.Effect<{ readonly pins: readonly PinRecord[] }, BackendError, R>;
     readonly bind: (
         ontology: string,
         request?: Request
@@ -676,7 +676,7 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                             message: "Only replica routes support native synchronization checkpoints.",
                         });
                     yield* settings?.revalidate ? bound.replica.revalidate : bound.replica.syncOnce;
-                    return { pin: yield* bound.replica.demand.pinStatus };
+                    return { pins: yield* bound.replica.demand.pins.list };
                 })
             ),
         // Failures before a route is bound: its IR policy is not known yet.

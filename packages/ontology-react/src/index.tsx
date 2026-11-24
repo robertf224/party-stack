@@ -34,7 +34,6 @@ export type {
 } from "@party-stack/db-fragments";
 
 export { useAttachmentUrl, useAttachmentMetadata } from "./attachments.js";
-export { useOfflinePin } from "./pins.js";
 
 export { ontologyCollections } from "@party-stack/ontology/tanstack";
 export type { OntologyViewOptions } from "./options.js";

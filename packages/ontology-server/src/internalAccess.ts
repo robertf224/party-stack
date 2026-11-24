@@ -14,16 +14,8 @@ export const withInternalCommands =
     ): OntologyRpcServerOptions<R>["authorize"] =>
     (request, headers) =>
         enabled &&
-        [
-            "ReplicaStatus",
-            "Traces",
-            "ControlOutbox",
-            "ReadPin",
-            "WatchPin",
-            "SetPin",
-            "ClearPin",
-            "DeleteLocalData",
-            "ReleaseOwner",
-        ].includes(request.operation)
+        ["ReplicaStatus", "Traces", "ControlOutbox", "Pins", "DeleteLocalData", "ReleaseOwner"].includes(
+            request.operation
+        )
             ? Effect.void
             : authorize(request, headers);

@@ -60,7 +60,7 @@ import type { DeliveryFrame } from "@party-stack/ontology-backend/delivery";
 import type { OntologyDescription } from "@party-stack/ontology-backend/description";
 import type { ClientSubmission, ClientView, OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
-import type { ReplicaService, ReplicaPinControls } from "@party-stack/ontology-replica";
+import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { TraceStore } from "@party-stack/runtime/tracing";
 import type { Headers } from "effect/http/Headers";
 
@@ -192,8 +192,6 @@ export interface OntologyClient {
     readonly ir?: import("@party-stack/ontology-spec").OntologyIR;
     readonly context?: Record<string, unknown>;
     readonly operations: OntologyOperationsClient;
-    /** Pin controls on the selected persistent replica, when the server advertises them. */
-    readonly pins?: ReplicaPinControls;
     /** Ordinary ontology operations over the selected replica's download inventory. */
     readonly pinBackend?: Effect.Effect<
         import("@party-stack/ontology-backend").OntologyBackendService,
@@ -253,7 +251,6 @@ export interface OntologyRpcServerOptions<R = never> extends ErrorProjectionOpti
     readonly delivery?: import("@party-stack/ontology-backend/delivery").DeliveryPolicy;
     readonly source?: OntologySource;
     readonly replica?: ReplicaService;
-    readonly pins?: ReplicaPinControls;
     readonly traces?: TraceStore;
     readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
     /** Worker bootstrap may run while transport starts accepting requests. */
@@ -439,7 +436,7 @@ const baseOntologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => {
                                 options.backend?.resolveActionParameters || options.replica
                             ),
                             queries: Boolean(options.backend),
-                            pins: Boolean(options.pins ?? options.replica),
+                            pins: Boolean(options.replica),
                             attachments: options.backend
                                 ? options.backend.attachments && {
                                       stage: Boolean(options.backend.attachments.stage),
@@ -646,7 +643,7 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) =>
                             context: options.context,
                             enableRealtime: options.enableRealtime,
                             errors: options.errors,
-                            authorize: (_, headers) => options.authorize({ operation: "ReadPin" }, headers),
+                            authorize: (_, headers) => options.authorize({ operation: "Pins" }, headers),
                         }),
                         scope
                     );
@@ -667,7 +664,7 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) =>
                                     message: "Unknown ontology resource.",
                                 });
                             if (resource === "pins")
-                                yield* options.authorize({ operation: "ReadPin" }, request.headers);
+                                yield* options.authorize({ operation: "Pins" }, request.headers);
                             const context = resource === "pins" ? yield* pins : ordinary;
                             const handler = yield* OntologyRpcs.accessHandler(tag as Rpcs["_tag"]).pipe(
                                 Effect.provideContext(context)
@@ -1005,7 +1002,6 @@ const openProtocolClient = Effect.fnUntraced(function* (
         description,
         definition: described.definition,
         operations,
-        pins: description.pins ? operations.pins : undefined,
         pinBackend,
         sourceId: description.sourceId,
         definitionHash: description.definitionHash,

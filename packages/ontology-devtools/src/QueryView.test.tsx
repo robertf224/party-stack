@@ -2,10 +2,10 @@ import { related, local, sub } from "@party-stack/ontology/query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vite-plus/test";
-import { PinnedContent } from "./Pinned.js";
+import { PinnedContent, type DownloadStatus } from "./Pinned.js";
 import { subsetQuery } from "./queryIR.js";
 import { QueryDocumentView, QueryExpression } from "./QueryView.js";
-import type { Expression, OntologyIR, PinStatus, Query, QueryDocument } from "@party-stack/ontology";
+import type { Expression, OntologyIR, Query, QueryDocument } from "@party-stack/ontology";
 
 const ir: OntologyIR = {
     types: [],
@@ -314,12 +314,12 @@ test("subset adaptation preserves absence, nullish values, zero limits and curso
     expect(subsetQuery("Note").where).toBeUndefined();
 });
 
-test("the pinned view distinguishes empty, loading, ready and retained replacement failures", () => {
+test("the pinned view distinguishes empty, loading, ready and failed downloads", () => {
     const render = (props: Omit<Parameters<typeof PinnedContent>[0], "ir">) =>
         renderToStaticMarkup(createElement(PinnedContent, { ir, ...props }));
     expect(render({})).toContain("No pinned graph.");
     expect(render({ loading: true })).toContain('aria-label="Reading pinned graph"');
-    const status: PinStatus = { query: graph, attachments: "all", ready: true, previousGraphRetained: false };
+    const status: DownloadStatus = { query: graph, attachments: "all", ready: true };
     const ready = render({ status });
     expect(ready).toContain("Available offline");
     expect(ready).toContain("Includes attachment bytes");
@@ -332,13 +332,11 @@ test("the pinned view distinguishes empty, loading, ready and retained replaceme
             ...status,
             ready: false,
             attachments: "none",
-            previousGraphRetained: true,
             error: { kind: "Unavailable", message: "Connection lost" },
         },
     });
     expect(failed).toContain("Download interrupted");
     expect(failed).toContain("Connection lost");
-    expect(failed).toContain("previous graph is retained");
     expect(failed).toContain("Objects only");
     expect(failed).not.toContain("Available offline");
 });
