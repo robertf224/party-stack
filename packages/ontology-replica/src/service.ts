@@ -44,11 +44,18 @@ export interface ReplicaConfiguration {
     readonly ir: OntologyIR;
     /**
      * What to do when the stored cache was written under a different definition contract.
-     * `"error"` (default) fails with `SchemaMismatch`. `"reset"` clears cached rows, coverage and
-     * delivery state when the replica opens, and keeps every pin's desired query so pinned data is
-     * fetched again. Queued actions stay queued: their predictions are replayed against the new
-     * definition, a prediction that no longer applies is dropped (the action is still sent), and
-     * failures are handled by the outbox's `failureStrategy`.
+     * `"error"` (default) fails with `SchemaMismatch`. `"reset"` clears cached data when the
+     * replica opens, inside its startup transaction so a failed open rolls it back:
+     * - A replica fed by a backend clears only object types whose own contract (properties,
+     *   primary key, constraints) changed or that were removed. Other types keep their rows and
+     *   coverage; action, link and query-function changes clear nothing. A change to named value
+     *   types, context or policy, or an unreadable stored definition, clears everything.
+     * - A replica fed by a protocol source clears everything, since its delivery position spans
+     *   all types.
+     * Every download keeps its desired query; one that lost rows reinstalls. Queued actions stay
+     * queued: their predictions are replayed against the new definition, a prediction that no
+     * longer applies is dropped (the action is still sent), and failures follow the outbox's
+     * `failureStrategy`. A changed primary key cannot reuse its stored index, so that open fails.
      */
     readonly onDefinitionChange?: "reset" | "error";
     readonly context?: Record<string, unknown>;

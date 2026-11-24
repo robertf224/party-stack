@@ -1,5 +1,8 @@
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
-import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
+import {
+    ontologyDefinitionContractSignature,
+    ontologyDefinitionSignature,
+} from "@party-stack/ontology-storage";
 import { makeBlobStorage, type BlobStorageService } from "@party-stack/ontology-storage/blobs";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect } from "effect";
@@ -87,6 +90,120 @@ export const resetReplicaCache = Effect.fn("Replica.resetCache")(function* (opti
         )
         .pipe(Effect.mapError((cause) => classifyBackendFailure("replica.rebuild", cause)));
 });
+
+/** Which cached data a definition change invalidates. */
+export type DefinitionResetPlan =
+    | { readonly kind: "none" }
+    | { readonly kind: "types"; readonly types: ReadonlySet<string> }
+    | { readonly kind: "all" };
+
+const emptyDefinition: OntologyIR = {
+    types: [],
+    objectTypes: [],
+    linkTypes: [],
+    actionTypes: [],
+    queryFunctionTypes: [],
+};
+const isDefinition = (value: unknown): value is OntologyIR =>
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { objectTypes?: unknown }).objectTypes) &&
+    Array.isArray((value as { types?: unknown }).types ?? []);
+
+/**
+ * Compare a stored definition with a new one object type by object type. Only rows are cached
+ * per type, so a type's rows survive unless its own contract (properties, primary key,
+ * constraints) changed or it was removed. Actions, links and query functions hold no cached
+ * rows. Named value types, context and policy are shared by every type (policy decides which
+ * rows a reader may see), so a change to them invalidates everything, as does a stored
+ * definition that can no longer be read.
+ */
+export function planDefinitionReset(previous: unknown, next: OntologyIR): DefinitionResetPlan {
+    if (!isDefinition(previous)) return { kind: "all" };
+    try {
+        const shared = (ir: OntologyIR) =>
+            ontologyDefinitionContractSignature({
+                ...emptyDefinition,
+                types: ir.types ?? [],
+                ...(ir.context ? { context: ir.context } : {}),
+                ...(ir.policy ? { policy: ir.policy } : {}),
+            });
+        if (shared(previous) !== shared(next)) return { kind: "all" };
+        const typeSignature = (ir: OntologyIR, name: string) => {
+            const type = ir.objectTypes.find((candidate) => candidate.name === name);
+            return (
+                type &&
+                ontologyDefinitionContractSignature({
+                    ...emptyDefinition,
+                    types: ir.types ?? [],
+                    objectTypes: [type],
+                })
+            );
+        };
+        const types = new Set(
+            previous.objectTypes
+                .map((type) => type.name)
+                .filter((name) => typeSignature(previous, name) !== typeSignature(next, name))
+        );
+        return types.size ? { kind: "types", types } : { kind: "none" };
+    } catch {
+        return { kind: "all" };
+    }
+}
+
+/**
+ * Clear only the given object types' cached rows and the bookkeeping that refers to them, inside
+ * the caller's transaction: their base, overlay and attachment roots, coverage, retention,
+ * action read sets and download membership. Other types keep their rows and coverage, and the
+ * sync position is kept. A download that held rows of a cleared type is marked not installed,
+ * keeping its desired query, so it reinstalls.
+ */
+export const resetObjectTypes = (
+    tx: Transaction,
+    options: {
+        readonly namespace: string;
+        readonly blobs?: BlobStorageService;
+        readonly types: ReadonlySet<string>;
+    }
+) =>
+    Effect.gen(function* () {
+        const { namespace, blobs, types } = options;
+        const name = (part: string) => JSON.stringify(["replica", namespace, part]);
+        for (const type of types) {
+            for (const layer of ["base", "parent-base", "parent-overlay", "overlay"])
+                yield* tx.clear(Table.make({ name: name(`${layer}:${type}`) }));
+            for (const layer of ["base", "overlay"])
+                if (blobs)
+                    yield* blobs.in(tx).releaseGroup(JSON.stringify(["replica-row", namespace, layer, type]));
+        }
+        const removeWhere = (part: string, objectType: (value: Record<string, unknown>) => unknown) =>
+            Effect.gen(function* () {
+                const table = Table.make<Record<string, unknown>>({ name: part });
+                for (const row of yield* tx.query(table))
+                    if (types.has(String(objectType(row.value)))) yield* tx.delete(table, row.key);
+            });
+        const subsetType = (value: Record<string, unknown>) =>
+            (value.subset as { objectType?: unknown } | undefined)?.objectType;
+        yield* removeWhere(name("coverage"), subsetType);
+        yield* removeWhere(name("action-queries"), subsetType);
+        for (const part of ["retention", "action-rows", "pins"])
+            yield* removeWhere(name(part), (value) => value.objectType);
+        yield* tx.clear(Table.make({ name: name("sweep") }));
+        const pins = Table.make<{ desired: unknown; removed?: boolean }>({ name: name("query-pin") });
+        for (const { key, value } of yield* tx.query(pins)) {
+            const id = String(key);
+            const members = Table.make<{ objectType: string }>({
+                name: JSON.stringify(["replica", namespace, "pin-members", id]),
+            });
+            let touched = false;
+            for (const member of yield* tx.query(members))
+                if (types.has(member.value.objectType)) {
+                    touched = true;
+                    yield* tx.delete(members, member.key);
+                }
+            if (touched && !value.removed) yield* tx.put(pins, id, { desired: value.desired });
+        }
+    });
 
 /**
  * Clear a replica's cached data for a new definition inside the caller's transaction, and

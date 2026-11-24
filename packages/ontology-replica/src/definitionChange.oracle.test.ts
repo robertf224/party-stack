@@ -4,6 +4,7 @@ import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend
 import { o, type OntologyIR, type QueryDocument } from "@party-stack/ontology-spec";
 import * as q from "@party-stack/ontology-spec/query";
 import { eq, evaluateQuery, field } from "@party-stack/ontology-storage";
+import { Table } from "@party-stack/ontology-storage/tables";
 import { MemoryRuntime, Runtimes } from "@party-stack/runtime";
 import { Cause, Deferred, Effect, Exit, Fiber, Schema, Scope } from "effect";
 import { TestClock } from "effect/testing";
@@ -266,7 +267,10 @@ const run = (scenario: typeof Scenario.Type) =>
             });
             // Hold the partition's storage for the whole run, as a device keeps its database
             // across restarts; a memory runtime nobody holds is discarded.
-            yield* (yield* Runtimes).acquire({ owner: "anonymous", namespace: "definition-oracle" });
+            const storage = yield* (yield* Runtimes).acquire({
+                owner: "anonymous",
+                namespace: "definition-oracle",
+            });
             const catalog = yield* makeReplicaPartitionCatalog();
             let replicaShape = initial;
             const open = Effect.gen(function* () {
@@ -396,6 +400,16 @@ const run = (scenario: typeof Scenario.Type) =>
                 for (const [name, query] of Object.entries(downloads))
                     yield* opened.replica.demand.pins.set({ name, query });
             }
+            // Keys of a type's confirmed cached rows, straight from storage.
+            const cachedKeys = (type: string) =>
+                storage.tables
+                    .query(
+                        Table.make({ name: JSON.stringify(["replica", "definition-oracle", `base:${type}`]) })
+                    )
+                    .pipe(
+                        Effect.map((rows) => JSON.stringify(rows.map((row) => String(row.key)).sort())),
+                        Effect.orDie
+                    );
             const restart = (how: "reopen" | "adopt" | "rebuild") =>
                 Effect.gen(function* () {
                     for (const fiber of [...passes, ...reads]) yield* Fiber.interrupt(fiber);
@@ -415,8 +429,22 @@ const run = (scenario: typeof Scenario.Type) =>
                             fail(`rebuild failed: ${Cause.pretty(rebuilt.cause).split("\n")[0]}`);
                     }
                     yield* Scope.close(opened!.scope, Exit.void);
+                    const previous = replicaShape;
+                    const cachedBefore = { Item: yield* cachedKeys("Item"), Tag: yield* cachedKeys("Tag") };
                     if (how !== "reopen") replicaShape = sourceShape;
                     opened = yield* open;
+                    // A reset when opening clears only types whose own definition changed: every
+                    // other type keeps exactly the rows it had cached. (A rebuild resets everything.)
+                    if (opened && how === "adopt" && scenario.resetBy === "open") {
+                        const kept = {
+                            Item:
+                                previous.label === replicaShape.label && previous.note === replicaShape.note,
+                            Tag: previous.tag && replicaShape.tag,
+                        };
+                        for (const type of ["Item", "Tag"] as const)
+                            if (kept[type] && (yield* cachedKeys(type)) !== cachedBefore[type])
+                                fail(`${type} rows changed across a reset that did not change ${type}`);
+                    }
                 });
             const reopen = (adopt: boolean) =>
                 restart(adopt ? (scenario.resetBy === "open" ? "adopt" : "rebuild") : "reopen");

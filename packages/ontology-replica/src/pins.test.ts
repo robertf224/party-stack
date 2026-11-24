@@ -999,38 +999,65 @@ test("cache pressure releases idle demand before reclaiming its rows", async () 
     );
 });
 
-test("a definition reset clears named downloads and reinstalls them from their desired queries", async () => {
+test("a definition reset clears only the changed type, and downloads drop and reinstall just its rows", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const f = yield* fixture();
                 const options = { ...f, namespace: "reset-named-pins", ir, live: false };
+                const table = (...parts: string[]) =>
+                    Table.make<{ objectType?: string; owners?: string[] }>({
+                        name: JSON.stringify(["replica", "reset-named-pins", ...parts]),
+                    });
+                const cached = (type: string) => f.tables.query(table(`base:${type}`));
+                // Each named pin keeps its members in its own table, keyed like its state row.
+                const members = Effect.gen(function* () {
+                    const byType: Record<string, number> = {};
+                    for (const { key } of yield* f.tables.query(table("query-pin")))
+                        for (const member of yield* f.tables.query(table("pin-members", String(key))))
+                            byType[member.value.objectType!] = (byType[member.value.objectType!] ?? 0) + 1;
+                    return byType;
+                });
+                const owned = Effect.map(f.tables.query(table("pins")), (rows) =>
+                    rows.map((row) => row.value.objectType)
+                );
                 const scope = yield* Scope.make();
                 const original = yield* Scope.provide(makeReplica(options), scope);
                 yield* original.demand.pins.set({ name: "folders", query: document("a") });
                 yield* original.syncOnce;
                 expect(yield* original.demand.pins.list).toMatchObject([{ name: "folders", ready: true }]);
-                const cached = (type: string) =>
-                    f.tables.query(
-                        Table.make({ name: JSON.stringify(["replica", "reset-named-pins", `base:${type}`]) })
-                    );
-                expect((yield* cached("Issue")).length).toBeGreaterThan(0);
-                // Each named pin keeps its members in its own table, keyed like its state row.
-                const pinMembers = Effect.gen(function* () {
-                    const table = (part: string) =>
-                        Table.make({
-                            name: JSON.stringify(["replica", "reset-named-pins", ...part.split("/")]),
-                        });
-                    let count = 0;
-                    for (const { key } of yield* f.tables.query(table("query-pin")))
-                        count += (yield* f.tables.query(table(`pin-members/${String(key)}`))).length;
-                    return count;
-                });
-                expect(yield* pinMembers).toBeGreaterThan(0);
+                const issues = yield* cached("Issue");
+                expect(issues.length).toBeGreaterThan(0);
+                expect((yield* cached("Project")).length).toBeGreaterThan(0);
+                const before = yield* members;
+                expect(before.Project).toBeGreaterThan(0);
+                expect(before.Issue).toBeGreaterThan(0);
                 yield* Scope.close(scope, Exit.void);
 
-                const changed: OntologyIR = {
+                // An action-only change caches no rows differently: nothing is cleared.
+                const withAction: OntologyIR = {
                     ...ir,
+                    actionTypes: [{ name: "archive", displayName: "Archive", parameters: [], logic: [] }],
+                };
+                yield* f.network.set(false);
+                yield* Effect.scoped(
+                    Effect.gen(function* () {
+                        const reopened = yield* makeReplica({
+                            ...options,
+                            ir: withAction,
+                            onDefinitionChange: "reset",
+                        });
+                        expect(yield* reopened.demand.pins.list).toMatchObject([
+                            { name: "folders", ready: true },
+                        ]);
+                        expect(yield* cached("Project")).not.toEqual([]);
+                        expect(yield* members).toEqual(before);
+                    })
+                );
+
+                // A property added to Project clears Project only.
+                const changed: OntologyIR = {
+                    ...withAction,
                     objectTypes: ir.objectTypes.map((type) =>
                         type.name === "Project"
                             ? {
@@ -1051,22 +1078,52 @@ test("a definition reset clears named downloads and reinstalls them from their d
                     _tag: "Failure",
                     failure: { kind: "SchemaMismatch" },
                 });
-
-                yield* f.network.set(false);
                 const reset = yield* makeReplica({ ...options, ir: changed, onDefinitionChange: "reset" });
-                // The download is still wanted, but nothing from the old definition counts as installed.
+                // Still wanted, but no longer fully installed: its Project rows are gone.
                 expect(yield* reset.demand.pins.list).toMatchObject([{ name: "folders", ready: false }]);
                 expect(yield* cached("Project")).toEqual([]);
-                // Membership and the shared ownership table are cleared together; a named pin's
-                // members must not outlive the rows and owners they referred to.
-                expect(yield* pinMembers).toBe(0);
-                expect(yield* cached("Issue")).toEqual([]);
+                expect(yield* cached("Issue")).toEqual(issues);
+                // Membership and the shared ownership rows lose exactly the cleared type, so no
+                // member outlives the rows and owners it referred to.
+                expect(yield* members).toEqual({ Issue: before.Issue });
+                expect(new Set(yield* owned)).toEqual(new Set(["Issue"]));
                 yield* f.network.set(true);
                 yield* reset.syncOnce;
                 expect(yield* reset.demand.pins.list).toMatchObject([{ name: "folders", ready: true }]);
                 // Installed again locally, not just readable through the backend.
-                expect((yield* cached("Issue")).length).toBeGreaterThan(0);
+                expect((yield* cached("Project")).length).toBeGreaterThan(0);
+                expect(yield* members).toEqual(before);
                 expect(yield* reset.get("Issue", "one")).toBeDefined();
+            })
+        )
+    );
+});
+
+test("a change to a shared named type resets every object type", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const options = { ...f, namespace: "reset-shared", ir, live: false };
+                const cached = (type: string) =>
+                    f.tables.query(
+                        Table.make({ name: JSON.stringify(["replica", "reset-shared", `base:${type}`]) })
+                    );
+                const scope = yield* Scope.make();
+                const original = yield* Scope.provide(makeReplica(options), scope);
+                yield* original.demand.pins.set({ name: "folders", query: document("a") });
+                yield* original.syncOnce;
+                expect((yield* cached("Issue")).length).toBeGreaterThan(0);
+                yield* Scope.close(scope, Exit.void);
+                const changed: OntologyIR = {
+                    ...ir,
+                    types: [{ name: "Unused", type: o.string({}) }],
+                };
+                yield* f.network.set(false);
+                const reset = yield* makeReplica({ ...options, ir: changed, onDefinitionChange: "reset" });
+                expect(yield* cached("Issue")).toEqual([]);
+                expect(yield* cached("Project")).toEqual([]);
+                expect(yield* reset.demand.pins.list).toMatchObject([{ name: "folders", ready: false }]);
             })
         )
     );
@@ -1102,6 +1159,73 @@ test("after a definition reset, a download whose query no longer fits reports an
                 const [pin] = yield* reset.demand.pins.list;
                 expect(pin).toMatchObject({ name: "files", ready: false });
                 expect(pin?.error).toMatchObject({ kind: "InvalidRequest" });
+            })
+        )
+    );
+});
+
+test("downloads that share rows of a reset type regain shared ownership, across a second restart", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const options = { ...f, namespace: "reset-shared-owners", ir, live: false };
+                const owners = Effect.map(
+                    f.tables.get(
+                        Table.make<{ owners?: string[] }>({
+                            name: JSON.stringify(["replica", "reset-shared-owners", "pins"]),
+                        }),
+                        JSON.stringify(["Issue", "one"])
+                    ),
+                    (row) => new Set(row?.owners ?? [])
+                );
+                const first = { name: "folders", query: document("a") };
+                const second = { name: "favorites", query: document("a") };
+                const both = new Set([pinRecordKey(first), pinRecordKey(second)]);
+                yield* Effect.scoped(
+                    Effect.gen(function* () {
+                        const replica = yield* makeReplica(options);
+                        yield* replica.demand.pins.update({ set: [first, second] });
+                        yield* replica.syncOnce;
+                        expect((yield* replica.demand.pins.list).every((pin) => pin.ready)).toBe(true);
+                    })
+                );
+                expect(yield* owners).toEqual(both);
+                const changed: OntologyIR = {
+                    ...ir,
+                    objectTypes: ir.objectTypes.map((type) =>
+                        type.name === "Issue"
+                            ? {
+                                  ...type,
+                                  properties: [
+                                      ...type.properties,
+                                      {
+                                          name: "note",
+                                          displayName: "Note",
+                                          type: o.optional({ type: o.string({}) }),
+                                      },
+                                  ],
+                              }
+                            : type
+                    ),
+                };
+                for (let launch = 0; launch < 2; launch++)
+                    yield* Effect.scoped(
+                        Effect.gen(function* () {
+                            const replica = yield* makeReplica({
+                                ...options,
+                                ir: changed,
+                                onDefinitionChange: "reset",
+                            });
+                            yield* replica.syncOnce;
+                            expect((yield* replica.demand.pins.list).every((pin) => pin.ready)).toBe(true);
+                            expect(yield* owners).toEqual(both);
+                            if (launch === 1) {
+                                yield* replica.demand.pins.remove(pinRecordKey(first));
+                                expect(yield* owners).toEqual(new Set([pinRecordKey(second)]));
+                            }
+                        })
+                    );
             })
         )
     );

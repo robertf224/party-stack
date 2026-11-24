@@ -359,7 +359,10 @@ new schema.
 `onDefinitionChange` is a replica setting, so it also applies to replicas fed by a
 backend and to `makeReplica`: with `"reset"`, a replica opened with a definition whose
 contract differs from its stored cache resets that cache instead of failing with
-`SchemaMismatch`.
+`SchemaMismatch`. A backend-fed replica clears only the object types whose own contract
+changed (or that were removed); other types keep their rows, and action, link or query
+function changes clear nothing. Display names, descriptions, icons and colors are not part
+of the contract. Changes to named value types, context or policy clear everything.
 
 Display names, descriptions, and other presentation metadata do not force a cache
 reset. Other contract changes are conservatively incompatible for now, including

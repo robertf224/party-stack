@@ -99,7 +99,12 @@ import { putIncomingRow, putIncomingBaseRows } from "./incoming.js";
 import { connectReplicaParent, connectReplicaDelivery } from "./parent.js";
 import { primaryKeyQueries, primaryKeyTableQuery } from "./primaryKeyOrder.js";
 import { deliveryRecovery } from "./recovery.js";
-import { resetReplicaHead } from "./reset.js";
+import {
+    planDefinitionReset,
+    resetObjectTypes,
+    resetReplicaHead,
+    type DefinitionResetPlan,
+} from "./reset.js";
 import { superviseWatch } from "./watch.js";
 export type { DemandPolicy } from "./demandCache.js";
 import { affectsCoverage, markQuery, retentionQuery } from "./retention.js";
@@ -798,11 +803,19 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             return false;
         }
     };
-    /** Object type names of a stored definition, read without decoding it against the current
-     * IR schema: the stored definition may predate a format change. */
+    /** A stored definition, read without decoding it against the current IR schema: it may
+     * predate a format change. */
+    const storedDefinition = (stored: string): unknown => {
+        try {
+            return Table.make<unknown>({ name: "replica-definition" }).decode(stored);
+        } catch {
+            return undefined;
+        }
+    };
+    /** Object type names of a stored definition, whatever its format. */
     const storedObjectTypes = (stored: string): string[] => {
         try {
-            const definition: unknown = Table.make<unknown>({ name: "replica-definition" }).decode(stored);
+            const definition = storedDefinition(stored);
             const types = (definition as { objectTypes?: unknown } | undefined)?.objectTypes;
             return Array.isArray(types)
                 ? types.flatMap((type) =>
@@ -815,7 +828,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             return [];
         }
     };
-    let resetFrom: string | undefined;
+    let resetFrom: { readonly plan: DefinitionResetPlan } | undefined;
     const schemaHash = yield* boundary(ontologyDefinitionContractHash(options.ir));
     const deliveryActive =
         options.startSync !== false && Boolean(options.source?.subscribe || adapter?.subscribeSelection);
@@ -1213,19 +1226,37 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             const stored = yield* tx.get(metadata, "head");
             if (!stored || stored.source !== sourceId || sameDefinitionContract(stored.signature))
                 return undefined;
-            const next = yield* resetReplicaHead(
-                tx,
-                {
-                    namespace: options.namespace,
-                    blobs: options.blobs,
-                    previousObjectTypes: storedObjectTypes(stored.signature),
-                    ir: options.ir,
-                    signature,
-                },
-                stored
-            );
-            if (next) yield* tx.put(metadata, "head", next);
-            return stored.signature;
+            // A replica fed by a protocol source shares one delivery position across every
+            // type, so it resets everything; a backend-fed replica resets only what changed.
+            const plan: DefinitionResetPlan = options.source
+                ? { kind: "all" }
+                : planDefinitionReset(storedDefinition(stored.signature), options.ir);
+            // Cleared rows were written under another schema; the visible-change tracker must
+            // not read them back with the new codecs.
+            (tx as Transaction & { readonly resetVisible?: () => void }).resetVisible?.();
+            if (plan.kind === "all") {
+                const next = yield* resetReplicaHead(
+                    tx,
+                    {
+                        namespace: options.namespace,
+                        blobs: options.blobs,
+                        previousObjectTypes: storedObjectTypes(stored.signature),
+                        ir: options.ir,
+                        signature,
+                    },
+                    stored
+                );
+                if (next) yield* tx.put(metadata, "head", next);
+            } else {
+                if (plan.kind === "types")
+                    yield* resetObjectTypes(tx, {
+                        namespace: options.namespace,
+                        blobs: options.blobs,
+                        types: plan.types,
+                    });
+                yield* tx.put(metadata, "head", { ...stored, signature });
+            }
+            return { plan };
         });
     const reader = (tx: ReadTransaction, confirmed: boolean): OwnedReadTransaction => ({
         get: (type, key) =>
@@ -1526,13 +1557,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             });
         }
     });
-    // Directly on storage, before the tracked startup transaction: the visible-change tracker
-    // would read the old rows with the new definition's schema. A crash after this commits
-    // leaves a consistent, already-reset cache under the new signature.
-    resetFrom = yield* boundary(options.tables.transaction((tx) => resetChangedDefinition(tx)));
     yield* boundary(
         tables.transaction((tx) =>
             Effect.gen(function* () {
+                // In the startup transaction, so a startup failure (for example an index that a
+                // changed primary key cannot reuse) rolls the reset back with it.
+                resetFrom = yield* resetChangedDefinition(tx);
                 yield* tx.put(metadata, "head", yield* position(tx));
                 // One designated owner opens this namespace. Query/read leases from
                 // a previous incarnation are volatile; pins and outbox roots are separate.
@@ -1581,10 +1611,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         )
     );
     if (resetFrom !== undefined) {
+        const { plan } = resetFrom;
         resetFrom = undefined;
         yield* Effect.logWarning("Replica cache reset for a changed definition", {
             namespace: options.namespace,
             schemaHash,
+            reset: plan.kind === "types" ? [...plan.types] : plan.kind,
         });
     }
     const publicRow = (type: string, object: ObjectValue, key?: Key) =>

@@ -57,6 +57,14 @@ Generalizing the `pins` resource header to named system resources (`pins`, `meta
 `telemetry`) is the shared mechanism for 2, 4 and 5. Once those move, the internal-access RPC allowlist
 becomes a policy on that resource.
 
+**Consolidate later:** an owned backend's change journal is exposed remotely as `PullChanges`
+(durable commit pages after a cursor) and `WatchChanges` (wake-up hints), which committed-mode
+replicas use instead of reloading subsets. Replica-to-replica sync has its own delivery
+(`OpenClient`, `SubscribeSelection`, `SubscribeState`, `UpdateView`, `AckDelivery`, `Demand`,
+`Changes`, `Read`, `Submit`, `Acknowledge`, `Accept`) with selections, speculative actions and
+acknowledgments. A delivery frame is close to a journal page filtered to a selection plus
+pending actions, so the two could share one change format and resume model.
+
 **Keep as protocol:** delivery selection and the client handshake (results and actions travel
 over them, so modelling them as actions would be circular), local data deletion (it destroys
 the store that would record its receipt), owner release (a worker handing storage ownership
@@ -64,23 +72,23 @@ to its replacement), attachment byte transfer.
 
 ## Definition changes and migrations
 
-**Today.** Replicas take `onDefinitionChange: "reset" | "error"`. `"reset"` clears cached rows,
-coverage and delivery state when a replica opens under a different definition contract, and
-keeps the outbox, receipts and every pin's desired query. Queued actions are replayed against
-the new definition; a prediction that no longer applies is dropped and the action is still
-sent, with failures handled by the outbox's `failureStrategy`.
+**Today.** Replicas take `onDefinitionChange: "reset" | "error"`. A reset compares the
+definition _contract_, which ignores presentation (display names, descriptions, icons, colors,
+titles, deprecation). With `"reset"`, opening under a different contract clears, inside the
+startup transaction:
 
-A reset compares the definition _contract_, which ignores presentation (display names,
-descriptions, icons, colors, titles, deprecation) but includes every property, link, action
-(including its logic and defaults), query function, type constraint and policy. Any contract
-change clears every object type's cached rows, so an action edit or one added property costs
-a device its whole cache.
+- for a backend-fed replica, only the object types whose own contract changed or that were
+  removed. Other types keep their rows and coverage; changes to actions, links and query
+  functions clear nothing. Changes to named value types, context or policy (which decides
+  which rows a reader may see) clear everything;
+- for a replica fed by a protocol source, everything, since its delivery position spans every
+  type.
 
-**Soon: reset only what changed.** Before full migration, `"reset"` can compare per object
-type: clear only types whose own contract changed or that were removed, keep every other
-type's rows and coverage, and leave rows untouched for changes to actions, links and query
-functions. Policy changes still reset everything, since they can change which rows a reader may
-see. Downloads touching a cleared type reinstall.
+The outbox, receipts and every download's desired query are kept; downloads that lost rows
+reinstall. Queued actions are replayed against the new definition; a prediction that no
+longer applies is dropped and the action is still sent, with failures handled by the outbox's
+`failureStrategy`. A changed primary key needs a new index that storage cannot yet replace, so
+that open fails and rolls back. Server-managed rebuilds still reset everything.
 
 **Without reconnecting.** A server rebuild today retires the replica: clients lose their
 binding and reconnect, which risks a thundering herd when every client reconnects at once. The

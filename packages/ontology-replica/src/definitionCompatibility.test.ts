@@ -199,3 +199,71 @@ test("a definition reset keeps queued actions and replays their predictions agai
         )
     );
 });
+
+test("a reset that cannot open rolls back, a changed source is refused, and an unreadable stored definition resets everything", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const ir = definition("Old");
+                const tables = yield* Memory.make();
+                const backend = yield* makeOwnedBackend({
+                    ir,
+                    namespace: "rollback-source",
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                const options: ReplicaOptions = {
+                    ir,
+                    tables,
+                    namespace: "rollback-cache",
+                    backend,
+                    startSync: false,
+                    execute: () => Effect.void,
+                };
+                const open = (overrides: Partial<ReplicaOptions>) =>
+                    Effect.scoped(makeReplica({ ...options, ...overrides } as ReplicaOptions)).pipe(
+                        Effect.asVoid
+                    );
+                yield* open({});
+                const position = Table.make<{ source: string; signature: string }>({
+                    name: JSON.stringify(["replica", "rollback-cache", "position"]),
+                });
+                const rows = Table.make<{ id: string; count: number }>({
+                    name: JSON.stringify(["replica", "rollback-cache", "base:Item"]),
+                });
+                const head = (yield* tables.get(position, "head"))!;
+                yield* tables.put(rows, "item", { id: "item", count: 1 });
+
+                // A new primary key needs an index the old table cannot reuse: opening fails and
+                // the reset rolls back with it, leaving the old cache usable.
+                const rekeyed = definition("New");
+                rekeyed.objectTypes[0]!.primaryKey = "count";
+                expect(
+                    yield* Effect.result(open({ ir: rekeyed, onDefinitionChange: "reset" }))
+                ).toMatchObject({ _tag: "Failure" });
+                expect(yield* tables.get(position, "head")).toEqual(head);
+                expect(yield* tables.get(rows, "item")).toEqual({ id: "item", count: 1 });
+
+                // A different source is never reset into.
+                const changed = definition("New");
+                changed.objectTypes[0]!.properties[1]!.type = o.string({});
+                expect(
+                    yield* Effect.result(
+                        open({
+                            ir: changed,
+                            onDefinitionChange: "reset",
+                            backend: { ...backend, sourceId: "other" },
+                        })
+                    )
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "SourceMismatch" } });
+                expect(yield* tables.get(rows, "item")).toEqual({ id: "item", count: 1 });
+
+                // A stored definition that can no longer be read cannot be compared, so everything resets.
+                yield* tables.put(position, "head", { ...head, signature: "unreadable" });
+                yield* open({ onDefinitionChange: "reset" });
+                expect(yield* tables.get(rows, "item")).toBeUndefined();
+                expect((yield* tables.get(position, "head"))?.signature).toBe(head.signature);
+            })
+        )
+    );
+});
