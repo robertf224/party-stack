@@ -1,5 +1,6 @@
 import { BackendError, projectBackendError } from "@party-stack/ontology-backend";
 import { CurrentExecutionContext } from "@party-stack/ontology-backend/policy";
+import { replicaBackend } from "@party-stack/ontology-replica/infrastructure";
 import { makeReplicaPartitionCatalog } from "@party-stack/ontology-replica/registry";
 import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { Runtimes } from "@party-stack/runtime";
@@ -88,6 +89,17 @@ interface RouteGeneration<R> {
 }
 const currentBinding = <R>(target: OntologyBindingOptions<R>): OntologyBindingOptions<R> =>
     (target as { readonly [routeGeneration]?: RouteGeneration<R> })[routeGeneration]?.current() ?? target;
+/** A replica binding serves the definition, and syncs with the backend, its replica is open
+ * under now. A replica that follows its definition reopens behind the same handle, so a new
+ * definition gets its own endpoint while requests to the old one finish. */
+const replicaGeneration = <R>(target: OntologyBindingOptions<R>): OntologyBindingOptions<R> => {
+    if (target.kind !== "replica") return target;
+    const ir = target.replica.ir;
+    const backend = replicaBackend(target.replica) ?? target.backend;
+    return ir === target.ir && backend === target.backend
+        ? target
+        : ({ ...target, ir, backend } as OntologyBindingOptions<R>);
+};
 
 class EndpointKey<T extends OntologyBindingOptions<unknown>> implements Equal.Equal {
     readonly identity;
@@ -702,11 +714,11 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
             );
             const replacing = switching.get(route.key);
             if (replacing) yield* Deferred.await(replacing);
-            const target = currentBinding(opened);
+            const target = replicaGeneration(currentBinding(opened));
             const context = caller ?? (target.kind === "replica" ? target.replica.context : target.context);
             return yield* RcMap.get(endpoints, new EndpointKey(ontology, target, context));
         }
-        const target = single
+        const resolved = single
             ? (options as OntologyBindingOptions<R>)
             : settings.resolve
               ? yield* settings.resolve(ontology)
@@ -718,6 +730,7 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                         message: "Unknown ontology.",
                     })
                 );
+        const target = replicaGeneration(resolved);
         const context = target.authenticate
             ? yield* authenticateRequest(target.authenticate, request)
             : target.kind === "replica"

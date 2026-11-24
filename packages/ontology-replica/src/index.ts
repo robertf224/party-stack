@@ -8,10 +8,12 @@ export type {
     AttachmentCreation,
 } from "./attachments/service.js";
 export { makeReplica } from "./make.js";
-export type { ReplicaOptions } from "./make.js";
+export type { ReplicaOptions, ReplicaBackendFactory } from "./make.js";
 export type {
     ReplicaService,
     ReplicaConfiguration,
+    ReplicaDefinition,
+    ReplicaDefinitionState,
     ReplicaReads,
     ReplicaOutbox,
     ReplicaActionStatus,
@@ -36,7 +38,12 @@ export type { PendingAction } from "@party-stack/ontology-backend/protocol";
 export class Replica extends Context.Service<Replica, ReplicaService>()(
     "@party-stack/ontology-replica/Replica"
 ) {
-    static readonly layer = (options: Omit<ReplicaOptions, "backend" | "source" | "authentication">) =>
+    static readonly layer = (
+        options: Omit<
+            Extract<ReplicaOptions, { readonly definition?: never }>,
+            "backend" | "source" | "authentication"
+        >
+    ) =>
         Layer.effect(
             Replica,
             Effect.gen(function* () {

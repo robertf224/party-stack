@@ -15,7 +15,10 @@ export interface ReplicaUpstream {
     readonly ontology?: string;
 }
 
-export type UpstreamReplicaRegistration = Omit<ReplicaRegistration, "ir" | "backend" | "bootstrap"> & {
+export type UpstreamReplicaRegistration = Omit<
+    Extract<ReplicaRegistration, { readonly definition?: never }>,
+    "ir" | "backend" | "bootstrap" | "definition"
+> & {
     readonly upstream: ReplicaUpstream;
     /** Select the local account before opening its retained definition or data. */
     readonly context: Record<string, unknown>;

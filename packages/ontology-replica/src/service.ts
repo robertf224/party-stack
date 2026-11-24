@@ -10,7 +10,7 @@ import { prepareActionParameters } from "./attachments/prepare.js";
 import { makeReplicaAttachments } from "./attachments/service.js";
 import { makeReplicaDecryption } from "./decrypt.js";
 import { makeReplicaKernel } from "./engine.js";
-import { kernel } from "./internal.js";
+import { kernel, upstream } from "./internal.js";
 import { makePinManager } from "./pinManager.js";
 import { makeQueryPin } from "./pins.js";
 import type { ReplicaAttachments } from "./attachments/service.js";
@@ -40,6 +40,22 @@ import type { EncryptionKeyringService } from "@party-stack/ontology-storage/enc
 import type { TablesService } from "@party-stack/ontology-storage/tables";
 import type { NetworkConnectivity, ResourceCapacity } from "@party-stack/runtime";
 
+/** A definition the replica follows. See `makeReplica`'s `definition` option. */
+export interface ReplicaDefinition {
+    /** The current definition first, then each new one. */
+    readonly changes: Stream.Stream<OntologyIR, BackendError>;
+    /** Ask the source to look again after an operation failed in a way that suggests the
+     * definition is stale. A change still arrives through `changes`. */
+    readonly revalidate?: (hint: {
+        readonly objectTypes: readonly string[];
+    }) => Effect.Effect<void, BackendError>;
+}
+/** The definition a replica is open under. */
+export interface ReplicaDefinitionState {
+    readonly current: Effect.Effect<OntologyIR, BackendError>;
+    /** The current definition first, then each one the replica reopens under. */
+    readonly changes: Stream.Stream<OntologyIR, BackendError>;
+}
 export interface ReplicaConfiguration {
     readonly ir: OntologyIR;
     /**
@@ -153,7 +169,9 @@ export interface ReplicaOutbox {
     ) => Effect.Effect<void, BackendError>;
 }
 export interface ReplicaService extends ReplicaReads {
+    /** The definition the replica is open under now. */
     readonly ir: OntologyIR;
+    readonly definition: ReplicaDefinitionState;
     readonly context: Record<string, unknown>;
     readonly sourceId: string;
     readonly upstreamKind: "committed" | "speculative";
@@ -569,10 +587,18 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
             )
         )
     );
-    const service: ReplicaService & { readonly [kernel]: KernelService } = {
+    const service: ReplicaService & {
+        readonly [kernel]: KernelService;
+        readonly [upstream]?: OntologyBackendService;
+    } = {
         [kernel]: engine,
+        [upstream]: options.backend,
         ...reads(false),
         ir: engine.ir,
+        definition: {
+            current: Effect.succeed(engine.ir),
+            changes: Stream.concat(Stream.make(engine.ir), Stream.never),
+        },
         context: options.context ?? {},
         sourceId: engine.sourceId,
         upstreamKind: options.source ? "speculative" : "committed",
@@ -699,6 +725,9 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         syncOnce: checkpoint,
         revalidate: Effect.andThen(engine.markDemandedStale, checkpoint),
         collectGarbage: engine.collectGarbage,
-    } satisfies ReplicaService & { readonly [kernel]: KernelService };
+    } satisfies ReplicaService & {
+        readonly [kernel]: KernelService;
+        readonly [upstream]?: OntologyBackendService;
+    };
     return service;
 });

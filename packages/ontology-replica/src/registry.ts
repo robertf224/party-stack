@@ -7,10 +7,24 @@ import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Runtime, Runtimes } from "@party-stack/runtime";
 import { makeTraceCapture } from "@party-stack/runtime/tracing";
-import { Context, Effect, Exit, Layer, LayerMap, Scope, Schema, Semaphore, Tracer } from "effect";
+import {
+    Context,
+    Effect,
+    Exit,
+    Layer,
+    LayerMap,
+    Option,
+    Scope,
+    Schema,
+    Semaphore,
+    Stream,
+    Tracer,
+} from "effect";
+import { replicaBackend } from "./internal.js";
 import { makeReplica } from "./make.js";
 import { assertReplicaRebuildSafe, resetReplicaCache } from "./reset.js";
-import type { ReplicaConfiguration, ReplicaService } from "./service.js";
+import type { ReplicaBackendFactory } from "./make.js";
+import type { ReplicaConfiguration, ReplicaDefinition, ReplicaService } from "./service.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyDescription } from "@party-stack/ontology-backend/description";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
@@ -18,16 +32,32 @@ import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { RuntimePartition, RuntimeService } from "@party-stack/runtime";
 import type { TraceStore } from "@party-stack/runtime/tracing";
 
-export interface ReplicaRegistration extends ReplicaConfiguration {
+export interface ReplicaRegistrationCommon extends Omit<ReplicaConfiguration, "ir"> {
     /** Defaults to the selected ontology name. Independent of the authenticated partition. */
     readonly namespace?: string;
-    readonly backend: OntologyBackendService;
-    readonly source?: OntologySource;
-    /** Host-owned storage migrations run before the native replica is opened. */
+    /** Host-owned storage migrations run before the native replica is opened, with the first
+     * definition it opens under. */
     readonly beforeOpen?: (runtime: RuntimeService, ir: OntologyIR) => Effect.Effect<void, BackendError>;
-    /** Accepted protocol binding to retain for an offline process restart. */
-    readonly bootstrap?: OntologyDescription;
 }
+export type ReplicaRegistration = ReplicaRegistrationCommon &
+    (
+        | {
+              readonly ir: OntologyIR;
+              readonly definition?: never;
+              readonly backend: OntologyBackendService;
+              readonly source?: OntologySource;
+              /** Accepted protocol binding to retain for an offline process restart. */
+              readonly bootstrap?: OntologyDescription;
+          }
+        | {
+              /** A definition the replica follows; see `makeReplica`. */
+              readonly definition: ReplicaDefinition;
+              readonly ir?: never;
+              readonly backend: OntologyBackendService | ReplicaBackendFactory;
+              readonly source?: never;
+              readonly bootstrap?: never;
+          }
+    );
 export interface RegisteredReplica {
     readonly ir: ReplicaConfiguration["ir"];
     readonly context: Record<string, unknown>;
@@ -210,9 +240,20 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
         );
         return yield* Scope.provide(
             Effect.gen(function* () {
+                // A followed definition places the partition by the definition it opens under.
+                const ir =
+                    configuration.ir ??
+                    Option.getOrUndefined(yield* Stream.runHead(configuration.definition.changes));
+                if (!ir)
+                    return yield* new BackendError({
+                        operation: "replica.definition",
+                        kind: "Unavailable",
+                        retryable: true,
+                        message: "The definition source ended before supplying a definition.",
+                    });
                 const partition = yield* Effect.try({
                     try: () => ({
-                        owner: contextPartition(configuration.ir, configuration.context ?? {}),
+                        owner: contextPartition(ir, configuration.context ?? {}),
                         namespace: partitionNamespace(configuration.namespace ?? ontology),
                     }),
                     catch: (cause) => classifyBackendFailure("replica-registry.partition", cause),
@@ -241,8 +282,7 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                         rebuilding.partition.owner !== partition.owner ||
                         rebuilding.partition.namespace !== partition.namespace ||
                         !target.ir ||
-                        ontologyDefinitionSignature(target.ir) !==
-                            ontologyDefinitionSignature(configuration.ir)
+                        ontologyDefinitionSignature(target.ir) !== ontologyDefinitionSignature(ir)
                     )
                         return yield* new BackendError({
                             operation: "replica.rebuild",
@@ -255,11 +295,10 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                 if (configuration.bootstrap) {
                     const bootstrap = configuration.bootstrap;
                     const bootstrapIR = yield* checkBootstrap(partition, bootstrap);
-                    if (bootstrapIR !== configuration.ir) {
+                    if (bootstrapIR !== ir) {
                         const same = yield* Effect.try({
                             try: () =>
-                                ontologyDefinitionSignature(bootstrapIR) ===
-                                ontologyDefinitionSignature(configuration.ir),
+                                ontologyDefinitionSignature(bootstrapIR) === ontologyDefinitionSignature(ir),
                             catch: (cause) =>
                                 new BackendError({
                                     operation: "replica.bootstrap",
@@ -286,12 +325,9 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                         });
                 }
                 const runtime = yield* protect(runtimes.acquire(partition));
-                if (configuration.beforeOpen) yield* configuration.beforeOpen(runtime, configuration.ir);
-                const backend = configuration.backend;
+                if (configuration.beforeOpen) yield* configuration.beforeOpen(runtime, ir);
                 const traces = yield* makeTraceCapture();
-                const work = makeReplica({ ...configuration, backend }).pipe(
-                    Effect.provideService(Runtime, runtime)
-                );
+                const work = makeReplica(configuration).pipe(Effect.provideService(Runtime, runtime));
                 const replica = yield* traces
                     ? work.pipe(Effect.provideService(Tracer.Tracer, traces.tracer))
                     : work;
@@ -303,7 +339,7 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                     !rebuilding.rebuild &&
                     rebuilding.partition.owner === partition.owner &&
                     rebuilding.partition.namespace === partition.namespace &&
-                    rebuilding.definition?.ir === configuration.ir &&
+                    rebuilding.definition?.ir === ir &&
                     JSON.stringify(rebuilding.definition.context) ===
                         JSON.stringify(configuration.context ?? {}) &&
                     rebuilding.bootstrap === configuration.bootstrap;
@@ -312,15 +348,17 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                         metadata.tables.put(table, ontology, {
                             ontology,
                             partition,
-                            definition: { ir: configuration.ir, context: configuration.context ?? {} },
+                            definition: { ir, context: configuration.context ?? {} },
                             ...(configuration.bootstrap ? { bootstrap: configuration.bootstrap } : {}),
                         })
                     );
                 return {
-                    ir: configuration.ir,
+                    ir: replica.ir,
                     context: configuration.context ?? {},
                     replica,
-                    backend,
+                    // A followed definition may build its backend per definition; servers read
+                    // the current one from the replica.
+                    backend: replicaBackend(replica) ?? (configuration.backend as OntologyBackendService),
                     runtime,
                     traces,
                 };
