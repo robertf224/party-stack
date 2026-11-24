@@ -370,6 +370,33 @@ changed (or that were removed); other types keep their rows, and action, link or
 function changes clear nothing. Display names, descriptions, icons and colors are not part
 of the contract. Changes to named value types, context or policy clear everything.
 
+### Follow a changing definition
+
+A replica fed by a backend can follow its definition instead of being opened with a fixed
+one. Pass `definition` in place of `ir`, and a `backend` built for each definition when the
+adapter compiles the IR:
+
+```ts
+import { metaDefinition } from "@party-stack/ontology-backend/meta";
+
+const route = {
+    kind: "replica" as const,
+    definition: yield * metaDefinition(metadataBackend, { objectTypeNames: ["Task", "Project"] }),
+    backend: (ir: OntologyIR) => makeProviderBackend({ ...connection, ir }),
+    context,
+    onDefinitionChange: "reset" as const,
+    dangerouslyAllowInternalAccess: true as const,
+};
+```
+
+`metaDefinition` reads the definition through ordinary metadata queries, the same way as
+`pull`, and emits a new one whenever the metadata changes (pass `changes` to say when to
+look again). When it emits a definition with a different contract, the replica reopens behind
+the same handle: it clears only the object types whose contract changed, live queries and
+held demand move to the new engine, and the server serves the new definition. Children that
+resume their delivery stream receive only the changed types' rows again. When the backend
+rejects a request with `SchemaMismatch`, the replica asks the definition to look again.
+
 Display names, descriptions, and other presentation metadata do not force a cache
 reset. Other contract changes are conservatively incompatible for now, including
 property additions. Migrating retained rows and queued declarative actions is

@@ -2,140 +2,146 @@
 
 ## Status
 
-Design, being built on the definition-change branch. Replaces the route-level swap that only
-ran for replicas fed by another server.
+Partly built. A replica fed by a backend follows its definition, servers and managed routes
+serve whatever definition their replica is open under, definitions can come from the meta
+ontology, schema errors trigger a recheck, and children resume after a reopen with only the
+changed types sent again. Replicas fed by another server (browser workers, in-app clients,
+`upstream` routes) do not follow their parent yet; see "Next".
 
 ## BLUF
 
 A replica follows its definition instead of being opened with a fixed one. When the definition
 changes, the replica reopens itself behind the same handle, clearing only the object types whose
-contract changed, and its children receive only those types again. This works the same for every
-replica: one fed by a backend (a cache in front of a provider, an app host), one fed by another
-server, and a browser worker. Servers only describe whatever definition the replica has now.
+contract changed, and its children receive only those types again. Servers describe whatever
+definition the replica has now.
 
 ## Replica construction
 
 ```ts
+// Fixed, as before.
+yield* makeReplica({ ir, backend, context });
+
+// Followed.
 const replica = yield* makeReplica({
-    // Was `ir: OntologyIR`. A fixed definition still works and never changes.
-    definition: metaDefinition(meta, { objectTypes: ["Task", "Project"] }),
-    // A fixed backend, or one built for each definition (provider adapters compile the IR).
+    definition: yield* metaDefinition(metadata, { objectTypeNames: ["Task", "Project"] }),
+    // A fixed backend, or one built for each definition (adapters that compile the IR).
     backend: (ir) => makeProviderBackend({ ...connection, ir, context }),
     context,
     onDefinitionChange: "reset", // later "migrate"
 });
 
+replica.ir; // the definition it is open under now
 replica.definition.current; // Effect<OntologyIR>
 replica.definition.changes; // Stream<OntologyIR>, current first
 ```
 
 ```ts
-type ReplicaDefinitionOption = OntologyIR | ReplicaDefinition;
-
 interface ReplicaDefinition {
-    /** The current definition first, then each one whose contract differs. */
+    /** The current definition first, then each new one. */
     readonly changes: Stream.Stream<OntologyIR, BackendError>;
-    /** Called when an operation failed in a way that suggests the definition is stale. A change
-     * still arrives through `changes`; this only asks the source to look again. */
+    /** Look again after an operation failed in a way that suggests the definition is stale. A
+     * change still arrives through `changes`. */
     readonly revalidate?: (hint: {
         readonly objectTypes: readonly string[];
     }) => Effect.Effect<void, BackendError>;
 }
 ```
 
-Sources:
-
-- `metaDefinition(meta, options)` reads the meta ontology's rows with live queries and compiles
-  them with the same code as `pull`. `meta` is anything that answers queries, normally a replica
-  of the provider's metadata backend, so an app opens offline from its cached metadata. Options
-  scope the object types and transform the pulled definition. `revalidate` revalidates the meta
-  rows for the named types.
-- `upstreamDefinition(client)` follows another server's description. A replica fed by another
-  server, including a browser worker, uses it automatically when no fixed definition is given.
+`metaDefinition(meta, options)` (in `@party-stack/ontology-backend/meta`) reads the definition
+with ordinary metadata queries, compiled by the same code as `pull`, and emits each one that
+differs. `meta` is anything that answers queries: a metadata backend, or a cached proxy over a
+meta replica so the definition is available offline. `options.changes` says when to read again
+(a live query over the meta replica, a timer); `options.revalidate` refreshes the metadata itself
+before a requested read.
 
 ### Reopening
 
 When `changes` emits a definition with a different contract, the replica:
 
-1. holds new calls,
+1. holds new calls and waits for writes in progress,
 2. closes its engine (background work, watches, delivery streams),
-3. opens a new engine under the new definition; the startup transaction clears only object types
-   whose contract changed or that were removed (see the system ontology spec),
-4. builds the backend again when `backend` is a function,
+3. marks the changed types' delivered rows stale for every child stream,
+4. opens a new engine under the new definition, building the backend again when `backend` is a
+   function; the startup transaction clears only object types whose contract changed or that
+   were removed,
 5. releases held calls on the new engine.
 
-The handle stays the same. Live queries switch to the new engine and emit again; demand held
-across the reopen is acquired again; outbox entries, receipts and downloads are kept as they are
-for a reset at open. A definition the replica cannot open under fails the replica's status and
-keeps the old engine closed until the next definition, as a failed open does today.
+The handle stays the same. Reads and waits that were running run again on the new engine, live
+queries switch to it and emit again, and demand held across the reopen is acquired again.
+Outbox entries, receipts and downloads are kept as for a reset at open. If the new definition
+cannot be opened, the startup transaction rolls back and the replica reopens under the previous
+one until the source supplies another.
 
 ### Errors that suggest a stale definition
 
-A backend reports `SchemaMismatch` with the object types involved when the provider rejects a
-request for referencing a type, property, link, action or parameter it does not know, or for
-using a property in a way it no longer allows. The replica calls `revalidate` with those types.
-If the definition changed, the reopen follows and the failed load runs again on the new engine;
-if not, the original error is surfaced. Provider "not found" errors that can also mean "no
-access" are classified this way too, since revalidation is cheap and the original error is kept.
+A backend reports `SchemaMismatch` when the provider rejects a request for referencing a type,
+property, link, action or parameter it does not know, or for using a property in a way it no
+longer allows. The Foundry adapter maps those errors (`PropertiesNotFound`,
+`ObjectTypeNotFound`, `LinkTypeNotFound`, `ActionTypeNotFound`, `ParametersNotFound`,
+`ActionEditedPropertiesNotFound`, `InvalidPropertyType`, `PropertiesNotSearchable`,
+`PropertiesNotSortable`); `OntologySyncing` becomes a retryable `Unavailable`. A followed replica
+calls `revalidate` with the object type involved. If the definition changed, the reopen follows
+and demand loads again on the new engine; if not, the original error stands. "Not found" for a
+type can also mean "no access", which the recheck settles.
 
 ## Server and route construction
 
 ```ts
 makeOntologyServer({
     routes: {
-        "accounts/:account/:ontology": (params) =>
-            Effect.gen(function* () {
-                const connection = yield* connectAccount(params.account);
-                return {
-                    kind: "replica",
-                    context: connection.context,
-                    definition: metaDefinition(yield* metaReplica(connection, params.ontology)),
-                    backend: (ir) => makeProviderBackend({ ...connection, ir }),
-                    onDefinitionChange: "reset",
-                };
-            }),
+        "accounts/:account/:ontology": {
+            dangerouslyAllowInternalAccess: true,
+            open: (params) =>
+                Effect.gen(function* () {
+                    const connection = yield* connectAccount(params.account);
+                    return {
+                        kind: "replica",
+                        context: connection.context,
+                        definition: yield* metaDefinition(connection.metadata),
+                        backend: (ir) => makeProviderBackend({ ...connection, ir }),
+                        onDefinitionChange: "reset",
+                    };
+                }),
+        },
     },
 });
 ```
 
-- A route's replica follows `definition`; the server describes `replica.definition.current` and
-  rebuilds its handlers for each new definition. Requests and connections stay open.
-- Removed: `OntologyRouteContext.definition({ context, load })` (the retained definition is the
-  replica's own, or the meta replica's cache) and the route catalog's rebuild-on-mismatch path.
-- `upstream` routes keep their shape and use `upstreamDefinition` internally.
-- `serveOntologyWorker` keeps its options. Its replica follows the parent server's definition
-  unless the app bundles one.
-- Clients notice a new definition through the definition hash on frames, as today, describe again
-  and rerun their live queries. An app that bundles a definition keeps its contract and reports
-  the mismatch.
+- A replica binding serves its replica's current definition and backend. A new definition gets
+  its own endpoint, so requests and connections stay open while requests to the old one finish.
+  This applies to managed routes and to a replica passed in directly (as `serveOntologyWorker`
+  does).
+- Clients notice a new definition through the definition hash on frames, as today.
 
 ## Delivery to children
 
-Delivery keeps per-stream memory of what each child has, and that memory now outlives an engine
-reopen:
+- A stream's binding no longer includes the definition.
+- A replica that follows its definition keeps its children's delivery state outside the engine,
+  so it survives a reopen. On a new definition it blanks the delivered hashes of the changed
+  types' rows; the next capture sends those rows again (and removes ones that are gone) while
+  other types keep their delivered state.
+- A frame captured under the old definition is never replayed: a child that installed it is
+  promoted past it, and one that did not has that frame's rows sent again instead.
+- A child fed by a protocol source resets only the changed types when it reopens under the new
+  definition.
+- Delivery state is in memory, so a parent restart still means a full resend.
 
-- A stream's binding no longer includes the definition; the stream records the definition hash it
-  was last delivered under.
-- On resume after a definition change, the parent compares the stream's definition with its own.
-  If it still has that definition, it forgets what the child has only for object types whose
-  contract changed and resumes; the first frame names those types and the child clears them in the
-  same transaction that applies the frame. Otherwise (the parent restarted, or the child was
-  stored under an older definition) delivery starts fresh, as today.
-- The child reopens under the new definition through `upstreamDefinition` and resets the same
-  types at open, so it never reads rows in the old shape.
+## Next
 
-Delivery memory is still held in memory, so a parent restart still means a full resend. Versioned
-rows (below) remove that.
-
-## Later
-
+- **Children follow their parent.** An `upstreamDefinition(serverClient, ontology)` source opens
+  a new client per definition (a client is bound to one description) and emits its definition;
+  `backend` for such a replica returns the client's backend and source. That covers browser
+  workers, in-app clients and `upstream` routes, and replaces the route catalog's
+  rebuild-on-mismatch path, keeping the retained description for offline starts. Open
+  question: how an in-app `LiveOntology` exposes a new definition (its typed collections are
+  built from one).
 - **Describe as a manifest.** Serve the definition as meta rows plus a `definition` query
-  function that returns the whole definition in one read, for when a client needs it
+  function returning the whole definition in one read, for when a client needs it
   transactionally. A provider can implement it with its whole-ontology metadata endpoint.
   `Describe` shrinks to version, source id, definition hash and capabilities.
 - **Versioned rows.** Stamp each stored row with a version from a per-replica counter and keep
   tombstones. A child holds a cursor plus per-type reset epochs; delivery sends rows changed since
-  the cursor, found by an index on the version instead of recapturing and hashing a selection. A
-  definition change bumps the epochs of changed types. Per-child membership is still needed for
-  ordered, limited selections, as in other sync engines.
+  the cursor, found by an index on the version instead of recapturing and hashing a selection,
+  and the parent no longer loses delivery state on restart. A definition change bumps the epochs
+  of changed types. Per-child membership is still needed for ordered, limited selections.
 - **Index sweep.** Drop indexes that active demand, downloads and recent use no longer need.
