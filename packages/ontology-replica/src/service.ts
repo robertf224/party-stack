@@ -47,8 +47,10 @@ export interface ReplicaConfiguration {
     /**
      * What to do when the stored cache was written under a different definition contract.
      * `"error"` (default) fails with `SchemaMismatch`. `"reset"` clears cached rows, coverage and
-     * delivery state when the replica opens, keeps every pin's desired query so pinned data is
-     * fetched again, and fails with `Conflict` while actions are pending.
+     * delivery state when the replica opens, and keeps every pin's desired query so pinned data is
+     * fetched again. Queued actions stay queued: their predictions are replayed against the new
+     * definition, a prediction that no longer applies is dropped (the action is still sent), and
+     * failures are handled by the outbox's `failureStrategy`.
      */
     readonly onDefinitionChange?: "reset" | "error";
     readonly context?: Record<string, unknown>;

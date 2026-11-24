@@ -1206,7 +1206,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                   };
         });
     /** With `onDefinitionChange: "reset"`, clear a cache stored under another definition
-     * contract before the position check; returns the replaced stored signature. */
+     * contract before the replica opens; returns the replaced stored signature. */
     const resetChangedDefinition = (tx: Transaction) =>
         Effect.gen(function* () {
             if (options.onDefinitionChange !== "reset") return undefined;
@@ -1526,10 +1526,13 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             });
         }
     });
+    // Directly on storage, before the tracked startup transaction: the visible-change tracker
+    // would read the old rows with the new definition's schema. A crash after this commits
+    // leaves a consistent, already-reset cache under the new signature.
+    resetFrom = yield* boundary(options.tables.transaction((tx) => resetChangedDefinition(tx)));
     yield* boundary(
         tables.transaction((tx) =>
             Effect.gen(function* () {
-                resetFrom = yield* resetChangedDefinition(tx);
                 yield* tx.put(metadata, "head", yield* position(tx));
                 // One designated owner opens this namespace. Query/read leases from
                 // a previous incarnation are volatile; pins and outbox roots are separate.

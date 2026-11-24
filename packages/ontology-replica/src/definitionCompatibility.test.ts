@@ -93,12 +93,6 @@ test("cosmetic definition updates preserve rows, coverage, pin retention and que
                     _tag: "Failure",
                     failure: { kind: "SchemaMismatch" },
                 });
-                // Resetting would discard the queued action's optimistic effects, so it is refused.
-                expect(
-                    yield* Effect.result(
-                        makeReplica({ ...options, ir: changed, onDefinitionChange: "reset" })
-                    )
-                ).toMatchObject({ _tag: "Failure", failure: { kind: "Conflict" } });
                 const preserved = yield* makeReplica({ ...options, ir: definition("Newest") });
                 expect((yield* preserved.pending).map((entry) => entry.invocation.id)).toEqual(["offline"]);
                 expect((yield* preserved.loadSubset("Item"))[0]?.value.count).toBe(2);
@@ -140,6 +134,67 @@ test("reopened replicas keep the full definition signature that app storage migr
                         ontologyDefinitionSignature(ir)
                     );
                 }
+            })
+        )
+    );
+});
+
+test("a definition reset keeps queued actions and replays their predictions against the new definition", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const ir = definition("Old");
+                const tables = yield* Memory.make();
+                const backend = yield* makeOwnedBackend({
+                    ir,
+                    namespace: "reset-source",
+                    tables: yield* Memory.make(),
+                    mutators: {},
+                });
+                yield* backend.applyAction({ id: "seed", name: "write", parameters: {} }).pipe(Effect.ignore);
+                const options: ReplicaOptions = {
+                    ir,
+                    tables,
+                    namespace: "reset-cache",
+                    backend,
+                    startSync: false,
+                    execute: (tx) => tx.put("Item", { id: "item", count: 2 }),
+                };
+                const owner = yield* Scope.fork(yield* Effect.scope);
+                const original = yield* Scope.provide(makeReplica(options), owner);
+                yield* original.enqueue({ id: "offline", name: "write", parameters: {} });
+                expect((yield* original.loadSubset("Item"))[0]?.value.count).toBe(2);
+                yield* Scope.close(owner, Exit.void);
+
+                const changed = definition("New");
+                changed.objectTypes[0]!.properties[1]!.type = o.string({});
+                const outbox = Table.make<{ prediction?: string }>({
+                    name: JSON.stringify(["replica", "reset-cache", "outbox"]),
+                });
+                // The old action writes an integer where the new definition has a string: its
+                // prediction no longer applies, so it is dropped, but the action stays queued.
+                const reset = yield* Scope.fork(yield* Effect.scope);
+                const dropped = yield* Scope.provide(
+                    makeReplica({ ...options, ir: changed, onDefinitionChange: "reset" }),
+                    reset
+                );
+                expect((yield* dropped.pending).map((entry) => entry.invocation.id)).toEqual(["offline"]);
+                expect((yield* tables.get(outbox, "offline"))?.prediction).toBe("dropped");
+                expect(yield* dropped.loadSubset("Item")).toEqual([]);
+                yield* Scope.close(reset, Exit.void);
+
+                // An action that still fits the new definition is predicted again.
+                const replayed = yield* makeReplica({
+                    ...options,
+                    ir: changed,
+                    onDefinitionChange: "reset",
+                    execute: (tx) => tx.put("Item", { id: "item", count: "two" }),
+                });
+                expect((yield* replayed.pending).map((entry) => entry.invocation.id)).toEqual(["offline"]);
+                expect((yield* tables.get(outbox, "offline"))?.prediction).toBe("applied");
+                expect(yield* replayed.loadSubset("Item")).toEqual([
+                    { key: "item", value: { id: "item", count: "two" } },
+                ]);
             })
         )
     );

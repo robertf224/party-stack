@@ -386,27 +386,26 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                     yield* Effect.scoped(
                         Effect.gen(function* () {
                             const runtime = yield* protect(runtimes.acquire(stored.partition));
-                            const signature = yield* Effect.try({
+                            // Fail on an unusable definition before retiring the cached owner.
+                            yield* Effect.try({
                                 try: () => ontologyDefinitionSignature(ir),
                                 catch: (cause) => classifyBackendFailure("replica.rebuild.definition", cause),
                             });
                             yield* assertReplicaRebuildSafe(
                                 runtime,
                                 stored.partition.namespace,
-                                description.sourceId,
-                                signature
+                                description.sourceId
                             );
-                            // Refuse a known blocked rebuild without retiring a
-                            // usable cached owner. Closure fences any write that
-                            // races this preflight; reset checks again atomically.
+                            // Refuse a rebuild that would change the source without
+                            // retiring a usable cached owner. Closure fences any write
+                            // that races this preflight; reset checks again atomically.
                             if (settings?.onRetire) yield* settings.onRetire;
                             const entry = active.get(ontology);
                             if (entry) yield* Scope.close(entry.scope, Exit.void);
                             yield* assertReplicaRebuildSafe(
                                 runtime,
                                 stored.partition.namespace,
-                                description.sourceId,
-                                signature
+                                description.sourceId
                             );
                             const pending = { ...stored, rebuild: { description } };
                             yield* protect(metadata.tables.put(table, ontology, pending));

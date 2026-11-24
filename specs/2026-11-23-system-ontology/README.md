@@ -59,8 +59,10 @@ low value.
 ## Definition changes and migrations
 
 **Today.** Replicas take `onDefinitionChange: "reset" | "error"`. `"reset"` clears cached rows,
-coverage and delivery state when a replica opens under a different definition contract, keeps
-the outbox, receipts and every pin's desired query, and refuses while actions are pending.
+coverage and delivery state when a replica opens under a different definition contract, and
+keeps the outbox, receipts and every pin's desired query. Queued actions are replayed against
+the new definition; a prediction that no longer applies is dropped and the action is still
+sent, with failures handled by the outbox's `failureStrategy`.
 
 **Next: `"migrate"`.** Compare definitions per object type instead of resetting everything:
 
@@ -73,7 +75,7 @@ the outbox, receipts and every pin's desired query, and refuses while actions ar
 | Link, action or query function changed | Nothing cached                                                             |
 | Property type or primary key changed   | Clear only that type                                                       |
 
-Pending actions block only a migration that touches what they reference. Store a schema
+Queued actions keep replaying as they do under `"reset"`. Store a schema
 version per object type from the start, even while the only operations are "same" and
 "reset".
 

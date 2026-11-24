@@ -10,15 +10,14 @@ import type { RuntimeService } from "@party-stack/runtime";
 export const assertReplicaRebuildSafe = Effect.fnUntraced(function* (
     runtime: RuntimeService,
     namespace: string,
-    sourceId: string,
-    signature: string
+    sourceId: string
 ) {
     const name = (part: string) => JSON.stringify(["replica", namespace, part]);
     yield* runtime.tables
         .read((tx) =>
             Effect.gen(function* () {
                 const stored = yield* tx.get(
-                    Table.make<{ source: string; signature: string }>({ name: name("position") }),
+                    Table.make<{ source: string }>({ name: name("position") }),
                     "head"
                 );
                 if (stored && stored.source !== sourceId)
@@ -28,15 +27,6 @@ export const assertReplicaRebuildSafe = Effect.fnUntraced(function* (
                         retryable: false,
                         message: "A replica rebuild cannot change its upstream source.",
                     });
-                if (stored?.signature === signature) return;
-                for (const part of ["outbox", "parent-pending"])
-                    if ((yield* tx.query(Table.make({ name: name(part) }), { limit: 1 })).length > 0)
-                        return yield* new BackendError({
-                            operation: "replica.rebuild",
-                            kind: "Conflict",
-                            retryable: false,
-                            message: "The replica has pending actions; its cache cannot be rebuilt safely.",
-                        });
             })
         )
         .pipe(Effect.mapError((cause) => classifyBackendFailure("replica.rebuild", cause)));
@@ -101,9 +91,11 @@ export const resetReplicaCache = Effect.fn("Replica.resetCache")(function* (opti
 /**
  * Clear a replica's cached data for a new definition inside the caller's transaction, and
  * return the position row to store (undefined when there was none). Keeps the outbox, session
- * ledgers and every named pin's desired query, so pinned downloads are fetched again. Fails
- * with `Conflict` while actions are pending. The caller has checked the source and owns the
- * position row in this transaction.
+ * ledgers, imported parent actions (replaced by the next snapshot) and every named pin's desired
+ * query, so pinned downloads are fetched again. Queued actions are not touched: the replica's
+ * startup rebase replays their predictions against the new definition, and one that no longer
+ * applies keeps going with its prediction dropped. The caller has checked the source and owns
+ * the position row in this transaction.
  */
 export const resetReplicaHead = <Stored extends object>(
     tx: Transaction,
@@ -120,14 +112,6 @@ export const resetReplicaHead = <Stored extends object>(
     Effect.gen(function* () {
         const { namespace, blobs } = options;
         const name = (part: string) => JSON.stringify(["replica", namespace, part]);
-        for (const part of ["outbox", "parent-pending"])
-            if ((yield* tx.query(Table.make({ name: name(part) }), { limit: 1 })).length > 0)
-                return yield* new BackendError({
-                    operation: "replica.rebuild",
-                    kind: "Conflict",
-                    retryable: false,
-                    message: "The replica has pending actions; its cache cannot be rebuilt safely.",
-                });
         const types = new Set([
             ...options.previousObjectTypes,
             ...options.ir.objectTypes.map((type) => type.name),

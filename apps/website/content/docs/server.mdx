@@ -347,12 +347,14 @@ This checks the retained/remote contract against the bundled application contrac
 it does not make a first-ever remote connection possible offline.
 
 With `onDefinitionChange: "reset"`, a typed schema mismatch triggers acquisition of
-the new definition and a reset of the downloaded cache. Pending or accepted
-actions block that reset. Completed receipts, submission identities, keys, and
-every pin's desired query survive; pins reacquire their data afterward.
-A bundled `ir` remains a fixed contract and is never silently replaced. Existing
-views also have a fixed IR: reopen them against the reset route to use its new
-schema.
+the new definition and a reset of the downloaded cache. Queued actions stay queued:
+when the replica reopens, their predictions are replayed against the new definition,
+a prediction that no longer applies is dropped (the action is still sent), and send
+failures follow the outbox's `failureStrategy`. Completed receipts, submission
+identities, keys, and every pin's desired query survive; pins reacquire their data
+afterward. A bundled `ir` remains a fixed contract and is never silently replaced.
+Existing views also have a fixed IR: reopen them against the reset route to use its
+new schema.
 
 `onDefinitionChange` is a replica setting, so it also applies to replicas fed by a
 backend and to `makeReplica`: with `"reset"`, a replica opened with a definition whose

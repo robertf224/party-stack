@@ -4,8 +4,8 @@ import { o } from "@party-stack/ontology-spec";
 import { evaluateQuery, ontologyDefinitionContractSignature } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
-import { MemoryRuntime, Runtimes, Runtime, MemoryBlobBytesStore } from "@party-stack/runtime";
-import { Deferred, Effect, Layer } from "effect";
+import { MemoryRuntime, Runtimes } from "@party-stack/runtime";
+import { Deferred, Effect } from "effect";
 import { expect, test } from "vite-plus/test";
 import { makeOntologyServer } from "./routing.js";
 import { makeOntologyLocalClient } from "./rpcLocal.js";
@@ -178,32 +178,7 @@ test("an automatic rebuild adopts a fresh descriptor and the next route bind use
     );
 });
 
-test("a pending-action rebuild refusal keeps the existing route and cached rows usable", async () => {
-    const blocked = Deferred.makeUnsafe<void>();
-    const platform = Layer.effect(
-        Runtime,
-        Effect.gen(function* () {
-            const memory = yield* Memory.make();
-            return yield* Runtime.make({
-                blobBytes: new MemoryBlobBytesStore(),
-                tables: {
-                    ...memory,
-                    read: (body) =>
-                        memory
-                            .read(body)
-                            .pipe(
-                                Effect.tapError((error) =>
-                                    error instanceof BackendError &&
-                                    error.operation === "replica.rebuild" &&
-                                    error.kind === "Conflict"
-                                        ? Deferred.succeed(blocked, undefined)
-                                        : Effect.void
-                                )
-                            ),
-                },
-            });
-        })
-    );
+test("a rebuild keeps queued actions and the next route bind replays them on the new definition", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -226,16 +201,21 @@ test("a pending-action rebuild refusal keeps the existing route and cached rows 
                     _tag: "Failure",
                     failure: { kind: "SchemaMismatch" },
                 });
-                yield* Deferred.await(f.fresh);
-                yield* Deferred.await(blocked);
-                // The refusal is observable through continued access, not a new owner
-                // or a hand-maintained application cache.
-                expect((yield* f.server.bind("notes")).options.replica).toBe(f.replica);
-                expect(yield* f.replica.confirmed.get("Item", "row")).toEqual({ id: "row", count: 1 });
-                expect(yield* f.runtime.tables.get(outbox, "offline")).toEqual(pending);
-                expect((yield* f.server.partitions)[0]?.rebuild).toBeUndefined();
-                expect(same((yield* f.server.partitions)[0]?.definition?.ir, original)).toBe(true);
-            }).pipe(Effect.provide(Runtimes.layer(platform)))
+                yield* until(
+                    f.server.partitions,
+                    (entries) => same(entries[0]?.definition?.ir, replacement) && !entries[0]?.rebuild
+                );
+                const rebound = yield* until(f.server.bind("notes"), (bound) =>
+                    same(bound.options.ir, replacement)
+                );
+                expect(rebound.options.replica).not.toBe(f.replica);
+                expect(yield* rebound.options.replica!.confirmed.get("Item", "row")).toBeUndefined();
+                // Rebinding opened the replica under the new definition, which replayed the
+                // queued action and recorded its prediction status.
+                const kept = yield* f.runtime.tables.get(outbox, "offline");
+                expect(kept?.invocation).toEqual(pending.invocation);
+                expect(kept?.prediction).toBeDefined();
+            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );
 });

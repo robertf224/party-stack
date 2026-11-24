@@ -140,43 +140,36 @@ test("rebuild atomically drops disposable data while preserving outcomes, source
     );
 });
 
-test("rebuild refuses both own pending intent and accepted parent intent before recording a reset", async () => {
-    await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                const { catalog, runtime, replacement, opened } = yield* setup;
-                for (const part of ["outbox", "parent-pending"]) {
+test("rebuild keeps own pending intent and accepted parent intent while it drops cached rows", async () => {
+    for (const part of ["outbox", "parent-pending"])
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const { catalog, runtime, replacement, backend } = yield* setup;
                     let retired = false;
                     yield* runtime.tables.put(table(part), "pending", pending);
                     yield* runtime.tables.put(table("base:Item"), "old", { id: "old", count: 1 });
+                    yield* catalog.rebuild("issues", replacement, {
+                        onRetire: Effect.sync(() => {
+                            retired = true;
+                        }),
+                    });
+                    expect(retired).toBe(true);
+                    expect(yield* runtime.tables.get(table("base:Item"), "old")).toBeUndefined();
                     expect(
-                        yield* Effect.result(
-                            catalog.rebuild("issues", replacement, {
-                                onRetire: Effect.sync(() => {
-                                    retired = true;
-                                }),
-                            })
-                        )
-                    ).toMatchObject({
-                        _tag: "Failure",
-                        failure: { kind: "Conflict" },
-                    });
-                    expect(retired).toBe(false);
-                    expect(yield* runtime.tables.get(table(part), "pending")).toEqual(pending);
-                    expect(yield* runtime.tables.get(table("base:Item"), "old")).toEqual({
-                        id: "old",
-                        count: 1,
-                    });
-                    expect((yield* catalog.lookup("issues"))?.rebuild).toBeUndefined();
-                    expect(yield* opened.replica.confirmed.get("Item", "old")).toEqual({
-                        id: "old",
-                        count: 1,
-                    });
-                    yield* runtime.tables.delete(table(part), "pending");
-                }
-            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
-        )
-    );
+                        (yield* runtime.tables.get(table<PendingAction>(part), "pending"))?.invocation
+                    ).toEqual(pending.invocation);
+                    const saved = yield* catalog.lookup("issues");
+                    expect(saved?.rebuild).toBeUndefined();
+                    expect(saved?.definition?.ir).toEqual(next);
+                    // Reopening under the new definition replays the queued action.
+                    yield* catalog.open("issues", { ir: next, backend, bootstrap: replacement, live: false });
+                    expect(
+                        (yield* runtime.tables.get(table<PendingAction>(part), "pending"))?.invocation
+                    ).toEqual(pending.invocation);
+                }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
+            )
+        );
 });
 
 test("a durable rebuild marker resumes without repeating a committed reset or deleting subsequent intent", async () => {
@@ -247,7 +240,7 @@ test("a durable rebuild marker resumes without repeating a committed reset or de
     );
 });
 
-test("a write racing the preflight retires the owner but leaves its old manifest and pending intent reopenable", async () => {
+test("a write racing the preflight is kept through the reset and replayed after reopening", async () => {
     let race = false;
     const platform = Layer.effect(
         Runtime,
@@ -297,17 +290,10 @@ test("a write racing the preflight retires the owner but leaves its old manifest
                 yield* runtime.tables.put(table("base:Item"), "old", { id: "old", count: 1 });
                 race = true;
                 let retired = false;
-                expect(
-                    yield* Effect.result(
-                        catalog.rebuild("issues", replacement, {
-                            onRetire: Effect.sync(() => {
-                                retired = true;
-                            }),
-                        })
-                    )
-                ).toMatchObject({
-                    _tag: "Failure",
-                    failure: { kind: "Conflict" },
+                yield* catalog.rebuild("issues", replacement, {
+                    onRetire: Effect.sync(() => {
+                        retired = true;
+                    }),
                 });
                 expect(retired).toBe(true);
                 expect(yield* Effect.result(opened.replica.confirmed.get("Item", "old"))).toMatchObject({
@@ -315,14 +301,14 @@ test("a write racing the preflight retires the owner but leaves its old manifest
                 });
                 const saved = yield* catalog.lookup("issues");
                 expect(saved?.rebuild).toBeUndefined();
-                expect(saved?.definition?.ir).toEqual(ir);
+                expect(saved?.definition?.ir).toEqual(next);
                 const reopened = yield* catalog.open("issues", {
-                    ir,
+                    ir: next,
                     backend,
-                    bootstrap: saved?.bootstrap,
+                    bootstrap: replacement,
                     live: false,
                 });
-                expect(yield* reopened.replica.confirmed.get("Item", "old")).toEqual({ id: "old", count: 1 });
+                expect(yield* reopened.replica.confirmed.get("Item", "old")).toBeUndefined();
                 expect(
                     (yield* runtime.tables.get(table<PendingAction>("outbox"), "pending"))?.invocation
                 ).toEqual(pending.invocation);
