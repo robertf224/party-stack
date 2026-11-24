@@ -1010,3 +1010,38 @@ test("a definition reset clears named downloads and reinstalls them from their d
         )
     );
 });
+
+test("after a definition reset, a download whose query no longer fits reports an error instead of installing", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const options = { ...f, namespace: "reset-invalid-pin", ir, live: false };
+                const scope = yield* Scope.make();
+                const original = yield* Scope.provide(makeReplica(options), scope);
+                yield* original.demand.pins.set({ name: "files", query: document("a", "all") });
+                yield* original.syncOnce;
+                expect(yield* original.demand.pins.list).toMatchObject([{ name: "files", ready: true }]);
+                yield* Scope.close(scope, Exit.void);
+
+                // The new definition drops the property the download selects.
+                const changed: OntologyIR = {
+                    ...ir,
+                    objectTypes: ir.objectTypes.map((type) =>
+                        type.name === "Issue"
+                            ? {
+                                  ...type,
+                                  properties: type.properties.filter((property) => property.name !== "file"),
+                              }
+                            : type
+                    ),
+                };
+                const reset = yield* makeReplica({ ...options, ir: changed, onDefinitionChange: "reset" });
+                yield* reset.syncOnce.pipe(Effect.ignore);
+                const [pin] = yield* reset.demand.pins.list;
+                expect(pin).toMatchObject({ name: "files", ready: false });
+                expect(pin?.error).toMatchObject({ kind: "InvalidRequest" });
+            })
+        )
+    );
+});
