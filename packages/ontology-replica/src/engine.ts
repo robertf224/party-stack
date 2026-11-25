@@ -5319,6 +5319,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 mode: options.source ? ("protocol" as const) : ("adapter" as const),
                 networkOnline: yield* connectivity.online,
                 authentication: connection?.state,
+                definition: { hash: schemaHash },
                 ...diagnostics.snapshot(),
                 replicationError,
                 watchError: changeWatchFailure && {

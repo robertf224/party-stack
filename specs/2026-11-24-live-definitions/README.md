@@ -83,10 +83,10 @@ The handle stays the same. Reads and waits that were running run again on the ne
 queries switch to it and emit again, and demand held across the reopen is acquired again.
 Outbox entries, receipts and downloads are kept as for a reset at open. If the new definition
 cannot be opened, the startup transaction rolls back and the replica reopens under the previous
-one. `replica.definition.status` reports the failed definition and its error; a retryable
-failure is tried again with backoff, any other waits for the source to supply another. Before
-an engine closes for a reopen it is retired: streams served from it end with a retryable
-error, so children resubscribe to the new engine.
+one. `replica.status.definition` reports the open definition's hash and the failed one's hash and
+error until the source supplies a definition that opens. Before an engine closes for a reopen
+it is retired: calls and streams still on it fail with a retryable `Unavailable`, so children
+resume against the new engine instead of stopping.
 
 ### Errors that suggest a stale definition
 

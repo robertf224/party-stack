@@ -403,11 +403,10 @@ held demand move to the new engine, and the server serves the new definition. Ch
 resume their delivery stream receive only the changed types' rows again. When the backend
 rejects a request with `SchemaMismatch`, the replica asks the definition to look again.
 
-If a new definition cannot open, the replica keeps serving the previous one and reports it:
-`replica.definition.status.get` and `.changes` give `{ ir, failed? }`, where `ir` is the
-definition it is open under and `failed` holds the newer definition, its error, and whether it
-is `retrying`. A retryable failure (storage, network) is tried again with backoff; any other
-waits for the source to supply a different definition. A definition that opens clears it.
+`replica.status` reports `definition: { hash, error? }`: the contract hash of the definition
+the replica is open under, and, when a newer definition could not be opened, its hash and
+error. The replica keeps serving the previous definition until the source supplies one that
+opens (a recheck after a `SchemaMismatch` asks for one), which clears the error.
 
 A managed replica starts under the definition it last had open, so it opens offline, then
 follows its source. Routes fed through `upstream` follow the same way, with the parent's

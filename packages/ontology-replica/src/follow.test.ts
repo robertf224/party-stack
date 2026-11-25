@@ -1,12 +1,12 @@
 import { BackendError, makeOntologyBackend } from "@party-stack/ontology-backend";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
-import { evaluateQuery } from "@party-stack/ontology-storage";
+import { evaluateQuery, ontologyDefinitionContractHash } from "@party-stack/ontology-storage";
 import { MemoryRuntime, Runtime, Runtimes } from "@party-stack/runtime";
 import { Effect, Queue, Stream, SubscriptionRef } from "effect";
-import { TestClock } from "effect/testing";
 import { expect, test } from "vite-plus/test";
 import { makeReplica } from "./make.js";
+import type { ReplicaStatus } from "./status.js";
 import type { ReplicaRowsBatch } from "./visible.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
@@ -207,9 +207,8 @@ test("a schema mismatch from the backend makes the definition source look again"
     );
 });
 
-test("a definition that cannot open is reported, retried when retryable, and superseded", async () => {
-    const v3: OntologyIR = { ...v2, objectTypes: [item(), other] };
-    const v4: OntologyIR = {
+test("a definition that cannot open is reported in status until one opens", async () => {
+    const v3: OntologyIR = {
         ...v1,
         objectTypes: [item([{ name: "size", displayName: "Size", type: o.integer({}) }]), other],
     };
@@ -217,39 +216,31 @@ test("a definition that cannot open is reported, retried when retryable, and sup
         Effect.scoped(
             Effect.gen(function* () {
                 const definition = yield* SubscriptionRef.make(v1);
-                const attempts = new Map<OntologyIR, number>();
-                const backendFor = (ir: OntologyIR) =>
-                    makeOntologyBackend({
-                        ir,
-                        name: "failing",
-                        sourceId: "failing",
-                        supportsIdempotency: true,
-                        queryFunction: () => Effect.void,
-                        loadSubset: () => Effect.succeed({ complete: true, rows: [] }),
-                        applyAction: (request) =>
-                            Effect.succeed({ operationId: request.id, outcome: "committed" as const }),
-                    });
                 const factory = (ir: OntologyIR) =>
-                    Effect.gen(function* () {
-                        const attempt = (attempts.get(ir) ?? 0) + 1;
-                        attempts.set(ir, attempt);
-                        // v2 fails once with a retryable error; v3 never opens.
-                        if (ir === v2 && attempt === 1)
-                            return yield* new BackendError({
-                                operation: "connect",
-                                kind: "Unavailable",
-                                retryable: true,
-                                message: "Offline.",
-                            });
-                        if (ir === v3)
-                            return yield* new BackendError({
-                                operation: "connect",
-                                kind: "InvalidConfiguration",
-                                retryable: false,
-                                message: "Cannot compile.",
-                            });
-                        return backendFor(ir);
-                    });
+                    ir === v2
+                        ? Effect.fail(
+                              new BackendError({
+                                  operation: "connect",
+                                  kind: "InvalidConfiguration",
+                                  retryable: false,
+                                  message: "Cannot compile.",
+                              })
+                          )
+                        : Effect.succeed(
+                              makeOntologyBackend({
+                                  ir,
+                                  name: "failing",
+                                  sourceId: "failing",
+                                  supportsIdempotency: true,
+                                  queryFunction: () => Effect.void,
+                                  loadSubset: () => Effect.succeed({ complete: true, rows: [] }),
+                                  applyAction: (request) =>
+                                      Effect.succeed({
+                                          operationId: request.id,
+                                          outcome: "committed" as const,
+                                      }),
+                              })
+                          );
                 const runtime = yield* (yield* Runtimes).acquire({
                     owner: "anonymous",
                     namespace: "failing",
@@ -259,41 +250,26 @@ test("a definition that cannot open is reported, retried when retryable, and sup
                     backend: factory,
                     onDefinitionChange: "reset",
                 }).pipe(Effect.provideService(Runtime, runtime));
-                expect(yield* replica.definition.status.get).toEqual({ ir: v1 });
-                const statusWhere = (
-                    check: (status: { ir: OntologyIR; failed?: { ir: OntologyIR } }) => boolean
-                ) => replica.definition.status.changes.pipe(Stream.filter(check), Stream.runHead);
+                const [h1, h2, h3] = yield* Effect.all([v1, v2, v3].map(ontologyDefinitionContractHash));
+                const statusWhere = (check: (status: ReplicaStatus) => boolean) =>
+                    replica.status.changes.pipe(Stream.filter(check), Stream.runHead);
+                expect((yield* replica.status.get).definition).toEqual({ hash: h1 });
 
-                // A retryable failure keeps serving v1 and reports v2 as retrying.
+                // v2 cannot open: the replica keeps serving v1 and reports v2's failure.
                 yield* SubscriptionRef.set(definition, v2);
-                yield* statusWhere((status) => status.failed?.ir === v2);
-                expect(yield* replica.definition.status.get).toMatchObject({
-                    ir: v1,
-                    failed: { ir: v2, retrying: true, error: { kind: "Unavailable" } },
+                yield* statusWhere((status) => status.definition?.error !== undefined);
+                expect((yield* replica.status.get).definition).toEqual({
+                    hash: h1,
+                    error: { hash: h2, kind: "InvalidConfiguration", message: "Cannot compile." },
                 });
                 expect(replica.ir).toBe(v1);
                 expect(yield* replica.get("Item", "missing")).toBeUndefined();
 
-                // The retry opens it and clears the failure.
-                yield* TestClock.adjust("5 seconds");
-                yield* statusWhere((status) => status.ir === v2 && !status.failed);
-                expect(replica.ir).toBe(v2);
-                expect(attempts.get(v2)).toBe(2);
-
-                // A non-retryable failure waits for a different definition.
+                // The next definition that opens clears it.
                 yield* SubscriptionRef.set(definition, v3);
-                yield* statusWhere((status) => status.failed?.ir === v3);
-                expect(yield* replica.definition.status.get).toMatchObject({
-                    ir: v2,
-                    failed: { ir: v3, retrying: false, error: { kind: "InvalidConfiguration" } },
-                });
-                yield* TestClock.adjust("10 minutes");
-                expect(attempts.get(v3)).toBe(1);
-
-                yield* SubscriptionRef.set(definition, v4);
-                yield* statusWhere((status) => status.ir === v4 && !status.failed);
-                expect(replica.ir).toBe(v4);
-            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)), Effect.provide(TestClock.layer()))
+                yield* statusWhere((status) => status.definition?.hash === h3 && !status.definition?.error);
+                expect(replica.ir).toBe(v3);
+            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );
 });

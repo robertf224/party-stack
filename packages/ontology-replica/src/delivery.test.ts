@@ -1425,3 +1425,52 @@ test.each(["complete", "invalid", "cancel"] as const)(
         );
     }
 );
+
+test("retiring a parent ends its delivery streams with an error the child reconnects on", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const engine = yield* Scope.make();
+                const parent = yield* Scope.provide(
+                    makeReplica({
+                        namespace: "closing-parent",
+                        ir,
+                        tables: yield* Memory.make(),
+                        backend: yield* setup(),
+                        execute,
+                        startSync: false,
+                    }),
+                    engine
+                );
+                const source = replicaStateSource(parent);
+                const session = yield* source.openClient();
+                const view = { generation: 1, selection: { subsets: [], actionIds: [] } };
+                const subscription = yield* source.subscribe!(session, view);
+                const delivered = yield* Deferred.make<void>();
+                const consumer = yield* subscription.frames.pipe(
+                    Stream.runForEach((frame) =>
+                        frame.end ? Deferred.succeed(delivered, undefined) : Effect.void
+                    ),
+                    Effect.forkScoped
+                );
+                yield* Deferred.await(delivered);
+                // A followed replica retires an engine before closing it for a reopen. Without
+                // that, the child's calls reach the closed engine and fail with InvalidRequest,
+                // whose recovery is to stop replicating.
+                const reopening = new BackendError({
+                    operation: "replica.definition",
+                    kind: "Unavailable",
+                    retryable: true,
+                    message: "Reopening.",
+                });
+                yield* parent.retire(reopening);
+                const exit = yield* Fiber.await(consumer).pipe(Effect.timeout("2 seconds"));
+                expect(Exit.isFailure(exit) && Exit.findErrorOption(exit)).toMatchObject({
+                    value: { kind: "Unavailable", retryable: true },
+                });
+                yield* Scope.close(engine, Exit.void);
+                expect(yield* Effect.flip(source.read(session, view))).toMatchObject({ kind: "Unavailable" });
+            })
+        )
+    );
+});

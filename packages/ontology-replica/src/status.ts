@@ -70,6 +70,23 @@ export const ReplicaStatusSchema = Schema.Struct({
     networkOnline: Schema.Boolean,
     authentication: Schema.optional(ConnectionStateSchema),
     watchError: Schema.optional(DemandFailure),
+    /**
+     * The contract hash of the definition the replica is open under. `error` reports a newer
+     * definition from a dynamic source that could not be opened; the replica keeps serving
+     * `hash` until a definition opens.
+     */
+    definition: Schema.optional(
+        Schema.Struct({
+            hash: Schema.String,
+            error: Schema.optional(
+                Schema.Struct({
+                    hash: Schema.optional(Schema.String),
+                    kind: BackendErrorKindSchema,
+                    message: Schema.String,
+                })
+            ),
+        })
+    ),
     replicationError: Schema.optional(
         Schema.Struct({
             kind: BackendErrorKindSchema,
