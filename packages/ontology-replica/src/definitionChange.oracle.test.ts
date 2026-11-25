@@ -276,7 +276,7 @@ const run = (scenario: typeof Scenario.Type) =>
                 const exit = yield* Effect.exit(
                     catalog
                         .open("definition-oracle", {
-                            ir: definition(replicaShape),
+                            definition: { kind: "static", ir: definition(replicaShape) },
                             backend: backendFor(replicaShape),
                             bootstrap: description(replicaShape),
                             onDefinitionChange: "reset",

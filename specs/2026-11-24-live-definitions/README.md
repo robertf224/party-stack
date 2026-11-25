@@ -21,10 +21,10 @@ definition the replica has now.
 ## Replica construction
 
 ```ts
-// Fixed. `ir` still works but is deprecated.
-yield* makeReplica({ definition: ir, backend, context });
+// Static.
+yield* makeReplica({ definition: { kind: "static", ir }, backend, context });
 
-// Followed.
+// Dynamic: metaDefinition returns { kind: "dynamic", changes, revalidate }.
 const replica = yield* makeReplica({
     definition: yield* metaDefinition(metadata, { objectTypeNames: ["Task", "Project"] }),
     // A fixed backend, or one built for each definition (adapters that compile the IR).
@@ -39,10 +39,14 @@ replica.definition.changes; // Stream<OntologyIR>, current first
 ```
 
 ```ts
-`definition` is an `OntologyIR` or a source:
+`definition` is static or dynamic:
 
 ```ts
-interface ReplicaDefinition {
+type ReplicaDefinition =
+    | { readonly kind: "static"; readonly ir: OntologyIR }
+    | DynamicReplicaDefinition;
+interface DynamicReplicaDefinition {
+    readonly kind: "dynamic";
     /** The current definition first, then each new one. */
     readonly changes: Stream.Stream<OntologyIR, BackendError>;
     /** Look again after an operation failed in a way that suggests the definition is stale. A

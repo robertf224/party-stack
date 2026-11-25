@@ -71,7 +71,7 @@ const setup = Effect.gen(function* () {
     const catalog = yield* makeReplicaPartitionCatalog();
     const scope = yield* Scope.make();
     const opened = yield* Scope.provide(
-        catalog.open("issues", { definition: ir, backend, bootstrap, live: false }),
+        catalog.open("issues", { definition: { kind: "static", ir }, backend, bootstrap, live: false }),
         scope
     );
     const replacement = { ...bootstrap, ir: next };
@@ -79,7 +79,7 @@ const setup = Effect.gen(function* () {
     const reopen = Effect.andThen(
         Scope.close(scope, Exit.void),
         catalog.open("issues", {
-            definition: next,
+            definition: { kind: "static", ir: next },
             backend,
             bootstrap: replacement,
             live: false,
@@ -164,7 +164,7 @@ test("a followed replica records each definition it reopens under and starts und
                 const scope = yield* Scope.make();
                 const opened = yield* Scope.provide(
                     catalog.open("issues", {
-                        definition: { changes: SubscriptionRef.changes(source) },
+                        definition: { kind: "dynamic", changes: SubscriptionRef.changes(source) },
                         backend,
                         live: false,
                         onDefinitionChange: "reset",
@@ -186,7 +186,7 @@ test("a followed replica records each definition it reopens under and starts und
                 yield* Scope.close(scope, Exit.void);
                 // Offline: the source never answers, and the replica opens under the retained one.
                 const restarted = yield* catalog.open("issues", {
-                    definition: { changes: Stream.never },
+                    definition: { kind: "dynamic", changes: Stream.never },
                     backend,
                     live: false,
                     onDefinitionChange: "reset",

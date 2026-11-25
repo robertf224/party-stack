@@ -49,9 +49,10 @@ test("pin collections use ordinary optimistic replica writes before the owner co
                     applyAction: () => Effect.die("Unexpected application action"),
                     queryFunction: () => Effect.void,
                 });
-                const owner = yield* makeReplica({ ir, backend: source }).pipe(
-                    Effect.provideService(Runtime, runtime)
-                );
+                const owner = yield* makeReplica({
+                    definition: { kind: "static", ir },
+                    backend: source,
+                }).pipe(Effect.provideService(Runtime, runtime));
                 const backend = yield* owner.demand.pins.backend;
                 const release = yield* Deferred.make<void>();
                 let starts = 0;

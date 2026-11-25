@@ -34,7 +34,7 @@ Effect.runFork(
             });
             const owner = yield* makeReplica({
                 id: "owner",
-                ir,
+                definition: { kind: "static", ir },
                 backend,
                 mutators: { increment },
                 demand: { refresh: { pollIntervalMs: 600_000 } },

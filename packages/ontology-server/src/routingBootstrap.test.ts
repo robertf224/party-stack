@@ -164,7 +164,7 @@ test("native backend routes reuse their account's definition before backend cons
                                     });
                                     return {
                                         kind: "replica" as const,
-                                        ir: definition,
+                                        definition: { kind: "static" as const, ir: definition },
                                         backend,
                                         context: selected,
                                         live: false,

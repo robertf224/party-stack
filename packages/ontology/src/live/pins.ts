@@ -73,7 +73,7 @@ export const makeOntologyPins = Effect.fnUntraced(function* (options: {
                 const backend = yield* options.backend;
                 return yield* makeReplica({
                     id: JSON.stringify([runtime.namespace, "pin-view"]),
-                    ir: pinOntology,
+                    definition: { kind: "static", ir: pinOntology },
                     backend,
                     context: {},
                     mutators: pinMutators,

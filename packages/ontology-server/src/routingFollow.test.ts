@@ -47,7 +47,7 @@ test("a replica binding serves the definition and backend its replica is open un
                 const source = yield* SubscriptionRef.make(v1);
                 const runtime = yield* (yield* Runtimes).acquire({ owner: "anonymous", namespace: "follow" });
                 const replica = yield* makeReplica({
-                    definition: { changes: SubscriptionRef.changes(source) },
+                    definition: { kind: "dynamic", changes: SubscriptionRef.changes(source) },
                     backend: (ir) => Effect.sync(() => backendFor(ir)),
                     onDefinitionChange: "reset",
                 }).pipe(Effect.provideService(Runtime, runtime));
@@ -83,7 +83,7 @@ test("a managed route can follow a definition and build its backend for each one
                     routes: {
                         items: {
                             kind: "replica",
-                            definition: { changes: SubscriptionRef.changes(source) },
+                            definition: { kind: "dynamic", changes: SubscriptionRef.changes(source) },
                             backend: (ir) =>
                                 Effect.sync(() => {
                                     built.push(ir);

@@ -266,6 +266,7 @@ export interface MetaDefinitionOptions extends Omit<PullOptions, "includeOmitted
 }
 /** A definition a replica can follow, read from the meta ontology. */
 export interface MetaDefinition {
+    readonly kind: "dynamic";
     /** The current definition first, then each one that differs. */
     readonly changes: Stream.Stream<OntologyIR, BackendError>;
     /** Read the definition again, after refreshing the named types' metadata. */
@@ -294,6 +295,7 @@ export const metaDefinition = Effect.fnUntraced(function* (
         }
     };
     return {
+        kind: "dynamic",
         changes: SubscriptionRef.changes(requests).pipe(
             Stream.merge(options.changes ?? Stream.never),
             Stream.mapEffect(() => pull(meta, options)),

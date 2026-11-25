@@ -122,11 +122,12 @@ export const upstreamReplicaRegistration = Effect.fn("OntologyServer.upstreamRep
         ...registration,
         context: initial.context ?? {},
         definition: {
+            kind: "dynamic",
             changes: Stream.map(SubscriptionRef.changes(current), (description) => description.ir),
         },
         backend: connect,
         bootstrap: initial,
-    } as ReplicaRegistration;
+    } satisfies ReplicaRegistration;
 });
 
 export type { OntologyDescription };

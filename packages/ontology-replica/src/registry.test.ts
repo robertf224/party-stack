@@ -50,7 +50,12 @@ test("registry shares scoped replicas and can forget a stored partition after cr
                         Effect.suspend(() => {
                             resolved();
                             return authenticated
-                                ? Effect.succeed({ ir, context: {}, backend, namespace: "cached-issues" })
+                                ? Effect.succeed({
+                                      definition: { kind: "static", ir },
+                                      context: {},
+                                      backend,
+                                      namespace: "cached-issues",
+                                  })
                                 : Effect.fail(
                                       new BackendError({
                                           operation: "resolve",
@@ -99,7 +104,12 @@ test("registry rejects two simultaneous replica owners for the same persistent p
                     mutators: {},
                 });
                 const registry = yield* makeReplicaRegistry({
-                    resolve: () => Effect.succeed({ ir, backend, namespace: "same-partition" }),
+                    resolve: () =>
+                        Effect.succeed({
+                            definition: { kind: "static", ir },
+                            backend,
+                            namespace: "same-partition",
+                        }),
                 });
                 yield* registry.acquire("first-name");
                 expect(yield* Effect.result(registry.acquire("second-name"))).toMatchObject({
@@ -136,7 +146,13 @@ test("default registry preserves existing data namespaces and leaves legacy cata
                     mutators: {},
                 });
                 const registry = yield* makeReplicaRegistry({
-                    resolve: () => Effect.succeed({ ir, backend, namespace: "notes-v1", live: false }),
+                    resolve: () =>
+                        Effect.succeed({
+                            definition: { kind: "static", ir },
+                            backend,
+                            namespace: "notes-v1",
+                            live: false,
+                        }),
                 });
                 expect(yield* registry.partitions).toEqual([]);
                 const current = yield* registry.acquire("notes");
@@ -176,7 +192,7 @@ test("explicit scopes isolate catalog and default or overridden data namespaces"
                     scope: "a:b",
                     resolve: (ontology) =>
                         Effect.succeed({
-                            ir,
+                            definition: { kind: "static", ir },
                             backend,
                             live: false,
                             namespace: ontology === "overridden" ? "shared" : undefined,
@@ -184,7 +200,13 @@ test("explicit scopes isolate catalog and default or overridden data namespaces"
                 });
                 const second = yield* makeReplicaRegistry({
                     scope: "a",
-                    resolve: () => Effect.succeed({ ir, backend, namespace: "b:shared", live: false }),
+                    resolve: () =>
+                        Effect.succeed({
+                            definition: { kind: "static", ir },
+                            backend,
+                            namespace: "b:shared",
+                            live: false,
+                        }),
                 });
                 const one = yield* first.acquire("overridden");
                 expect(one.runtime.namespace).toBe(JSON.stringify(["replica-scope", "a:b", "shared"]));
@@ -269,7 +291,13 @@ test("catalog retains a portable accepted bootstrap before the next replica open
                 };
                 const catalog = yield* makeReplicaPartitionCatalog();
                 yield* Effect.scoped(
-                    catalog.open("issues", { ir, backend, context, bootstrap, live: false })
+                    catalog.open("issues", {
+                        definition: { kind: "static", ir },
+                        backend,
+                        context,
+                        bootstrap,
+                        live: false,
+                    })
                 );
                 // A new catalog reads durable metadata without opening a data
                 // replica or contacting a provider to rediscover the definition.
@@ -322,7 +350,13 @@ test("catalog bootstrap updates preserve the accepted record on source, partitio
                 // scopes, as a durable driver would across process restarts.
                 yield* (yield* Runtimes).acquire({ owner: "alice", namespace: "issues" });
                 yield* Effect.scoped(
-                    catalog.open("issues", { ir: boundIR, backend, context, bootstrap, live: false })
+                    catalog.open("issues", {
+                        definition: { kind: "static", ir: boundIR },
+                        backend,
+                        context,
+                        bootstrap,
+                        live: false,
+                    })
                 );
                 for (const description of [
                     { ...bootstrap, context: { user: "bob" } },
@@ -347,7 +381,7 @@ test("catalog bootstrap updates preserve the accepted record on source, partitio
                     yield* Effect.scoped(
                         Effect.result(
                             catalog.open("issues", {
-                                ir: boundIR,
+                                definition: { kind: "static", ir: boundIR },
                                 backend,
                                 context,
                                 bootstrap: { ...bootstrap, ir: changedIR },
@@ -361,7 +395,7 @@ test("catalog bootstrap updates preserve the accepted record on source, partitio
                     yield* Effect.scoped(
                         Effect.result(
                             catalog.open("issues", {
-                                ir: changedIR,
+                                definition: { kind: "static", ir: changedIR },
                                 backend,
                                 context,
                                 bootstrap: { ...bootstrap, ir: changedIR },

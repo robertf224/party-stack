@@ -81,7 +81,7 @@ test("a replica that follows its definition reopens behind the same handle", asy
                 const built: OntologyIR[] = [];
                 const runtime = yield* (yield* Runtimes).acquire({ owner: "anonymous", namespace: "follow" });
                 const replica = yield* makeReplica({
-                    definition: { changes: SubscriptionRef.changes(definition) },
+                    definition: { kind: "dynamic", changes: SubscriptionRef.changes(definition) },
                     backend: (ir) => Effect.sync(() => (built.push(ir), source(ir))),
                     onDefinitionChange: "reset",
                     outbox: { failureStrategy: "pause" },
@@ -177,6 +177,7 @@ test("a schema mismatch from the backend makes the definition source look again"
                 });
                 const replica = yield* makeReplica({
                     definition: {
+                        kind: "dynamic",
                         changes: SubscriptionRef.changes(definition),
                         revalidate: (hint) =>
                             Effect.andThen(

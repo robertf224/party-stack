@@ -14,7 +14,7 @@ import {
 } from "effect";
 import { kernel, upstream } from "./internal.js";
 import type { ReplicaService as KernelService } from "./engine.js";
-import type { ReplicaDefinition, ReplicaService } from "./service.js";
+import type { DynamicReplicaDefinition, ReplicaService } from "./service.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
@@ -33,7 +33,7 @@ const subsetType = (subset: unknown) => {
  */
 export const revalidateOnMismatch = (
     backend: OntologyBackendService,
-    revalidate: NonNullable<ReplicaDefinition["revalidate"]>
+    revalidate: NonNullable<DynamicReplicaDefinition["revalidate"]>
 ): OntologyBackendService => {
     const check =
         (objectTypes: readonly string[]) =>
@@ -102,7 +102,7 @@ const signature = (ir: OntologyIR) => {
  * and demand held across the change is acquired again.
  */
 export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
-    readonly definition: ReplicaDefinition;
+    readonly definition: DynamicReplicaDefinition;
     readonly open: (ir: OntologyIR) => Effect.Effect<ReplicaService, BackendError, Scope.Scope>;
     /** Runs between closing the engine for `previous` and opening the one for `next`. */
     readonly changed?: (previous: OntologyIR, next: OntologyIR) => Effect.Effect<void>;

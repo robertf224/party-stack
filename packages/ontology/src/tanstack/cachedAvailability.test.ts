@@ -71,7 +71,7 @@ const fixture = Effect.fnUntraced(function* (name: string, initial: ObjectSubset
     const open = (scope: Scope.Scope) =>
         Scope.provide(
             makeReplica({
-                ir,
+                definition: { kind: "static", ir },
                 backend,
                 id: name,
                 cache: { objects: false, attachments: false },

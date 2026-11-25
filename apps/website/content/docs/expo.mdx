@@ -154,7 +154,7 @@ const openDevice = Effect.gen(function* () {
                             });
                             return {
                                 kind: "replica" as const,
-                                ir: foundryPlatformOntology,
+                                definition: { kind: "static" as const, ir: foundryPlatformOntology },
                                 context: { userId: access.userId },
                                 authentication: access.authentication,
                                 backend: yield* makeFoundryPlatformBackend({

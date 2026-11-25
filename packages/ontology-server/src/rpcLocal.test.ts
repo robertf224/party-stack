@@ -357,7 +357,7 @@ test("managed replica routes resolve action parameters from the replica without 
                     routes: {
                         items: {
                             kind: "replica",
-                            ir,
+                            definition: { kind: "static", ir },
                             backend: withoutResolver,
                             live: false,
                             dangerouslyAllowInternalAccess: true,

@@ -9,11 +9,12 @@ export type {
 } from "./attachments/service.js";
 export { makeReplica } from "./make.js";
 export type { ReplicaOptions, ReplicaBackendFactory, ReplicaConnection } from "./make.js";
-export { isReplicaDefinition } from "./service.js";
 export type {
     ReplicaService,
     ReplicaConfiguration,
     ReplicaDefinition,
+    StaticReplicaDefinition,
+    DynamicReplicaDefinition,
     ReplicaDefinitionState,
     ReplicaReads,
     ReplicaOutbox,
@@ -39,13 +40,7 @@ export type { PendingAction } from "@party-stack/ontology-backend/protocol";
 export class Replica extends Context.Service<Replica, ReplicaService>()(
     "@party-stack/ontology-replica/Replica"
 ) {
-    static readonly layer = (
-        options: ReplicaOptions extends infer Options
-            ? Options extends ReplicaOptions
-                ? Omit<Options, "backend" | "source" | "authentication">
-                : never
-            : never
-    ) =>
+    static readonly layer = (options: Omit<ReplicaOptions, "backend" | "source" | "authentication">) =>
         Layer.effect(
             Replica,
             Effect.gen(function* () {
@@ -55,7 +50,7 @@ export class Replica extends Context.Service<Replica, ReplicaService>()(
                     backend: upstream.backend,
                     source: upstream.kind === "speculative" ? upstream.source : undefined,
                     authentication: upstream.authentication,
-                } as ReplicaOptions);
+                });
             })
         );
 }

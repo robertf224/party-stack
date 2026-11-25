@@ -40,19 +40,27 @@ import type { EncryptionKeyringService } from "@party-stack/ontology-storage/enc
 import type { TablesService } from "@party-stack/ontology-storage/tables";
 import type { NetworkConnectivity, ResourceCapacity } from "@party-stack/runtime";
 
-/** A definition the replica follows. See `makeReplica`'s `definition` option. */
-export interface ReplicaDefinition {
+/** A fixed definition. The replica opens under it, and a stored cache written under a different
+ * contract is handled by `onDefinitionChange`. */
+export interface StaticReplicaDefinition {
+    readonly kind: "static";
+    readonly ir: OntologyIR;
+}
+/** A definition the replica follows. It opens under the first and reopens behind the same handle
+ * under each later one that differs. */
+export interface DynamicReplicaDefinition {
+    readonly kind: "dynamic";
     /** The current definition first, then each new one. */
     readonly changes: Stream.Stream<OntologyIR, BackendError>;
-    /** Ask the source to look again after an operation failed in a way that suggests the
-     * definition is stale. A change still arrives through `changes`. */
+    /** Ask the source to look again now. The replica calls it when its backend fails with
+     * `SchemaMismatch`, which suggests the definition is stale. A change still arrives through
+     * `changes`. */
     readonly revalidate?: (hint: {
         readonly objectTypes: readonly string[];
     }) => Effect.Effect<void, BackendError>;
 }
-/** A definition source, as opposed to a fixed `OntologyIR`. */
-export const isReplicaDefinition = (value: OntologyIR | ReplicaDefinition): value is ReplicaDefinition =>
-    "changes" in value;
+/** The definition a replica opens under: fixed, or followed. See `makeReplica`'s `definition`. */
+export type ReplicaDefinition = StaticReplicaDefinition | DynamicReplicaDefinition;
 /** The definition a replica is open under. */
 export interface ReplicaDefinitionState {
     readonly current: Effect.Effect<OntologyIR, BackendError>;

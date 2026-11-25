@@ -54,7 +54,7 @@ test("localClient lazily owns a server and opens an SDK memory view over its man
             routes: {
                 "workspaces/demo": {
                     kind: "replica",
-                    ir,
+                    definition: { kind: "static", ir },
                     backend: yield* makeBackend(),
                     dangerouslyAllowInternalAccess: true,
                 },

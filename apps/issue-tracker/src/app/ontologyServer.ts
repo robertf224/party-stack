@@ -135,7 +135,7 @@ export const makeTrackerOntologyServer = Effect.fn("Tracker.server")(function* (
                           );
                     return {
                         kind: "replica" as const,
-                        ir: ontology,
+                        definition: { kind: "static" as const, ir: ontology },
                         context,
                         backend,
                         // Preserve the existing persistent cache addresses during this API migration.

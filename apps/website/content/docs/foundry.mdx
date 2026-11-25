@@ -126,7 +126,7 @@ const server = Effect.gen(function* () {
                         return {
                             kind: "replica" as const,
                             namespace: foundry.ontologyId,
-                            ir: ontology,
+                            definition: { kind: "static" as const, ir: ontology },
                             context,
                             authentication: access.authentication,
                             backend: yield* makeFoundryBackend({

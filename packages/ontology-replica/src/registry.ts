@@ -22,7 +22,6 @@ import {
 } from "effect";
 import { replicaBackend } from "./internal.js";
 import { makeReplica } from "./make.js";
-import { isReplicaDefinition } from "./service.js";
 import type { ReplicaBackendFactory } from "./make.js";
 import type { ReplicaConfiguration, ReplicaDefinition, ReplicaService } from "./service.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
@@ -43,24 +42,13 @@ export type ReplicaRegistration = ReplicaRegistrationCommon & {
     readonly source?: OntologySource;
     /** Accepted protocol binding for the first definition, retained for an offline restart. */
     readonly bootstrap?: OntologyDescription;
-} & (
-        | {
-              /**
-               * A fixed `OntologyIR`, or a source the replica follows (see `makeReplica`). A
-               * followed replica reopens under the definition it last had open, then follows the
-               * source, so it starts offline.
-               */
-              readonly definition: OntologyIR | ReplicaDefinition;
-              readonly ir?: never;
-              readonly backend: OntologyBackendService | ReplicaBackendFactory;
-          }
-        | {
-              /** @deprecated Use `definition`. */
-              readonly ir: OntologyIR;
-              readonly definition?: never;
-              readonly backend: OntologyBackendService;
-          }
-    );
+    /**
+     * Static or dynamic (see `makeReplica`). A dynamic replica reopens under the definition it
+     * last had open, then follows the source, so it starts offline.
+     */
+    readonly definition: ReplicaDefinition;
+    readonly backend: OntologyBackendService | ReplicaBackendFactory;
+};
 export interface RegisteredReplica {
     readonly ir: ReplicaConfiguration["ir"];
     readonly context: Record<string, unknown>;
@@ -210,8 +198,8 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
         );
         return yield* Scope.provide(
             Effect.gen(function* () {
-                const source = configuration.definition ?? configuration.ir;
-                const followed = isReplicaDefinition(source) ? source : undefined;
+                const source = configuration.definition;
+                const followed = source.kind === "dynamic" ? source : undefined;
                 const stored = yield* protect(metadata.tables.get(table, ontology));
                 // A followed replica reopens under the definition it last had open (or the
                 // accepted bootstrap), then follows its source: it starts without the network.
@@ -225,11 +213,12 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                           ? stored.definition.ir
                           : undefined))
                     : undefined;
-                const ir = !followed
-                    ? (source as OntologyIR)
-                    : (retained ?? Option.getOrUndefined(yield* Stream.runHead(followed.changes)));
+                const ir =
+                    source.kind === "static"
+                        ? source.ir
+                        : (retained ?? Option.getOrUndefined(yield* Stream.runHead(source.changes)));
                 let primed = false;
-                const definition: ReplicaDefinition | undefined =
+                const definition: ReplicaDefinition =
                     followed && retained
                         ? {
                               ...followed,
@@ -240,7 +229,7 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                                   return Stream.concat(Stream.make(retained), followed.changes);
                               }),
                           }
-                        : followed;
+                        : source;
                 if (!ir)
                     return yield* new BackendError({
                         operation: "replica.definition",
@@ -311,11 +300,9 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                 const runtime = yield* protect(runtimes.acquire(partition));
                 if (configuration.beforeOpen) yield* configuration.beforeOpen(runtime, ir);
                 const traces = yield* makeTraceCapture();
-                const work = makeReplica({
-                    ...configuration,
-                    ir: undefined,
-                    definition: definition ?? ir,
-                } as Parameters<typeof makeReplica>[0]).pipe(Effect.provideService(Runtime, runtime));
+                const work = makeReplica({ ...configuration, definition }).pipe(
+                    Effect.provideService(Runtime, runtime)
+                );
                 const replica = yield* traces
                     ? work.pipe(Effect.provideService(Tracer.Tracer, traces.tracer))
                     : work;

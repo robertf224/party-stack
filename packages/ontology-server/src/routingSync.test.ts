@@ -69,7 +69,7 @@ test("native checkpoints share the managed route owner and return its installed 
                                     return {
                                         kind: "replica" as const,
                                         backend: upstream,
-                                        ir,
+                                        definition: { kind: "static" as const, ir },
                                         live: false,
                                     };
                                 }),

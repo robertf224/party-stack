@@ -376,8 +376,9 @@ of the contract. Changes to named value types, context or policy clear everythin
 
 ### Follow a changing definition
 
-`definition` is either a fixed `OntologyIR` or a source the replica follows. To follow one,
-pass a source, and a `backend` built for each definition when the adapter compiles the IR:
+`definition` is static, `{ kind: "static", ir }`, or dynamic, `{ kind: "dynamic", changes,
+revalidate? }`. A dynamic replica follows `changes`. Pass a `backend` built for each definition
+when the adapter compiles the IR:
 
 ```ts
 import { metaDefinition } from "@party-stack/ontology-backend/meta";
@@ -419,7 +420,7 @@ Selected delivery checks the schema hash already carried in each batch. A
 finite-only adapter that does not report typed `SchemaMismatch` errors needs an
 explicit definition refresh to discover upstream schema changes.
 
-`route.definition` is deprecated: return a definition source and a `backend` built per
+`route.definition` is deprecated: return a dynamic definition and a `backend` built per
 definition instead.
 
 ## Use separate HTTP endpoints

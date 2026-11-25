@@ -43,7 +43,7 @@ test("after its parent reopens under a new definition, a child receives only the
                 const parentDefinition = yield* SubscriptionRef.make(v1);
                 const runtime = yield* (yield* Runtimes).acquire({ owner: "anonymous", namespace: "parent" });
                 const parent = yield* makeFollowingReplica({
-                    definition: { changes: SubscriptionRef.changes(parentDefinition) },
+                    definition: { kind: "dynamic", changes: SubscriptionRef.changes(parentDefinition) },
                     backend: (ir) =>
                         Effect.succeed(
                             makeOntologyBackend({

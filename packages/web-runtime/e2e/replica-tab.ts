@@ -24,7 +24,7 @@ const makeTab = Effect.gen(function* () {
     const source = connection.replication.source;
     const replica = yield* makeReplica({
         id: "tab",
-        ir,
+        definition: { kind: "static", ir },
         backend: connection.backend,
         source,
         mutators: { increment },

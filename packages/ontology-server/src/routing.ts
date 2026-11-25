@@ -4,19 +4,7 @@ import { replicaBackend } from "@party-stack/ontology-replica/infrastructure";
 import { makeReplicaPartitionCatalog } from "@party-stack/ontology-replica/registry";
 import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { Runtimes } from "@party-stack/runtime";
-import {
-    Context,
-    Effect,
-    Equal,
-    Exit,
-    Hash,
-    Layer,
-    Option,
-    RcMap,
-    Schema,
-    Scope,
-    Stream,
-} from "effect";
+import { Context, Effect, Equal, Exit, Hash, Layer, Option, RcMap, Schema, Scope, Stream } from "effect";
 import { Rpc, RpcGroup, RpcSchema } from "effect/rpc";
 import { prepareOntologyServer, bindOntologyServer } from "./composition.js";
 import { errorProjectionLayer, errorContext, OntologyErrorProjection } from "./errorProjection.js";

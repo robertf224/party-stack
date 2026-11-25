@@ -84,7 +84,7 @@ const server = Effect.gen(function* () {
                   });
             return {
                 kind: "replica" as const,
-                ir: meta ? metadata : ontology,
+                definition: { kind: "static" as const, ir: meta ? metadata : ontology },
                 namespace: `${SALESFORCE_TASK_MANAGER_ONTOLOGY_ID}:${meta ? "metadata" : "data"}`,
                 context,
                 backend,

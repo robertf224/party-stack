@@ -703,7 +703,7 @@ test.each([undefined, {}])("managed replica routes share one owner with replicas
                                 return {
                                     kind: "replica" as const,
                                     backend,
-                                    ir,
+                                    definition: { kind: "static" as const, ir },
                                     namespace: `issues-${id}`,
                                 };
                             }),
@@ -746,7 +746,7 @@ test("managed replica scope prefixes a configured namespace after concrete route
                             open: ({ id }) =>
                                 Effect.succeed({
                                     kind: "replica" as const,
-                                    ir,
+                                    definition: { kind: "static" as const, ir },
                                     backend,
                                     namespace: `cache:${id}`,
                                     live: false,
