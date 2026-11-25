@@ -14,7 +14,7 @@ import {
 } from "effect";
 import { kernel, upstream } from "./internal.js";
 import type { ReplicaService as KernelService } from "./engine.js";
-import type { DynamicReplicaDefinition, ReplicaService } from "./service.js";
+import type { DynamicReplicaDefinition, ReplicaDefinitionStatus, ReplicaService } from "./service.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
@@ -112,8 +112,22 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
     let current: Generation | undefined;
     // What synchronous getters report while the next engine opens: the last one that opened.
     let latest: Generation | undefined;
+    let failed: ReplicaDefinitionStatus["failed"];
+    const status = yield* SubscriptionRef.make<ReplicaDefinitionStatus | undefined>(undefined);
+    const publish = () => SubscriptionRef.set(status, latest && { ir: latest.ir, ...(failed && { failed }) });
 
     const close = Effect.fnUntraced(function* (generation: Generation) {
+        // Children and server streams bound to this engine reconnect to the next one.
+        yield* (
+            (generation.service as unknown as { readonly [kernel]?: KernelService })[kernel]?.retire(
+                new BackendError({
+                    operation: "replica.definition",
+                    kind: "Unavailable",
+                    retryable: true,
+                    message: "The replica is reopening under a new definition.",
+                })
+            ) ?? Effect.void
+        );
         yield* generation.writes.withPermits(WRITE_PERMITS)(
             Effect.sync(() => {
                 generation.closed = true;
@@ -138,9 +152,16 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
             closed: false,
         } satisfies Generation;
     });
+    /** Open under `ir`; true when the replica is open under it afterwards. */
     const apply = Effect.fnUntraced(function* (ir: OntologyIR) {
         const previous = current;
-        if (previous && signature(previous.ir) === signature(ir)) return;
+        if (previous && signature(previous.ir) === signature(ir)) {
+            if (failed) {
+                failed = undefined;
+                yield* publish();
+            }
+            return true;
+        }
         if (previous) {
             yield* SubscriptionRef.set(state, { _tag: "opening" });
             current = undefined;
@@ -150,8 +171,10 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
         const opened = yield* Effect.exit(openGeneration(ir));
         if (Exit.isSuccess(opened)) {
             current = latest = opened.value;
+            failed = undefined;
+            yield* publish();
             yield* SubscriptionRef.set(state, { _tag: "open", generation: opened.value });
-            return;
+            return true;
         }
         const error = Exit.findErrorOption(opened).pipe(
             Option.getOrElse(
@@ -165,18 +188,36 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
             )
         );
         yield* Effect.logWarning("Replica could not open under a new definition", error);
+        failed = { ir, error, retrying: error.retryable };
         // The failed startup transaction rolled back, so the cache still matches the previous
         // definition. Keep serving it until the source supplies one that opens.
         if (previous) {
             const restored = yield* Effect.exit(openGeneration(previous.ir));
             if (Exit.isSuccess(restored)) {
                 current = latest = restored.value;
+                yield* publish();
                 yield* SubscriptionRef.set(state, { _tag: "open", generation: restored.value });
-                return;
+                return false;
             }
         }
+        yield* publish();
         yield* SubscriptionRef.set(state, { _tag: "failed", error });
+        return false;
     });
+    // A retryable failure (storage, network) is tried again with backoff until it opens or the
+    // source supplies a different definition; any other waits for a different definition.
+    const attempt = (ir: OntologyIR, settled: Effect.Effect<void>) =>
+        Effect.gen(function* () {
+            let delay = 5_000;
+            while (true) {
+                // Opening is never interrupted midway; a newer definition waits for it.
+                const opened = yield* Effect.uninterruptible(apply(ir));
+                yield* settled;
+                if (opened || !failed?.retrying) return;
+                yield* Effect.sleep(delay);
+                delay = Math.min(delay * 2, 5 * 60_000);
+            }
+        });
     yield* Effect.addFinalizer(() => (current ? close(current) : Effect.void));
 
     const ready = SubscriptionRef.changes(state).pipe(
@@ -203,7 +244,10 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
     const first = yield* Deferred.make<void, BackendError>();
     yield* options.definition.changes.pipe(
         Stream.changesWith((left, right) => left === right),
-        Stream.runForEach((ir) => Effect.andThen(apply(ir), Deferred.succeed(first, undefined))),
+        Stream.switchMap((ir) =>
+            Stream.fromEffect(attempt(ir, Deferred.succeed(first, undefined).pipe(Effect.asVoid)))
+        ),
+        Stream.runDrain,
         Effect.andThen(
             Effect.fail(
                 new BackendError({
@@ -343,6 +387,12 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
                 ),
                 Stream.changes
             ),
+            status: {
+                get: Effect.andThen(ready, SubscriptionRef.get(status)).pipe(Effect.map((value) => value!)),
+                changes: SubscriptionRef.changes(status).pipe(
+                    Stream.filterMap((value) => (value ? Result.succeed(value) : Result.fail(undefined)))
+                ),
+            },
         },
         get: (type, key) => read((service) => service.get(type, key)),
         readSubset: (subset) => read((service) => service.readSubset(subset)),

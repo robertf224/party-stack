@@ -208,6 +208,11 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly visibleRevision: (tx: ReadTransaction) => Effect.Effect<number, OntologyStorageError>;
     /** Read a local observation fence from this replica's own storage. */
     readonly readVisibleRevision: Effect.Effect<number, BackendError>;
+    /** Retire this engine before its owner closes it: streams served from it end with `error`
+     * now, and calls that reach it after it closes fail with `error`. */
+    readonly retire: (error: BackendError) => Effect.Effect<void>;
+    /** Fails with the retirement error once the engine is retired. */
+    readonly retired: Effect.Effect<never, BackendError>;
     readonly hasCoverage: (
         tx: ReadTransaction,
         subset: CompiledSubset
@@ -601,8 +606,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             ]) as Table<unknown>[],
     });
     let closed = false;
+    // Set when the owner retires this engine on purpose (a followed replica reopening), so
+    // callers still attached to it learn to reconnect rather than stop.
+    let closedWith: BackendError | undefined;
+    const retired = yield* Deferred.make<never, BackendError>();
     const open = Effect.suspend(() =>
-        closed ? Effect.fail(fault("InvalidRequest", "Replica scope is closed.")) : Effect.void
+        closed ? Effect.fail(closedWith ?? fault("InvalidRequest", "Replica scope is closed.")) : Effect.void
     );
     yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
@@ -5034,6 +5043,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         ),
         visibleRevision,
         readVisibleRevision: access(tables.read(visibleRevision)),
+        retire: (error) =>
+            Effect.andThen(
+                Effect.sync(() => {
+                    closedWith = error;
+                }),
+                Deferred.fail(retired, error)
+            ),
+        retired: Deferred.await(retired),
         hasCoverage: (tx, subset) =>
             Effect.gen(function* () {
                 const proof = yield* coverageFor(tx, subset);

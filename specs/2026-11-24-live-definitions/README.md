@@ -8,8 +8,8 @@ definition their replica is open under; schema errors trigger a recheck; a manag
 starts offline under the definition it last had open; and children resume after a reopen
 with only the changed types sent again. Reopening is the only way a replica changes
 definition: the route-level swap and the catalog's `rebuild` are gone. An in-app
-`LiveOntology` and a browser worker's replica still open under one definition; the app opens
-them again, as it does today.
+`LiveOntology` keeps one definition and reports when it is stale; `OntologyProvider` reopens
+it. A browser worker's replica still opens under one definition.
 
 ## BLUF
 
@@ -83,7 +83,10 @@ The handle stays the same. Reads and waits that were running run again on the ne
 queries switch to it and emit again, and demand held across the reopen is acquired again.
 Outbox entries, receipts and downloads are kept as for a reset at open. If the new definition
 cannot be opened, the startup transaction rolls back and the replica reopens under the previous
-one until the source supplies another.
+one. `replica.definition.status` reports the failed definition and its error; a retryable
+failure is tried again with backoff, any other waits for the source to supply another. Before
+an engine closes for a reopen it is retired: streams served from it end with a retryable
+error, so children resubscribe to the new engine.
 
 ### Errors that suggest a stale definition
 
@@ -149,8 +152,9 @@ makeOntologyServer({
 ## Next
 
 - **Live ontologies follow too.** An in-app `LiveOntology` builds typed collections from one
-  definition, so the app opens it again on a new one. A browser worker's replica is made the
-  same way. Both could take a definition source later.
+  definition; it reports `stale` and `OntologyProvider` reopens it, which remounts the tree. A
+  browser worker's replica still opens under one definition. Both could take a definition
+  source later.
 - **Persist delivery state.** Children's delivered hashes are in memory per stream; a parent
   restart, or eviction, means a full resend. Storing them in the parent's tables (one row per
   delivered ref per stream, as Zero's CVR does) bounds memory and survives restarts.

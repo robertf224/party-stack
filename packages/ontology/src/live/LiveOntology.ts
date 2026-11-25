@@ -94,6 +94,21 @@ export interface DecryptOptions {
     readonly cache?: boolean;
     readonly signal?: AbortSignal;
 }
+export interface LiveOntologyDefinitionStatus {
+    /**
+     * `"stale"`: the server now has a different definition than the one this view opened with.
+     * The view keeps working against cached data, but new rows and changed types need a reopen.
+     * `OntologyProvider` reopens it automatically.
+     */
+    readonly status: "current" | "stale";
+    readonly error?: BackendError;
+}
+/** Synchronous status for UI stores (`useSyncExternalStore`). */
+export interface LiveOntologyDefinition {
+    readonly get: () => LiveOntologyDefinitionStatus;
+    /** Calls `listener` when the status changes; returns an unsubscribe function. */
+    readonly subscribe: (listener: () => void) => () => void;
+}
 export type LiveOntologyDecrypt = <A>(value: Encrypted<A>, options?: DecryptOptions) => Promise<A>;
 
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
@@ -102,6 +117,8 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
      */
     readonly dbClient: DbClient;
     readonly ir: OntologyIR;
+    /** Whether the server still serves `ir`. Reopen the view when it becomes stale. */
+    readonly definition: LiveOntologyDefinition;
     readonly context: OntologyContext<Ontology>;
     /** Lazy typed collections. Consuming queries acquire upstream subset demand. */
     readonly objects: LiveOntologyObjects<Ontology["objectTypes"]>;
@@ -135,6 +152,12 @@ interface LiveOntologySettings<Context extends Record<string, unknown>> {
     context?: Context;
     authentication?: ConnectionMonitor;
     label?: string;
+    /**
+     * What the view's local replica does when its stored cache was written under a different
+     * definition (see `makeReplica`). Defaults to `"reset"` for a view fed by a client, so a
+     * reopened view clears only the types that changed, and `"error"` otherwise.
+     */
+    onDefinitionChange?: "reset" | "error";
     /** Attach parent diagnostics, including for committed-only clients.
      * The endpoint must permit internal diagnostics for this caller.
      */

@@ -61,11 +61,33 @@ export interface DynamicReplicaDefinition {
 }
 /** The definition a replica opens under: fixed, or followed. See `makeReplica`'s `definition`. */
 export type ReplicaDefinition = StaticReplicaDefinition | DynamicReplicaDefinition;
+/** Which definition a replica is open under, and whether a newer one failed to open. */
+export interface ReplicaDefinitionStatus {
+    /** The definition the replica is open under and serving. */
+    readonly ir: OntologyIR;
+    /**
+     * The newest definition from a dynamic source that could not be opened. The replica keeps
+     * serving `ir`. A retryable failure is tried again with backoff (`retrying`); any other
+     * waits for the source to supply a different definition. Cleared when a definition opens.
+     */
+    readonly failed?: {
+        readonly ir: OntologyIR;
+        readonly error: BackendError;
+        readonly retrying: boolean;
+    };
+}
 /** The definition a replica is open under. */
 export interface ReplicaDefinitionState {
     readonly current: Effect.Effect<OntologyIR, BackendError>;
     /** The current definition first, then each one the replica reopens under. */
     readonly changes: Stream.Stream<OntologyIR, BackendError>;
+    /** The open definition and any newer one that failed to open. Fails when no definition
+     * has opened. */
+    readonly status: {
+        readonly get: Effect.Effect<ReplicaDefinitionStatus, BackendError>;
+        /** The current status first, then each change. */
+        readonly changes: Stream.Stream<ReplicaDefinitionStatus, BackendError>;
+    };
 }
 export interface ReplicaConfiguration {
     readonly ir: OntologyIR;
@@ -610,6 +632,10 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         definition: {
             current: Effect.succeed(engine.ir),
             changes: Stream.concat(Stream.make(engine.ir), Stream.never),
+            status: {
+                get: Effect.succeed({ ir: engine.ir }),
+                changes: Stream.concat(Stream.make({ ir: engine.ir }), Stream.never),
+            },
         },
         context: options.context ?? {},
         sourceId: engine.sourceId,

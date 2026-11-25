@@ -36,7 +36,7 @@ import {
     SubscriptionRef,
 } from "effect";
 import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcSchema } from "effect/rpc";
-import { expectedBindingHeaders, withExpectedBinding } from "./bindingFence.js";
+import { expectedBindingHeaders, expectedDefinitionHeader, withExpectedBinding } from "./bindingFence.js";
 import {
     OntologyErrorProjection,
     errorProjectionLayer,
@@ -888,7 +888,6 @@ const makeDefinitionClient = Effect.fnUntraced(function* (
             Effect.asVoid
         );
     });
-    const headers = expectedBindingHeaders(description);
     // Delivery metadata already carries the contract hash. Check it at the
     // client boundary too, so a receiver's schema failure reaches definition
     // lifecycle handling even when the transport successfully delivered a frame.
@@ -897,6 +896,13 @@ const makeDefinitionClient = Effect.fnUntraced(function* (
             description.ir ? ontologyDefinitionContractHash(description.ir) : Effect.succeed(undefined)
         ).pipe(Effect.mapError(unavailable))
     );
+    // Requests carry it too, so a server whose definition changed rejects them with
+    // SchemaMismatch instead of serving them under a contract the client does not know.
+    const contract = yield* Effect.orElseSucceed(schemaHash, () => undefined);
+    const headers = {
+        ...expectedBindingHeaders(description),
+        ...(contract !== undefined ? { [expectedDefinitionHeader]: contract } : {}),
+    };
     const checkFrame = Effect.fnUntraced(function* (frame: DeliveryFrame) {
         if (frame.metadata) {
             if (frame.metadata.sourceId !== description.sourceId)

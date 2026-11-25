@@ -357,8 +357,10 @@ a prediction that no longer applies is dropped (the action is still sent), and s
 failures follow the outbox's `failureStrategy`. Completed receipts, submission
 identities, keys, and every pin's desired query survive; pins reacquire their data
 afterward. A bundled `ir` remains a fixed contract and is never silently replaced.
-Existing views also have a fixed IR: reopen them against the reset route to use its
-new schema.
+A `LiveOntology` view keeps the definition it opened with. `live.definition.get()` reports
+`"stale"` once the server's definition changes (and `live.definition.subscribe` notifies);
+`OntologyProvider` closes an owned view and opens it again under the new definition. The
+reopened view clears only the changed types, and the server resends only those.
 
 The route itself stays open through the reset. The server replaces the replica behind
 it: requests that bind the route while the replacement opens wait for it rather than
@@ -401,6 +403,12 @@ held demand move to the new engine, and the server serves the new definition. Ch
 resume their delivery stream receive only the changed types' rows again. When the backend
 rejects a request with `SchemaMismatch`, the replica asks the definition to look again.
 
+If a new definition cannot open, the replica keeps serving the previous one and reports it:
+`replica.definition.status.get` and `.changes` give `{ ir, failed? }`, where `ir` is the
+definition it is open under and `failed` holds the newer definition, its error, and whether it
+is `retrying`. A retryable failure (storage, network) is tried again with backoff; any other
+waits for the source to supply a different definition. A definition that opens clears it.
+
 A managed replica starts under the definition it last had open, so it opens offline, then
 follows its source. Routes fed through `upstream` follow the same way, with the parent's
 description as the source.
@@ -414,6 +422,8 @@ At the native client layer, `client.definition.get` and `.changes` expose
 `retained`, `current`, or `incompatible` status. `.refresh` explicitly checks the
 parent description. Typed schema/source failures from normal operations also
 update that status; there is no periodic metadata poll or live definition stream.
+Requests carry the contract hash of the definition the client accepted, and a server now
+serving a different definition rejects them with `SchemaMismatch`.
 Source/account changes are errors, never automatic schema rebuilds.
 
 Selected delivery checks the schema hash already carried in each batch. A

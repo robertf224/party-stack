@@ -5,6 +5,7 @@ import { MemoryRuntime, Runtime, Runtimes } from "@party-stack/runtime";
 import { Effect, Stream, SubscriptionRef } from "effect";
 import { expect, test } from "vite-plus/test";
 import { makeOntologyServer } from "./routing.js";
+import { makeOntologyLocalClient } from "./rpcLocal.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const definition = (extra: OntologyIR["objectTypes"][number]["properties"] = []): OntologyIR => ({
@@ -118,6 +119,69 @@ test("a managed route can follow a definition and build its backend for each one
                 expect(after.options.ir).toBe(v2);
                 expect(after.options.replica).toBe(replica);
                 expect(built).toEqual([v1, v2]);
+            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
+        )
+    );
+});
+
+test("a client bound to the old definition gets SchemaMismatch after the replica reopens", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const source = yield* SubscriptionRef.make(v1);
+                const server = yield* makeOntologyServer({
+                    routes: {
+                        items: {
+                            kind: "replica",
+                            definition: { kind: "dynamic", changes: SubscriptionRef.changes(source) },
+                            backend: (ir) =>
+                                Effect.succeed(
+                                    makeOntologyBackend({
+                                        ir,
+                                        name: "fence",
+                                        sourceId: "fence",
+                                        supportsIdempotency: true,
+                                        queryFunction: () => Effect.void,
+                                        loadSubset: () => Effect.succeed({ complete: true, rows: [] }),
+                                        applyAction: (request) =>
+                                            Effect.succeed({
+                                                operationId: request.id,
+                                                outcome: "committed" as const,
+                                            }),
+                                    })
+                                ),
+                            onDefinitionChange: "reset",
+                            dangerouslyAllowInternalAccess: true,
+                        },
+                    },
+                });
+                const transport = yield* makeOntologyLocalClient(server);
+                const client = yield* transport.ontology("items");
+                const item = { from: { source: { objectType: "Item" }, binding: "item" } };
+                yield* client.backend.loadSubset(item);
+
+                const replica = (yield* Effect.scoped(server.bind("items"))).options.replica!;
+                yield* SubscriptionRef.set(source, v2);
+                yield* replica.definition.changes.pipe(
+                    Stream.filter((ir) => ir === v2),
+                    Stream.runHead
+                );
+                expect(yield* Effect.result(client.backend.loadSubset(item))).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "SchemaMismatch" },
+                });
+                // The client's definition status reports it, and a fresh client binds to v2.
+                yield* client.definition.changes.pipe(
+                    Stream.filter((status) => status.status === "incompatible" && !status.refreshing),
+                    Stream.runHead
+                );
+                expect(yield* client.definition.get).toMatchObject({
+                    status: "incompatible",
+                    error: { kind: "SchemaMismatch" },
+                });
+                const fresh = yield* transport.ontology("items");
+                expect(fresh.ir).toBe(v2);
+                expect(yield* fresh.backend.loadSubset(item)).toMatchObject({ rows: [] });
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );

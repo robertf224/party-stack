@@ -85,7 +85,7 @@ export interface ReplicaViewOptions {
 /** Materialize a scoped UI view over an existing replica; engine ownership is independent. */
 export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
     options: ReplicaViewOptions
-): Effect.fn.Return<Omit<LiveOntology, "cleanup">, BackendError, Runtime | Scope.Scope> {
+): Effect.fn.Return<Omit<LiveOntology, "cleanup" | "definition">, BackendError, Runtime | Scope.Scope> {
     const services = yield* Runtime;
     const runtime = services;
     const { ir, context, replica } = options;

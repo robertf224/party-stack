@@ -5,6 +5,7 @@ import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { digestBytes } from "@party-stack/ontology-storage/blobs";
 import { Runtime, Runtimes } from "@party-stack/runtime";
 import { Effect, Exit, Scope, Tracer, Stream } from "effect";
+import { makeLiveDefinition } from "./definition.js";
 import { makeReplicaResource } from "./live.js";
 import { makeReplicaOntologyView } from "./view.js";
 import type { LiveOntologyOptions, LiveOntology, OntologyDefinition } from "../live/LiveOntology.js";
@@ -116,7 +117,9 @@ export const makeOntologyResource = Effect.fn("Ontology.acquire")(function* <
                     demand: opts.demand,
                     cache: opts.cache,
                     authentication: opts.authentication,
+                    onDefinitionChange: opts.onDefinitionChange ?? (client ? "reset" : undefined),
                 }).pipe(Effect.provideService(Runtime, runtime));
+                const definition = yield* makeLiveDefinition(client);
                 const close = Scope.close(scope, Exit.void);
                 const view = yield* Effect.cached(
                     Scope.provide(
@@ -150,6 +153,7 @@ export const makeOntologyResource = Effect.fn("Ontology.acquire")(function* <
                             (view) =>
                                 ({
                                     ...view,
+                                    definition,
                                     cleanup: () => Effect.runPromise(close),
                                 }) as LiveOntology<Ontology>
                         )

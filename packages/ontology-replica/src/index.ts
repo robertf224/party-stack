@@ -16,6 +16,7 @@ export type {
     StaticReplicaDefinition,
     DynamicReplicaDefinition,
     ReplicaDefinitionState,
+    ReplicaDefinitionStatus,
     ReplicaReads,
     ReplicaOutbox,
     ReplicaActionStatus,

@@ -284,3 +284,33 @@ test.each(["ready", "strict", "unmount", "replace", "fail", "unused-error"])(
     },
     30_000
 );
+
+test("an owned view reopens under the new definition once the old one has closed", async () => {
+    const server = await createServer({
+        root: fileURLToPath(new URL("../", import.meta.url)),
+        cacheDir: "node_modules/.vite/provider.browser.test",
+        server: { host: "127.0.0.1", port: 0 },
+        logLevel: "error",
+    });
+    const browser = await chromium.launch();
+    try {
+        await server.listen();
+        const page = await browser.newPage();
+        const errors: string[] = [];
+        page.on("pageerror", (error) => errors.push(error.message));
+        await page.goto(`${server.resolvedUrls!.local[0]}e2e/reopen.html`);
+        const events = () =>
+            page.evaluate(() => (Reflect.get(window, "fixture") as { events(): string[] }).events());
+        await expect.poll(() => page.getByTestId("types").textContent(), { timeout: 10_000 }).toBe("Item");
+        expect(await events()).toEqual(["open 1"]);
+        await page.evaluate(() => (Reflect.get(window, "fixture") as { stale(): void }).stale());
+        await expect
+            .poll(() => page.getByTestId("types").textContent(), { timeout: 10_000 })
+            .toBe("Item,Other");
+        expect(await events()).toEqual(["open 1", "close 1", "open 2"]);
+        expect(errors).toEqual([]);
+    } finally {
+        await browser.close();
+        await server.close();
+    }
+}, 30_000);
