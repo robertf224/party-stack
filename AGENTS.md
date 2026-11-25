@@ -19,6 +19,8 @@ party-stack is open source. Everything committed or posted here is public: code,
 
 - Find the CI plan in the .github/workflows folder.
 - Run `vp run <project_name>#test` to build prerequisites and run a package's tests.
+- A package's tests import other workspace packages from their built `lib/`, not their `src/`. Running `vp test` directly in a package skips those builds, so edits to a dependency (including temporary logging) are invisible, while stack traces still show `src/` paths through sourcemaps. After editing a dependency, rebuild it (`vp pack` in its directory, or `vp run <project_name>#test`) before running or debugging a dependent's tests.
+- Before changing lifecycle, scope or protocol behavior to fix a failure seen from another package, reproduce it in the owning package's own tests, which run against its `src/`. A cross-package observation made against stale builds is not evidence.
 - Run `vp run <project_name>#check` for formatting, lint, and type checks.
 - Fix test or type errors until the suite is green.
 - After moving files or changing imports, run `vp run <project_name>#build` to verify checks and published outputs.
