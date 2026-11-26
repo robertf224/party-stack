@@ -92,6 +92,8 @@ export interface ReplicaConfiguration {
     readonly demand?: DemandPolicy;
     readonly outbox?: {
         readonly retryPolicy?: { readonly maxRetries?: number; readonly retryDelayMs?: number };
+        /** Backend dispatch deadline in milliseconds. Defaults to 30 seconds. Infinity disables it. */
+        readonly dispatchTimeoutMs?: number;
         readonly failureStrategy?: "pause" | "discard-all";
         /** Completed results only. Pending intent never expires. Default seven days. */
         readonly resultRetentionMs?: number;
@@ -149,6 +151,8 @@ export interface ReplicaReads {
 }
 export interface ReplicaActionStatus {
     readonly pending?: PendingAction;
+    /** Details of an earlier blocked action visible to this replica. */
+    readonly blockedBy?: BackendError["blockedBy"];
     readonly receipt?: ActionReceipt;
     readonly error?: BackendError;
     readonly parentAcceptance?: { readonly sourceId: string };
@@ -166,6 +170,7 @@ export interface ReplicaOutbox {
         ids?: readonly string[]
     ) => Stream.Stream<readonly (PendingAction & { readonly forwarding: boolean })[], BackendError>;
     readonly get: (id: string) => Effect.Effect<ReplicaActionStatus, BackendError>;
+    /** An earlier blocked action rejects the confirmation wait with Conflict. The action stays queued. */
     readonly wait: (
         id: string,
         options?: { readonly until?: "accepted" | "confirmed" }
@@ -422,6 +427,7 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
             ...options.outbox?.retryPolicy,
             failureStrategy: options.outbox?.failureStrategy,
             prediction: options.outbox?.prediction,
+            dispatchTimeoutMs: options.outbox?.dispatchTimeoutMs,
         },
         execute: (tx, request, settings) =>
             executeAction({

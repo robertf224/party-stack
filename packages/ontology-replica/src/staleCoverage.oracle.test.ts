@@ -16,7 +16,9 @@ import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 // resolves must return, row by row, the source state at some instant inside its
 // freshness bound: `maxCoverageAgeMs` for a fresh proof, `maxStaleAgeMs` for a stale
 // one. A row's confirmed version never moves backwards, and once everything is
-// released the replica converges to the source.
+// released the replica converges to the source. Every enqueued action's wait settles:
+// at once when the queue is stopped at a blocked action at or ahead of it, and in any
+// case once everything is released.
 
 const ir: OntologyIR = {
     types: [],
@@ -92,6 +94,9 @@ const ops = {
     // The next dispatch commits at the source, then times out with a retryable error,
     // so the replica cannot tell whether it committed.
     timeoutAction: Schema.Struct({ kind: Schema.Literal("timeoutAction") }),
+    // The next dispatch commits at the source, then never answers. Only the replica's
+    // dispatch timeout (its 30 second default) ends it, as an unknown outcome.
+    hangAction: Schema.Struct({ kind: Schema.Literal("hangAction") }),
     // The last consumer of a subset leaves; a later read acquires it again. With
     // `collect`, the cache is collected right after, while the subset is unprotected.
     drop: Schema.Struct({
@@ -173,6 +178,7 @@ const ActionScenario = scenario(
         ops.lostReadBack,
         ops.crashAction,
         ops.timeoutAction,
+        ops.hangAction,
         ops.pass,
     ]),
     {
@@ -182,6 +188,34 @@ const ActionScenario = scenario(
         background: Schema.Boolean,
         capture: Schema.Literal("end"),
         idempotent: Schema.Boolean,
+    }
+);
+
+// Blocking: dispatches commit and then crash, time out or hang on a backend that cannot
+// deduplicate, so the queue stops at a blocked action while more actions are enqueued
+// behind it and slow dispatches, held dispatches and passes keep arriving. Every wait
+// at or behind the blocked action must end at once, not when the run does.
+const BlockedScenario = scenario(
+    Schema.Union([
+        ops.increment,
+        ops.crashAction,
+        ops.timeoutAction,
+        ops.hangAction,
+        Schema.Struct({ kind: Schema.Literal("hold"), what: Schema.Literal("actions") }),
+        ops.release,
+        ops.advance,
+        ops.pass,
+        ops.read,
+        ops.edit,
+    ]),
+    {
+        stale: Schema.Boolean,
+        poll: Schema.Literal(false),
+        serial: Schema.Boolean,
+        background: Schema.Boolean,
+        capture: Schema.Literal("end"),
+        idempotent: Schema.Literal(false),
+        actionLatencyMs: Schema.Literals([0, 1_000, 3_000]),
     }
 );
 
@@ -351,8 +385,8 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
             };
             // Each load fetched while loads are held waits for its own release.
             const heldLoads: Array<Deferred.Deferred<void>> = [];
-            // The source version each committed action produced.
-            const committedAt = new Map<string, number>();
+            // A committed no-op has a receipt but produces no row version.
+            const committedAt = new Map<string, number | undefined>();
             let latency = scenario.latencyMs ?? 0;
             let actionLatency = scenario.actionLatencyMs ?? 0;
             let failReadBack = false;
@@ -363,6 +397,7 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
             let failuresFired = 0;
             let crashNextAction = false;
             let timeoutNextAction = false;
+            let hangNextAction = false;
             let terminalInjected = false;
             const backend = makeOntologyBackend({
                 ir,
@@ -420,16 +455,23 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                             return {
                                 operationId: request.id,
                                 outcome: "committed" as const,
-                                affected: [{ objectType: "Item", keys: [id] }],
+                                affected:
+                                    committedAt.get(request.id) === undefined
+                                        ? []
+                                        : [{ objectType: "Item", keys: [id] }],
                             };
                         if (row) {
                             yield* write({ ...row, value: row.value + 1 });
-                            committedAt.set(request.id, version);
                             committedSinceFailure = true;
                         }
+                        committedAt.set(request.id, row ? version : undefined);
                         if (actionLatency) yield* Effect.sleep(actionLatency);
                         // Committed at the source before the receipt reaches the replica.
                         if (holds.actions) yield* Deferred.await(holds.actions);
+                        if (hangNextAction) {
+                            hangNextAction = false;
+                            return yield* Effect.never;
+                        }
                         if (crashNextAction) {
                             crashNextAction = false;
                             return yield* Effect.die(new Error("Adapter bug after commit."));
@@ -600,6 +642,68 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                     yield* Effect.yieldNow;
                 }
             });
+            // Each enqueued action's wait, as an application awaits it.
+            const waits = new Map<string, Fiber.Fiber<unknown, BackendError>>();
+            const judged = new Set<string>();
+            const wait = Effect.fnUntraced(function* (id: string) {
+                waits.set(id, yield* Effect.forkScoped(replica.awaitAction(id)));
+            });
+            let sequence = 0;
+            const enqueueIncrement = Effect.fnUntraced(function* (item: string) {
+                const id = `increment-${sequence++}`;
+                yield* replica.enqueue({ id, name: "increment", parameters: { id: item } });
+                yield* wait(id);
+            });
+            // The queue sends nothing past its first blocked action, and nothing in this
+            // model retries, reconciles or removes one, so a wait at or behind it would
+            // otherwise never end.
+            const stalledWaits = Effect.gen(function* () {
+                const pending = yield* replica.pending;
+                const blockedAt = pending.findIndex((entry) => entry.state === "blocked");
+                return blockedAt < 0
+                    ? []
+                    : pending
+                          .slice(blockedAt)
+                          .map((entry) => entry.invocation.id)
+                          .filter((id) => waits.has(id) && !waits.get(id)!.pollUnsafe());
+            });
+            const checkWaits = Effect.gen(function* () {
+                // A wait gets one more round to observe a block that just happened.
+                if ((yield* stalledWaits).length) yield* progress;
+                for (const id of yield* stalledWaits)
+                    fail(`${id}: its wait continues behind a blocked action`);
+                const pending = yield* replica.pending;
+                for (const [id, fiber] of waits) {
+                    const exit = fiber.pollUnsafe();
+                    if (!exit || judged.has(id)) continue;
+                    judged.add(id);
+                    if (Exit.isSuccess(exit)) {
+                        if (!committedAt.has(id))
+                            fail(`${id}: its wait returned a commit the source never made`);
+                        continue;
+                    }
+                    if (Cause.hasDies(exit.cause)) {
+                        fail(`${id}: its wait died: ${Cause.pretty(exit.cause).split("\n")[0]}`);
+                        continue;
+                    }
+                    const error = Cause.squash(exit.cause);
+                    const entry = pending.find((candidate) => candidate.invocation.id === id);
+                    const blocker = pending.find((candidate) => candidate.state === "blocked");
+                    if (
+                        !(error instanceof BackendError) ||
+                        !entry ||
+                        !blocker ||
+                        entry.sequence < blocker.sequence
+                    ) {
+                        fail(`${id}: its wait failed without a blocked action at or ahead of it`);
+                    } else if (entry.state === "blocked") {
+                        if (error.kind !== entry.failure || error.blockedBy)
+                            fail(`${id}: its wait lost its own dispatch failure`);
+                    } else if (error.kind !== "Conflict" || error.blockedBy?.id !== blocker.invocation.id) {
+                        fail(`${id}: its wait did not identify the first blocked action`);
+                    }
+                }
+            });
             const release = (order: "oldest" | "newest" | "one") =>
                 Effect.gen(function* () {
                     if (order === "one") {
@@ -619,7 +723,6 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                         yield* monotonic;
                     }
                 });
-            let sequence = 0;
             let obstructed = false;
             let firedAtPass = 0;
             for (const operation of scenario.operations) {
@@ -639,6 +742,7 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                 } else if (operation.kind === "revalidate") yield* replica.markDemandedStale;
                 else if (operation.kind === "crashAction") crashNextAction = true;
                 else if (operation.kind === "timeoutAction") timeoutNextAction = true;
+                else if (operation.kind === "hangAction") hangNextAction = true;
                 else if (operation.kind === "lostReadBack") {
                     failReadBack = true;
                     committedSinceFailure = false;
@@ -665,10 +769,14 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                     );
                     terminalInjected ||= operation.failure !== "retryable";
                 } else if (operation.kind === "reopen") {
-                    // The app closes: its reads and passes end with it.
-                    for (const fiber of [...reads, ...passes]) yield* Fiber.interrupt(fiber);
+                    // The app closes: its reads, passes and waits end with it.
+                    for (const fiber of [...reads, ...passes, ...waits.values()])
+                        yield* Fiber.interrupt(fiber);
                     reads.length = 0;
                     passes.length = 0;
+                    const waited = new Set(waits.keys());
+                    waits.clear();
+                    judged.clear();
                     yield* release("oldest");
                     const reacquire = [...leases.keys()];
                     for (const scope of leases.values()) yield* Scope.close(scope, Exit.void);
@@ -677,17 +785,16 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                     device.skew += operation.skewMs;
                     ({ replica, scope: replicaScope } = yield* open);
                     for (const name of reacquire) yield* lease(name);
+                    // The reopened app waits again for the actions it was waiting for.
+                    for (const entry of yield* replica.pending)
+                        if (waited.has(entry.invocation.id)) yield* wait(entry.invocation.id);
                 } else {
                     const known = (yield* replica.get("Item", operation.id)) !== undefined;
-                    if (known)
-                        yield* replica.enqueue({
-                            id: `increment-${sequence++}`,
-                            name: "increment",
-                            parameters: { id: operation.id },
-                        });
+                    if (known) yield* enqueueIncrement(operation.id);
                 }
                 yield* progress;
                 yield* monotonic;
+                yield* checkWaits;
                 // A pass that nothing obstructs revalidates every stale proof it served.
                 if (
                     operation.kind === "pass" &&
@@ -727,11 +834,7 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
                 for (let waited = 0; waited < deadline; waited += 500) {
                     if (scenario.editEveryMs && waited % scenario.editEveryMs === 0) {
                         const id = ids[(waited / scenario.editEveryMs) % ids.length]!;
-                        yield* replica.enqueue({
-                            id: `increment-${sequence++}`,
-                            name: "increment",
-                            parameters: { id },
-                        });
+                        yield* enqueueIncrement(id);
                     }
                     // With edits under way, read every subset, then invalidate them all:
                     // each must load again and install while the outbox stays busy.
@@ -808,6 +911,20 @@ const simulate = (scenario: typeof Scenario.Type, source: Clock.Clock, device: {
             yield* settle("a checkpoint", Effect.result(replica.syncOnce));
             yield* settle("a checkpoint", replica.syncOnce);
             yield* settle("a checkpoint", replica.syncOnce);
+            // Every wait settles once nothing is held: committed, failed, or ended behind
+            // a blocked action. Retries and hung dispatches need clock time and passes.
+            for (
+                let waited = 0;
+                waited < 120_000 && [...waits.values()].some((fiber) => !fiber.pollUnsafe());
+                waited += 1_000
+            ) {
+                yield* settle("a checkpoint", Effect.result(replica.syncOnce));
+                yield* TestClock.adjust(1_000);
+                yield* progress;
+            }
+            yield* checkWaits;
+            for (const [id, fiber] of waits) if (!fiber.pollUnsafe()) fail(`${id}: its wait never settled`);
+            if (violation) return yield* Effect.fail(new Error(violation));
             for (const name of demanded) {
                 const subset = subsets[name]!;
                 yield* settle(`${name}: converging read`, replica.syncSubset(subset));
@@ -838,6 +955,12 @@ it.effect.prop(
     [FreshnessScenario],
     ([value]) => run(asScenario(value)),
     { arbitrary: { runs: 200, size: 24, seed: "stale-coverage-freshness-v1" }, timeout: 120_000 }
+);
+it.effect.prop(
+    "a wait at or behind a blocked action ends at once while dispatches keep crashing, timing out and hanging",
+    [BlockedScenario],
+    ([value]) => run(asScenario(value)),
+    { arbitrary: { runs: 200, size: 24, seed: "stale-coverage-blocked-v1" }, timeout: 120_000 }
 );
 it.effect.prop(
     "a row's confirmed version never regresses when overlapping loads finish out of order",
@@ -1040,6 +1163,62 @@ it.effect("a retried action whose first dispatch may have committed is never sho
                     { kind: "read", subset: "groupA" },
                     { kind: "increment", id: "i0" },
                     { kind: "pass" },
+                    { kind: "read", subset: "whole" },
+                ],
+            });
+            expect(agreed).toBe(true);
+        }
+    })
+);
+
+it.effect("an action queued behind a blocked one ends its wait and is still queued", () =>
+    Effect.gen(function* () {
+        for (const background of [false, true]) {
+            const agreed = yield* run({
+                stale: false,
+                poll: false,
+                serial: false,
+                background,
+                capture: "end",
+                idempotent: false,
+                // The first dispatch commits, then crashes: its outcome is unknown and the
+                // backend cannot deduplicate, so it blocks the queue. The second action
+                // waits behind it.
+                operations: [
+                    { kind: "read", subset: "whole" },
+                    { kind: "crashAction" },
+                    { kind: "increment", id: "i0" },
+                    { kind: "pass" },
+                    { kind: "increment", id: "i1" },
+                    { kind: "pass" },
+                ],
+            });
+            expect(agreed).toBe(true);
+        }
+    })
+);
+
+it.effect("a dispatch that never answers times out as an unknown outcome", () =>
+    Effect.gen(function* () {
+        for (const idempotent of [false, true]) {
+            const agreed = yield* run({
+                stale: false,
+                poll: false,
+                serial: false,
+                background: true,
+                capture: "end",
+                idempotent,
+                // The dispatch commits, then hangs while another action queues behind it.
+                // The timeout blocks it (or retries it, deduplicated), and the queue moves on.
+                operations: [
+                    { kind: "read", subset: "whole" },
+                    { kind: "hangAction" },
+                    { kind: "increment", id: "i0" },
+                    { kind: "increment", id: "i1" },
+                    { kind: "advance", ms: 8_000 },
+                    { kind: "advance", ms: 8_000 },
+                    { kind: "advance", ms: 8_000 },
+                    { kind: "advance", ms: 8_000 },
                     { kind: "read", subset: "whole" },
                 ],
             });
