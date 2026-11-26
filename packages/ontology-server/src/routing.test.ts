@@ -1,6 +1,6 @@
 import * as BrowserWorker from "@effect/platform-browser/BrowserWorker";
 import * as BrowserWorkerRunner from "@effect/platform-browser/BrowserWorkerRunner";
-import { BackendError } from "@party-stack/ontology-backend";
+import { BackendError, projectBackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
@@ -14,6 +14,7 @@ import { makeReplica } from "../../ontology-replica/lib/service.js";
 import { makeOntologyServer } from "./routing.js";
 import { makeOntologyHttpClient, makeOntologyHttpHandler } from "./rpcHttp.js";
 import { makeOntologyWorkerClient, serveOntologyWorker } from "./rpcWorker.js";
+import type { ManagedReplicaRoute } from "./routing.js";
 import type { Scope } from "effect";
 
 const ir = {
@@ -210,7 +211,7 @@ test("routing resolves a replacement native owner while an old subscription is s
     );
 });
 
-test("one worker routes ordinary clients and pin controls to the selected replica", async () => {
+test("one worker routes ordinary clients and download controls to the selected replica", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -254,13 +255,24 @@ test("one worker routes ordinary clients and pin controls to the selected replic
                     })
                 );
                 expect(yield* client.backend.query(query)).toEqual({ issues: [{ id: "issues" }] });
-                expect(client.pins).toBeDefined();
-                expect(yield* client.pins!.pinStatus).toBeUndefined();
-                yield* client.pins!.setPin(query);
-                expect(yield* replica.demand.pinStatus).toMatchObject({ query, attachments: "none" });
-                expect(yield* client.pins!.pinStatus).toMatchObject({ query, attachments: "none" });
-                yield* client.pins!.clearPin;
-                expect(yield* replica.demand.pinStatus).toBeUndefined();
+                expect(client.pinBackend).toBeDefined();
+                const downloads = yield* client.pinBackend!;
+                expect((yield* downloads.loadSubset(objectSubset("Pin"))).rows).toEqual([]);
+                yield* downloads.applyAction({
+                    id: "download",
+                    name: "updatePins",
+                    parameters: { change: { set: [{ name: "issues", query }] } },
+                });
+                expect(yield* replica.demand.pins.list).toMatchObject([
+                    { name: "issues", attachments: "none" },
+                ]);
+                expect((yield* downloads.loadSubset(objectSubset("Pin"))).rows).toHaveLength(1);
+                yield* downloads.applyAction({
+                    id: "clear",
+                    name: "updatePins",
+                    parameters: { change: { clearName: "issues" } },
+                });
+                expect(yield* replica.demand.pins.list).toEqual([]);
             })
         )
     );
@@ -280,16 +292,18 @@ test("a shared HTTP client selects static and parameter routes without mixing co
                             backend: fixed,
                             dangerouslyAllowInternalAccess: true,
                         },
-                        "issues/:id": ({ id }) =>
-                            Effect.gen(function* () {
-                                expectTypeOf(id).toEqualTypeOf<string>();
-                                opened.push(id);
-                                return {
-                                    kind: "owned" as const,
-                                    backend: yield* setup(id),
-                                    dangerouslyAllowInternalAccess: true as const,
-                                };
-                            }),
+                        "issues/:id": {
+                            dangerouslyAllowInternalAccess: true,
+                            open: ({ id }) =>
+                                Effect.gen(function* () {
+                                    expectTypeOf(id).toEqualTypeOf<string>();
+                                    opened.push(id);
+                                    return {
+                                        kind: "owned" as const,
+                                        backend: yield* setup(id),
+                                    };
+                                }),
+                        },
                     },
                 });
                 const handler = yield* makeOntologyHttpHandler(server);
@@ -376,25 +390,29 @@ test("literal routes infer all named and wildcard parameters", async () => {
                 const server = yield* makeOntologyServer({
                     enableRealtime: true,
                     routes: {
-                        "forms/:formId/revisions/:revisionId": (params) => {
-                            expectTypeOf(params).toEqualTypeOf<
-                                Readonly<{ formId: string; revisionId: string }>
-                            >();
-                            seen.push(params);
-                            return Effect.succeed({
-                                kind: "owned",
-                                backend,
-                                dangerouslyAllowInternalAccess: true,
-                            });
+                        "forms/:formId/revisions/:revisionId": {
+                            dangerouslyAllowInternalAccess: true,
+                            open: (params) => {
+                                expectTypeOf(params).toEqualTypeOf<
+                                    Readonly<{ formId: string; revisionId: string }>
+                                >();
+                                seen.push(params);
+                                return Effect.succeed({
+                                    kind: "owned",
+                                    backend,
+                                });
+                            },
                         },
-                        "assets/*path": (params) => {
-                            expectTypeOf(params).toEqualTypeOf<Readonly<{ path: string }>>();
-                            seen.push(params);
-                            return Effect.succeed({
-                                kind: "owned",
-                                backend,
-                                dangerouslyAllowInternalAccess: true,
-                            });
+                        "assets/*path": {
+                            dangerouslyAllowInternalAccess: true,
+                            open: (params) => {
+                                expectTypeOf(params).toEqualTypeOf<Readonly<{ path: string }>>();
+                                seen.push(params);
+                                return Effect.succeed({
+                                    kind: "owned",
+                                    backend,
+                                });
+                            },
                         },
                     },
                 });
@@ -417,24 +435,26 @@ test("a route that fails to open is opened again by the next request, not served
                     enableRealtime: true,
                     // The default 60 second retention: a cached failure would outlive the test.
                     routes: {
-                        "issues/:id": () =>
-                            Effect.gen(function* () {
-                                const attempt = ++opens;
-                                if (attempt === 1) {
-                                    yield* Deferred.await(release);
-                                    return yield* new BackendError({
-                                        operation: "test.open",
-                                        kind: "Unavailable",
-                                        retryable: true,
-                                        message: "Schema load failed.",
-                                    });
-                                }
-                                return {
-                                    kind: "owned" as const,
-                                    backend,
-                                    dangerouslyAllowInternalAccess: true as const,
-                                };
-                            }),
+                        "issues/:id": {
+                            dangerouslyAllowInternalAccess: true,
+                            open: () =>
+                                Effect.gen(function* () {
+                                    const attempt = ++opens;
+                                    if (attempt === 1) {
+                                        yield* Deferred.await(release);
+                                        return yield* new BackendError({
+                                            operation: "test.open",
+                                            kind: "Unavailable",
+                                            retryable: true,
+                                            message: "Schema load failed.",
+                                        });
+                                    }
+                                    return {
+                                        kind: "owned" as const,
+                                        backend,
+                                    };
+                                }),
+                        },
                     },
                 });
                 // Requests already waiting on the failing open share its failure.
@@ -461,21 +481,188 @@ test("a route that fails to open is opened again by the next request, not served
     );
 });
 
+const definitionFailure = () =>
+    new BackendError({
+        operation: "metadata.pull",
+        kind: "InvalidConfiguration",
+        retryable: false,
+        message: "Pulled ontology is invalid: Unknown property.",
+    });
+
+test.each([
+    [undefined, "The operation could not be completed."],
+    [true as const, "Pulled ontology is invalid: Unknown property."],
+])(
+    "a route that fails to open reports its original error only to callers allowed internal access (%s)",
+    async (dangerouslyAllowInternalAccess, message) => {
+        await Effect.runPromise(
+            Effect.scoped(
+                Effect.gen(function* () {
+                    const server = yield* makeOntologyServer({
+                        routes: {
+                            broken: { dangerouslyAllowInternalAccess, open: () => definitionFailure() },
+                        },
+                    }).pipe(
+                        Effect.flatMap((router) => makeOntologyHttpHandler(router)),
+                        Effect.map((handleRequest) => ({ handleRequest }))
+                    );
+                    const result = yield* Effect.result(
+                        makeOntologyHttpClient({ url: "https://ontology.test/rpc", ontology: "broken" }).pipe(
+                            Effect.flatMap((client) => client.ontology())
+                        )
+                    ).pipe(
+                        Effect.provide(FetchHttpClient.layer),
+                        Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+                            server.handleRequest(new Request(input, init))
+                        )
+                    );
+                    expect(result).toMatchObject({
+                        _tag: "Failure",
+                        failure: { kind: "InvalidConfiguration", message },
+                    });
+                })
+            )
+        );
+    }
+);
+
+test("a route authenticates before it opens, and a predicate decides who sees open failures", async () => {
+    let opens = 0;
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const server = yield* makeOntologyServer({
+                    routes: {
+                        broken: {
+                            authenticate: (request) => {
+                                const role = request.headers.get("role");
+                                return role
+                                    ? Effect.succeed({ role })
+                                    : Effect.fail(
+                                          new BackendError({
+                                              operation: "test.authenticate",
+                                              kind: "Unauthenticated",
+                                              retryable: false,
+                                              message: "No session.",
+                                          })
+                                      );
+                            },
+                            dangerouslyAllowInternalAccess: (context) => context.role === "admin",
+                            open: () =>
+                                Effect.suspend(() => {
+                                    opens++;
+                                    return definitionFailure();
+                                }),
+                        },
+                    },
+                    idleRetentionMs: 0,
+                });
+                const attempt = (headers: Record<string, string>) =>
+                    server.bind("broken", new Request("https://ontology.test/rpc", { headers })).pipe(
+                        Effect.mapError((error) => projectBackendError(error, server.errors)),
+                        Effect.flip
+                    );
+
+                expect(yield* attempt({})).toMatchObject({ kind: "Unauthenticated" });
+                expect(opens).toBe(0);
+                expect(yield* attempt({ role: "admin" })).toMatchObject({
+                    message: "Pulled ontology is invalid: Unknown property.",
+                });
+                expect(yield* attempt({ role: "member" })).toMatchObject({
+                    message: "The operation could not be completed.",
+                });
+                expect(opens).toBe(2);
+            })
+        )
+    );
+});
+
+test("replica routes require internal access for every caller", async () => {
+    const result = await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const backend = yield* setup("replica-access");
+                const server = yield* makeOntologyServer({
+                    routes: {
+                        items: {
+                            dangerouslyAllowInternalAccess: () => true,
+                            open: Effect.gen(function* () {
+                                return {
+                                    kind: "replica" as const,
+                                    backend,
+                                    replica: yield* makeReplica({
+                                        namespace: "replica-access",
+                                        ir,
+                                        backend,
+                                        tables: yield* Memory.make(),
+                                        live: false,
+                                    }),
+                                };
+                            }),
+                        },
+                    },
+                });
+                return yield* Effect.result(server.bind("items"));
+            })
+        )
+    );
+    expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: {
+            kind: "InvalidConfiguration",
+            message: "Replica routes require dangerouslyAllowInternalAccess: true.",
+        },
+    });
+});
+
+test("access and authentication are settings of the route, not of what it opens", () => {
+    const backend = undefined as unknown as Effect.Success<ReturnType<typeof makeOwnedBackend>>;
+    void (() =>
+        makeOntologyServer({
+            routes: {
+                // @ts-expect-error Internal access is declared beside `open`, not returned by it.
+                opened: {
+                    dangerouslyAllowInternalAccess: true,
+                    open: () =>
+                        Effect.succeed({
+                            kind: "owned" as const,
+                            backend,
+                            dangerouslyAllowInternalAccess: true as const,
+                        }),
+                },
+            },
+        }));
+});
+
+test("managed replica routes leave the protocol source and bootstrap to the server", () => {
+    type Keys = ManagedReplicaRoute extends infer Route
+        ? Route extends unknown
+            ? keyof Route
+            : never
+        : never;
+    expectTypeOf<Extract<Keys, "source" | "bootstrap">>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<Keys, "onDefinitionChange" | "ir" | "upstream">>().toEqualTypeOf<
+        "onDefinitionChange" | "ir" | "upstream"
+    >();
+});
+
 test("inferred route parameters preserve Effect service requirements", async () => {
     class Label extends Context.Service<Label, string>()("routing-test/Label") {}
     const open = makeOntologyServer({
         enableRealtime: true,
         replicas: {},
         routes: {
-            "issues/:id": ({ id }) =>
-                Effect.gen(function* () {
-                    const label = yield* Label;
-                    return {
-                        kind: "owned" as const,
-                        backend: yield* setup(`${id}-${label}`),
-                        dangerouslyAllowInternalAccess: true as const,
-                    };
-                }),
+            "issues/:id": {
+                dangerouslyAllowInternalAccess: true,
+                open: ({ id }) =>
+                    Effect.gen(function* () {
+                        const label = yield* Label;
+                        return {
+                            kind: "owned" as const,
+                            backend: yield* setup(`${id}-${label}`),
+                        };
+                    }),
+            },
         },
     });
     expectTypeOf<Effect.Services<typeof open>>().toEqualTypeOf<Label | Scope.Scope>();
@@ -502,23 +689,25 @@ test.each([undefined, {}])("managed replica routes share one owner with replicas
                     replicas,
                     idleRetentionMs: 0,
                     routes: {
-                        "issues/:id": Effect.fnUntraced(function* ({ id }: Readonly<Record<string, string>>) {
-                            acquired++;
-                            if (!available)
-                                return yield* new BackendError({
-                                    operation: "route",
-                                    kind: "Unauthenticated",
-                                    retryable: false,
-                                    message: "Expired",
-                                });
-                            return {
-                                kind: "replica" as const,
-                                dangerouslyAllowInternalAccess: true as const,
-                                backend,
-                                ir,
-                                namespace: `issues-${id}`,
-                            };
-                        }),
+                        "issues/:id": {
+                            dangerouslyAllowInternalAccess: true,
+                            open: Effect.fnUntraced(function* ({ id }: Readonly<Record<string, string>>) {
+                                acquired++;
+                                if (!available)
+                                    return yield* new BackendError({
+                                        operation: "route",
+                                        kind: "Unauthenticated",
+                                        retryable: false,
+                                        message: "Expired",
+                                    });
+                                return {
+                                    kind: "replica" as const,
+                                    backend,
+                                    definition: { kind: "static" as const, ir },
+                                    namespace: `issues-${id}`,
+                                };
+                            }),
+                        },
                     },
                 });
                 expectTypeOf<Effect.Services<typeof open>>().toEqualTypeOf<Runtimes | Scope.Scope>();
@@ -552,15 +741,17 @@ test("managed replica scope prefixes a configured namespace after concrete route
                     enableRealtime: true,
                     replicas: { scope: "server:one" },
                     routes: {
-                        "issues/:id": ({ id }) =>
-                            Effect.succeed({
-                                kind: "replica" as const,
-                                dangerouslyAllowInternalAccess: true as const,
-                                ir,
-                                backend,
-                                namespace: `cache:${id}`,
-                                live: false,
-                            }),
+                        "issues/:id": {
+                            dangerouslyAllowInternalAccess: true,
+                            open: ({ id }) =>
+                                Effect.succeed({
+                                    kind: "replica" as const,
+                                    definition: { kind: "static" as const, ir },
+                                    backend,
+                                    namespace: `cache:${id}`,
+                                    live: false,
+                                }),
+                        },
                     },
                 });
                 const first = yield* server.bind("/issues/one/");

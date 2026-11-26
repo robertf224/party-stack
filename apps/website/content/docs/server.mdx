@@ -247,17 +247,19 @@ export const openServer = Effect.fn("App.openServer")(function* (options: {
         enableRealtime: true,
         routes: {
             issues: { kind: "owned", backend, ir, authenticate },
-            "forms/:formId": ({ formId }) =>
-                Effect.gen(function* () {
-                    const formBackend = yield* openFormBackend(formId);
-                    return {
-                        kind: "proxy" as const,
-                        backend: formBackend,
-                        ir: formIR,
-                        authenticate,
-                        enableRealtime: false,
-                    };
-                }),
+            "forms/:formId": {
+                authenticate,
+                open: ({ formId }) =>
+                    Effect.gen(function* () {
+                        const formBackend = yield* openFormBackend(formId);
+                        return {
+                            kind: "proxy" as const,
+                            backend: formBackend,
+                            ir: formIR,
+                            enableRealtime: false,
+                        };
+                    }),
+            },
         },
         idleRetentionMs: 60_000,
     });
@@ -311,17 +313,19 @@ export const openDeviceServer = Effect.fn("App.openDeviceServer")(function* (
     return yield* makeOntologyServer({
         enableRealtime: true,
         routes: {
-            "workspaces/:workspaceId": ({ workspaceId }) =>
-                Effect.succeed({
-                    kind: "replica" as const,
-                    upstream: {
-                        client: upstreamClient,
-                        ontology: `workspaces/${workspaceId}`,
-                    },
-                    context: { userId },
-                    definition: { onIncompatible: "rebuild" as const },
-                    dangerouslyAllowInternalAccess: true as const,
-                }),
+            "workspaces/:workspaceId": {
+                dangerouslyAllowInternalAccess: true,
+                open: ({ workspaceId }) =>
+                    Effect.succeed({
+                        kind: "replica" as const,
+                        upstream: {
+                            client: upstreamClient,
+                            ontology: `workspaces/${workspaceId}`,
+                        },
+                        context: { userId },
+                        onDefinitionChange: "reset" as const,
+                    }),
+            },
         },
     });
 });
@@ -331,24 +335,118 @@ Here `upstreamClient` is an acquired HTTP, worker, or local client, and `userId`
 comes from the selected account. Provide persistent `Runtimes` to this device
 server, as in the [Expo guide](/docs/expo). Keep its internal-access endpoint private.
 
-The first open obtains the parent's description. The partition catalog then saves
-the IR, context, source identity, and protocol capabilities with the partition
-address. Later opens restore that binding locally. They can answer from retained
-data without a startup `Describe` request or a validation gate. Normal requests
-still verify source and context; they cannot silently use another account's data.
+The first open obtains the parent's description. The partition catalog then saves the
+context, source identity and protocol capabilities with the partition address, and the
+replica keeps the parent's definition in a replica of its `meta` resource, in its own storage.
+Later opens restore both locally. They can answer from retained data without a startup
+`Describe` request or a validation gate. Normal requests still verify source and context; they
+cannot silently use another account's data.
 
-Omit `definition` to preserve retained data and report incompatible definitions.
-For an app generated from a fixed schema, supply `definition: { ir: appIR }`.
+With `onDefinitionChange: "reset"`, the replica follows the parent's definition. When the
+parent's metadata changes (a live replica watches it), or a request under the old definition is
+rejected with `SchemaMismatch`, the replica reads the new one from the parent's `meta` resource
+and reopens behind the same handle (see below). An action the parent rejected that way before
+committing it stays queued and is sent again after the reopen. Omit `onDefinitionChange` (or set
+`"error"`) to preserve retained data and report incompatible definitions. For an app
+generated from a fixed schema, supply `ir: appIR`; the parent's definition must then match
+it and is never adopted.
 This checks the retained/remote contract against the bundled application contract;
 it does not make a first-ever remote connection possible offline.
 
-With `onIncompatible: "rebuild"`, a typed schema mismatch triggers acquisition of
-the new definition and rebuilding of the downloaded cache. Pending or accepted
-actions block that rebuild. Completed receipts, submission identities, keys, and
-desired offline pins survive; compatible pins reacquire their data afterward.
-A bundled `ir` remains a fixed contract and is never silently replaced. Existing
-views also have a fixed IR: reopen them against the rebuilt route to use its new
-schema.
+With `onDefinitionChange: "reset"`, a typed schema mismatch triggers acquisition of
+the new definition and a reset of the downloaded cache. Queued actions stay queued:
+when the replica reopens, their predictions are replayed against the new definition,
+a prediction that no longer applies is dropped (the action is still sent), and send
+failures follow the outbox's `failureStrategy`. Completed receipts, submission
+identities, keys, and every pin's desired query survive; pins reacquire their data
+afterward. A bundled `ir` remains a fixed contract and is never silently replaced.
+A `LiveOntology` view keeps the definition it opened with. `live.definition.get()` reports
+`"stale"` once the server's definition changes (and `live.definition.subscribe` notifies);
+`OntologyProvider` closes an owned view and opens it again under the new definition. The
+reopened view clears only the changed types, and the server resends only those.
+
+The route itself stays open through the reset. The server replaces the replica behind
+it: requests that bind the route while the replacement opens wait for it rather than
+failing, and the route is not reopened. Streams served by the old replica end, and their
+clients subscribe again on the same connection. Delivery frames carry the definition's
+hash, so a child replica learns of the change from the next frame it receives.
+
+`onDefinitionChange` is a replica setting, so it also applies to replicas fed by a
+backend and to `makeReplica`: with `"reset"`, a replica opened with a definition whose
+contract differs from its stored cache resets that cache instead of failing with
+`SchemaMismatch`. A backend-fed replica clears only the object types whose own contract
+changed (or that were removed); other types keep their rows, and action, link or query
+function changes clear nothing. Display names, descriptions, icons and colors are not part
+of the contract. Changes to named value types, context or policy clear everything.
+
+### Follow a changing definition
+
+`definition` is static, `{ kind: "static", ir }`, or dynamic, `{ kind: "dynamic", meta,
+select? }`. A dynamic replica reads its definition from `meta`, a backend that serves the
+meta ontology (`@party-stack/ontology-spec/meta`), and follows it as it changes. Pass a `backend` built for each
+definition when the adapter compiles the IR:
+
+```ts
+const route = {
+    kind: "replica" as const,
+    definition: {
+        kind: "dynamic" as const,
+        meta: metadataBackend,
+        select: { objectTypeNames: ["Task", "Project"], actionTypeNames: ["completeTask"] },
+    },
+    backend: (ir: OntologyIR) => makeProviderBackend({ ...connection, ir }),
+    context,
+    onDefinitionChange: "reset" as const,
+    dangerouslyAllowInternalAccess: true as const,
+};
+```
+
+`select` takes the same options as `pull`: `objectTypeNames`, `actionTypeNames`,
+`queryFunctionTypeNames` and `transform` (app-specific edits applied before invalid
+definitions are omitted). Omitted names select everything of that kind.
+
+The replica keeps its own replica of the metadata it reads, in the same storage and under the
+same `live` setting and demand policy, and demands exactly the rows the definition was built
+from, so the definition is as fresh as the data it describes. That metadata syncs like any other data, so
+the replica opens offline under the definition it last read and notices changes as its watch
+or polling reports them (a metadata backend can recommend a poll interval through `refresh`).
+After a change it waits until every row the definition was read from is current again before
+reading it, so an edit a provider delivers one type at a time reopens it once. When the definition's contract changes, the replica reopens behind the same handle: it
+clears only the object types whose contract changed, live queries and held demand move to the
+new engine, and the server serves the new definition. Children that resume their delivery
+stream receive only the changed types' rows again. When the backend rejects a request with
+`SchemaMismatch`, the replica revalidates the metadata it read.
+
+`replica.status` reports `definition: { hash, error? }`: the contract hash of the definition
+the replica is open under, and an error when a newer definition could not be read or opened.
+The replica keeps serving the previous definition until one opens, which clears the error.
+
+A managed replica reopens its account's partition without reading the definition first: its
+metadata replica, stored there, has it. Only the first open for an account reads the
+definition from the metadata backend, because the partition depends on the definition's
+context. The catalog stores the partition, context and (for `upstream` routes) the parent's
+description; it no longer stores definitions.
+
+### Definition metadata
+
+Every route with a definition serves it as meta ontology rows on the `meta` resource of the
+same route, with the same access as `Describe`. `Describe` (protocol version 2) carries the
+binding and capabilities, plus `definitionHash` and `contractHash`; a client reads the definition from the
+`meta` resource in one request and checks it against `definitionHash`. A local client
+(`makeOntologyLocalClient`) uses its server's definition object instead while it is the one
+described. A protocol
+client exposes the resource as `client.metaBackend`, which always serves the route's current
+definition, and a retained client is opened with both its accepted `description` and the `ir`
+it was accepted with.
+
+Value, object, link, action and query function types and properties may carry an `id`: a
+stable identifier assigned by their provider that survives renames. A definition may leave
+ids out; each then defaults to its name (for a link type, its source object type and
+`target.name`), and meta ontology rows always carry them. Ids are not part of the contract, so
+a definition generated without them (code generation leaves them out) is compatible with the
+provider's. A replica still treats a changed id as a different type: when both definitions set
+an object type's or property's id and they differ, that type's cached rows are cleared (or, with
+`onDefinitionChange: "error"`, opening fails).
 
 Display names, descriptions, and other presentation metadata do not force a cache
 reset. Other contract changes are conservatively incompatible for now, including
@@ -358,16 +456,18 @@ future work.
 At the native client layer, `client.definition.get` and `.changes` expose
 `retained`, `current`, or `incompatible` status. `.refresh` explicitly checks the
 parent description. Typed schema/source failures from normal operations also
-update that status; there is no periodic metadata poll or live definition stream.
+update that status. While something follows `.changes`, the client watches the route's
+`meta` resource and checks the description again when it changes (after a random delay of up
+to two seconds, so a route's clients don't all check at once), so an idle client learns of a
+new definition without a failed request. A server without realtime offers no watch; the
+next request after a change reports it instead.
+Requests carry the contract hash of the definition the client accepted, and a server now
+serving a different definition rejects them with `SchemaMismatch`.
 Source/account changes are errors, never automatic schema rebuilds.
 
 Selected delivery checks the schema hash already carried in each batch. A
 finite-only adapter that does not report typed `SchemaMismatch` errors needs an
 explicit definition refresh to discover upstream schema changes.
-
-Native adapters that need IR before construction can use `route.definition` to
-restore it from the same catalog. The [Expo Foundry example](/docs/expo) shows this
-with `loadDefinition(metadataBackend)`.
 
 ## Use separate HTTP endpoints
 
@@ -432,6 +532,24 @@ dangerouslyAllowInternalAccess: (context) => context.role === "internal-admin",
 Declare `role` in the context type and return it from `authenticate`. The predicate
 must return a boolean synchronously; session/database checks belong in `authenticate`.
 Use `true` only when all callers may run internal commands. Trace recording is separate.
+
+A route that acquires its backend declares these settings beside `open`:
+
+```ts
+routes: {
+    "forms/:formId": {
+        authenticate,
+        dangerouslyAllowInternalAccess: (context) => context.role === "internal-admin",
+        open: ({ formId }) => openFormRoute(formId),
+    },
+},
+```
+
+Each request is authenticated before the route opens, so an unauthenticated request
+never opens it. If opening fails (for example its definition doesn't load), a caller
+allowed internal access gets the original error; everyone else gets a generic message.
+A predicate needs `authenticate` for this, since a route's fixed context only exists
+once it has opened. Replica routes require `true`.
 
 The SharedWorker helpers enable internal access for private app ports. Without an
 IR policy, this also exposes raw backend/replica capabilities. With a policy, raw

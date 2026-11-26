@@ -91,9 +91,12 @@ export const openHandler = Effect.fn("App.openHandler")(function* (options: {
     const server = yield* makeOntologyServer({
         routes: {
             issues: { kind: "owned", backend: owned, authenticate },
-            "forms/:formId": Effect.fnUntraced(function* ({ formId }: Readonly<Record<string, string>>) {
-                return { kind: "proxy" as const, backend: yield* openForm(formId!), ir, authenticate };
-            }),
+            "forms/:formId": {
+                authenticate,
+                open: Effect.fnUntraced(function* ({ formId }: Readonly<Record<string, string>>) {
+                    return { kind: "proxy" as const, backend: yield* openForm(formId!), ir };
+                }),
+            },
         },
         idleRetentionMs: 60_000,
     });
@@ -262,6 +265,12 @@ Use `true` for a private endpoint, or a synchronous predicate over validated con
 ```ts
 dangerouslyAllowInternalAccess: (context) => context.role === "internal-admin",
 ```
+
+A route that acquires its backend declares `authenticate` and
+`dangerouslyAllowInternalAccess` beside `open`, and `open` returns only the backend and
+binding. Each request is authenticated before the route opens. If opening fails, a caller
+allowed internal access gets the original error and everyone else a generic message; a
+predicate needs `authenticate` for this. Replica routes require `true`.
 
 Authentication still runs per request. A predicate must return a boolean; session
 and database checks belong in `authenticate`. Worker helpers enable internal access

@@ -3,7 +3,7 @@ import canonicalOntology from "../ir/schema.js";
 import metaOntology from "./ontology.js";
 
 describe("meta ontology runtime fields", () => {
-    it("keeps identifiers runtime-only and preserves presentation metadata", () => {
+    it("gives definitions an optional provider id and preserves presentation metadata", () => {
         const objectType = canonicalOntology.types.find((type) => type.name === "ObjectTypeDef");
         const property = canonicalOntology.types.find((type) => type.name === "PropertyDef");
         const actionType = canonicalOntology.types.find((type) => type.name === "ActionTypeDef");
@@ -20,13 +20,14 @@ describe("meta ontology runtime fields", () => {
             throw new Error("Expected canonical object, property, and action definitions to be structs.");
         }
 
-        expect(objectType.type.value.fields.map(({ name }) => name)).not.toContain("id");
+        const optionalString = { kind: "optional", value: { type: { kind: "string", value: {} } } };
+        expect(objectType.type.value.fields.find(({ name }) => name === "id")?.type).toEqual(optionalString);
         expect(objectType.type.value.fields.find(({ name }) => name === "title")?.type).toEqual({
             kind: "optional",
             value: { type: { kind: "string", value: {} } },
         });
-        expect(property.type.value.fields.map(({ name }) => name)).not.toContain("id");
-        expect(actionType.type.value.fields.map(({ name }) => name)).not.toContain("id");
+        expect(property.type.value.fields.find(({ name }) => name === "id")?.type).toEqual(optionalString);
+        expect(actionType.type.value.fields.find(({ name }) => name === "id")?.type).toEqual(optionalString);
         expect(objectType.type.value.fields.map(({ name }) => name)).toEqual(
             expect.arrayContaining(["icon", "color"])
         );
@@ -63,33 +64,16 @@ describe("meta ontology runtime fields", () => {
         });
     });
 
-    it("requires IDs while preserving the canonical title field in runtime metadata", () => {
-        const objectType = metaOntology.objectTypes.find((type) => type.name === "ObjectType");
-        const property = metaOntology.types.find((type) => type.name === "PropertyDef");
-        const actionType = metaOntology.objectTypes.find((type) => type.name === "ActionType");
-
-        expect(objectType?.properties.find(({ name }) => name === "id")?.type).toEqual({
-            kind: "string",
-            value: {},
-        });
-        expect(objectType?.properties.find(({ name }) => name === "title")?.type).toEqual({
-            kind: "optional",
-            value: {
-                type: { kind: "string", value: {} },
-            },
-        });
-
-        expect(property?.type.kind).toBe("struct");
-        if (property?.type.kind !== "struct") {
-            throw new Error("Expected runtime PropertyDef to be a struct.");
+    it("requires the ids a definition may leave out", () => {
+        const stringType = { kind: "string", value: {} };
+        for (const name of ["ObjectType", "ActionType", "LinkType", "QueryFunctionType", "ValueType"]) {
+            const objectType = metaOntology.objectTypes.find((type) => type.name === name);
+            expect(objectType?.properties.find((property) => property.name === "id")?.type).toEqual(
+                stringType
+            );
         }
-        expect(property.type.value.fields.find(({ name }) => name === "id")?.type).toEqual({
-            kind: "string",
-            value: {},
-        });
-        expect(actionType?.properties.find(({ name }) => name === "id")?.type).toEqual({
-            kind: "string",
-            value: {},
-        });
+        const property = metaOntology.types.find((type) => type.name === "PropertyDef");
+        if (property?.type.kind !== "struct") throw new Error("Expected PropertyDef to be a struct.");
+        expect(property.type.value.fields.find(({ name }) => name === "id")?.type).toEqual(stringType);
     });
 });

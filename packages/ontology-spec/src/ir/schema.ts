@@ -387,6 +387,13 @@ export default {
             type: o.struct({
                 fields: [
                     {
+                        name: "id",
+                        displayName: "ID",
+                        type: o.optional({ type: o.string({}) }),
+                        description:
+                            "A stable identifier for this value type, assigned by its provider: it survives renames. Defaults to its name.",
+                    },
+                    {
                         name: "name",
                         displayName: "Name",
                         type: o.string({}),
@@ -588,6 +595,13 @@ export default {
             type: o.struct({
                 fields: [
                     {
+                        name: "id",
+                        displayName: "ID",
+                        type: o.optional({ type: o.string({}) }),
+                        description:
+                            "A stable identifier for this property, assigned by its provider: it survives renames. Defaults to its name.",
+                    },
+                    {
                         name: "name",
                         displayName: "Name",
                         type: o.string({}),
@@ -624,6 +638,13 @@ export default {
             description: "An object type in the ontology.",
             type: o.struct({
                 fields: [
+                    {
+                        name: "id",
+                        displayName: "ID",
+                        type: o.optional({ type: o.string({}) }),
+                        description:
+                            "A stable identifier for this object type, assigned by its provider: it survives renames. Defaults to its name.",
+                    },
                     {
                         name: "name",
                         displayName: "Name",
@@ -728,7 +749,9 @@ export default {
                     {
                         name: "id",
                         displayName: "ID",
-                        type: o.string({}),
+                        type: o.optional({ type: o.string({}) }),
+                        description:
+                            "A stable identifier for this link type, assigned by its provider. Defaults to the source object type and `target.name`.",
                     },
                     {
                         name: "source",
@@ -1126,6 +1149,13 @@ export default {
             type: o.struct({
                 fields: [
                     {
+                        name: "id",
+                        displayName: "ID",
+                        type: o.optional({ type: o.string({}) }),
+                        description:
+                            "A stable identifier for this action type, assigned by its provider: it survives renames. Defaults to its name.",
+                    },
+                    {
                         name: "meta",
                         displayName: "Meta",
                         type: o.optional({
@@ -1234,6 +1264,13 @@ export default {
             description: "A runnable query function type in the ontology.",
             type: o.struct({
                 fields: [
+                    {
+                        name: "id",
+                        displayName: "ID",
+                        type: o.optional({ type: o.string({}) }),
+                        description:
+                            "A stable identifier for this query function type, assigned by its provider: it survives renames. Defaults to its name.",
+                    },
                     {
                         name: "name",
                         displayName: "Name",

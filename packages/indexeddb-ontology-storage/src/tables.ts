@@ -1,6 +1,7 @@
 import * as IndexedDb from "@effect/platform-browser/IndexedDb";
 import {
     makeTables,
+    caseInsensitiveIndex,
     INDEX_BACKFILL_BATCH_SIZE,
     storageError,
     transactionError,
@@ -200,6 +201,13 @@ function rawTransaction(
                 () => tx.objectStore("definitions").index("table").getAll(table) as IDBRequest<StoredIndex[]>
             ),
         putIndex: (index) => run(() => tx.objectStore("definitions").put(index)).pipe(Effect.asVoid),
+        deleteIndex: Effect.fnUntraced(function* (table: string, name: string) {
+            yield* run(() => tx.objectStore("definitions").delete([table, name]));
+            for (const index of [name, caseInsensitiveIndex(name)])
+                yield* run(() =>
+                    tx.objectStore("entries").delete(keyRange.bound([table, index], [table, index, []]))
+                );
+        }),
         putEntry: (entry) => run(() => tx.objectStore("entries").put(entry)).pipe(Effect.asVoid),
         deleteEntries,
         countEntries: (table, index, range: Range = {}) =>

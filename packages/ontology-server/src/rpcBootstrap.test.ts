@@ -130,7 +130,7 @@ test.each([
                     delivery: true,
                     stateDelivery: true,
                 };
-                const describe = vi.fn(() => Effect.succeed({ ...description, ir: changed }));
+                const describe = vi.fn(() => Effect.succeed({ ...description, contractHash: metadataHash }));
                 const raw = withDescribe(fixture.raw, describe);
                 const notified = yield* Deferred.make<BackendError>();
                 const client = yield* makeOntologyProtocolClient(
@@ -142,6 +142,7 @@ test.each([
                     },
                     {
                         description,
+                        ir,
                         onIncompatible: (error) => Deferred.succeed(notified, error).pipe(Effect.asVoid),
                     }
                 );
@@ -184,11 +185,13 @@ test("retained construction and ordinary operations never require a Describe rou
                 const validate = vi.fn(() => Effect.void);
                 const client = yield* makeOntologyProtocolClient(withDescribe(fixture.raw, describe), {
                     description: fixture.description,
+                    ir,
                     validate,
                 });
                 expect(describe).not.toHaveBeenCalled();
                 expect(client.description).toEqual(fixture.description);
-                expect(client.description.ir).not.toBe(fixture.description.ir);
+                expect(client.description).not.toBe(fixture.description);
+                expect(client.ir).toBe(ir);
                 expect(yield* client.definition.get).toEqual({ status: "retained", refreshing: false });
                 const refresh = yield* Effect.forkScoped(client.definition.refresh);
                 yield* Deferred.await(started);
@@ -233,6 +236,7 @@ test("explicit refresh coalesces concurrent attempts and retries transient failu
                 );
                 const client = yield* makeOntologyProtocolClient(withDescribe(fixture.raw, describe), {
                     description: fixture.description,
+                    ir,
                 });
                 expect(yield* Effect.result(client.definition.refresh)).toMatchObject({
                     _tag: "Failure",
@@ -281,6 +285,7 @@ test.each(["source", "context", "protocol"] as const)(
                         withDescribe(fixture.raw, () => Effect.succeed(fresh)),
                         {
                             description: fixture.description,
+                            ir,
                             validate,
                             onIncompatible: (error) => Deferred.succeed(notified, error).pipe(Effect.asVoid),
                         }
@@ -319,7 +324,7 @@ test("incompatible definition errors are observable without gating subsequent or
                 const validate = vi.fn(() => Effect.fail(error));
                 const client = yield* makeOntologyProtocolClient(
                     withDescribe(fixture.raw, () => Effect.succeed(fresh)),
-                    { description: fixture.description, validate }
+                    { description: fixture.description, ir, validate }
                 );
                 expect(yield* Effect.result(client.definition.refresh)).toMatchObject({
                     _tag: "Failure",
@@ -350,7 +355,7 @@ test("closing a client scope interrupts its refresh without closing the borrowed
                 const client = yield* Scope.provide(
                     makeOntologyProtocolClient(
                         { ...fixture.raw, Describe },
-                        { description: fixture.description }
+                        { description: fixture.description, ir }
                     ),
                     scope
                 );
@@ -366,7 +371,7 @@ test("closing a client scope interrupts its refresh without closing the borrowed
     );
 });
 
-test("a retained description without IR is rejected before any remote attempt", async () => {
+test("a retained description without its definition is rejected before any remote attempt", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -375,7 +380,7 @@ test("a retained description without IR is rejected before any remote attempt", 
                 expect(
                     yield* Effect.result(
                         makeOntologyProtocolClient(withDescribe(fixture.raw, describe), {
-                            description: { ...fixture.description, ir: undefined },
+                            description: fixture.description,
                         })
                     )
                 ).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidConfiguration" } });
@@ -397,7 +402,13 @@ test.each(["source", "context"] as const)(
                     const client = yield* makeOntologyProtocolClient(withDescribe(fixture.raw, describe), {
                         onIncompatible: (error) => Deferred.succeed(notified, error).pipe(Effect.asVoid),
                     });
-                    expect(describe).toHaveBeenCalledOnce();
+                    // The ontology is described once; the definition is read from its `meta` resource.
+                    const resources = describe.mock.calls.map(
+                        (call) =>
+                            (call as unknown as [unknown, { headers?: Record<string, string> }?])[1]
+                                ?.headers?.["x-party-stack-resource"]
+                    );
+                    expect(resources).toEqual([undefined, "meta"]);
                     if (kind === "source") fixture.binding.sourceId = "new-source";
                     else fixture.binding.context = { account: "new-account" };
                     expect(
@@ -446,6 +457,7 @@ test("HTTP streamed uploads and multipart actions obey the same source fence", a
                     const transport = yield* makeOntologyHttpClient({ url: "https://ontology.test/rpc" });
                     const client = yield* transport.ontology(undefined, {
                         description: { ...fixture.description, attachments: { stage: true } },
+                        ir,
                         onIncompatible: (error) => Deferred.succeed(notified, error).pipe(Effect.asVoid),
                     });
                     fixture.binding.sourceId = "new-source";
@@ -490,15 +502,12 @@ test("presentation-only definition refresh succeeds without replacing the accept
                 const fixture = yield* setup();
                 const fresh = {
                     ...fixture.description,
+                    // Presentation changed; the contract did not.
                     definitionHash: "new-presentation",
-                    ir: {
-                        ...ir,
-                        objectTypes: ir.objectTypes.map((object) => ({ ...object, displayName: "Renamed" })),
-                    },
                 };
                 const client = yield* makeOntologyProtocolClient(
                     withDescribe(fixture.raw, () => Effect.succeed(fresh)),
-                    { description: fixture.description }
+                    { description: fixture.description, ir }
                 );
                 expect(yield* client.definition.refresh).toEqual(fresh);
                 expect(yield* client.definition.get).toEqual({ status: "current", refreshing: false });
@@ -543,6 +552,7 @@ test.each(["SchemaMismatch", "InvalidRequest", "Unavailable"] as const)(
                     const notify = vi.fn(() => Effect.void);
                     const client = yield* makeOntologyProtocolClient(withDescribe(fixture.raw, describe), {
                         description: fixture.description,
+                        ir,
                         onIncompatible: notify,
                     });
                     expect(
@@ -566,3 +576,22 @@ test.each(["SchemaMismatch", "InvalidRequest", "Unavailable"] as const)(
         );
     }
 );
+
+test("a client requires the current protocol from a fresh description, and still opens a retained older one", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const fixture = yield* setup();
+                const older = { ...fixture.description, version: 1 as const };
+                expect(
+                    yield* Effect.result(
+                        makeOntologyProtocolClient(withDescribe(fixture.raw, () => Effect.succeed(older)))
+                    )
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "NotImplemented" } });
+                // A device keeps the description it accepted before upgrading, with its definition.
+                const retained = yield* makeOntologyProtocolClient(fixture.raw, { description: older, ir });
+                expect((yield* retained.backend.loadSubset(objectSubset("Item"))).rows).toHaveLength(1);
+            })
+        )
+    );
+});

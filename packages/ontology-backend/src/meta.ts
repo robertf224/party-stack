@@ -1,13 +1,13 @@
-import { validate } from "@party-stack/ontology-spec";
+import { omitInvalid, withDefinitionIds, withoutDefaultIds } from "@party-stack/ontology-spec";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import * as q from "@party-stack/ontology-spec/query";
 import { and, inArray, field, evaluateQuery } from "@party-stack/ontology-storage";
-import { Effect } from "effect";
+import { Effect, Stream } from "effect";
 import { makeOntologyBackend } from "./query.js";
 import { compileObjectSubset, objectSubset } from "./subset.js";
 import { BackendError } from "./index.js";
-import type { OntologyBackendService } from "./index.js";
-import type { OntologyIR } from "@party-stack/ontology-spec";
+import type { OntologyBackendService, SubsetWatchEvent } from "./index.js";
+import type { OmittedDefinition, OntologyIR } from "@party-stack/ontology-spec";
 import type {
     ActionType,
     ObjectType,
@@ -63,12 +63,25 @@ export interface PullOptions {
     objectTypeNames?: string[];
     actionTypeNames?: string[];
     queryFunctionTypeNames?: string[];
-    /** App-specific definition edits, applied before the final IR validation. */
-    transformPulledOntology?: (ontology: OntologyIR) => OntologyIR | Promise<OntologyIR>;
+    /** App-specific definition edits, applied before invalid definitions are omitted. */
+    transform?: (ontology: OntologyIR) => OntologyIR | Promise<OntologyIR>;
+    /** Resolve to `{ ontology, omitted }` instead of the IR alone. */
+    includeOmitted?: boolean;
+}
+/** Which definitions to take from the metadata, and app-specific edits to apply to them. */
+export type DefinitionSelection = Omit<PullOptions, "includeOmitted">;
+
+export interface PullResult {
+    /** A valid Ontology. */
+    readonly ontology: OntologyIR;
+    /**
+     * Definitions (or action parameter defaults) the provider exposes but the IR could not
+     * represent, and why. A caller that needs the complete Ontology treats any entry as a failure.
+     */
+    readonly omitted: readonly OmittedDefinition[];
 }
 
-/** Pull selected definitions directly from a metadata backend, without a replica or UI collections. */
-export const pull = Effect.fn("Metadata.pull")(function* (
+const pullDefinitions = Effect.fn("Metadata.pull")(function* (
     backend: Pick<OntologyBackendService, "query">,
     options: PullOptions = {}
 ) {
@@ -77,13 +90,6 @@ export const pull = Effect.fn("Metadata.pull")(function* (
         select: metaOntology.objectTypes
             .find((type) => type.name === objectType)!
             .properties.map((property) => q.selectField(property.name, q.field("row", property.name))),
-    });
-    const load = Effect.fnUntraced(function* <A>(
-        objectType: string,
-        scan: Parameters<typeof objectSubset>[1]
-    ) {
-        const result = yield* backend.query({ select: [q.sub("rows", select(objectType, scan))] });
-        return result.rows as A[];
     });
     const { objectTypeNames, actionTypeNames, queryFunctionTypeNames } = options;
     const result = yield* backend.query({
@@ -117,13 +123,25 @@ export const pull = Effect.fn("Metadata.pull")(function* (
                     where: queryFunctionTypeNames && inArray(field("name"), queryFunctionTypeNames),
                 })
             ),
+            // Value types are referenced by name from inside other definitions' types, which a
+            // query cannot follow. There are few, so read them all in the same request and keep
+            // the ones the selection uses.
+            q.sub("valueTypes", select("ValueType", {})),
         ],
     });
-    const objectTypes = result.objectTypes as ObjectType[];
-    const descriptors = result.descriptors as OntologyDescriptor[];
-    const linkTypes = result.linkTypes as OntologyIR["linkTypes"];
-    const actionTypes = result.actionTypes as ActionType[];
-    const queryFunctionTypes = result.queryFunctionTypes as QueryFunctionType[];
+    // A projection reads every meta property; one a row does not set is absent, not undefined.
+    const rows = <A>(value: unknown) =>
+        (value as Record<string, unknown>[]).map(
+            (row) => Object.fromEntries(Object.entries(row).filter(([, field]) => field !== undefined)) as A
+        );
+    const objectTypes = rows<ObjectType>(result.objectTypes);
+    const descriptors = rows<OntologyDescriptor>(result.descriptors);
+    const linkTypes = rows<OntologyIR["linkTypes"][number]>(result.linkTypes);
+    const actionTypes = rows<ActionType>(result.actionTypes);
+    const queryFunctionTypes = rows<QueryFunctionType>(result.queryFunctionTypes);
+    const valueTypes = new Map(
+        rows<OntologyIR["types"][number]>(result.valueTypes).map((type) => [type.name, type])
+    );
     const invalid = (message: string) =>
         new BackendError({ operation: "metadata.pull", kind: "InvalidResponse", retryable: false, message });
     if (descriptors.length !== 1 || descriptors[0]?.id !== "ontology")
@@ -151,25 +169,29 @@ export const pull = Effect.fn("Metadata.pull")(function* (
         ])
     );
 
-    const types: OntologyIR["types"] = [];
-    const loaded = new Set<string>();
-    let pending = valueTypeNames;
-    while (pending.length) {
-        const batch = yield* load<OntologyIR["types"][number]>("ValueType", {
-            where: inArray(field("name"), pending),
-        });
-        for (const type of batch) {
-            loaded.add(type.name);
-            types.push(type);
+    // Everything when nothing is selected, so a definition round-trips whole; otherwise the
+    // value types the selection uses, and the ones those use.
+    const selected = objectTypeNames ?? actionTypeNames ?? queryFunctionTypeNames;
+    const types: OntologyIR["types"] = selected === undefined ? [...valueTypes.values()] : [];
+    if (selected !== undefined) {
+        const loaded = new Set<string>();
+        let pending = valueTypeNames;
+        while (pending.length) {
+            const missing = pending.filter((name) => !valueTypes.has(name));
+            if (missing.length) return yield* invalid(`Missing metadata value types: ${missing.join(", ")}.`);
+            const batch = pending.map((name) => valueTypes.get(name)!);
+            for (const type of batch) {
+                loaded.add(type.name);
+                types.push(type);
+            }
+            pending = [...new Set(batch.flatMap((type) => getValueTypes(type.type)))].filter(
+                (name) => !loaded.has(name)
+            );
         }
-        const missing = pending.filter((name) => !loaded.has(name));
-        if (missing.length) return yield* invalid(`Missing metadata value types: ${missing.join(", ")}.`);
-        pending = [...new Set(batch.flatMap((type) => getValueTypes(type.type)))].filter(
-            (name) => !loaded.has(name)
-        );
     }
-
-    const pulled: OntologyIR = {
+    // Rows carry every id; one equal to its default is left out, so a definition reads back as
+    // it was written. Provider ids are kept.
+    const pulled: OntologyIR = withoutDefaultIds({
         types,
         objectTypes,
         linkTypes,
@@ -179,10 +201,10 @@ export const pull = Effect.fn("Metadata.pull")(function* (
         ...(descriptor?.description === undefined ? {} : { description: descriptor.description }),
         ...(descriptor?.context === undefined ? {} : { context: descriptor.context }),
         ...(descriptor?.policy === undefined ? {} : { policy: descriptor.policy }),
-    };
-    const definition = options.transformPulledOntology
+    });
+    const definition = options.transform
         ? yield* Effect.tryPromise({
-              try: async () => options.transformPulledOntology!(pulled),
+              try: async () => options.transform!(pulled),
               catch: (cause) =>
                   new BackendError({
                       operation: "metadata.pull.transform",
@@ -193,40 +215,67 @@ export const pull = Effect.fn("Metadata.pull")(function* (
                   }),
           })
         : pulled;
-    const valid = validate(definition);
-    if (valid.kind === "err")
+    // One definition the IR cannot represent should not make the whole Ontology unusable.
+    const repaired = omitInvalid(definition);
+    if (repaired.issues.length)
         return yield* new BackendError({
             operation: "metadata.pull",
-            kind: options.transformPulledOntology ? "InvalidConfiguration" : "InvalidResponse",
+            kind: options.transform ? "InvalidConfiguration" : "InvalidResponse",
             retryable: false,
-            message: `Pulled ontology is incomplete or invalid: ${valid.value.map((issue) => issue.message).join(" ")}`,
+            message: `Pulled ontology is invalid: ${repaired.issues.map((issue) => issue.message).join(" ")}`,
+            issues: repaired.issues,
         });
-    return definition;
+    if (repaired.omitted.length)
+        yield* Effect.logWarning("Omitted definitions the Ontology IR cannot represent.").pipe(
+            Effect.annotateLogs({
+                omitted: repaired.omitted.map(
+                    (entry) => `${entry.name}${entry.parameter ? `.${entry.parameter}` : ""}`
+                ),
+            })
+        );
+    const pulledResult: PullResult = { ontology: repaired.ontology, omitted: repaired.omitted };
+    return pulledResult;
 });
+
+/**
+ * Pull selected definitions directly from a metadata backend, without a replica or UI collections.
+ *
+ * Definitions the IR cannot represent are omitted (see `omitInvalid`) and logged as a warning,
+ * rather than failing the pull. Pass `includeOmitted: true` to also receive what was omitted.
+ */
+export function pull(
+    backend: Pick<OntologyBackendService, "query">,
+    options: PullOptions & { readonly includeOmitted: true }
+): Effect.Effect<PullResult, BackendError>;
+export function pull(
+    backend: Pick<OntologyBackendService, "query">,
+    options?: PullOptions
+): Effect.Effect<OntologyIR, BackendError>;
+export function pull(
+    backend: Pick<OntologyBackendService, "query">,
+    options: PullOptions = {}
+): Effect.Effect<OntologyIR | PullResult, BackendError> {
+    const result = pullDefinitions(backend, options);
+    return options.includeOmitted ? result : Effect.map(result, (pulled) => pulled.ontology);
+}
 
 /** Assemble a runtime definition through ordinary metadata queries. Completeness
  * is the adapter's query contract; this does not invent an atomic provider revision.
  */
 export const loadDefinition = (backend: Pick<OntologyBackendService, "query">) => pull(backend);
 
-function localId(kind: "ActionType" | "ObjectType" | "Property", name: string): string {
-    return `local:${kind}:${encodeURIComponent(name)}`;
+export interface MetadataBackendOptions {
+    /** Emits when the definition this backend describes has been replaced. Watches report it as
+     * a reset, so a replica of the metadata reloads it. */
+    readonly replaced?: Stream.Stream<unknown, BackendError>;
 }
-
-export function makeMetadataBackend(ir: OntologyIR): OntologyBackendService {
-    ir = structuredClone(ir);
-    const objectTypes: ObjectType[] = ir.objectTypes.map((objectType) => ({
-        ...objectType,
-        id: localId("ObjectType", objectType.name),
-        properties: objectType.properties.map((property) => ({
-            ...property,
-            id: localId("Property", `${objectType.name}.${property.name}`),
-        })),
-    }));
-    const actionTypes: ActionType[] = ir.actionTypes.map((actionType) => ({
-        ...actionType,
-        id: localId("ActionType", actionType.name),
-    }));
+/** Serve a definition as meta ontology rows. */
+export function makeMetadataBackend(
+    ir: OntologyIR,
+    options: MetadataBackendOptions = {}
+): OntologyBackendService {
+    // Meta rows always carry ids; a definition without them is given its defaults.
+    ir = withDefinitionIds(structuredClone(ir));
 
     return makeOntologyBackend({
         ir: metaOntology,
@@ -246,10 +295,10 @@ export function makeMetadataBackend(ir: OntologyIR): OntologyBackendService {
                                 policy: ir.policy,
                             },
                         ],
-                        ObjectType: objectTypes,
+                        ObjectType: ir.objectTypes,
                         ValueType: ir.types,
                         LinkType: ir.linkTypes,
-                        ActionType: actionTypes,
+                        ActionType: ir.actionTypes,
                         QueryFunctionType: ir.queryFunctionTypes,
                     };
                     const type = metaOntology.objectTypes.find((type) => type.name === subset.objectType);
@@ -274,6 +323,9 @@ export function makeMetadataBackend(ir: OntologyIR): OntologyBackendService {
                     });
                 })
             ),
+        ...(options.replaced && {
+            watchSubset: () => Effect.succeed(Stream.map(options.replaced!, (): SubsetWatchEvent => "reset")),
+        }),
         applyAction: () =>
             Effect.fail(
                 new BackendError({

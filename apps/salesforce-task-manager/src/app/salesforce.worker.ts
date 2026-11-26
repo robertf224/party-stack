@@ -84,8 +84,7 @@ const server = Effect.gen(function* () {
                   });
             return {
                 kind: "replica" as const,
-                dangerouslyAllowInternalAccess: true as const,
-                ir: meta ? metadata : ontology,
+                definition: { kind: "static" as const, ir: meta ? metadata : ontology },
                 namespace: `${SALESFORCE_TASK_MANAGER_ONTOLOGY_ID}:${meta ? "metadata" : "data"}`,
                 context,
                 backend,
@@ -96,8 +95,8 @@ const server = Effect.gen(function* () {
         enableRealtime: true,
         routes: {
             connect: connectDeviceRoute(manager),
-            "data/:type/:connection": route(false),
-            "metadata/:type/:connection": route(true),
+            "data/:type/:connection": { dangerouslyAllowInternalAccess: true, open: route(false) },
+            "metadata/:type/:connection": { dangerouslyAllowInternalAccess: true, open: route(true) },
         },
     });
 });

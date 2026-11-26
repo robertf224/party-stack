@@ -21,7 +21,7 @@ export default {
             },
         },
     }),
-    transformPulledOntology,
+    transform: transformPulledOntology,
     objectTypeNames: ["Issue", "Project"],
     actionTypeNames: [
         "createIssue",

@@ -21,8 +21,7 @@ function isOntologyPullConfig(value: unknown): value is OntologyPullConfig {
     return (
         Predicate.isObject(value) &&
         Effect.isEffect(value.backend) &&
-        (value.transformPulledOntology === undefined ||
-            typeof value.transformPulledOntology === "function") &&
+        (value.transform === undefined || typeof value.transform === "function") &&
         Array.isArray(value.objectTypeNames) &&
         value.objectTypeNames.every((entry) => typeof entry === "string") &&
         Array.isArray(value.actionTypeNames) &&
@@ -58,19 +57,25 @@ export async function writePulledOntology(
     context: OntologyPullContext,
     ontologyImportPath = ONTOLOGY_IMPORT_PATH
 ): Promise<void> {
-    const ontology = await Effect.runPromise(
+    const { ontology, omitted } = await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const backend = yield* config.backend;
                 return yield* pull(backend, {
+                    includeOmitted: true,
                     objectTypeNames: config.objectTypeNames,
                     actionTypeNames: config.actionTypeNames,
                     queryFunctionTypeNames: config.queryFunctionTypeNames ?? [],
-                    transformPulledOntology: config.transformPulledOntology,
+                    transform: config.transform,
                 });
             })
         ).pipe(Effect.provide(context.runtime))
     );
+    for (const entry of omitted) {
+        const target = entry.parameter ? `${entry.name}.${entry.parameter} default` : entry.name;
+        const reasons = entry.issues.map((issue) => issue.message).join(" ");
+        console.warn(`Omitted ${target} (${entry.section}): ${reasons}`);
+    }
     const output = generateOntology(ontology, { ontologyImportPath });
 
     mkdirSync(dirname(outPath), { recursive: true });

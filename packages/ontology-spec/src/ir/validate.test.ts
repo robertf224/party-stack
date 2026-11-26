@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { o } from "./generated/builders.js";
+import { omitInvalid } from "./omitInvalid.js";
 import { validate, ValidationResult } from "./validate.js";
 import type { OntologyIR, TypeDef } from "./generated/types.js";
 
@@ -146,6 +147,32 @@ describe("Ontology Validation", () => {
             const result = validate(ontology);
             expectErr(result, 1);
             expect(getErrors(result)).toContain('Duplicate link type target name: "fromA" on "A".');
+        });
+
+        it("should detect a duplicate default link id", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType({ name: "A" }), minimalObjectType({ name: "B" })],
+                linkTypes: [
+                    {
+                        id: "A.b",
+                        source: { objectType: "A", name: "toB", displayName: "To B" },
+                        target: { objectType: "B", name: "first", displayName: "First" },
+                        foreignKey: "employeeId",
+                        cardinality: "many" as const,
+                    },
+                    {
+                        source: { objectType: "A", name: "alsoToB", displayName: "Also to B" },
+                        target: { objectType: "B", name: "b", displayName: "B" },
+                        foreignKey: "name",
+                        cardinality: "many" as const,
+                    },
+                ],
+            };
+
+            const result = validate(ontology);
+            expectErr(result, 1);
+            expect(getErrors(result)).toContain('Duplicate link type id: "A.b".');
         });
 
         it("should detect duplicate property names within an object type", () => {
@@ -692,6 +719,239 @@ describe("Ontology Validation", () => {
 
             expect(getErrors(validate(ontology))).toContain(
                 'Default value for "count" has an incompatible type.'
+            );
+        });
+
+        it("should omit only incompatible defaults, keeping the parameter", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType()],
+                actionTypes: [
+                    {
+                        name: "updateEmployee",
+                        displayName: "Update Employee",
+                        parameters: [
+                            {
+                                name: "employee",
+                                displayName: "Employee",
+                                type: o.objectReference({ objectType: "Employee" }),
+                            },
+                            {
+                                name: "count",
+                                displayName: "Count",
+                                type: o.integer({}),
+                                defaultValue: o.Expression.getAt({
+                                    source: o.Expression.lookup({
+                                        reference: o.Expression.inputReference({ name: "employee" }),
+                                    }),
+                                    path: ["name"],
+                                }),
+                            },
+                        ],
+                        logic: [],
+                    },
+                ],
+            };
+
+            const repaired = omitInvalid(ontology);
+
+            expect(repaired.omitted).toEqual([
+                {
+                    kind: "defaultValue",
+                    section: "actionTypes",
+                    name: "updateEmployee",
+                    parameter: "count",
+                    issues: [
+                        expect.objectContaining({ code: "IncompatibleDefault", path: ["defaultValue"] }),
+                    ],
+                },
+            ]);
+            expect(repaired.issues).toEqual([]);
+            expect(repaired.ontology.actionTypes[0]!.parameters[1]).toEqual({
+                name: "count",
+                displayName: "Count",
+                type: o.integer({}),
+            });
+            expectOk(validate(repaired.ontology));
+            expect(omitInvalid(repaired.ontology).ontology).toBe(repaired.ontology);
+        });
+
+        const facility = (coordinates: TypeDef) => ({
+            ...minimalObjectType({ name: "Facility", primaryKey: "id" }),
+            properties: [
+                { name: "id", displayName: "ID", type: o.string({}) },
+                { name: "coordinates", displayName: "Coordinates", type: o.optional({ type: coordinates }) },
+                { name: "employee", displayName: "Employee", type: o.optional({ type: o.string({}) }) },
+            ],
+        });
+        const editFacility = (
+            parameter: TypeDef,
+            property = "coordinates"
+        ): OntologyIR["actionTypes"][number] => ({
+            name: "editFacility",
+            displayName: "Edit Facility",
+            parameters: [
+                {
+                    name: "facility",
+                    displayName: "Facility",
+                    type: o.objectReference({ objectType: "Facility" }),
+                },
+                { name: "value", displayName: "Value", type: parameter },
+            ],
+            logic: [
+                o.ActionLogicStep.updateObject({
+                    object: { name: "facility" },
+                    values: [{ property: [property], value: o.Expression.inputReference({ name: "value" }) }],
+                }),
+            ],
+        });
+
+        it("should reject action logic that writes a value of the wrong type", () => {
+            const result = validate({
+                ...emptyOntology,
+                objectTypes: [facility(o.geopoint({}))],
+                actionTypes: [editFacility(o.string({}))],
+            });
+
+            expect(result.kind === "err" && result.value).toEqual([
+                expect.objectContaining({
+                    message: 'Value written to "Facility.coordinates" has an incompatible type.',
+                    code: "IncompatibleAssignment",
+                    path: ["actionTypes", 0, "logic", 0, "value", "values", 0, "value"],
+                }),
+            ]);
+        });
+
+        it("should accept writes that only differ by optionality, number width or reference keys", () => {
+            expectOk(
+                validate({
+                    ...emptyOntology,
+                    objectTypes: [facility(o.double({}))],
+                    actionTypes: [editFacility(o.optional({ type: o.integer({}) }))],
+                })
+            );
+            expectOk(
+                validate({
+                    ...emptyOntology,
+                    objectTypes: [minimalObjectType(), facility(o.geopoint({}))],
+                    actionTypes: [editFacility(o.objectReference({ objectType: "Employee" }), "employee")],
+                })
+            );
+        });
+
+        it("should omit an action that writes a value of the wrong type, and nothing else", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [facility(o.geopoint({}))],
+                actionTypes: [
+                    editFacility(o.string({})),
+                    { ...editFacility(o.geopoint({})), name: "moveFacility" },
+                ],
+            };
+
+            const repaired = omitInvalid(ontology);
+
+            expect(repaired.omitted).toEqual([
+                {
+                    kind: "definition",
+                    section: "actionTypes",
+                    name: "editFacility",
+                    issues: [expect.objectContaining({ code: "IncompatibleAssignment" })],
+                },
+            ]);
+            expect(repaired.ontology.actionTypes.map((action) => action.name)).toEqual(["moveFacility"]);
+            expectOk(validate(repaired.ontology));
+        });
+
+        it("should omit definitions that depend on an omitted one", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [
+                    minimalObjectType(),
+                    minimalObjectType({ name: "Broken", primaryKey: "missing" }),
+                ],
+                linkTypes: [
+                    {
+                        id: "brokenEmployee",
+                        source: { objectType: "Broken", name: "employee", displayName: "Employee" },
+                        target: { objectType: "Employee", name: "broken", displayName: "Broken" },
+                        foreignKey: "name",
+                        cardinality: "one",
+                    },
+                ],
+                actionTypes: [
+                    {
+                        name: "deleteBroken",
+                        displayName: "Delete Broken",
+                        parameters: [
+                            {
+                                name: "broken",
+                                displayName: "Broken",
+                                type: o.objectReference({ objectType: "Broken" }),
+                            },
+                        ],
+                        logic: [o.ActionLogicStep.deleteObject({ object: { name: "broken" } })],
+                    },
+                ],
+            };
+
+            const repaired = omitInvalid(ontology);
+
+            expect(repaired.omitted.map(({ kind, section, name }) => ({ kind, section, name }))).toEqual([
+                { kind: "definition", section: "objectTypes", name: "Broken" },
+                { kind: "definition", section: "linkTypes", name: "brokenEmployee" },
+                { kind: "definition", section: "actionTypes", name: "deleteBroken" },
+            ]);
+            expect(repaired.issues).toEqual([]);
+            expect(repaired.ontology.objectTypes.map((type) => type.name)).toEqual(["Employee"]);
+            expectOk(validate(repaired.ontology));
+        });
+
+        it("should accept a list of object references as an action target", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType()],
+                actionTypes: [
+                    {
+                        name: "deleteEmployees",
+                        displayName: "Delete Employees",
+                        parameters: [
+                            {
+                                name: "employees",
+                                displayName: "Employees",
+                                type: o.list({ elementType: o.objectReference({ objectType: "Employee" }) }),
+                            },
+                        ],
+                        logic: [o.ActionLogicStep.deleteObject({ object: { name: "employees" } })],
+                    },
+                ],
+            };
+
+            expectOk(validate(ontology));
+        });
+
+        it("should reject a list of non-references as an action target", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType()],
+                actionTypes: [
+                    {
+                        name: "deleteEmployees",
+                        displayName: "Delete Employees",
+                        parameters: [
+                            {
+                                name: "ids",
+                                displayName: "IDs",
+                                type: o.list({ elementType: o.string({}) }),
+                            },
+                        ],
+                        logic: [o.ActionLogicStep.deleteObject({ object: { name: "ids" } })],
+                    },
+                ],
+            };
+
+            expect(getErrors(validate(ontology))).toContain(
+                'Action target parameter "ids" must be an object reference or a list of object references.'
             );
         });
 

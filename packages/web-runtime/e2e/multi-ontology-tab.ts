@@ -1,11 +1,11 @@
-import { createLiveOntology, createOntologyClient } from "@party-stack/ontology";
+import { createLiveOntology, createOntologyClient, definePin } from "@party-stack/ontology";
 import { createAuthenticationClient } from "@party-stack/ontology/authentication";
 import * as q from "@party-stack/ontology/query";
 import { workerClient } from "@party-stack/ontology/worker";
 import { queryOnce } from "@tanstack/db";
 import { Effect } from "effect";
 import * as WebRuntime from "../src/WebRuntime.js";
-import type { PinStatus, LiveOntology } from "@party-stack/ontology";
+import type { LiveOntology } from "@party-stack/ontology";
 
 // Only the SharedWorker may open persistent storage.
 indexedDB.open = () => {
@@ -51,10 +51,20 @@ const command = (name: string, parameters: Record<string, unknown>) =>
     );
 const traceSubscriptions: (() => void)[] = [];
 const tracingViews = new Map<string, LiveOntology>();
-const pinWatches = new Map<
-    string,
-    { values: (PinStatus | undefined)[]; errors: unknown[]; close: () => Promise<void> }
->();
+const counters = definePin("counters", {
+    query: {
+        select: [
+            q.sub("counters", {
+                from: { source: { objectType: "Counter" }, binding: "c" },
+                select: [
+                    q.selectField("id", q.field("c", "id")),
+                    q.selectField("count", q.field("c", "count")),
+                ],
+            }),
+        ],
+    },
+});
+
 if (connections)
     Reflect.set(window, "serverTest", {
         signIn: (userId: string) => connections.attachExternalSession("fixture", userId),
@@ -63,52 +73,27 @@ if (connections)
                 userId: row.userId,
                 state: { status: row.status },
             })),
-        watchPin: async (ontologyId: string) => {
-            const live = await open(ontologyId);
-            const values: (PinStatus | undefined)[] = [];
-            const errors: unknown[] = [];
-            const stop = live.pins.subscribe(
-                (value) => values.push(value),
-                (error) => errors.push(String(error))
-            );
-            pinWatches.set(ontologyId, {
-                values,
-                errors,
-                close: async () => {
-                    stop();
-                    await live.cleanup();
-                },
-            });
-        },
-        pinEvents: (ontologyId: string) => {
-            const watch = pinWatches.get(ontologyId)!;
-            return { values: watch.values, errors: watch.errors };
-        },
-        stopPinWatch: (ontologyId: string) => pinWatches.get(ontologyId)!.close(),
         setPin: async (ontologyId: string) => {
             const live = await open(ontologyId);
             try {
-                await live.pins.set({
-                    select: [
-                        q.sub("counters", {
-                            from: { source: { objectType: "Counter" }, binding: "c" },
-                            select: [
-                                q.selectField("id", q.field("c", "id")),
-                                q.selectField("count", q.field("c", "count")),
-                            ],
-                        }),
-                    ],
-                });
+                await live.pins(counters).set();
             } finally {
                 await live.cleanup();
             }
         },
+        // `device`: downloads in the shared worker's replica, which every tab's `pins` targets.
+        // `tab`: downloads in this tab's own memory replica, which should stay empty.
         pin: async (ontologyId: string) => {
             const live = await open(ontologyId);
             try {
+                const device = await queryOnce((q) => q.from({ pin: live.pins.collection }));
                 return {
-                    device: await live.pins.get(),
-                    tab: await Effect.runPromise(live.replica.demand.pinStatus),
+                    device: device.map((pin) => ({
+                        name: pin.name,
+                        ready: pin.ready,
+                        attachments: pin.attachments,
+                    })),
+                    tab: (await Effect.runPromise(live.replica.demand.pins.list)).map((pin) => pin.name),
                 };
             } finally {
                 await live.cleanup();
@@ -117,7 +102,7 @@ if (connections)
         clearPin: async (ontologyId: string) => {
             const live = await open(ontologyId);
             try {
-                await live.pins.clear();
+                await live.pins.clear("counters");
             } finally {
                 await live.cleanup();
             }
@@ -195,7 +180,6 @@ if (connections)
         cleanup: async () => {
             for (const unsubscribe of traceSubscriptions) unsubscribe();
             await Promise.allSettled([...tracingViews.values()].map((view) => view.cleanup()));
-            await Promise.allSettled([...pinWatches.values()].map((watch) => watch.close()));
             await connections.cleanup();
             await client.cleanup();
         },

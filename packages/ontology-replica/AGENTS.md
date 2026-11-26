@@ -123,6 +123,19 @@ example tests:
   crash or time out (with and without a deduplicating backend), and restarts on the same storage with the
   device clock corrected forwards or backwards. Deadlines for progress scale with every wait a load can legitimately incur
   (fetch latency and an action's turn), so they flag starvation rather than slowness.
+- Definition changes have their own oracle, `src/definitionChange.oracle.test.ts`: the source
+  changes its definition (a property changes type, a property or object type comes or goes,
+  display text changes) while edits, queued actions, held dispatches, reads and downloads
+  continue. The app restarts under its old definition or the source's, and adopts a new one
+  either by resetting when it opens (`onDefinitionChange: "reset"`) or only through a catalog
+  rebuild (opening with `"error"`). It checks that opening never fails, served rows always fit
+  the replica's definition and include rows the source always has, every queued action reaches
+  the source exactly once, and reads and downloads converge; a second property keeps changing
+  the definition and requires each read and action to finish before the next change. A
+  terminal load failure stays on its demand until revalidated or restarted, so later reads of
+  that subset may replay it. Run its oracle tests with a held partition runtime: a memory
+  runtime nobody holds is discarded on restart. Extend it when you change resets, rebuilds or
+  definition handling.
 - The oracle judges freshness by the source's clock; the replica runs on a device
   clock that a restart may find corrected. Coverage ages are wall-clock differences, so
   the replica detects a backward correction (`currentTime`) and invalidates every

@@ -10,8 +10,6 @@ type Fixture = {
         revoked: string[];
         created: string[];
         fields: string[][];
-        listeners: number;
-        pinCommands: string[];
     };
     resolve(index: number): void;
     reject(index: number): void;
@@ -63,11 +61,7 @@ test("Suspense attachment hooks share reads through StrictMode and keep URLs unt
         await page.getByRole("button", { name: "Toggle", exact: true }).click();
         expect(await page.getByTestId("url-first").textContent()).toBe(url);
         expect((await state(page)).reads).toHaveLength(1);
-        await page.getByRole("button", { name: "Pin", exact: true }).click();
-        await page.getByRole("button", { name: "Unpin", exact: true }).click();
-        expect((await state(page)).pinCommands).toEqual(["set", "clear"]);
         await page.getByRole("button", { name: "Close view", exact: true }).click();
-        await expect.poll(async () => (await state(page)).listeners).toBe(0);
         await expect.poll(async () => (await state(page)).revoked).toEqual([url]);
         expect((await state(page)).reads[0]!.aborted).toBe(true);
     });

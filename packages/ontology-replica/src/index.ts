@@ -8,21 +8,22 @@ export type {
     AttachmentCreation,
 } from "./attachments/service.js";
 export { makeReplica } from "./make.js";
-export type { ReplicaOptions } from "./make.js";
+export type { ReplicaOptions, ReplicaBackendFactory, ReplicaConnection } from "./make.js";
 export type {
     ReplicaService,
     ReplicaConfiguration,
+    ReplicaDefinition,
+    StaticReplicaDefinition,
+    DynamicReplicaDefinition,
+    ReplicaDefinitionState,
     ReplicaReads,
     ReplicaOutbox,
     ReplicaActionStatus,
     ReplicaOutboxPolicy,
-    ReplicaPinControls,
 } from "./service.js";
 import type { ReplicaOptions } from "./make.js";
 export { ReplicaStatusSchema, makeReplicaMonitor } from "./status.js";
 export type { ReplicaStatus, ReplicaLoad, ReplicaMonitor } from "./status.js";
-export type { PinOptions, PinStatus, PinGraph } from "./pins.js";
-export { PinOptionsSchema, PinStatusSchema } from "./pins.js";
 export { pinOntology, pinMutators, pinRecordKey, pinDefinitionKey } from "./pinModel.js";
 export type { PinWrite, PinRecord, PinUpdate } from "./pinModel.js";
 export type { ReplicaPins } from "./pinManager.js";

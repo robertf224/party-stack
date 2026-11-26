@@ -52,40 +52,42 @@ test("native checkpoints share the managed route owner and return its installed 
                     enableRealtime: true,
                     replicas: {},
                     routes: {
-                        "workspaces/:workspaceId/issues": () =>
-                            Effect.gen(function* () {
-                                yield* Effect.acquireRelease(
-                                    Effect.sync(() => {
-                                        opened++;
-                                        active++;
-                                    }),
-                                    () =>
+                        "workspaces/:workspaceId/issues": {
+                            dangerouslyAllowInternalAccess: true,
+                            open: () =>
+                                Effect.gen(function* () {
+                                    yield* Effect.acquireRelease(
                                         Effect.sync(() => {
-                                            active--;
-                                        })
-                                );
-                                return {
-                                    kind: "replica" as const,
-                                    backend: upstream,
-                                    ir,
-                                    live: false,
-                                    dangerouslyAllowInternalAccess: true as const,
-                                };
-                            }),
+                                            opened++;
+                                            active++;
+                                        }),
+                                        () =>
+                                            Effect.sync(() => {
+                                                active--;
+                                            })
+                                    );
+                                    return {
+                                        kind: "replica" as const,
+                                        backend: upstream,
+                                        definition: { kind: "static" as const, ir },
+                                        live: false,
+                                    };
+                                }),
+                        },
                     },
                 });
                 const target = "workspaces/first/issues";
-                expect(yield* server.syncOnce(target)).toEqual({ pin: undefined });
+                expect(yield* server.syncOnce(target)).toEqual({ pins: [] });
                 expect(opened).toBe(1);
                 expect(active).toBe(1);
                 yield* Effect.scoped(
                     Effect.gen(function* () {
                         const bound = yield* server.bind(target);
-                        yield* bound.options.replica!.demand.setPin(query);
+                        yield* bound.options.replica!.demand.pins.set({ name: "issues", query });
                     })
                 );
                 expect(yield* server.syncOnce(target)).toMatchObject({
-                    pin: { query, ready: true, attachments: "none", previousGraphRetained: false },
+                    pins: [{ name: "issues", ready: true }],
                 });
                 expect(opened).toBe(1);
                 expect(active).toBe(1);

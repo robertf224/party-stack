@@ -1,4 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
+import { makeMetadataBackend } from "@party-stack/ontology-backend/meta";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
@@ -10,6 +11,7 @@ import { expect, test } from "vite-plus/test";
 import { makeOntologyServer } from "./routing.js";
 import { makeOntologyLocalClient } from "./rpcLocal.js";
 import type { OntologyServerClient } from "./rpc.js";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
 
 const property = (name: string) => ({ name, displayName: name, type: o.string({}) });
 const ir = {
@@ -60,7 +62,8 @@ test("managed routes reopen retained data without a Describe preflight", async (
                     ontology: (name, options) =>
                         Effect.suspend(() => {
                             if (!options?.description) {
-                                descriptions++;
+                                // Reading the definition from the `meta` resource is not a Describe.
+                                if (!options?.resource) descriptions++;
                                 if (offline)
                                     return Effect.fail(
                                         new BackendError({
@@ -132,11 +135,12 @@ test("managed routes reopen retained data without a Describe preflight", async (
     );
 });
 
-test("native backend routes reuse their account's definition before backend construction", async () => {
+test("a dynamic route reopens its account's partition from cached metadata", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const runtimes = yield* Runtimes;
+                // Keep the memory driver alive between owners to model durable storage.
                 yield* runtimes.acquire({ owner: "replica-registry", namespace: "default" });
                 yield* runtimes.acquire({ owner: contextPartition(ir, context), namespace: "notes" });
                 const backend = yield* makeOwnedBackend({
@@ -145,44 +149,48 @@ test("native backend routes reuse their account's definition before backend cons
                     namespace: "native-bootstrap",
                     mutators: {},
                 });
-                let loads = 0;
+                const metadata = makeMetadataBackend(ir);
+                let reads = 0;
+                const meta: OntologyBackendService = {
+                    ...metadata,
+                    loadSubset: (subset) => Effect.suspend(() => (reads++, metadata.loadSubset(subset))),
+                    query: (document, settings) =>
+                        Effect.suspend(() => (reads++, metadata.query(document, settings))),
+                };
                 let selected = context;
                 const open = makeOntologyServer({
                     enableRealtime: true,
                     replicas: {},
                     routes: {
-                        notes: (_, route) =>
-                            Effect.gen(function* () {
-                                const definition = yield* route.definition({
-                                    context: selected,
-                                    load: Effect.sync(() => {
-                                        loads++;
-                                        return ir;
-                                    }),
-                                });
-                                return {
+                        notes: {
+                            dangerouslyAllowInternalAccess: true,
+                            open: () =>
+                                Effect.succeed({
                                     kind: "replica" as const,
-                                    ir: definition,
+                                    definition: { kind: "dynamic" as const, meta },
                                     backend,
                                     context: selected,
                                     live: false,
-                                    dangerouslyAllowInternalAccess: true as const,
-                                };
-                            }),
+                                }),
+                        },
                     },
                 });
                 const acquire = Effect.scoped(
                     Effect.gen(function* () {
                         const server = yield* open;
-                        yield* server.bind("notes");
+                        return (yield* server.bind("notes")).options.ir;
                     })
                 );
+                expect((yield* acquire)?.objectTypes.map((type) => type.name)).toEqual(["Note"]);
+                const first = reads;
+                expect(first).toBeGreaterThan(0);
+                // The same account reopens without reading the metadata backend.
                 yield* acquire;
-                yield* acquire;
-                expect(loads).toBe(1);
+                expect(reads).toBe(first);
+                // Another account reads its definition into its own partition.
                 selected = { userId: "bob" };
                 yield* acquire;
-                expect(loads).toBe(2);
+                expect(reads).toBeGreaterThan(first);
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );

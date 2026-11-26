@@ -1,9 +1,12 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import blog from "@party-stack/ontology-spec/examples/blog";
 import metaOntology from "@party-stack/ontology-spec/meta";
-import { Effect } from "effect";
+import { ontologyDefinitionHash } from "@party-stack/ontology-storage";
+import { Effect, Queue, Stream } from "effect";
 import { expect, test } from "vitest";
 import { loadDefinition, makeMetadataBackend, pull } from "./meta.js";
 import { makeOntologyBackend } from "./query.js";
+import { objectSubset } from "./subset.js";
 
 const ir: OntologyIR = {
     displayName: "Native metadata",
@@ -85,7 +88,7 @@ test.each([
                 },
                 {
                     ...options,
-                    transformPulledOntology: (ontology) => {
+                    transform: (ontology) => {
                         transformed = true;
                         return ontology;
                     },
@@ -185,7 +188,7 @@ test("pull validates after an app transform and rejects invalid transformed defi
     const result = await Effect.runPromise(
         pull(backend, {
             ...options,
-            transformPulledOntology: async (pulled) => ({ ...pulled, context: ir.context, types: ir.types }),
+            transform: async (pulled) => ({ ...pulled, context: ir.context, types: ir.types }),
         })
     );
     expect(result.context).toEqual(ir.context);
@@ -193,8 +196,132 @@ test("pull validates after an app transform and rejects invalid transformed defi
     const invalid = await Effect.runPromise(
         pull(backend, {
             ...options,
-            transformPulledOntology: (pulled) => ({ ...pulled, context: ir.context }),
+            transform: (pulled) => ({ ...pulled, context: ir.context }),
         }).pipe(Effect.result)
     );
     expect(invalid).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidConfiguration" } });
+});
+
+test("pull omits definitions the IR cannot represent and reports them, instead of failing the Ontology", async () => {
+    const withPrefill: OntologyIR = {
+        types: [],
+        linkTypes: [],
+        queryFunctionTypes: [],
+        objectTypes: [
+            {
+                name: "Facility",
+                displayName: "Facility",
+                pluralDisplayName: "Facilities",
+                primaryKey: "id",
+                properties: [
+                    { name: "id", displayName: "ID", type: o.string({}) },
+                    {
+                        name: "coordinates",
+                        displayName: "Coordinates",
+                        type: o.optional({ type: o.geopoint({}) }),
+                    },
+                ],
+            },
+        ],
+        actionTypes: [
+            {
+                name: "editFacility",
+                displayName: "Edit Facility",
+                parameters: [
+                    {
+                        name: "facility",
+                        displayName: "Facility",
+                        type: o.objectReference({ objectType: "Facility" }),
+                    },
+                    {
+                        name: "coordinates",
+                        displayName: "Coordinates",
+                        type: o.string({}),
+                        defaultValue: o.Expression.getAt({
+                            source: o.Expression.lookup({
+                                reference: o.Expression.inputReference({ name: "facility" }),
+                            }),
+                            path: ["coordinates"],
+                        }),
+                    },
+                ],
+                logic: [],
+            },
+        ],
+    };
+
+    const result = await Effect.runPromise(pull(makeMetadataBackend(withPrefill), { includeOmitted: true }));
+
+    expect(result.ontology.actionTypes[0]?.parameters[1]).toEqual({
+        name: "coordinates",
+        displayName: "Coordinates",
+        type: o.string({}),
+    });
+    expect(result.omitted).toMatchObject([
+        { kind: "defaultValue", section: "actionTypes", name: "editFacility", parameter: "coordinates" },
+    ]);
+
+    // Writing that string into the geopoint property is not representable either: the action goes.
+    const withWrite: OntologyIR = {
+        ...withPrefill,
+        actionTypes: withPrefill.actionTypes.map((action) => ({
+            ...action,
+            logic: [
+                o.ActionLogicStep.updateObject({
+                    object: { name: "facility" },
+                    values: [
+                        {
+                            property: ["coordinates"],
+                            value: o.Expression.inputReference({ name: "coordinates" }),
+                        },
+                    ],
+                }),
+            ],
+        })),
+    };
+    const dropped = await Effect.runPromise(pull(makeMetadataBackend(withWrite), { includeOmitted: true }));
+    expect(dropped.ontology.actionTypes).toEqual([]);
+    expect(dropped.ontology.objectTypes.map((type) => type.name)).toEqual(["Facility"]);
+    expect(dropped.omitted).toMatchObject([
+        {
+            kind: "definition",
+            section: "actionTypes",
+            name: "editFacility",
+            issues: expect.arrayContaining([expect.objectContaining({ code: "IncompatibleAssignment" })]),
+        },
+    ]);
+});
+
+test("a metadata backend reports a replaced definition to its watches", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const replaced = yield* Queue.unbounded<void>();
+                const backend = makeMetadataBackend(named, { replaced: Stream.fromQueue(replaced) });
+                const watch = yield* backend.watchSubset!(objectSubset("ObjectType"))!;
+                const events = yield* Queue.unbounded<unknown>();
+                yield* watch.pipe(
+                    Stream.runForEach((event) => Queue.offer(events, event)),
+                    Effect.forkScoped
+                );
+                yield* Queue.offer(replaced, undefined);
+                expect(yield* Queue.take(events)).toBe("reset");
+                expect(makeMetadataBackend(named).watchSubset).toBeUndefined();
+            })
+        )
+    );
+});
+
+test("a definition read back from its metadata has the same hash", async () => {
+    const definitions = [
+        ir,
+        blog,
+        { ...named, objectTypes: named.objectTypes.map((type) => ({ ...type, id: "provider-item" })) },
+    ];
+    for (const definition of definitions) {
+        const pulled = await Effect.runPromise(pull(makeMetadataBackend(definition)));
+        expect(await Effect.runPromise(ontologyDefinitionHash(pulled))).toBe(
+            await Effect.runPromise(ontologyDefinitionHash(definition))
+        );
+    }
 });

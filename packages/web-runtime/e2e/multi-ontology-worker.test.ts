@@ -89,43 +89,23 @@ test.each([1, 2, 3])(
                 first: 7,
                 last: 7,
             });
-            await run(second, "watchPin", "first-ontology");
-            await expect
-                .poll(() => run(second, "pinEvents", "first-ontology"))
-                .toMatchObject({ values: [undefined], errors: [] });
+            expect(await run(second, "pin", "first-ontology")).toEqual({ device: [], tab: [] });
             await run(first, "setPin", "first-ontology");
-            await expect
-                .poll(async () =>
-                    ((await run(second, "pinEvents", "first-ontology")) as { values: unknown[] }).values.at(
-                        -1
-                    )
-                )
-                .toMatchObject({ ready: true });
+            // A download set from one tab lives in the shared worker's replica, so the other tab
+            // sees it become ready; neither tab's own replica holds it.
             await expect
                 .poll(() => run(second, "pin", "first-ontology"))
-                .toMatchObject({
-                    device: { ready: true, attachments: "none" },
-                    tab: undefined,
-                });
+                .toMatchObject({ device: [{ name: "counters", ready: true, attachments: "none" }], tab: [] });
             await first.reload();
             await first.waitForFunction(() => Reflect.has(window, "serverTest"), null, { timeout: 20_000 });
             expect(await run(first, "connections")).toMatchObject([
                 { userId: "alice", state: { status: "active" } },
             ]);
-            expect(await run(first, "pin", "first-ontology")).toMatchObject({ device: { ready: true } });
+            expect(await run(first, "pin", "first-ontology")).toMatchObject({
+                device: [{ name: "counters", ready: true }],
+            });
             await run(second, "clearPin", "first-ontology");
-            expect(await run(first, "pin", "first-ontology")).toEqual({ device: undefined, tab: undefined });
-            await expect
-                .poll(async () =>
-                    ((await run(second, "pinEvents", "first-ontology")) as { values: unknown[] }).values.at(
-                        -1
-                    )
-                )
-                .toBeUndefined();
-            expect(
-                ((await run(second, "pinEvents", "first-ontology")) as { errors: unknown[] }).errors
-            ).toEqual([]);
-            await run(second, "stopPinWatch", "first-ontology");
+            await expect.poll(() => run(first, "pin", "first-ontology")).toEqual({ device: [], tab: [] });
             await run(second, "disconnect");
             await expect
                 .poll(() => run(first, "connections"))

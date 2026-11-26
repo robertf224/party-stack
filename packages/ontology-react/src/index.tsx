@@ -6,7 +6,7 @@ import { createLiveOntology, createOntologyClient } from "@party-stack/ontology"
 import { classifyBackendFailure } from "@party-stack/ontology-backend";
 import { DbProvider } from "@tanstack/react-db";
 import { Effect } from "effect";
-import { createContext, useContext, useMemo, useSyncExternalStore } from "react";
+import { createContext, useContext, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AttachmentResourcesContext, makeAttachmentResources } from "./attachmentResources.js";
 import { useViewOptions } from "./options.js";
 import { OwnedResource, OwnedResourceLease, OwnedValue } from "./resource.js";
@@ -34,7 +34,6 @@ export type {
 } from "@party-stack/db-fragments";
 
 export { useAttachmentUrl, useAttachmentMetadata } from "./attachments.js";
-export { useOfflinePin } from "./pins.js";
 
 export { ontologyCollections } from "@party-stack/ontology/tanstack";
 export type { OntologyViewOptions } from "./options.js";
@@ -160,20 +159,44 @@ function ConstructedProvider<Definition extends OntologyDefinition>({
         if (!client) throw new Error("Supply a backend, a client, or an OntologyEnvironmentProvider.");
         return { ...settings, ir, client, ontology };
     }, [defaults, overrides, backend, client, ir, ontology]);
+    // When the server's definition changes, the view reopens under the new one. The previous
+    // view closes first: both would otherwise open the same local replica.
+    const [generation, setGeneration] = useState(0);
+    const closing = useRef<Promise<void> | undefined>(undefined);
     const open = useMemo(
         () => async () => {
+            await closing.current?.catch(() => {});
             const ontology = await createLiveOntology<Definition>(options);
             const resources = makeAttachmentResources();
+            let closed: Promise<void> | undefined;
+            let reopening = false;
+            const reopen = () => {
+                if (reopening || closed || ontology.definition.get().status !== "stale") return;
+                reopening = true;
+                setGeneration((value) => value + 1);
+            };
+            const unsubscribe = ontology.definition.subscribe(reopen);
+            reopen();
             return {
                 ontology,
                 resources,
-                cleanup: async () => {
-                    await resources.cleanup();
-                    await ontology.cleanup();
+                cleanup: () => {
+                    closed ??= (async () => {
+                        unsubscribe();
+                        await resources.cleanup();
+                        await ontology.cleanup();
+                    })();
+                    // The next view, if any, opens once this one has closed.
+                    const done = closed;
+                    closing.current = done;
+                    return done.finally(() => {
+                        if (closing.current === done) closing.current = undefined;
+                    });
                 },
             };
         },
-        [options]
+        // A new generation reopens the view after its definition changed.
+        [options, generation]
     );
     return (
         <OwnedResource open={open}>

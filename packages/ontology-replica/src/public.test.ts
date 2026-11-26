@@ -201,7 +201,7 @@ test.each([true, false])(
 );
 
 test("the replica Layer acquires its platform resources from one Runtime bundle", async () => {
-    const app = Replica.layer({ ir, live: false }).pipe(
+    const app = Replica.layer({ definition: { kind: "static", ir }, live: false }).pipe(
         Layer.provide(
             Layer.succeed(ReplicaUpstream)({
                 kind: "committed",

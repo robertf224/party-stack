@@ -14,12 +14,7 @@ import {
     ObjectSubsetCodec,
     protocolValueCodec,
 } from "@party-stack/ontology-backend/protocol";
-import {
-    PinOptionsSchema,
-    PinStatusSchema,
-    ReplicaStatusSchema,
-    makeReplicaMonitor,
-} from "@party-stack/ontology-replica";
+import { ReplicaStatusSchema, makeReplicaMonitor } from "@party-stack/ontology-replica";
 import { QueryDocumentSchema } from "@party-stack/ontology-spec/effect";
 import { getTargetValueType } from "@party-stack/ontology-spec/utils";
 import { withObjectSources } from "@party-stack/ontology-storage";
@@ -41,7 +36,7 @@ import {
 } from "./attachmentTransfers.js";
 import { projectValidationReport, type ErrorProjectionOptions } from "./errorProjection.js";
 import type { AttachmentTransferPolicy } from "./attachmentTransfers.js";
-import type { ReplicaService, ReplicaPinControls } from "@party-stack/ontology-replica";
+import type { ReplicaService } from "@party-stack/ontology-replica";
 import type { AttachmentCreateOptions } from "@party-stack/ontology-replica";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { attachment } from "@party-stack/ontology-spec/values";
@@ -162,23 +157,6 @@ const HelperRpcs = RpcGroup.make(
         ),
         error: BackendError,
     }),
-    Rpc.make("ReadPin", {
-        success: protocolValueCodec(Schema.UndefinedOr(PinStatusSchema)),
-        error: BackendError,
-    }),
-    Rpc.make("WatchPin", {
-        success: protocolValueCodec(Schema.UndefinedOr(PinStatusSchema)),
-        error: BackendError,
-        stream: true,
-    }),
-    Rpc.make("SetPin", {
-        payload: {
-            query: protocolValueCodec(QueryDocumentSchema),
-            options: Schema.optional(protocolValueCodec(PinOptionsSchema)),
-        },
-        error: BackendError,
-    }),
-    Rpc.make("ClearPin", { error: BackendError }),
     Rpc.make("ReplicaStatus", {
         success: protocolValueCodec(ReplicaStatusSchema),
         error: BackendError,
@@ -234,12 +212,8 @@ export type OntologyOperationRequest =
           readonly command: "remove" | "retry" | "edit";
           readonly invocation?: Schema.Schema.Type<typeof ActionRequestSchema>;
       }
-    | { readonly operation: "ReadPin" | "WatchPin" | "ClearPin" }
-    | {
-          readonly operation: "SetPin";
-          readonly query: Schema.Schema.Type<typeof QueryDocumentSchema>;
-          readonly options?: Schema.Schema.Type<typeof PinOptionsSchema>;
-      }
+    /** Reads and writes of the replica's download inventory (the `pins` resource). */
+    | { readonly operation: "Pins" }
     | { readonly operation: "ReplicaStatus" | "Traces" | "DeleteLocalData" | "ReleaseOwner" };
 
 const failure = (cause: unknown) => classifyBackendFailure("ontology.operations", cause);
@@ -261,7 +235,6 @@ const missing = (name: string) =>
 export type OntologyOperationOptions<R = never> = ErrorProjectionOptions & {
     readonly attachmentTransfers?: AttachmentTransferPolicy<R>;
     readonly replica?: ReplicaService;
-    readonly pins?: ReplicaPinControls;
     readonly traces?: TraceStore;
     readonly backend?: import("@party-stack/ontology-backend").OntologyBackendService;
     readonly ready?: Effect.Effect<void, BackendError, R>;
@@ -554,39 +527,6 @@ export const ontologyOperationHandlers = <R>(
                     );
                 })
             ),
-        ReadPin: (_, context) =>
-            Effect.gen(function* () {
-                yield* authorize({ operation: "ReadPin" }, context.headers);
-                yield* options.ready ?? Effect.void;
-                const pins = options.pins ?? options.replica?.demand;
-                if (!pins) return yield* missing("ReadPin");
-                return yield* pins.pinStatus;
-            }),
-        WatchPin: (_, context) =>
-            Stream.unwrap(
-                Effect.gen(function* () {
-                    yield* authorize({ operation: "WatchPin" }, context.headers);
-                    yield* options.ready ?? Effect.void;
-                    const pins = options.pins ?? options.replica?.demand;
-                    return pins?.pinStatusChanges ?? Stream.fail(missing("WatchPin"));
-                })
-            ),
-        SetPin: ({ query, options: settings }, context) =>
-            Effect.gen(function* () {
-                yield* authorize({ operation: "SetPin", query, options: settings }, context.headers);
-                yield* options.ready ?? Effect.void;
-                const pins = options.pins ?? options.replica?.demand;
-                if (!pins) return yield* missing("SetPin");
-                return yield* pins.setPin(query, settings);
-            }),
-        ClearPin: (_, context) =>
-            Effect.gen(function* () {
-                yield* authorize({ operation: "ClearPin" }, context.headers);
-                yield* options.ready ?? Effect.void;
-                const pins = options.pins ?? options.replica?.demand;
-                if (!pins) return yield* missing("ClearPin");
-                return yield* pins.clearPin;
-            }),
         DeleteLocalData: (_, context) =>
             authorize({ operation: "DeleteLocalData" }, context.headers).pipe(
                 Effect.andThen(options.deleteLocalData ?? Effect.fail(missing("DeleteLocalData")))
@@ -661,7 +601,6 @@ export interface OntologyOperationsClient {
     >;
     readonly traces: TraceStore;
     readonly replicaMonitor: import("@party-stack/ontology-replica").ReplicaMonitor;
-    readonly pins: ReplicaPinControls;
     readonly deleteLocalData: Effect.Effect<void, BackendError>;
     readonly releaseOwner: Effect.Effect<void, BackendError>;
 }
@@ -842,13 +781,6 @@ export const makeOntologyOperationsClient = Effect.fnUntraced(function* (
             ),
         deleteLocalData: client.DeleteLocalData().pipe(Effect.mapError(failure)),
         releaseOwner: client.ReleaseOwner(undefined, { discard: true }).pipe(Effect.mapError(failure)),
-        pins: {
-            pinStatus: client.ReadPin().pipe(Effect.mapError(failure)),
-            pinStatusChanges: client.WatchPin().pipe(Stream.mapError(failure)),
-            setPin: (query, settings) =>
-                client.SetPin({ query, options: settings }).pipe(Effect.mapError(failure)),
-            clearPin: client.ClearPin().pipe(Effect.mapError(failure)),
-        },
         queryFunction: (name, parameters) =>
             client.QueryFunction({ name, parameters }).pipe(Effect.mapError(failure)),
         resolveActionParameters: (name, parameters) =>

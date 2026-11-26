@@ -4,6 +4,7 @@ import type { ValueType as MetaValueType } from "@party-stack/ontology-spec/meta
 
 export function convertFoundryMetaValueType(valueType: OntologyValueType): MetaValueType {
     return {
+        id: valueType.rid,
         name: valueType.apiName,
         description: valueType.description,
         deprecated: valueType.status === "DEPRECATED" ? { message: "Deprecated in Foundry." } : undefined,

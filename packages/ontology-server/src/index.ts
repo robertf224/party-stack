@@ -5,13 +5,14 @@ export type {
     OntologyServerRoutes,
     OntologyServerOptions,
     OntologyRoute,
+    OntologyRouteDeclaration,
+    OpenedOntologyRoute,
     OntologyRouteFactory,
     OntologyRouteParams,
-    OntologyRouteContext,
     ManagedReplicaRoute,
 } from "./routing.js";
 export type { OntologyResolver } from "./routing.js";
-export type { ReplicaDefinitionOptions, ReplicaUpstream } from "./replicaBootstrap.js";
+export type { ReplicaUpstream } from "./replicaBootstrap.js";
 export type {
     OntologyBindingOptions,
     OntologyServerBindingOptions,

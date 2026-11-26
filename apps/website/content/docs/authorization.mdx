@@ -284,7 +284,8 @@ application Effect that verifies the token and returns its approval ID.
 
 ## What clients receive
 
-`Describe` sends the policy-projected IR and the declared context values. The
+Clients read the policy-projected IR from the ontology's `meta` resource, and `Describe`
+sends the declared context values. The
 policy itself, including read predicates, action checks and binding expressions,
 stays on the server. Bound action parameters are removed from the public signature;
 the server supplies their values during execution.

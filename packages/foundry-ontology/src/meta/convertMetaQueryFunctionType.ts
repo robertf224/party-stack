@@ -1,5 +1,6 @@
 import type { QueryDataType, QueryParameterV2, QueryTypeV2 } from "@osdk/foundry.ontologies";
-import type { QueryFunctionParameterDef, QueryFunctionTypeDef, TypeDef } from "@party-stack/ontology-spec";
+import type { QueryFunctionParameterDef, TypeDef } from "@party-stack/ontology-spec";
+import type { QueryFunctionType as MetaQueryFunctionType } from "@party-stack/ontology-spec/meta";
 
 function stringType(): TypeDef {
     return { kind: "string", value: {} };
@@ -120,8 +121,9 @@ function convertQueryFunctionParameter(name: string, parameter: QueryParameterV2
     };
 }
 
-export function convertFoundryMetaQueryFunctionType(query: QueryTypeV2): QueryFunctionTypeDef {
+export function convertFoundryMetaQueryFunctionType(query: QueryTypeV2): MetaQueryFunctionType {
     return {
+        id: query.rid,
         name: query.apiName,
         displayName: query.displayName ?? query.apiName,
         description: query.description,

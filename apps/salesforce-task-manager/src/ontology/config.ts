@@ -25,7 +25,7 @@ export default createSalesforceOntologyPullConfig({
             operations: ["create", "update", "delete"],
         },
     ],
-    transformPulledOntology: projectTaskManagerOntology,
+    transform: projectTaskManagerOntology,
     connection: {
         userId: settings.userId,
         oauth: {

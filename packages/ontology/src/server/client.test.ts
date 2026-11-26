@@ -170,7 +170,6 @@ test("automatic client namespaces separate sources under the declared context ow
             version: 1,
             replication: "committed",
             sourceId,
-            ir: definition,
             context,
             supportsIdempotency: false,
         };

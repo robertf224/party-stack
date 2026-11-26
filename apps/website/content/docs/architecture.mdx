@@ -177,7 +177,8 @@ handler. Route patterns do not automatically create separate HTTP paths.
 `serveOntologyWorker` attaches the normal ontology server to a worker transport.
 An HTTP binding attaches it to a Fetch handler. `workerClient` and `httpClient`
 open the corresponding client. One root client can select several named ontologies;
-`Describe` returns the selected definition, context, and supported capabilities.
+`Describe` returns the selected binding (source, context, definition hashes) and supported
+capabilities; the definition itself is read from the ontology's `meta` resource.
 There is no separate installation-worker protocol.
 
 A managed replica can restore its parent description from the catalog and open

@@ -1,9 +1,7 @@
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
-import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Schema } from "effect";
 import { joinNoteMarkdown } from "./noteContent";
-import type { OntologyIR } from "@party-stack/ontology";
 import type { OwnedStorageService } from "@party-stack/ontology-backend/owned";
 import type { TablesService } from "@party-stack/ontology-storage/tables";
 
@@ -74,98 +72,3 @@ export const migrateNotesStorage = Effect.fn("Notes.migrateStorage")(
 
 // Upgrade only the known previous definitions. Keep sequence numbers, cursors,
 // cached objects, offline pins and every pending outbox entry in their namespace.
-export const migrateNotesReplica = Effect.fn("Notes.migrateReplica")(
-    function* (tables: TablesService, namespace: string, ir: OntologyIR) {
-        const beforeTrashUnpins: OntologyIR = {
-            ...ir,
-            actionTypes: ir.actionTypes.map((action) =>
-                action.name === "updateNote"
-                    ? {
-                          ...action,
-                          logic: action.logic.map((step) =>
-                              step.kind === "updateObject"
-                                  ? {
-                                        ...step,
-                                        value: {
-                                            ...step.value,
-                                            values: step.value.values.map((assignment) =>
-                                                assignment.property[0] === "favorite"
-                                                    ? {
-                                                          ...assignment,
-                                                          value: {
-                                                              kind: "inputReference",
-                                                              value: { name: "favorite" },
-                                                          },
-                                                      }
-                                                    : assignment
-                                            ),
-                                        },
-                                    }
-                                  : step
-                          ),
-                      }
-                    : action
-            ),
-        };
-        const previousColors: Readonly<Record<string, string>> = {
-            Preferences: "#9aa8b5",
-            Notebook: "#d4a72c",
-            Note: "#d4a72c",
-            NoteAttachment: "#8b9cc4",
-        };
-        const beforeAppearance: OntologyIR = {
-            ...beforeTrashUnpins,
-            objectTypes: ir.objectTypes.map((type) => {
-                const previous = { ...type, color: previousColors[type.name] ?? type.color };
-                delete previous.icon;
-                return previous;
-            }),
-        };
-        const beforeFolders: OntologyIR = {
-            ...beforeAppearance,
-            actionTypes: beforeTrashUnpins.actionTypes.filter(
-                ({ name }) => name !== "updateNotebook" && name !== "deleteNotebook"
-            ),
-            ...(ir.policy
-                ? {
-                      policy: {
-                          ...ir.policy,
-                          actions: ir.policy.actions?.filter(
-                              ({ actionType }) =>
-                                  actionType !== "updateNotebook" && actionType !== "deleteNotebook"
-                          ),
-                      },
-                  }
-                : {}),
-        };
-        const previous: OntologyIR = {
-            ...beforeFolders,
-            objectTypes: beforeFolders.objectTypes.filter(({ name }) => name !== "Preferences"),
-            actionTypes: beforeFolders.actionTypes.filter(({ name }) => name !== "setPanelWidths"),
-        };
-        const position = Table.make<{ signature: string; [key: string]: unknown }>({
-            name: JSON.stringify(["replica", namespace, "position"]),
-        });
-        const signature = ontologyDefinitionSignature(ir);
-        yield* tables.transaction((tx) =>
-            Effect.gen(function* () {
-                const head = yield* tx.get(position, "head");
-                if (!head || head.signature === signature) return;
-                if (
-                    head.signature !== ontologyDefinitionSignature(beforeTrashUnpins) &&
-                    head.signature !== ontologyDefinitionSignature(previous) &&
-                    head.signature !== ontologyDefinitionSignature(beforeFolders) &&
-                    head.signature !== ontologyDefinitionSignature(beforeAppearance)
-                )
-                    return yield* new BackendError({
-                        operation: "notes.migrate",
-                        kind: "SchemaMismatch",
-                        retryable: false,
-                        message: "Unexpected Notes replica definition.",
-                    });
-                yield* tx.put(position, "head", { ...head, signature });
-            })
-        );
-    },
-    Effect.mapError((cause) => classifyBackendFailure("notes.migrate", cause))
-);

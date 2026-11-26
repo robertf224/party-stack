@@ -93,6 +93,7 @@ const fixture = (
         put: unused,
         delete: unused,
         putIndex: unused,
+        deleteIndex: unused,
         putEntry: unused,
         deleteEntries: unused,
     };

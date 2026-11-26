@@ -3,13 +3,22 @@ import { BackendError } from "@party-stack/ontology-backend";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Clock, Deferred, Effect, Exit, PubSub, Queue, Scope, Stream } from "effect";
+import { Clock, Deferred, Effect, Exit, PubSub, Queue, Random, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { expect } from "vitest";
 import { connectReplicaDelivery } from "./parent.js";
 import { makeReplica, replicaStateSource } from "./testing.js";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { OntologyIR } from "@party-stack/ontology-spec";
+
+/** Reconnect waits are jittered within the retry interval; these tests time the longest wait. */
+const longestWait = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.provideService(effect, Random.Random, {
+        nextIntUnsafe: () => 0,
+        nextDoubleUnsafe: () => 0.999_999,
+    });
+const shortestWait = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.provideService(effect, Random.Random, { nextIntUnsafe: () => 0, nextDoubleUnsafe: () => 0 });
 
 const ir: OntologyIR = {
     types: [],
@@ -138,7 +147,7 @@ it.effect(
                 };
                 const owner = yield* Scope.fork(yield* Effect.scope);
                 const start = yield* Clock.currentTimeMillis;
-                yield* connectReplicaDelivery(controller, source).pipe(Scope.provide(owner));
+                yield* connectReplicaDelivery(controller, source).pipe(longestWait, Scope.provide(owner));
                 expect(yield* Queue.take(opened)).toEqual({ attempt: 1, at: start });
                 expect(yield* Queue.take(reset)).toBe(1);
                 // Drain runnable fibers without advancing virtual time. The old
@@ -174,95 +183,107 @@ it.effect(
 );
 
 for (const failureAt of ["semantic", "delivery"] as const)
-    it.effect(`repeated ${failureAt} ACK history expiration backs off until an ACK completes`, () =>
-        Effect.scoped(
-            Effect.gen(function* () {
-                const authority = yield* makeOwnedBackend({
-                    namespace: `ack-recovery-authority-${failureAt}`,
-                    ir,
-                    tables: yield* Memory.make(),
-                    mutators: { seed: (tx) => tx.put("Counter", { id: "one", count: 1 }) },
-                });
-                yield* authority.applyAction({ id: "seed", name: "seed", parameters: {} });
-                const parent = yield* makeReplica({
-                    namespace: `ack-recovery-parent-${failureAt}`,
-                    ir,
-                    tables: yield* Memory.make(),
-                    backend: authority,
-                    startSync: false,
-                    live: false,
-                    objectCacheGc: false,
-                    execute: () => Effect.void,
-                });
-                yield* parent.demand({ objectType: "Counter" });
-                yield* parent.syncOnce;
-                const actual = replicaStateSource(parent);
-                const opened = yield* Queue.unbounded<number>();
-                const resets = yield* Queue.unbounded<number>();
-                const acknowledged = yield* Queue.unbounded<number>();
-                let attempts = 0;
-                const source: OntologySource = {
-                    ...actual,
-                    subscribe: (session, view, policy, resume) =>
-                        Effect.gen(function* () {
-                            const attempt = ++attempts;
-                            yield* Queue.offer(opened, attempt);
-                            const subscription = yield* actual.subscribe!(session, view, policy, resume);
-                            return {
-                                ...subscription,
-                                acknowledge: (position) =>
-                                    failureAt === "delivery" && attempt <= 2
-                                        ? Effect.fail(expired())
-                                        : subscription
-                                              .acknowledge(position)
-                                              .pipe(
-                                                  Effect.andThen(Queue.offer(acknowledged, attempt)),
-                                                  Effect.asVoid
-                                              ),
-                            };
-                        }),
-                    acknowledge: (session, revision, through, generation) =>
-                        failureAt === "semantic" && attempts <= 2
-                            ? Effect.fail(expired())
-                            : actual.acknowledge(session, revision, through, generation),
-                };
-                const child = yield* makeReplica({
-                    namespace: `ack-recovery-child-${failureAt}`,
-                    ir,
-                    tables: yield* Memory.make(),
-                    source,
-                    startSync: false,
-                    objectCacheGc: false,
-                    execute: () => Effect.void,
-                });
-                yield* child.demand({ objectType: "Counter" });
-                const controller = {
-                    ...child,
-                    resetParentDelivery: child.resetParentDelivery.pipe(
-                        Effect.andThen(Effect.suspend(() => Queue.offer(resets, attempts))),
-                        Effect.asVoid
-                    ),
-                };
-                const start = yield* Clock.currentTimeMillis;
-                yield* connectReplicaDelivery(controller, source);
-                expect(yield* Queue.take(opened)).toBe(1);
-                expect(yield* Queue.take(resets)).toBe(1);
-                expect(yield* Queue.take(opened)).toBe(2);
-                expect(yield* Queue.take(resets)).toBe(2);
-                // Installation alone is not completed recovery: both ACKs must
-                // succeed before another immediate rebuild can be earned.
-                yield* TestClock.adjust(0);
-                expect(attempts).toBe(2);
-                expect(yield* Clock.currentTimeMillis).toBe(start);
-                yield* TestClock.adjust(999);
-                expect(attempts).toBe(2);
-                yield* TestClock.adjust(1);
-                expect(yield* Queue.take(opened)).toBe(3);
-                expect(yield* Queue.take(acknowledged)).toBe(3);
-                expect(yield* child.confirmed.get("Counter", "one")).toEqual({ id: "one", count: 1 });
-            })
-        )
-    );
+    for (const wait of ["longest", "shortest"] as const)
+        it.effect(
+            `repeated ${failureAt} ACK history expiration backs off until an ACK completes (${wait} jittered wait)`,
+            () =>
+                Effect.scoped(
+                    Effect.gen(function* () {
+                        const authority = yield* makeOwnedBackend({
+                            namespace: `ack-recovery-authority-${failureAt}`,
+                            ir,
+                            tables: yield* Memory.make(),
+                            mutators: { seed: (tx) => tx.put("Counter", { id: "one", count: 1 }) },
+                        });
+                        yield* authority.applyAction({ id: "seed", name: "seed", parameters: {} });
+                        const parent = yield* makeReplica({
+                            namespace: `ack-recovery-parent-${failureAt}`,
+                            ir,
+                            tables: yield* Memory.make(),
+                            backend: authority,
+                            startSync: false,
+                            live: false,
+                            objectCacheGc: false,
+                            execute: () => Effect.void,
+                        });
+                        yield* parent.demand({ objectType: "Counter" });
+                        yield* parent.syncOnce;
+                        const actual = replicaStateSource(parent);
+                        const opened = yield* Queue.unbounded<number>();
+                        const resets = yield* Queue.unbounded<number>();
+                        const acknowledged = yield* Queue.unbounded<number>();
+                        let attempts = 0;
+                        const source: OntologySource = {
+                            ...actual,
+                            subscribe: (session, view, policy, resume) =>
+                                Effect.gen(function* () {
+                                    const attempt = ++attempts;
+                                    yield* Queue.offer(opened, attempt);
+                                    const subscription = yield* actual.subscribe!(
+                                        session,
+                                        view,
+                                        policy,
+                                        resume
+                                    );
+                                    return {
+                                        ...subscription,
+                                        acknowledge: (position) =>
+                                            failureAt === "delivery" && attempt <= 2
+                                                ? Effect.fail(expired())
+                                                : subscription
+                                                      .acknowledge(position)
+                                                      .pipe(
+                                                          Effect.andThen(Queue.offer(acknowledged, attempt)),
+                                                          Effect.asVoid
+                                                      ),
+                                    };
+                                }),
+                            acknowledge: (session, revision, through, generation) =>
+                                failureAt === "semantic" && attempts <= 2
+                                    ? Effect.fail(expired())
+                                    : actual.acknowledge(session, revision, through, generation),
+                        };
+                        const child = yield* makeReplica({
+                            namespace: `ack-recovery-child-${failureAt}`,
+                            ir,
+                            tables: yield* Memory.make(),
+                            source,
+                            startSync: false,
+                            objectCacheGc: false,
+                            execute: () => Effect.void,
+                        });
+                        yield* child.demand({ objectType: "Counter" });
+                        const controller = {
+                            ...child,
+                            resetParentDelivery: child.resetParentDelivery.pipe(
+                                Effect.andThen(Effect.suspend(() => Queue.offer(resets, attempts))),
+                                Effect.asVoid
+                            ),
+                        };
+                        const start = yield* Clock.currentTimeMillis;
+                        // The reconnect wait is jittered between half the interval and all of it.
+                        const delay = wait === "longest" ? 1_000 : 500;
+                        yield* (wait === "longest" ? longestWait : shortestWait)(
+                            connectReplicaDelivery(controller, source)
+                        );
+                        expect(yield* Queue.take(opened)).toBe(1);
+                        expect(yield* Queue.take(resets)).toBe(1);
+                        expect(yield* Queue.take(opened)).toBe(2);
+                        expect(yield* Queue.take(resets)).toBe(2);
+                        // Installation alone is not completed recovery: both ACKs must
+                        // succeed before another immediate rebuild can be earned.
+                        yield* TestClock.adjust(0);
+                        expect(attempts).toBe(2);
+                        expect(yield* Clock.currentTimeMillis).toBe(start);
+                        yield* TestClock.adjust(delay - 1);
+                        expect(attempts).toBe(2);
+                        yield* TestClock.adjust(1);
+                        expect(yield* Queue.take(opened)).toBe(3);
+                        expect(yield* Queue.take(acknowledged)).toBe(3);
+                        expect(yield* child.confirmed.get("Counter", "one")).toEqual({ id: "one", count: 1 });
+                    })
+                )
+        );
 
 const authenticationParent = Effect.fnUntraced(function* () {
     const authority = yield* makeOwnedBackend({

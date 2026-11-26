@@ -52,8 +52,14 @@ export function trackVisible(tx: Transaction, views: ReadonlyMap<string, Overlay
         if (reset || !objectType || before.has(JSON.stringify([objectType, key]))) return;
         remember(objectType, key, yield* getVisible(tx, views.get(objectType)!, key));
     });
-    const wrapped: Transaction = {
+    const wrapped: Transaction & { readonly resetVisible: () => void } = {
         ...tx,
+        // A definition reset clears rows written under another schema; they cannot be read
+        // back with the new codecs, so report a full reset instead of per-row changes.
+        resetVisible: () => {
+            reset = true;
+            before.clear();
+        },
         insert: (table, key, value) =>
             touch(table as Table<unknown>, key).pipe(Effect.andThen(tx.insert(table, key, value))),
         put: (table, key, value) =>

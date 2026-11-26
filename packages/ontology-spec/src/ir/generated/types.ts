@@ -446,6 +446,8 @@ export type TypeDef = v.Union<{
 
 /** A named type definition that can be referenced by other types. */
 export type NamedTypeDef = {
+    /** A stable identifier for this value type, assigned by its provider: it survives renames. Defaults to its name. */
+    id?: string;
     /** The type's name for use in code. */
     name: string;
     /** Optional documentation for the type. */
@@ -513,6 +515,8 @@ export type ObjectReferenceTypeDef = {
 
 /** A property on an Object type. */
 export type PropertyDef = {
+    /** A stable identifier for this property, assigned by its provider: it survives renames. Defaults to its name. */
+    id?: string;
     /** The property's name. */
     name: string;
     /** Human-readable name. */
@@ -526,6 +530,8 @@ export type PropertyDef = {
 
 /** An object type in the ontology. */
 export type ObjectTypeDef = {
+    /** A stable identifier for this object type, assigned by its provider: it survives renames. Defaults to its name. */
+    id?: string;
     /** The object type's programmatic name. */
     name: string;
     /** Human-readable name. */
@@ -557,7 +563,8 @@ export type LinkCardinality = "one" | "many";
 
 /** A relationship between two object types. */
 export type LinkTypeDef = {
-    id: string;
+    /** A stable identifier for this link type, assigned by its provider. Defaults to the source object type and `target.name`. */
+    id?: string;
     source: LinkTypeSideDef;
     target: LinkTypeSideDef;
     /** The foreign key on the source. */
@@ -712,6 +719,8 @@ export type ActionLogicStep = v.Union<{
 
 /** An action type in the ontology. */
 export type ActionTypeDef = {
+    /** A stable identifier for this action type, assigned by its provider: it survives renames. Defaults to its name. */
+    id?: string;
     /** Provider-specific metadata used to execute this action. */
     meta?: Record<string, unknown>;
     /** The object type's programmatic name. */
@@ -747,6 +756,8 @@ export type QueryFunctionParameterDef = {
 
 /** A runnable query function type in the ontology. */
 export type QueryFunctionTypeDef = {
+    /** A stable identifier for this query function type, assigned by its provider: it survives renames. Defaults to its name. */
+    id?: string;
     /** The query function type's programmatic name. */
     name: string;
     /** Human-readable name. */

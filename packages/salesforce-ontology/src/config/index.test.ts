@@ -181,7 +181,7 @@ describe("makeSalesforcePullBackend", () => {
             flowActionTypeNames: [],
             connection: { token: "token" },
         });
-        const transformed = await config.transformPulledOntology!(ontology);
+        const transformed = await config.transform!(ontology);
         const task = transformed.objectTypes.find((objectType) => objectType.name === "Task")!;
 
         expect(task.properties.find((property) => property.name === "CreatedById")?.type).toEqual(

@@ -182,10 +182,6 @@ URLs. Pending reads remain owned by the provider even without a committed reader
 Closing the provider aborts pending reads and revokes all its cached URLs. This
 request lifetime is separate from the replica's stored attachment bytes.
 
-```tsx
-const { status, set, clear } = useOfflinePin();
-```
-
 Pins use ordinary TanStack DB queries: bind a named descriptor with
 `ontology.pins(downloadFolder)`, query its typed `.collection`, and call `.set(inputs)`
 or `.remove(inputs)` directly. Joins on `pin.inputs.folderId` can add download

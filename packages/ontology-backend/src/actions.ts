@@ -3,6 +3,7 @@ import {
     getAtPath,
     setAtPath,
     resolveType,
+    getActionTargetType,
     unwrapType,
     unwrapValueType,
     resolveRelatedLink,
@@ -337,21 +338,22 @@ export const executeAction = Effect.fn("Action.execute")(function* (options: Act
     if (options.resolveOnly) return { parameters, result: undefined };
     for (const [index, step] of action.logic.entries()) {
         let type: ObjectTypeDef | undefined;
-        let key: Key | undefined;
+        let keys: Key[] = [];
         if (step.kind === "createObject") type = ir.objectTypes.find((t) => t.name === step.value.objectType);
         else {
             const parameter = action.parameters.find((p) => p.name === step.value.object.name);
-            const resolved = parameter && unwrapType(resolveType(ir, parameter.type)).type;
-            type =
-                resolved?.kind === "objectReference"
-                    ? ir.objectTypes.find((t) => t.name === resolved.value.objectType)
-                    : undefined;
-            key = yield* keyOf(parameters[step.value.object.name]);
+            const target = parameter && getActionTargetType(ir, unwrapType(parameter.type).type);
+            type = target && ir.objectTypes.find((t) => t.name === target.objectType);
+            const value = parameters[step.value.object.name];
+            // A list target applies the step to each referenced object; an absent list changes nothing.
+            keys = target?.many
+                ? yield* Effect.forEach(Array.isArray(value) ? value : [], keyOf)
+                : [yield* keyOf(value)];
         }
         if (!type)
             return yield* failure("Action logic references an unknown object type.", "InvalidConfiguration");
         if (step.kind === "deleteObject") {
-            yield* tx.delete(type.name, key!);
+            for (const key of keys) yield* tx.delete(type.name, key);
             continue;
         }
         const changes = [];
@@ -371,7 +373,7 @@ export const executeAction = Effect.fn("Action.execute")(function* (options: Act
                         : value,
             });
         }
-        if (step.kind === "updateObject") yield* tx.patch(type.name, key!, changes);
+        if (step.kind === "updateObject") for (const key of keys) yield* tx.patch(type.name, key, changes);
         else {
             let value: Record<string, unknown> = {};
             for (const change of changes) value = setAtPath(value, change.path, change.value);

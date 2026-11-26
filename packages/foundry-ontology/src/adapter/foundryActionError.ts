@@ -1,6 +1,7 @@
-import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { BackendError } from "@party-stack/ontology-backend";
 import { resolveType } from "@party-stack/ontology-spec/utils";
 import { Schema } from "effect";
+import { classifyFoundryFailure } from "./foundryErrors.js";
 import type { OntologyIR, TypeDef } from "@party-stack/ontology-spec";
 
 const Failure = Schema.Struct({
@@ -19,7 +20,7 @@ export function foundryActionError(
     values: Record<string, unknown>
 ): BackendError {
     if (cause instanceof BackendError) return cause;
-    const normalized = classifyBackendFailure(operation, cause);
+    const normalized = classifyFoundryFailure(operation, cause);
     const action = ir.actionTypes.find((action) => action.name === actionName);
     if (!action) return normalized;
     let candidate = cause;

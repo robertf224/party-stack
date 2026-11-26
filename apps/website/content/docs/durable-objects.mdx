@@ -120,7 +120,7 @@ export const makeCachedProxy = Effect.fn("Project.makeCachedProxy")(function* (
         })
     );
     const cache = yield* makeReplica({
-        ir,
+        definition: { kind: "static", ir },
         backend: upstreamBackend,
         live: false,
         cache: { objects: false },

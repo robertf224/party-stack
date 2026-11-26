@@ -21,6 +21,56 @@ test("definition identity survives wire decoding and reordered object keys", () 
     expect(ontologyDefinitionSignature(reordered)).toBe(ontologyDefinitionSignature(definition));
 });
 
+test("definition identity ignores the order of named collections, not of properties", () => {
+    const type = (name: string, properties = ["id", "label"]) => ({
+        name,
+        displayName: name,
+        pluralDisplayName: name,
+        primaryKey: "id",
+        properties: properties.map((property) => ({
+            name: property,
+            displayName: property,
+            type: o.string({}),
+        })),
+    });
+    const ordered: OntologyIR = { ...definition, objectTypes: [type("A"), type("B")] };
+    const swapped: OntologyIR = { ...definition, objectTypes: [type("B"), type("A")] };
+    expect(ontologyDefinitionSignature(swapped)).toBe(ontologyDefinitionSignature(ordered));
+    expect(ontologyDefinitionContractSignature(swapped)).toBe(ontologyDefinitionContractSignature(ordered));
+    // An optional field set to undefined is the same as one left out.
+    expect(ontologyDefinitionSignature({ ...ordered, policy: undefined, description: undefined })).toBe(
+        ontologyDefinitionSignature(ordered)
+    );
+    const reorderedProperties: OntologyIR = {
+        ...definition,
+        objectTypes: [type("A", ["label", "id"]), type("B")],
+    };
+    expect(ontologyDefinitionSignature(reorderedProperties)).not.toBe(ontologyDefinitionSignature(ordered));
+});
+
+test("provider ids identify a definition but are not part of its contract", () => {
+    const withId = (id?: string): OntologyIR => ({
+        ...definition,
+        objectTypes: [
+            {
+                ...(id === undefined ? {} : { id }),
+                name: "A",
+                displayName: "A",
+                pluralDisplayName: "A",
+                primaryKey: "id",
+                properties: [{ name: "id", displayName: "id", type: o.string({}) }],
+            },
+        ],
+    });
+    // A generated definition without ids is compatible with the provider's.
+    expect(ontologyDefinitionContractSignature(withId("one"))).toBe(
+        ontologyDefinitionContractSignature(withId())
+    );
+    expect(ontologyDefinitionSignature(withId("one"))).not.toBe(ontologyDefinitionSignature(withId("two")));
+    // An id equal to its default (the name) is the same as none.
+    expect(ontologyDefinitionSignature(withId("A"))).toBe(ontologyDefinitionSignature(withId()));
+});
+
 test("definition identity preserves typed literal values and meaningful array order", () => {
     const withValue = (value: unknown): OntologyIR => ({
         ...definition,

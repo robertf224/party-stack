@@ -20,6 +20,7 @@ interface ReplicaHostCommonOptions {
     readonly cache?: ReplicaOptions["cache"];
     readonly demand?: ReplicaOptions["demand"];
     readonly clientSessions?: ReplicaOptions["clientSessions"];
+    readonly onDefinitionChange?: ReplicaOptions["onDefinitionChange"];
 }
 /** A native connection can additionally publish speculative parent state. */
 export type ReplicaHostOptions = ReplicaHostCommonOptions & {
@@ -40,7 +41,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
     const replica = yield* makeReplica({
         id: options.id,
         live: options.live,
-        ir: options.ir,
+        definition: { kind: "static", ir: options.ir },
         context: options.context,
         backend,
         source: options.source,
@@ -50,6 +51,7 @@ export const makeReplicaHost = Effect.fn("OntologyHost.open")(function* (
         cache: options.cache,
         demand: options.demand,
         clientSessions: options.clientSessions,
+        onDefinitionChange: options.onDefinitionChange,
     });
     const captured = yield* Effect.context<never>();
     const scope = yield* Effect.scope;

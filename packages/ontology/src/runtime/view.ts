@@ -4,7 +4,7 @@ import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { Runtime } from "@party-stack/runtime";
 import { DbClient } from "@tanstack/db";
 import { Schema } from "effect";
-import { Effect, Scope, Fiber, Stream, Cause } from "effect";
+import { Effect, Scope, Fiber, Stream } from "effect";
 import { createLiveOntologyAction } from "../live/actions/createLiveOntologyAction.js";
 import { makeOntologyPins } from "../live/pins.js";
 import { ontologyCollections, ontologyCollectionDependency } from "../tanstack/descriptors.js";
@@ -18,7 +18,7 @@ import type { LiveOntologyAttachments } from "../live/attachments/createLiveOnto
 import type { LiveOntology, LiveOntologyWrites } from "../live/LiveOntology.js";
 import type { OntologyOutbox, OntologyOutboxEntry, OntologyActionRequest } from "../live/outbox/types.js";
 import type { ActionRequest, ActionReceipt } from "@party-stack/ontology-backend";
-import type { PendingAction, ReplicaService, ReplicaPinControls } from "@party-stack/ontology-replica";
+import type { PendingAction, ReplicaService } from "@party-stack/ontology-replica";
 import type { OntologyIR, OntologyObject } from "@party-stack/ontology-spec";
 import type { TraceStore } from "@party-stack/runtime/tracing";
 import type { Collection } from "@tanstack/db";
@@ -72,7 +72,6 @@ export interface ReplicaViewOptions {
     readonly writes?: LiveOntologyWrites;
     readonly replica: ReplicaService;
     readonly attachments: LiveOntologyAttachments;
-    readonly pins?: ReplicaPinControls;
     readonly pinBackend?: Effect.Effect<
         import("@party-stack/ontology-backend").OntologyBackendService,
         BackendError,
@@ -86,7 +85,7 @@ export interface ReplicaViewOptions {
 /** Materialize a scoped UI view over an existing replica; engine ownership is independent. */
 export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
     options: ReplicaViewOptions
-): Effect.fn.Return<Omit<LiveOntology, "cleanup">, BackendError, Runtime | Scope.Scope> {
+): Effect.fn.Return<Omit<LiveOntology, "cleanup" | "definition">, BackendError, Runtime | Scope.Scope> {
     const services = yield* Runtime;
     const runtime = services;
     const { ir, context, replica } = options;
@@ -325,7 +324,6 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         backend: options.pinBackend ?? replica.demand.pins.backend,
         dbClient,
     });
-    const clearFamily = downloadPins.clear;
     return {
         dbClient,
         ir,
@@ -334,43 +332,7 @@ export const makeReplicaOntologyView = Effect.fn("Ontology.view")(function* (
         cachedObjects,
         actions,
         outbox,
-        pins: Object.assign(downloadPins, {
-            get: () => run((options.pins ?? replica.demand).pinStatus),
-            set: (
-                query: import("@party-stack/ontology-spec").QueryDocument,
-                settings?: import("@party-stack/ontology-replica").PinOptions
-            ) => run((options.pins ?? replica.demand).setPin(query, settings)),
-            clear: (name?: string) =>
-                name === undefined ? run((options.pins ?? replica.demand).clearPin) : clearFamily(name),
-            subscribe: (
-                listener: (status: import("@party-stack/ontology-replica").PinStatus | undefined) => void,
-                onError?: (error: unknown) => void
-            ) => {
-                if (owner.state._tag === "Closed")
-                    throw new BackendError({
-                        operation: "pins.subscribe",
-                        kind: "InvalidRequest",
-                        retryable: false,
-                        message: "Ontology view is closed.",
-                    });
-                const watch = Stream.runForEach((options.pins ?? replica.demand).pinStatusChanges, (status) =>
-                    Effect.sync(() => listener(status))
-                ).pipe(
-                    Effect.catchCause((cause) =>
-                        Cause.hasInterruptsOnly(cause)
-                            ? Effect.void
-                            : Effect.sync(() => {
-                                  if (onError) onError(Cause.squash(cause));
-                                  else console.error("Pin subscription failed.", Cause.pretty(cause));
-                              })
-                    )
-                );
-                const fiber = Effect.runSyncWith(captured)(Effect.forkIn(watch, owner));
-                return () => {
-                    Effect.runFork(Fiber.interrupt(fiber));
-                };
-            },
-        }),
+        pins: downloadPins,
         attachments: options.attachments,
         decrypt: async (value, settings) =>
             (await run(replica.decrypt(value, settings), settings?.signal)).value as never,

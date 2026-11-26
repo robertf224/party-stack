@@ -4,6 +4,45 @@ import { generateOntology } from "./ontology.js";
 import type { OntologyIR } from "../ir/index.js";
 
 describe("generateOntology", () => {
+    it("leaves provider ids out of generated source", () => {
+        const output = generateOntology({
+            types: [{ id: "provider-status", name: "Status", type: o.string({}) }],
+            linkTypes: [
+                {
+                    id: "provider-link",
+                    source: { objectType: "Task", name: "tasks", displayName: "Tasks" },
+                    target: { objectType: "Task", name: "parent", displayName: "Parent" },
+                    foreignKey: "id",
+                    cardinality: "one",
+                },
+            ],
+            queryFunctionTypes: [],
+            objectTypes: [
+                {
+                    id: "provider-object-type",
+                    name: "Task",
+                    displayName: "Task",
+                    pluralDisplayName: "Tasks",
+                    primaryKey: "id",
+                    properties: [
+                        { id: "provider-property", name: "id", displayName: "ID", type: o.string({}) },
+                    ],
+                },
+            ],
+            actionTypes: [
+                {
+                    id: "provider-action",
+                    name: "complete",
+                    displayName: "Complete",
+                    parameters: [],
+                    logic: [],
+                },
+            ],
+        });
+        expect(output).not.toContain("provider-");
+        expect(output).toContain("Task");
+    });
+
     it("preserves object and action presentation metadata", () => {
         const ontology: OntologyIR = {
             types: [],

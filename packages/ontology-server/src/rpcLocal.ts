@@ -28,6 +28,7 @@ export const makeOntologyLocalClient = Effect.fn("OntologyClient.local")(functio
         onFromClient: ({ message }) => dispatch.write(0, message),
     });
     const rpc = client.client;
+    const context = yield* Effect.context<R>();
     return {
         ontology: Effect.fn("OntologyClient.select")(function* (
             selected?: string,
@@ -36,7 +37,15 @@ export const makeOntologyLocalClient = Effect.fn("OntologyClient.local")(functio
             const name = selected ?? options?.ontology;
             return yield* makeTrustedOntologyProtocolClient(
                 name === undefined ? rpc : selectOntology(rpc, name),
-                clientOptions
+                {
+                    ...clientOptions,
+                    // The definition object the server serves this route now, instead of a copy.
+                    localDefinition: Effect.scoped(server.bind(name ?? server.defaultOntology ?? "")).pipe(
+                        Effect.map((bound) => bound.options.ir),
+                        Effect.orElseSucceed(() => undefined),
+                        Effect.provideContext(context)
+                    ),
+                }
             );
         }),
     };

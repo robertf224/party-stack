@@ -18,6 +18,7 @@ export function useViewOptions({
     authentication,
     label,
     parent,
+    onDefinitionChange,
 }: OntologyViewOptions) {
     return useMemo(() => {
         const values = {
@@ -32,9 +33,23 @@ export function useViewOptions({
             authentication,
             label,
             parent,
+            onDefinitionChange,
         } satisfies Record<keyof OntologyViewOptions, unknown>;
         return Object.fromEntries(
             Object.entries(values).filter(([, value]) => value !== undefined)
         ) as OntologyViewOptions;
-    }, [id, live, runtime, writes, demand, cache, traceRecording, context, authentication, label, parent]);
+    }, [
+        id,
+        live,
+        runtime,
+        writes,
+        demand,
+        cache,
+        traceRecording,
+        context,
+        authentication,
+        label,
+        parent,
+        onDefinitionChange,
+    ]);
 }

@@ -339,7 +339,9 @@ test("local clients share the server's validated definition instead of copying i
                 const second = yield* local.ontology("items");
                 expect(first.ir).toBe(ir);
                 expect(second.ir).toBe(first.ir);
-                expect(yield* first.definition.refresh).toMatchObject({ ir });
+                expect(yield* first.definition.refresh).toMatchObject({
+                    definitionHash: first.definitionHash,
+                });
             })
         )
     );
@@ -357,7 +359,7 @@ test("managed replica routes resolve action parameters from the replica without 
                     routes: {
                         items: {
                             kind: "replica",
-                            ir,
+                            definition: { kind: "static", ir },
                             backend: withoutResolver,
                             live: false,
                             dangerouslyAllowInternalAccess: true,

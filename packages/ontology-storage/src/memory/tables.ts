@@ -1,6 +1,6 @@
 /** Optional in-memory backend. Import explicitly; the main/SQL entry points do not load it. */
 import { Effect, Equal, Exit, HashMap, HashSet, Layer, Option, Order, Semaphore, Stream } from "effect";
-import { INDEX_BACKFILL_BATCH_SIZE } from "../driver/index.js";
+import { caseInsensitiveIndex, INDEX_BACKFILL_BATCH_SIZE } from "../driver/index.js";
 import { transactionError, type OntologyStorageError } from "../errors.js";
 import { queryRows } from "../planner/index.js";
 import { makeTables, Tables } from "../tables.js";
@@ -174,6 +174,13 @@ export const make = () =>
                             putIndex: (definition) =>
                                 run(true, () => {
                                     definitionsForWrite(definition.table).set(definition.name, definition);
+                                }),
+                            deleteIndex: (table, name) =>
+                                run(true, () => {
+                                    if (working.definitions.get(table)?.has(name))
+                                        definitionsForWrite(table).delete(name);
+                                    putIndex(table, name, undefined);
+                                    putIndex(table, caseInsensitiveIndex(name), undefined);
                                 }),
                             putEntry: (entry) =>
                                 run(true, () => {

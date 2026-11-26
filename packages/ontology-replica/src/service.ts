@@ -10,14 +10,13 @@ import { prepareActionParameters } from "./attachments/prepare.js";
 import { makeReplicaAttachments } from "./attachments/service.js";
 import { makeReplicaDecryption } from "./decrypt.js";
 import { makeReplicaKernel } from "./engine.js";
-import { kernel } from "./internal.js";
+import { kernel, upstream } from "./internal.js";
 import { makePinManager } from "./pinManager.js";
 import { makeQueryPin } from "./pins.js";
 import type { ReplicaAttachments } from "./attachments/service.js";
 import type { DemandPolicy } from "./demandCache.js";
 import type { ReplicaService as KernelService } from "./engine.js";
 import type { ReplicaPins } from "./pinManager.js";
-import type { PinOptions, PinStatus } from "./pins.js";
 import type { ObjectCachePolicy, ObjectCacheSweepOptions } from "./policies.js";
 import type { ReplicaStatus } from "./status.js";
 import type { ReplicaRowsBatch } from "./visible.js";
@@ -31,8 +30,8 @@ import type {
 } from "@party-stack/ontology-backend";
 import type { ActionMutatorRegistry } from "@party-stack/ontology-backend/actions";
 import type { ClientPolicy } from "@party-stack/ontology-backend/clients";
+import type { DefinitionSelection } from "@party-stack/ontology-backend/meta";
 import type { OntologySource, PendingAction, ClientSubmission } from "@party-stack/ontology-backend/protocol";
-import type { QueryDocument } from "@party-stack/ontology-spec";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
 import type { Encrypted, attachment } from "@party-stack/ontology-spec/values";
@@ -42,8 +41,50 @@ import type { EncryptionKeyringService } from "@party-stack/ontology-storage/enc
 import type { TablesService } from "@party-stack/ontology-storage/tables";
 import type { NetworkConnectivity, ResourceCapacity } from "@party-stack/runtime";
 
+/** A fixed definition. The replica opens under it, and a stored cache written under a different
+ * contract is handled by `onDefinitionChange`. */
+export interface StaticReplicaDefinition {
+    readonly kind: "static";
+    readonly ir: OntologyIR;
+}
+/** A definition read from the meta ontology. The replica opens under the definition the metadata
+ * describes and reopens behind the same handle when it changes. */
+export interface DynamicReplicaDefinition {
+    readonly kind: "dynamic";
+    /** A metadata backend: anything that serves the meta ontology (`@party-stack/ontology-spec/meta`).
+     * The replica keeps its own replica of the metadata it reads, in the same storage, so it opens
+     * offline under the definition it last read and follows changes as the metadata syncs. A
+     * request that fails with `SchemaMismatch` revalidates the metadata. */
+    readonly meta: OntologyBackendService;
+    /** The definitions to take, and app-specific edits to apply, as in `pull`. Defaults to all. */
+    readonly select?: DefinitionSelection;
+}
+/** The definition a replica opens under: fixed, or read from metadata. See `makeReplica`'s `definition`. */
+export type ReplicaDefinition = StaticReplicaDefinition | DynamicReplicaDefinition;
+/** The definition a replica is open under. */
+export interface ReplicaDefinitionState {
+    readonly current: Effect.Effect<OntologyIR, BackendError>;
+    /** The current definition first, then each one the replica reopens under. */
+    readonly changes: Stream.Stream<OntologyIR, BackendError>;
+}
 export interface ReplicaConfiguration {
     readonly ir: OntologyIR;
+    /**
+     * What to do when the stored cache was written under a different definition contract.
+     * `"error"` (default) fails with `SchemaMismatch`. `"reset"` clears cached data when the
+     * replica opens, inside its startup transaction so a failed open rolls it back. It clears
+     * only object types whose own contract (properties, primary key, constraints) changed or
+     * that were removed. Other types keep their rows and coverage; action, link and
+     * query-function changes clear nothing. A change to named value types, context or policy,
+     * or an unreadable stored definition, clears everything. A replica fed by another server
+     * resumes its delivery stream, and its parent sends only the cleared types again.
+     * Every download keeps its desired query; one that lost rows reinstalls. Queued actions stay
+     * queued: their predictions are replayed against the new definition, a prediction that no
+     * longer applies is dropped (the action is still sent), and failures follow the outbox's
+     * `failureStrategy`. A cleared type's indexes are dropped and ensured again for the new
+     * definition, so a changed primary key also opens.
+     */
+    readonly onDefinitionChange?: "reset" | "error";
     readonly context?: Record<string, unknown>;
     readonly mutators?: ActionMutatorRegistry;
     /** False acquires one-shot demand without background workers or new application outbox submissions. */
@@ -86,6 +127,8 @@ export type ReplicaOptions = ReplicaConfiguration & {
     readonly encryptionKeyring?: EncryptionKeyringService;
     readonly network?: NetworkConnectivity;
     readonly capacity?: ResourceCapacity;
+    /** @internal Children's delivery state, kept across reopens by a replica that follows its definition. */
+    readonly deliveries?: import("./engine.js").ReplicaDeliveries;
     /** The connection this replica syncs through. Pass Connect's ConnectionLifecycle
      * (ConnectionAccess.authentication) so a watch the source rejects can renew its
      * credential; a plain monitor only waits for the connection to change. */
@@ -138,7 +181,9 @@ export interface ReplicaOutbox {
     ) => Effect.Effect<void, BackendError>;
 }
 export interface ReplicaService extends ReplicaReads {
+    /** The definition the replica is open under now. */
     readonly ir: OntologyIR;
+    readonly definition: ReplicaDefinitionState;
     readonly context: Record<string, unknown>;
     readonly sourceId: string;
     readonly upstreamKind: "committed" | "speculative";
@@ -170,11 +215,6 @@ export interface ReplicaService extends ReplicaReads {
     readonly observeSubset: (subset: ObjectSubset) => Stream.Stream<ReplicaRowsBatch, BackendError>;
     readonly demand: {
         readonly pins: ReplicaPins;
-        readonly setPin: (query: QueryDocument, options?: PinOptions) => Effect.Effect<void, BackendError>;
-        readonly clearPin: Effect.Effect<void, BackendError>;
-        readonly pinStatus: Effect.Effect<PinStatus | undefined, BackendError>;
-        /** Emits the current pin status, then status after each saved intent/readiness change. */
-        readonly pinStatusChanges: Stream.Stream<PinStatus | undefined, BackendError>;
         /** Live demand defaults to cached availability while freshness repairs
          * continue. One-shot replicas and explicit complete reads await current coverage. */
         readonly acquire: (
@@ -196,10 +236,6 @@ export interface ReplicaService extends ReplicaReads {
     readonly collectGarbage: (options?: ObjectCacheSweepOptions) => Effect.Effect<number, BackendError>;
 }
 /** Pin operations may be delegated to the device's persistent replica owner. */
-export type ReplicaPinControls = Pick<
-    ReplicaService["demand"],
-    "setPin" | "clearPin" | "pinStatus" | "pinStatusChanges"
->;
 
 export const makeReplica = Effect.fn("Replica.open")(function* (
     options: ReplicaOptions
@@ -407,12 +443,28 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
             encrypted: options.encrypted ?? options.backend?.encrypted,
         },
     });
-    const pin = yield* makeQueryPin({
-        ...options,
-        engine,
-        live: options.live !== false,
-        attachments: remoteAttachments,
+    // Release a download left by the removed single-pin API (stored as the "head" pin) once:
+    // nothing reconciles it any more, so its rows and bytes would otherwise stay retained.
+    const pinState = Table.make<unknown>({
+        name: JSON.stringify(["replica", options.namespace, "query-pin"]),
     });
+    if (
+        (yield* options.tables
+            .get(pinState, "head")
+            .pipe(Effect.mapError((cause) => classifyBackendFailure("replica.pins", cause)))) !== undefined
+    )
+        yield* Effect.scoped(
+            Effect.flatMap(
+                makeQueryPin({
+                    ...options,
+                    engine,
+                    id: "head",
+                    live: false,
+                    attachments: remoteAttachments,
+                }),
+                (legacy) => legacy.clearPin()
+            )
+        );
     const pinOwner = yield* Effect.scope;
     let pinManagerOpened = false;
     const pinManager = yield* Effect.cached(
@@ -452,7 +504,6 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         yield* pinManager;
     const status = Effect.gen(function* () {
         const current = yield* engine.status;
-        const pinned = yield* pin.pinStatus;
         const memory = options.capacity && (yield* Effect.result(options.capacity.memory));
         const storage = options.capacity && (yield* Effect.result(options.capacity.storage));
         return {
@@ -481,11 +532,6 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
                                   ? undefined
                                   : Math.floor(options.cache.attachments.maxBytes * 0.8))),
                 },
-            },
-            pin: pinned && {
-                ready: pinned.ready,
-                previousGraphRetained: pinned.previousGraphRetained,
-                error: pinned.error,
             },
         };
     }).pipe(Effect.withSpan("Replica.status"));
@@ -547,17 +593,24 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         );
     });
     const checkpoint = engine.syncOnce.pipe(
-        Effect.andThen(pin.refresh),
         Effect.andThen(
             Effect.suspend(() =>
                 pinManagerOpened ? Effect.flatMap(pinManager, (manager) => manager.refresh) : Effect.void
             )
         )
     );
-    const service: ReplicaService & { readonly [kernel]: KernelService } = {
+    const service: ReplicaService & {
+        readonly [kernel]: KernelService;
+        readonly [upstream]?: OntologyBackendService;
+    } = {
         [kernel]: engine,
+        [upstream]: options.backend,
         ...reads(false),
         ir: engine.ir,
+        definition: {
+            current: Effect.succeed(engine.ir),
+            changes: Stream.concat(Stream.make(engine.ir), Stream.never),
+        },
         context: options.context ?? {},
         sourceId: engine.sourceId,
         upstreamKind: options.source ? "speculative" : "committed",
@@ -606,15 +659,6 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
             ),
         demand: {
             pins,
-            setPin: pin.setPin,
-            clearPin: pin.clearPin(),
-            pinStatus: pin.pinStatus,
-            // The pin's replaying notification source covers changes between the
-            // initial read and subscription; no polling or additional status store.
-            pinStatusChanges: pin.changes.pipe(
-                Stream.prepend([undefined]),
-                Stream.mapEffect(() => pin.pinStatus)
-            ),
             acquire: Effect.fn("Replica.demand")(function* (
                 subset: ObjectSubset,
                 settings?: { readonly localOnly?: boolean; readonly resultType?: "cached" | "complete" }
@@ -688,13 +732,14 @@ export const makeReplica = Effect.fn("Replica.open")(function* (
         },
         status: {
             get: status,
-            changes: Stream.merge(engine.statuses.pipe(Stream.as(undefined)), pin.changes).pipe(
-                Stream.mapEffect(() => status)
-            ),
+            changes: engine.statuses.pipe(Stream.mapEffect(() => status)),
         },
         syncOnce: checkpoint,
         revalidate: Effect.andThen(engine.markDemandedStale, checkpoint),
         collectGarbage: engine.collectGarbage,
-    } satisfies ReplicaService & { readonly [kernel]: KernelService };
+    } satisfies ReplicaService & {
+        readonly [kernel]: KernelService;
+        readonly [upstream]?: OntologyBackendService;
+    };
     return service;
 });

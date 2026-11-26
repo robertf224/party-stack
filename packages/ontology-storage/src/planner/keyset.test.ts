@@ -89,6 +89,7 @@ const fixture = (values: readonly Note[]) => {
         put: unused,
         delete: unused,
         putIndex: unused,
+        deleteIndex: unused,
         putEntry: unused,
         deleteEntries: unused,
     };

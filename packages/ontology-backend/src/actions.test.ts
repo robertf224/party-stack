@@ -213,3 +213,74 @@ test("native mutators query their transaction through Query IR and see preceding
         )
     );
 });
+
+test("applies delete and update steps to each object of a list target", async () => {
+    const deleted: unknown[] = [];
+    const patched: unknown[] = [];
+    const task = o.objectReference({ objectType: "Task" });
+    const ir: OntologyIR = {
+        types: [],
+        objectTypes: [
+            {
+                name: "Task",
+                displayName: "Task",
+                pluralDisplayName: "Tasks",
+                primaryKey: "Id",
+                properties: [
+                    { name: "Id", displayName: "ID", type: o.string({}) },
+                    { name: "Done", displayName: "Done", type: o.boolean({}) },
+                ],
+            },
+        ],
+        linkTypes: [],
+        actionTypes: [
+            {
+                name: "deleteTasks",
+                displayName: "Delete Tasks",
+                parameters: [{ name: "tasks", displayName: "Tasks", type: o.list({ elementType: task }) }],
+                logic: [o.ActionLogicStep.deleteObject({ object: { name: "tasks" } })],
+            },
+            {
+                name: "completeTasks",
+                displayName: "Complete Tasks",
+                parameters: [{ name: "tasks", displayName: "Tasks", type: o.list({ elementType: task }) }],
+                logic: [
+                    o.ActionLogicStep.updateObject({
+                        object: { name: "tasks" },
+                        values: [{ property: ["Done"], value: o.Expression.literal({ value: true }) }],
+                    }),
+                ],
+            },
+        ],
+        queryFunctionTypes: [],
+    };
+    const tx = {
+        get: () => Effect.succeed(undefined),
+        loadSubset: () => Effect.succeed([]),
+        put: () => Effect.void,
+        patch: (type: string, key: unknown, changes: unknown) =>
+            Effect.sync(() => void patched.push([type, key, changes])),
+        delete: (type: string, key: unknown) => Effect.sync(() => void deleted.push([type, key])),
+    };
+
+    await Effect.runPromise(
+        executeAction({
+            ir,
+            request: { id: "r1", name: "deleteTasks", parameters: { tasks: ["a", "b"] } },
+            tx,
+        })
+    );
+    await Effect.runPromise(
+        executeAction({
+            ir,
+            request: { id: "r2", name: "completeTasks", parameters: { tasks: ["c"] } },
+            tx,
+        })
+    );
+
+    expect(deleted).toEqual([
+        ["Task", "a"],
+        ["Task", "b"],
+    ]);
+    expect(patched).toEqual([["Task", "c", [{ path: ["Done"], value: true }]]]);
+});

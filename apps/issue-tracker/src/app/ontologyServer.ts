@@ -105,48 +105,49 @@ export const makeTrackerOntologyServer = Effect.fn("Tracker.server")(function* (
             connect: {
                 ...connectDeviceRoute(authority),
             },
-            "issues/:connectionType/:connectionId": Effect.fnUntraced(function* (
-                params: Readonly<Record<string, string>>
-            ) {
-                const selection = yield* Schema.decodeUnknownEffect(Selection)({
-                    objectType: params.connectionType,
-                    id: params.connectionId,
-                }).pipe(Effect.mapError(unknown));
-                const access = yield* connections.acquire(selection);
-                const userId = access.userId;
-                const context = { userId };
-                const foundry = access.serviceInstance.service === "foundry";
-                const web = yield* toWebEgress(access.egress);
-                const backend = foundry
-                    ? yield* makeFoundryBackend({
-                          baseUrl: access.serviceInstance.instanceUrl,
-                          ontologyId: FOUNDRY_ONTOLOGY_RID,
-                          egress: access.egress,
-                          ir: ontology,
-                          context,
-                          users,
-                      })
-                    : yield* makeOntologyHttpBackend({
-                          url: new URL("/api/remote-ontology/rpc", access.serviceInstance.instanceUrl).href,
-                      }).pipe(
-                          Effect.provide(FetchHttpClient.layer),
-                          Effect.provideService(FetchHttpClient.Fetch, web.fetch)
-                      );
-                return {
-                    kind: "replica" as const,
-                    dangerouslyAllowInternalAccess: true as const,
-                    ir: ontology,
-                    context,
-                    backend,
-                    // Preserve the existing persistent cache addresses during this API migration.
-                    namespace: foundry
-                        ? `${encodeURIComponent(FOUNDRY_INSTALLATION_ID)}:${encodeURIComponent(FOUNDRY_ONTOLOGY_RID)}`
-                        : "issue-tracker-sqlite:issue-tracker",
-                    authentication: access.authentication,
-                    outbox: trackerWrites.outbox,
-                    demand: { idleRetentionMs: 5_000 },
-                };
-            }),
+            "issues/:connectionType/:connectionId": {
+                dangerouslyAllowInternalAccess: true,
+                open: Effect.fnUntraced(function* (params: Readonly<Record<string, string>>) {
+                    const selection = yield* Schema.decodeUnknownEffect(Selection)({
+                        objectType: params.connectionType,
+                        id: params.connectionId,
+                    }).pipe(Effect.mapError(unknown));
+                    const access = yield* connections.acquire(selection);
+                    const userId = access.userId;
+                    const context = { userId };
+                    const foundry = access.serviceInstance.service === "foundry";
+                    const web = yield* toWebEgress(access.egress);
+                    const backend = foundry
+                        ? yield* makeFoundryBackend({
+                              baseUrl: access.serviceInstance.instanceUrl,
+                              ontologyId: FOUNDRY_ONTOLOGY_RID,
+                              egress: access.egress,
+                              ir: ontology,
+                              context,
+                              users,
+                          })
+                        : yield* makeOntologyHttpBackend({
+                              url: new URL("/api/remote-ontology/rpc", access.serviceInstance.instanceUrl)
+                                  .href,
+                          }).pipe(
+                              Effect.provide(FetchHttpClient.layer),
+                              Effect.provideService(FetchHttpClient.Fetch, web.fetch)
+                          );
+                    return {
+                        kind: "replica" as const,
+                        definition: { kind: "static" as const, ir: ontology },
+                        context,
+                        backend,
+                        // Preserve the existing persistent cache addresses during this API migration.
+                        namespace: foundry
+                            ? `${encodeURIComponent(FOUNDRY_INSTALLATION_ID)}:${encodeURIComponent(FOUNDRY_ONTOLOGY_RID)}`
+                            : "issue-tracker-sqlite:issue-tracker",
+                        authentication: access.authentication,
+                        outbox: trackerWrites.outbox,
+                        demand: { idleRetentionMs: 5_000 },
+                    };
+                }),
+            },
         },
     });
 });

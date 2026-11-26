@@ -2,7 +2,7 @@ import { classifySalesforceStandardAction } from "../standardActions.js";
 import { matchesMetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
 import { convertSalesforceMetaStandardQueryFunctionType } from "./convertMetaQueryFunctionType.js";
 import type { MetaNameQuery } from "./convertMetaLoadSubsetOptions.js";
-import type { QueryFunctionTypeDef } from "@party-stack/ontology-spec";
+import type { QueryFunctionType as MetaQueryFunctionType } from "@party-stack/ontology-spec/meta";
 import type { Query } from "@party-stack/ontology-storage";
 import type {
     SalesforceClient,
@@ -37,7 +37,7 @@ export async function loadSalesforceQueryFunctionTypes(
     opts: { client: SalesforceClient; standardQueryFunctionTypeNames?: string[] },
     query: MetaNameQuery = { type: "list" },
     window?: Pick<Query, "offset" | "limit">
-): Promise<QueryFunctionTypeDef[]> {
+): Promise<MetaQueryFunctionType[]> {
     let summaries: SalesforceInvocableActionSummary[] | undefined;
     if (query.type !== "getBatch" && !opts.standardQueryFunctionTypeNames) {
         const response = await opts.client.listStandardActions();

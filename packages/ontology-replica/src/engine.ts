@@ -8,7 +8,7 @@ import {
 import { tableUsage } from "@party-stack/ontology-storage/tables";
 import { alwaysOnlineConnectivity } from "@party-stack/runtime";
 import type { ConnectionLifecycle, ConnectionMonitor } from "@party-stack/connect";
-import type { DeliveryPosition } from "@party-stack/ontology-backend/delivery";
+import type { DeliveryManager, DeliveryPosition } from "@party-stack/ontology-backend/delivery";
 import type { CompiledSubset } from "@party-stack/ontology-backend/subset";
 import type { NetworkConnectivity } from "@party-stack/runtime";
 export { makeCachedProxy } from "./proxy.js";
@@ -99,6 +99,13 @@ import { putIncomingRow, putIncomingBaseRows } from "./incoming.js";
 import { connectReplicaParent, connectReplicaDelivery } from "./parent.js";
 import { primaryKeyQueries, primaryKeyTableQuery } from "./primaryKeyOrder.js";
 import { deliveryRecovery } from "./recovery.js";
+import {
+    changedIdTypes,
+    planDefinitionReset,
+    resetObjectTypes,
+    resetReplicaHead,
+    type DefinitionResetPlan,
+} from "./reset.js";
 import { superviseWatch } from "./watch.js";
 export type { DemandPolicy } from "./demandCache.js";
 import { affectsCoverage, markQuery, retentionQuery } from "./retention.js";
@@ -202,6 +209,11 @@ export interface ReplicaService extends OwnedReadTransaction {
     readonly visibleRevision: (tx: ReadTransaction) => Effect.Effect<number, OntologyStorageError>;
     /** Read a local observation fence from this replica's own storage. */
     readonly readVisibleRevision: Effect.Effect<number, BackendError>;
+    /** Retire this engine before its owner closes it: streams served from it end with `error`
+     * now, and calls that reach it after it closes fail with `error`. */
+    readonly retire: (error: BackendError) => Effect.Effect<void>;
+    /** Fails with the retirement error once the engine is retired. */
+    readonly retired: Effect.Effect<never, BackendError>;
     readonly hasCoverage: (
         tx: ReadTransaction,
         subset: CompiledSubset
@@ -391,6 +403,11 @@ export interface ReplicaService extends OwnedReadTransaction {
 interface ReplicaCommonOptions {
     readonly namespace: string;
     readonly ir: OntologyIR;
+    /** Children's delivery state, kept by a replica that reopens under a new definition so its
+     * children resume and receive only the object types that changed. */
+    readonly deliveries?: ReplicaDeliveries;
+    /** See `ReplicaConfiguration.onDefinitionChange`. Applied once, when the replica opens. */
+    readonly onDefinitionChange?: "reset" | "error";
     readonly context?: Record<string, unknown>;
     readonly tables: TablesService;
     readonly blobs?: BlobStorageService;
@@ -478,6 +495,21 @@ const snapshotDigest = Effect.fnUntraced(function* (snapshot: ReplicaStateSnapsh
 });
 
 /** A scoped persistent Replica. Its replay capability cannot reach the backend. */
+export interface ReplicaDeliveries {
+    readonly committed: DeliveryManager;
+    readonly speculative: DeliveryManager;
+}
+/** Delivery state for a replica's children, owned by the caller's Scope. */
+export const makeReplicaDeliveries = Effect.fnUntraced(function* (options: {
+    readonly tables: TablesService;
+    readonly namespace: string;
+}) {
+    const name = (part: string) => JSON.stringify(["replica", options.namespace, part]);
+    return {
+        committed: yield* makeDeliveryManager({ tables: options.tables, namespace: name("committed") }),
+        speculative: yield* makeDeliveryManager({ tables: options.tables, namespace: name("speculative") }),
+    } satisfies ReplicaDeliveries;
+});
 export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: ReplicaOptions) {
     const connectivity = options.connectivity ?? alwaysOnlineConnectivity;
     const connection = options.connection;
@@ -544,14 +576,8 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         ? Effect.succeed(adapter)
         : Effect.fail(fault("NotImplemented", "This Replica receives state through its protocol source."));
     const name = (part: string) => JSON.stringify(["replica", options.namespace, part]);
-    const committedDeliveries = yield* makeDeliveryManager({
-        tables: options.tables,
-        namespace: name("committed"),
-    });
-    const speculativeDeliveries = yield* makeDeliveryManager({
-        tables: options.tables,
-        namespace: name("speculative"),
-    });
+    const { committed: committedDeliveries, speculative: speculativeDeliveries } =
+        options.deliveries ?? (yield* makeReplicaDeliveries(options));
     const stateHead = Table.make<{ sourceId: string; revision: number; visibleRevision?: number }>({
         name: name("state-head"),
     });
@@ -581,8 +607,12 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             ]) as Table<unknown>[],
     });
     let closed = false;
+    // Set when the owner retires this engine on purpose (a followed replica reopening), so
+    // callers still attached to it learn to reconnect rather than stop.
+    let closedWith: BackendError | undefined;
+    const retired = yield* Deferred.make<never, BackendError>();
     const open = Effect.suspend(() =>
-        closed ? Effect.fail(fault("InvalidRequest", "Replica scope is closed.")) : Effect.void
+        closed ? Effect.fail(closedWith ?? fault("InvalidRequest", "Replica scope is closed.")) : Effect.void
     );
     yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
@@ -790,11 +820,40 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         if (stored === signature) return true;
         try {
             const definition = Table.make<OntologyIR>({ name: "replica-definition" }).decode(stored);
-            return ontologyDefinitionContractSignature(definition) === contractSignature;
+            return (
+                ontologyDefinitionContractSignature(definition) === contractSignature &&
+                changedIdTypes(definition, options.ir).size === 0
+            );
         } catch {
             return false;
         }
     };
+    /** A stored definition, read without decoding it against the current IR schema: it may
+     * predate a format change. */
+    const storedDefinition = (stored: string): unknown => {
+        try {
+            return Table.make<unknown>({ name: "replica-definition" }).decode(stored);
+        } catch {
+            return undefined;
+        }
+    };
+    /** Object type names of a stored definition, whatever its format. */
+    const storedObjectTypes = (stored: string): string[] => {
+        try {
+            const definition = storedDefinition(stored);
+            const types = (definition as { objectTypes?: unknown } | undefined)?.objectTypes;
+            return Array.isArray(types)
+                ? types.flatMap((type) =>
+                      typeof (type as { name?: unknown })?.name === "string"
+                          ? [(type as { name: string }).name]
+                          : []
+                  )
+                : [];
+        } catch {
+            return [];
+        }
+    };
+    let resetFrom: { readonly plan: DefinitionResetPlan } | undefined;
     const schemaHash = yield* boundary(ontologyDefinitionContractHash(options.ir));
     const deliveryActive =
         options.startSync !== false && Boolean(options.source?.subscribe || adapter?.subscribeSelection);
@@ -1184,6 +1243,48 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                       ...(options.source ? { mode: "parent" as const } : {}),
                   };
         });
+    /** With `onDefinitionChange: "reset"`, clear a cache stored under another definition
+     * contract before the replica opens; returns the replaced stored signature. */
+    const resetChangedDefinition = (tx: Transaction) =>
+        Effect.gen(function* () {
+            if (options.onDefinitionChange !== "reset") return undefined;
+            const stored = yield* tx.get(metadata, "head");
+            if (!stored || stored.source !== sourceId || sameDefinitionContract(stored.signature))
+                return undefined;
+            // Only what changed, for a backend-fed replica and for one fed by a protocol source:
+            // its parent sends the changed types' rows again on the same delivery stream, or
+            // starts the stream over when it cannot.
+            const plan: DefinitionResetPlan = planDefinitionReset(
+                storedDefinition(stored.signature),
+                options.ir
+            );
+            // Cleared rows were written under another schema; the visible-change tracker must
+            // not read them back with the new codecs.
+            (tx as Transaction & { readonly resetVisible?: () => void }).resetVisible?.();
+            if (plan.kind === "all") {
+                const next = yield* resetReplicaHead(
+                    tx,
+                    {
+                        namespace: options.namespace,
+                        blobs: options.blobs,
+                        previousObjectTypes: storedObjectTypes(stored.signature),
+                        ir: options.ir,
+                        signature,
+                    },
+                    stored
+                );
+                if (next) yield* tx.put(metadata, "head", next);
+            } else {
+                if (plan.kind === "types")
+                    yield* resetObjectTypes(tx, {
+                        namespace: options.namespace,
+                        blobs: options.blobs,
+                        types: plan.types,
+                    });
+                yield* tx.put(metadata, "head", { ...stored, signature });
+            }
+            return { plan };
+        });
     const reader = (tx: ReadTransaction, confirmed: boolean): OwnedReadTransaction => ({
         get: (type, key) =>
             boundary(
@@ -1486,6 +1587,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
     yield* boundary(
         tables.transaction((tx) =>
             Effect.gen(function* () {
+                // In the startup transaction, so a startup failure (for example an index that a
+                // changed primary key cannot reuse) rolls the reset back with it.
+                resetFrom = yield* resetChangedDefinition(tx);
                 yield* tx.put(metadata, "head", yield* position(tx));
                 // One designated owner opens this namespace. Query/read leases from
                 // a previous incarnation are volatile; pins and outbox roots are separate.
@@ -1533,6 +1637,15 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
             })
         )
     );
+    if (resetFrom !== undefined) {
+        const { plan } = resetFrom;
+        resetFrom = undefined;
+        yield* Effect.logWarning("Replica cache reset for a changed definition", {
+            namespace: options.namespace,
+            schemaHash,
+            reset: plan.kind === "types" ? [...plan.types] : plan.kind,
+        });
+    }
     const publicRow = (type: string, object: ObjectValue, key?: Key) =>
         withObjectSources({
             ir: options.ir,
@@ -4934,6 +5047,14 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         ),
         visibleRevision,
         readVisibleRevision: access(tables.read(visibleRevision)),
+        retire: (error) =>
+            Effect.andThen(
+                Effect.sync(() => {
+                    closedWith = error;
+                }),
+                Deferred.fail(retired, error)
+            ),
+        retired: Deferred.await(retired),
         hasCoverage: (tx, subset) =>
             Effect.gen(function* () {
                 const proof = yield* coverageFor(tx, subset);
@@ -4977,7 +5098,9 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     return yield* committedDeliveries.open({
                         policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
                         resume,
-                        binding: JSON.stringify([ownSourceId, schemaHash]),
+                        // Not the definition: a stream outlives a reopen under a new one, which
+                        // invalidates only the changed types' delivered rows.
+                        binding: JSON.stringify([ownSourceId]),
                         identity: JSON.stringify(selection),
                         changes: service.subscribeChanges,
                         capture: (tx, emit) =>
@@ -5062,7 +5185,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                     const delivery = yield* speculativeDeliveries.open({
                         policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
                         resume,
-                        binding: JSON.stringify([ownSourceId, schemaHash, session.client.clientId]),
+                        binding: JSON.stringify([ownSourceId, session.client.clientId]),
                         identity: JSON.stringify(selected),
                         rowSelection: JSON.stringify(selected.selection.subsets),
                         changes: Effect.map(service.subscribeChanges, (changes) =>
@@ -5200,6 +5323,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                 mode: options.source ? ("protocol" as const) : ("adapter" as const),
                 networkOnline: yield* connectivity.online,
                 authentication: connection?.state,
+                definition: { hash: schemaHash },
                 ...diagnostics.snapshot(),
                 replicationError,
                 watchError: changeWatchFailure && {

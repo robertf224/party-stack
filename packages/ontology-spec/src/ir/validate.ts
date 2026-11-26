@@ -2,6 +2,7 @@ import { validatePolicy } from "../query/policy.js";
 import { analyzeQueryDocument } from "../query/validate.js";
 import { nestedEncryptedIssues } from "./encrypted.js";
 import { ImageMediaTypeOptions } from "./generated/constants.js";
+import { linkTypeId } from "./ids.js";
 import type { ValidationIssue } from "../utils/validation.js";
 import type { Result } from "../utils/values.js";
 import type {
@@ -336,31 +337,13 @@ function analyzeActionExpression(
     );
     return { type: analysis.expressionTypes.get(expression), issues: analysis.issues };
 }
-function validateExpression(
-    expression: Expression,
-    parameters: ReadonlyMap<string, ActionParameterDef>,
-    path: (string | number)[],
-    valueTypes: ReadonlyMap<string, TypeDef>,
-    objectTypes: ReadonlyMap<string, ObjectTypeDef>,
-    linkTypes: readonly LinkTypeDef[],
-    contextType: TypeDef | undefined
-): ValidationIssue[] {
-    return analyzeActionExpression(
-        expression,
-        parameters,
-        valueTypes,
-        objectTypes,
-        linkTypes,
-        contextType
-    ).issues.map((issue) => ({ ...issue, path: [...path, ...(issue.path?.slice(4) ?? [])] }));
-}
-
 function unwrapOptionalType(type: TypeDef, valueTypes: ReadonlyMap<string, TypeDef>): TypeDef | undefined {
     const resolved = resolveType(type, valueTypes);
     return resolved?.kind === "optional" ? unwrapOptionalType(resolved.value.type, valueTypes) : resolved;
 }
 
-function areDefaultTypesCompatible(
+/** Whether a value of `source` type can fill a `target` parameter or property without conversion. */
+function areValueTypesCompatible(
     target: TypeDef,
     source: TypeDef,
     valueTypes: ReadonlyMap<string, TypeDef>,
@@ -371,24 +354,25 @@ function areDefaultTypesCompatible(
     const sourceType = unwrapOptionalType(source, valueTypes);
     if (!targetType || !sourceType) return false;
     if (targetType.kind === "unknown" || sourceType.kind === "unknown") return true;
-    // Portable object references are primary-key values. A stored foreign-key
-    // field can supply a default without coercion; two named references still
-    // have to identify the same object type.
-    if (targetType.kind === "objectReference" && sourceType.kind !== "objectReference") {
-        const name = targetType.value.objectType;
-        if (references.has(name)) return false;
-        const object = objectTypes.get(name);
-        const key = object?.properties.find((property) => property.name === object.primaryKey);
-        return (
-            !!key &&
-            areDefaultTypesCompatible(
-                key.type,
-                sourceType,
-                valueTypes,
-                objectTypes,
-                new Set([...references, name])
-            )
-        );
+    // Portable object references are primary-key values, so a reference and a stored
+    // foreign-key field interchange without coercion. Two named references still have
+    // to identify the same object type.
+    const primaryKeyType = (reference: Extract<TypeDef, { kind: "objectReference" }>) => {
+        const object = objectTypes.get(reference.value.objectType);
+        return object?.properties.find((property) => property.name === object.primaryKey)?.type;
+    };
+    if ((targetType.kind === "objectReference") !== (sourceType.kind === "objectReference")) {
+        const reference = (targetType.kind === "objectReference" ? targetType : sourceType) as Extract<
+            TypeDef,
+            { kind: "objectReference" }
+        >;
+        const name = reference.value.objectType;
+        const key = references.has(name) ? undefined : primaryKeyType(reference);
+        if (!key) return false;
+        const nested = new Set([...references, name]);
+        return targetType.kind === "objectReference"
+            ? areValueTypesCompatible(key, sourceType, valueTypes, objectTypes, nested)
+            : areValueTypesCompatible(targetType, key, valueTypes, objectTypes, nested);
     }
     if (
         ["integer", "float", "double"].includes(targetType.kind) &&
@@ -400,7 +384,7 @@ function areDefaultTypesCompatible(
         return targetType.value.objectType === sourceType.value.objectType;
     }
     if (targetType.kind === "list" && sourceType.kind === "list") {
-        return areDefaultTypesCompatible(
+        return areValueTypesCompatible(
             targetType.value.elementType,
             sourceType.value.elementType,
             valueTypes,
@@ -431,12 +415,15 @@ function validateActionObjectReference(
         };
     }
 
-    const resolved = resolveType(parameter.type, valueTypes);
+    const declared = resolveType(parameter.type, valueTypes);
+    // A list of references applies the step to each object, like Foundry's object-list parameters.
+    const resolved =
+        declared?.kind === "list" ? resolveType(declared.value.elementType, valueTypes) : declared;
     if (!resolved || resolved.kind !== "objectReference") {
         return {
             errors: [
                 {
-                    message: `Action target parameter "${parameterName}" must be an object reference.`,
+                    message: `Action target parameter "${parameterName}" must be an object reference or a list of object references.`,
                     path: [...path, "name"],
                 },
             ],
@@ -484,25 +471,33 @@ function validateActionPropertyAssignment(
     }
 
     const resolved = resolveFieldType(property.type, rest, valueTypes);
-    const errors = validateExpression(
+    const analysis = analyzeActionExpression(
         assignment.value,
         parameters,
-        [...path, "value"],
         valueTypes,
         objectTypes,
         linkTypes,
         contextType
     );
-
-    return resolved
-        ? errors
-        : [
-              ...errors,
-              {
-                  message: `Invalid property "${assignment.property.join(".")}" on object type "${target.name}".`,
-                  path: [...path, "property"],
-              },
-          ];
+    const errors: ValidationIssue[] = analysis.issues.map((issue) => ({
+        ...issue,
+        path: [...path, "value", ...(issue.path?.slice(4) ?? [])],
+    }));
+    if (!resolved)
+        return [
+            ...errors,
+            {
+                message: `Invalid property "${assignment.property.join(".")}" on object type "${target.name}".`,
+                path: [...path, "property"],
+            },
+        ];
+    if (analysis.type && !areValueTypesCompatible(resolved, analysis.type, valueTypes, objectTypes))
+        errors.push({
+            message: `Value written to "${target.name}.${assignment.property.join(".")}" has an incompatible type.`,
+            path: [...path, "value"],
+            code: INCOMPATIBLE_ASSIGNMENT,
+        });
+    return errors;
 }
 
 function validateAction(
@@ -554,13 +549,11 @@ function validateAction(
                 }))
             );
             const sourceType = analysis.type;
-            if (
-                sourceType &&
-                !areDefaultTypesCompatible(parameter.type, sourceType, valueTypes, objectTypes)
-            ) {
+            if (sourceType && !areValueTypesCompatible(parameter.type, sourceType, valueTypes, objectTypes)) {
                 errors.push({
                     message: `Default value for "${parameter.name}" has an incompatible type.`,
                     path: [...parameterPath, "defaultValue"],
+                    code: INCOMPATIBLE_DEFAULT,
                 });
             }
         }
@@ -679,6 +672,11 @@ function validateQueryFunctionType(
     return errors;
 }
 
+/** Issue code for an action parameter default whose expression type does not fit the parameter. */
+export const INCOMPATIBLE_DEFAULT = "IncompatibleDefault";
+/** Issue code for action logic that writes a value whose type does not fit the property. */
+export const INCOMPATIBLE_ASSIGNMENT = "IncompatibleAssignment";
+
 export function validate(ontology: OntologyIR): ValidationResult {
     const errors: ValidationIssue[] = nestedEncryptedIssues(ontology);
 
@@ -755,13 +753,14 @@ export function validate(ontology: OntologyIR): ValidationResult {
         const lt = ontology.linkTypes[i]!;
         const ltPath = ["linkTypes", i] as (string | number)[];
 
-        if (linkIds.has(lt.id)) {
+        const id = linkTypeId(lt);
+        if (linkIds.has(id)) {
             errors.push({
-                message: `Duplicate link type id: "${lt.id}".`,
+                message: `Duplicate link type id: "${id}".`,
                 path: [...ltPath, "id"],
             });
         }
-        linkIds.add(lt.id);
+        linkIds.add(id);
 
         // Relationship names from a source object are keyed by target.name.
         const linkName = `${lt.source.objectType}:${lt.target.name}`;
@@ -793,7 +792,7 @@ export function validate(ontology: OntologyIR): ValidationResult {
             sourceType?.properties.some((property) => property.name === foreignKeyRoot) ?? false;
         if (sourceType && !sourceHasFk) {
             errors.push({
-                message: `Foreign key "${lt.foreignKey}" does not exist on source object type "${lt.source.objectType}" for link "${lt.id}".`,
+                message: `Foreign key "${lt.foreignKey}" does not exist on source object type "${lt.source.objectType}" for link "${linkTypeId(lt)}".`,
                 path: [...ltPath, "foreignKey"],
             });
         }

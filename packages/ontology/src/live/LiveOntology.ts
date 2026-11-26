@@ -4,15 +4,12 @@ import type {
     ReplicaOptions,
     DemandPolicy,
     ReplicaMonitor,
-    PinOptions,
-    PinStatus,
 } from "@party-stack/ontology-replica";
 import type { OntologyDefinition } from "@party-stack/ontology-spec";
 import type { Encrypted } from "@party-stack/ontology-spec/values";
 import type { TraceStore, TraceRecordingMode } from "@party-stack/runtime/tracing";
 import type { DbClient } from "@tanstack/db";
 export type { OntologyDefinition } from "@party-stack/ontology-spec";
-export type { PinOptions, PinStatus, PinGraph } from "@party-stack/ontology-replica";
 import { MemoryRuntime, Runtimes, type RuntimesLayer } from "@party-stack/runtime";
 import { Effect, Exit, Scope, Layer } from "effect";
 import { makeOntologyResource } from "../runtime/resource.js";
@@ -26,7 +23,7 @@ import type { ConnectionMonitor } from "@party-stack/connect";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { BackendError } from "@party-stack/ontology-backend";
 import type { OntologyClient, OntologyServerClient } from "@party-stack/ontology-server/rpc";
-import type { OntologyIR, QueryDocument } from "@party-stack/ontology-spec";
+import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { Runtime } from "@party-stack/runtime";
 
 export type { LiveOntologyAction, LiveOntologyActionOptions } from "./actions/createLiveOntologyAction.js";
@@ -97,25 +94,22 @@ export interface DecryptOptions {
     readonly cache?: boolean;
     readonly signal?: AbortSignal;
 }
-export type LiveOntologyDecrypt = <A>(value: Encrypted<A>, options?: DecryptOptions) => Promise<A>;
-
-export interface LiveOntologyPins extends OntologyPins {
-    /** The application's current offline graph, including its readiness. */
-    get(): Promise<PinStatus | undefined>;
-    /** Replace the offline graph, retaining the previous graph until the replacement is ready.
-     * Server-backed clients target the parent's persistent replica, including from a memory tab.
-     * Standalone clients target their own replica. Attachments default to "none".
+export interface LiveOntologyDefinitionStatus {
+    /**
+     * `"stale"`: the server now has a different definition than the one this view opened with.
+     * The view keeps working against cached data, but new rows and changed types need a reopen.
+     * `OntologyProvider` reopens it automatically.
      */
-    set(query: QueryDocument, options?: PinOptions): Promise<void>;
-    clear(name?: string): Promise<void>;
-    /** Receives the current pin and subsequent updates. Unsubscribe releases its stream.
-     * Native pin failures appear on status.error; transport failures call onError.
-     */
-    subscribe(
-        listener: (status: PinStatus | undefined) => void,
-        onError?: (cause: unknown) => void
-    ): () => void;
+    readonly status: "current" | "stale";
+    readonly error?: BackendError;
 }
+/** Synchronous status for UI stores (`useSyncExternalStore`). */
+export interface LiveOntologyDefinition {
+    readonly get: () => LiveOntologyDefinitionStatus;
+    /** Calls `listener` when the status changes; returns an unsubscribe function. */
+    readonly subscribe: (listener: () => void) => () => void;
+}
+export type LiveOntologyDecrypt = <A>(value: Encrypted<A>, options?: DecryptOptions) => Promise<A>;
 
 export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefinition> {
     /** Scoped source-collection and query-identity owner. Supply to React's DbProvider or query options.
@@ -123,6 +117,8 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
      */
     readonly dbClient: DbClient;
     readonly ir: OntologyIR;
+    /** Whether the server still serves `ir`. Reopen the view when it becomes stale. */
+    readonly definition: LiveOntologyDefinition;
     readonly context: OntologyContext<Ontology>;
     /** Lazy typed collections. Consuming queries acquire upstream subset demand. */
     readonly objects: LiveOntologyObjects<Ontology["objectTypes"]>;
@@ -140,7 +136,8 @@ export interface LiveOntology<Ontology extends OntologyDefinition = OntologyDefi
      */
     decrypt: LiveOntologyDecrypt;
     outbox: OntologyOutbox;
-    readonly pins: LiveOntologyPins;
+    /** Named offline downloads: bind a family with `pins({ name, query, attachments })`. */
+    readonly pins: OntologyPins;
     cleanup: () => Promise<void>;
 }
 
@@ -155,6 +152,12 @@ interface LiveOntologySettings<Context extends Record<string, unknown>> {
     context?: Context;
     authentication?: ConnectionMonitor;
     label?: string;
+    /**
+     * What the view's local replica does when its stored cache was written under a different
+     * definition (see `makeReplica`). Defaults to `"reset"` for a view fed by a client, so a
+     * reopened view clears only the types that changed, and `"error"` otherwise.
+     */
+    onDefinitionChange?: "reset" | "error";
     /** Attach parent diagnostics, including for committed-only clients.
      * The endpoint must permit internal diagnostics for this caller.
      */

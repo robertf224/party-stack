@@ -435,9 +435,13 @@ function collectMutationTargetParameterNames(rules: ActionLogicRule[]): Set<stri
     return parameterNames;
 }
 
+/** Modify and delete rules target one object, or each object of an object-list parameter. */
 function requireObjectReferenceMutationTarget(type: TypeDef, isMutationTarget: boolean): TypeDef {
-    return isMutationTarget && type.kind === "optional" && type.value.type.kind === "objectReference"
-        ? type.value.type
+    if (!isMutationTarget || type.kind !== "optional") return type;
+    const target = type.value.type;
+    return target.kind === "objectReference" ||
+        (target.kind === "list" && target.value.elementType.kind === "objectReference")
+        ? target
         : type;
 }
 

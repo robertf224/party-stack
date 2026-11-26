@@ -1,5 +1,6 @@
 /** Server composition adapters; authorization belongs to the enclosing server. */
 import { kernel, replicaController } from "./internal.js";
+export { replicaBackend } from "./internal.js";
 import { replicaStateSource as stateSource } from "./parent.js";
 import { makeCachedProxy as cachedProxy } from "./proxy.js";
 import type { ReplicaHandle } from "./internal.js";

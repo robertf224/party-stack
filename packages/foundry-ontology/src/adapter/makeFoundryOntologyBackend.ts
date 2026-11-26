@@ -7,7 +7,7 @@ import {
     MediaReferenceProperties,
     Queries,
 } from "@osdk/foundry.ontologies";
-import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { BackendError } from "@party-stack/ontology-backend";
 import { certain, uncertain, type OntologyIR } from "@party-stack/ontology-spec";
 import { resolveType, unwrapType } from "@party-stack/ontology-spec/utils";
 import {
@@ -33,6 +33,7 @@ import {
     validateFoundryActionDraftCriteria,
 } from "./foundryActionValidation.js";
 import { createFoundryCodec } from "./foundryCodec.js";
+import { classifyFoundryFailure } from "./foundryErrors.js";
 import { decodeFoundryMediaId, mediaReferenceToFoundryMediaId } from "./foundryMediaId.js";
 import { uploadFoundryMedia, uploadFoundryAttachment } from "./uploads.js";
 import type { OntologyClient } from "@party-stack/foundry-client";
@@ -552,7 +553,7 @@ export const makeFoundryOntologyBackend = Effect.fn("Foundry.makeBackend")(funct
     const attempt = <A>(operation: string, run: (signal: AbortSignal) => Promise<A>) =>
         Effect.tryPromise({
             try: run,
-            catch: (cause) => classifyBackendFailure(operation, cause),
+            catch: (cause) => classifyFoundryFailure(operation, cause),
         });
     const validateAction = Effect.fn("Foundry.validateAction")(function* (
         name: string,

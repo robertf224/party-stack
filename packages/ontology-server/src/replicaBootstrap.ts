@@ -1,102 +1,162 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { contextPartition } from "@party-stack/ontology-spec/utils";
-import { ontologyDefinitionContractSignature } from "@party-stack/ontology-storage";
-import { Deferred, Effect } from "effect";
+import { ontologyDefinitionContractHash } from "@party-stack/ontology-storage";
+import { Effect, Option, Ref, Scope, Stream, SynchronizedRef } from "effect";
 import type { OntologyClient, OntologyServerClient } from "./rpc.js";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyDescription } from "@party-stack/ontology-backend/description";
+import type { ReplicaConnection } from "@party-stack/ontology-replica";
 import type {
     ReplicaRegistration,
+    ReplicaRegistrationCommon,
     makeReplicaPartitionCatalog,
 } from "@party-stack/ontology-replica/registry";
 import type { OntologyIR } from "@party-stack/ontology-spec";
-
-export interface ReplicaDefinitionOptions {
-    /** Optional application contract. Cached remote metadata can otherwise supply the IR. */
-    readonly ir?: OntologyIR;
-    /** Pending actions are preserved; rebuilding waits for explicit migration/resolution of them. */
-    readonly onIncompatible?: "error" | "rebuild";
-}
 
 export interface ReplicaUpstream {
     readonly client: OntologyServerClient;
     readonly ontology?: string;
 }
 
-export type UpstreamReplicaRegistration = Omit<ReplicaRegistration, "ir" | "backend" | "bootstrap"> & {
+export type UpstreamReplicaRegistration = Omit<ReplicaRegistrationCommon, "context"> & {
     readonly upstream: ReplicaUpstream;
     /** Select the local account before opening its retained definition or data. */
     readonly context: Record<string, unknown>;
-    readonly definition?: ReplicaDefinitionOptions;
+    /**
+     * The application's contract, when it has one. The upstream's definition must match it, and
+     * `onDefinitionChange` never replaces it. Without it, the replica takes the upstream's
+     * definition, and with `onDefinitionChange: "reset"` follows it as it changes.
+     */
+    readonly ir?: OntologyIR;
 };
 
 const mismatch = (message: string) =>
     new BackendError({ operation: "replica.definition", kind: "SchemaMismatch", retryable: false, message });
 
-const sameContract = (left: OntologyIR, right: OntologyIR) =>
-    ontologyDefinitionContractSignature(left) === ontologyDefinitionContractSignature(right);
+const sameValue = (left: unknown, right: unknown) => {
+    try {
+        return JSON.stringify(left) === JSON.stringify(right);
+    } catch {
+        return false;
+    }
+};
 
-/** Restore the protocol binding locally. Refresh is explicit or driven by a typed
- * upstream incompatibility; there is no startup Describe/validation barrier.
+/**
+ * The upstream's `meta` resource as a backend the replica can open before the upstream is
+ * reachable: it connects on first use, and again after a failed connection.
  */
-export const restoreReplicaRegistration = Effect.fn("OntologyServer.restoreReplica")(function* (
+const lazyMetaBackend = Effect.fnUntraced(function* (upstream: ReplicaUpstream, sourceId: string) {
+    const scope = yield* Effect.scope;
+    const connected = yield* SynchronizedRef.make(Option.none<OntologyClient>());
+    const client = SynchronizedRef.modifyEffect(connected, (current) =>
+        Option.isSome(current)
+            ? Effect.succeed([current.value, current] as const)
+            : Effect.map(
+                  Scope.provide(upstream.client.ontology(upstream.ontology, { resource: "meta" }), scope),
+                  (opened) => [opened, Option.some(opened)] as const
+              )
+    );
+    const backend = Effect.map(client, (opened) => opened.backend);
+    const readOnly = (operation: string) =>
+        Effect.fail(
+            new BackendError({
+                operation,
+                kind: "NotImplemented",
+                retryable: false,
+                message: "Metadata is read-only.",
+            })
+        );
+    return {
+        name: "upstream-metadata",
+        sourceId: `${sourceId}#meta`,
+        supportsIdempotency: false,
+        loadSubset: (subset) => Effect.flatMap(backend, (meta) => meta.loadSubset(subset)),
+        query: (document, settings) => Effect.flatMap(backend, (meta) => meta.query(document, settings)),
+        // Without a watch on the upstream, the endpoint closing ends this stream and the
+        // replica watches again.
+        watchSubset: (subset) =>
+            Effect.flatMap(backend, (meta) => meta.watchSubset?.(subset) ?? Effect.succeed(Stream.never)),
+        applyAction: () => readOnly("applyAction"),
+        queryFunction: () => readOnly("queryFunction"),
+    } satisfies OntologyBackendService;
+});
+
+/**
+ * A replica fed by another party-stack server. It reopens its partition from the retained
+ * binding (the upstream's description) without contacting the upstream. Without an application
+ * contract its definition is dynamic: read from the upstream's `meta` resource through a meta
+ * replica in the same storage, so it starts offline and follows the upstream's definition.
+ */
+export const upstreamReplicaRegistration = Effect.fn("OntologyServer.upstreamReplica")(function* (
     ontology: string,
     declaration: UpstreamReplicaRegistration,
-    catalog: Effect.Success<ReturnType<typeof makeReplicaPartitionCatalog>>,
-    onIncompatible: (client: OntologyClient, error: BackendError) => Effect.Effect<void>
-) {
+    catalog: Effect.Success<ReturnType<typeof makeReplicaPartitionCatalog>>
+): Effect.fn.Return<ReplicaRegistration, BackendError, Scope.Scope> {
+    const { upstream, ir: contract, ...registration } = declaration;
     const stored = yield* catalog.lookup(ontology);
-    const cached = stored?.rebuild?.description ?? stored?.bootstrap;
-    const ownerMatches = cached?.ir
-        ? contextPartition(cached.ir, declaration.context) === stored!.partition.owner
-        : false;
-    const description = ownerMatches ? cached : undefined;
-    const opened = yield* Deferred.make<void, BackendError>();
-    let client: OntologyClient;
-    client = yield* declaration.upstream.client.ontology(declaration.upstream.ontology, {
-        description,
-        validate: (fresh) =>
-            Effect.gen(function* () {
-                if (!fresh.ir)
-                    return yield* mismatch("The upstream no longer supplies an ontology definition.");
-                const current = client.ir;
-                if (!current || !sameContract(current, fresh.ir))
-                    return yield* mismatch(
-                        "The upstream ontology definition is incompatible with this replica."
-                    );
-                if (declaration.definition?.ir && !sameContract(declaration.definition.ir, fresh.ir))
-                    return yield* mismatch(
-                        "The upstream definition is incompatible with the application contract."
-                    );
-                yield* Deferred.await(opened);
-                yield* catalog.saveBootstrap(ontology, fresh);
-            }),
-        onIncompatible: (error) => onIncompatible(client, error),
-    });
-    if (!client.ir) return yield* mismatch("The upstream did not supply an ontology definition.");
-    const expectedOwner = contextPartition(client.ir, declaration.context);
-    if (contextPartition(client.ir, client.context ?? {}) !== expectedOwner)
-        return yield* new BackendError({
-            operation: "replica.bootstrap",
-            kind: "SourceMismatch",
-            retryable: false,
-            message: "The upstream belongs to a different context partition.",
+    const retained =
+        stored?.bootstrap && (stored.context === undefined || sameValue(stored.context, declaration.context))
+            ? stored.bootstrap
+            : undefined;
+    const initial =
+        retained ??
+        (yield* Effect.scoped(
+            Effect.map(upstream.client.ontology(upstream.ontology), (client) => client.description)
+        ));
+    if (contract && initial.contractHash !== undefined) {
+        const expected = yield* Effect.orElseSucceed(
+            ontologyDefinitionContractHash(contract),
+            () => undefined
+        );
+        if (expected !== initial.contractHash)
+            return yield* mismatch("The upstream definition is incompatible with the application contract.");
+    }
+    // The latest accepted binding. Capabilities may change while the definition does not.
+    const binding = yield* Ref.make(initial);
+    const follows = declaration.onDefinitionChange === "reset" && !contract;
+    const connect = (ir: OntologyIR) =>
+        Effect.gen(function* () {
+            const accepted = yield* Ref.get(binding);
+            const client = yield* upstream.client.ontology(upstream.ontology, {
+                description: accepted,
+                ir,
+                // Keep the refreshed binding. A different definition is followed: requests under
+                // the old one fail with SchemaMismatch, which revalidates the replica's metadata
+                // (as the upstream's metadata watch does for a live replica), and it reopens.
+                // Without following, it is a mismatch.
+                validate: (fresh) =>
+                    Effect.gen(function* () {
+                        const expected = yield* Effect.orElseSucceed(
+                            ontologyDefinitionContractHash(ir),
+                            () => undefined
+                        );
+                        if (fresh.contractHash !== expected && !follows)
+                            return yield* mismatch("The upstream ontology definition changed.");
+                        yield* Ref.set(binding, fresh);
+                        yield* catalog
+                            .saveBootstrap(ontology, fresh)
+                            .pipe(
+                                Effect.catch((error) =>
+                                    Effect.logWarning("Could not retain the upstream description", error)
+                                )
+                            );
+                    }),
+            });
+            // Following the definition status checks the upstream's binding as it changes.
+            yield* client.definition.changes.pipe(Stream.runDrain, Effect.forkScoped);
+            return {
+                backend: client.backend,
+                ...(client.replication.kind === "speculative" ? { source: client.replication.source } : {}),
+            } satisfies ReplicaConnection;
         });
-    if (declaration.definition?.ir && !sameContract(declaration.definition.ir, client.ir))
-        return yield* mismatch("The retained definition is incompatible with the application contract.");
-    const registration: ReplicaRegistration = {
-        ...declaration,
-        ir: client.ir,
-        context: client.context ?? {},
-        backend: client.backend,
-        ...(client.replication.kind === "speculative" ? { source: client.replication.source } : {}),
-        bootstrap: client.description,
-    };
     return {
-        registration,
-        client,
-        opened: Deferred.succeed(opened, undefined),
-        failed: (error: BackendError) => Deferred.fail(opened, error),
-    };
+        ...registration,
+        context: initial.context ?? {},
+        definition: contract
+            ? { kind: "static", ir: contract }
+            : { kind: "dynamic", meta: yield* lazyMetaBackend(upstream, initial.sourceId) },
+        backend: connect,
+        bootstrap: initial,
+    } satisfies ReplicaRegistration;
 });
 
 export type { OntologyDescription };

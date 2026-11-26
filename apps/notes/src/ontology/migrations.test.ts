@@ -1,11 +1,10 @@
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
-import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { make as memoryTables } from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Exit } from "effect";
 import { Temporal } from "temporal-polyfill";
 import { expect, test } from "vite-plus/test";
-import { migrateNoteDocuments, migrateNotesReplica, migrateNotesStorage } from "./migrations";
+import { migrateNoteDocuments, migrateNotesStorage } from "./migrations";
 import { notesOntology } from "./ontology";
 import type { OntologyIR } from "@party-stack/ontology";
 
@@ -165,74 +164,5 @@ test("adding Preferences reopens existing object storage without replacing its d
                 ).toEqual(head);
             })
         )
-    );
-});
-
-test("replica migration keeps queued actions, cached objects and sequence/cursor state, and rejects unrelated changes", async () => {
-    await Effect.runPromise(
-        Effect.gen(function* () {
-            const tables = yield* memoryTables();
-            const position = Table.make<{
-                signature: string;
-                sequence: number;
-                cursor: string;
-                source: string;
-            }>({ name: JSON.stringify(["replica", "notes-v1", "position"]) });
-            const outbox = Table.make({ name: JSON.stringify(["replica", "notes-v1", "outbox"]) });
-            const head = {
-                signature: ontologyDefinitionSignature(previous),
-                sequence: 42,
-                cursor: "existing-cursor",
-                source: "existing-source",
-            };
-            const queued = {
-                id: "unsent-edit",
-                name: "updateNote",
-                parameters: { note: "my-note", title: "Keep this edit" },
-            };
-            yield* tables.put(position, "head", head);
-            yield* tables.put(outbox, queued.id, queued);
-            yield* migrateNotesReplica(tables, "notes-v1", current);
-            yield* migrateNotesReplica(tables, "notes-v1", current);
-            expect(yield* tables.get(position, "head")).toEqual({
-                ...head,
-                signature: ontologyDefinitionSignature(current),
-            });
-            expect(yield* tables.get(outbox, queued.id)).toEqual(queued);
-            yield* tables.put(position, "head", {
-                ...head,
-                signature: ontologyDefinitionSignature(beforeFolders),
-            });
-            yield* migrateNotesReplica(tables, "notes-v1", current);
-            expect(yield* tables.get(position, "head")).toEqual({
-                ...head,
-                signature: ontologyDefinitionSignature(current),
-            });
-            expect(yield* tables.get(outbox, queued.id)).toEqual(queued);
-            yield* tables.put(position, "head", {
-                ...head,
-                signature: ontologyDefinitionSignature(beforeAppearance),
-            });
-            yield* migrateNotesReplica(tables, "notes-v1", current);
-            expect(yield* tables.get(position, "head")).toEqual({
-                ...head,
-                signature: ontologyDefinitionSignature(current),
-            });
-            expect(yield* tables.get(outbox, queued.id)).toEqual(queued);
-            yield* tables.put(position, "head", {
-                ...head,
-                signature: ontologyDefinitionSignature(beforeTrashUnpins),
-            });
-            yield* migrateNotesReplica(tables, "notes-v1", current);
-            expect(yield* tables.get(position, "head")).toEqual({
-                ...head,
-                signature: ontologyDefinitionSignature(current),
-            });
-            expect(yield* tables.get(outbox, queued.id)).toEqual(queued);
-            yield* tables.put(position, "head", { ...head, signature: "unrelated-definition" });
-            const result = yield* Effect.exit(migrateNotesReplica(tables, "notes-v1", current));
-            expect(Exit.isFailure(result)).toBe(true);
-            expect((yield* tables.get(position, "head"))?.signature).toBe("unrelated-definition");
-        })
     );
 });

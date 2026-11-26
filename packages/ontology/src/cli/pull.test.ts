@@ -63,7 +63,7 @@ describe("native metadata CLI", () => {
         const config = configuration(closed);
         const updated = {
             ...config,
-            transformPulledOntology: () => {
+            transform: () => {
                 throw new Error("transform failed");
             },
         };

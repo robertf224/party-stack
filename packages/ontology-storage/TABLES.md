@@ -225,6 +225,13 @@ Index names identify immutable definitions. Repeating the same declaration is
 idempotent; changing its path/uniqueness under the same name fails. Physical SQL
 index/key-size limits still apply to very large indexed strings or keys.
 
+To change a definition, `dropIndex(table, name)` first. It removes the definition,
+its entries or SQL projections and its native SQL indexes in the current transaction,
+so the same name can then be ensured with another definition, in that transaction
+or a later one. Dropping a missing index does nothing. `indexes(table)` lists the
+current definitions, for example to drop every index of a table being reset. On
+PostgreSQL, `DROP INDEX` locks the shared rows table exclusively until commit.
+
 ## Optional memory backend and planner
 
 ```ts

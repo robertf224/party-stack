@@ -19,6 +19,7 @@ import {
     validatePolicy,
 } from "@party-stack/ontology-spec/query";
 import { contextPartition } from "@party-stack/ontology-spec/utils";
+import { ontologyDefinitionHash } from "@party-stack/ontology-storage";
 import { makeBlobStorage } from "@party-stack/ontology-storage/blobs";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Effect } from "effect";
@@ -584,7 +585,8 @@ test("projected discovery, finite queries and private protocol boundaries use th
                     Effect.provide(ontologyRpcHandlers({ ...view, enableRealtime: true }))
                 );
                 const description = yield* client.Describe();
-                expect(description.ir).toEqual(view.ir);
+                // The caller is described the projected definition, which its `meta` resource serves.
+                expect(description.definitionHash).toBe(yield* ontologyDefinitionHash(view.ir));
                 expect(description.context).toEqual(principal);
                 expect(description.queries).toBe(true);
                 expect(description.changes).toBe(false);

@@ -1,0 +1,169 @@
+# System ontologies and definition changes
+
+## Status
+
+Tracking note, not a design. It lists the control surfaces that should become ordinary
+ontologies, what has already moved, and the direction for definition changes and migrations.
+Items move from "Candidates" to "Done" as they land.
+
+## BLUF
+
+Prefer modelling control and definition state as ordinary ontologies (object types, actions,
+queries) served through the same protocol as application data, instead of adding special RPCs
+or side channels. Each special operation removed shrinks the protocol, the internal-access
+allowlist and the client surface, and gives every tier (owned server, replica, client) the
+same model.
+
+## Done
+
+- **Offline downloads (pins).** `pinOntology` (`packages/ontology-replica/src/pinModel.ts`)
+  has a `Pin` object type and an `updatePins` action. It is served as an ordinary ontology
+  through the `pins` resource header (`packages/ontology-server/src/rpc.ts`).
+- **Account inventory.** Signed-in accounts are the Connect ontology, read with ordinary
+  queries (`packages/ontology/src/authentication.ts`, `packages/connect`).
+- **Single-pin API removed.** `ReadPin`, `WatchPin`, `SetPin` and `ClearPin`, the replica's
+  `setPin`/`clearPin`/`pinStatus`, `LiveOntology.pins.get/set/clear()/subscribe` and React's
+  `useOfflinePin` are gone; downloads are named pins only, read and changed through the `pins`
+  resource. A replica releases a download left by the old API once when it opens.
+- **Ontology metadata.** The meta ontology (`@party-stack/ontology-spec/meta`) describes
+  object, link, action and value types as rows. `pull` builds IR from any backend that
+  answers its queries, including a replica of a metadata backend.
+- **Definitions from the meta ontology.** Every route with a definition serves it on a `meta`
+  resource, and `Describe` is a manifest (binding, capabilities, definition and contract
+  hashes): clients read the definition from `meta` and check it against the hash. A replica can
+  take `definition: { kind: "dynamic", meta, select? }` and follows it through its own meta
+  replica; `upstream` routes do this with the parent's `meta` resource. Clients following their
+  definition status watch the `meta` resource (or poll `Describe` without realtime), so idle
+  views notice a change without a failed request. The partition catalog no longer stores
+  definitions.
+
+## Candidates, in rough order
+
+1. **Outbox controls as objects.** A `PendingAction` object type with remove, retry and edit
+   actions would replace `ControlOutbox` and `OntologySource.outbox`. Pending and completed
+   actions already travel as delivery records. These control actions must not go through the
+   outbox themselves, and need a privileged policy.
+2. **A `definition` query function** on the meta ontology, returning the whole definition in
+   one consistent read (see the live definitions spec), and value type references lifted into
+   links so selected reads can follow them.
+3. **Singletons and endpoint settings.** Some system state is one object, not a collection:
+   an endpoint's settings (for example how often clients should check for a new definition when
+   it offers no watch), or a replica's own status. A notion of singleton object types (one row,
+   no key) would let the meta ontology carry a settings object that clients sync like any other
+   row, instead of options on each client.
+4. **Definition status.** Retained, current or incompatible becomes a subscription to the meta
+   `Ontology` row's hash. The typed `SchemaMismatch` error on operations stays.
+5. **Replica status.** Read-only `Replica`, `Demand` and `Load` objects for devtools. Load
+   changes constantly, so watch the delivery traffic.
+6. **Traces as an OpenTelemetry ontology.** Replace the `Traces` RPC (a stream of the replica's
+   in-memory trace store, read by devtools) with a standard OpenTelemetry ontology: span, trace
+   and service types aligned with OTLP, later logs and metrics. The replica's tracer exports
+   spans into it, and devtools reads them with ordinary live queries. An OTLP-aligned trace
+   ontology with an Effect tracer that writes into it is being built separately. Before it can
+   carry high-volume telemetry it needs an append-only mode for owned storage (no full-row
+   change journal, compact receipts) and aggregate queries, so spans aren't copied to clients
+   to be counted.
+
+Generalizing the `pins` resource header to named system resources (`pins`, `meta`, `system`,
+`telemetry`) is the shared mechanism for these. Once those move, the internal-access RPC allowlist
+becomes a policy on that resource.
+
+**Consolidate later:** an owned backend's change journal is exposed remotely as `PullChanges`
+(durable commit pages after a cursor) and `WatchChanges` (wake-up hints), which committed-mode
+replicas use instead of reloading subsets. Replica-to-replica sync has its own delivery
+(`OpenClient`, `SubscribeSelection`, `SubscribeState`, `UpdateView`, `AckDelivery`, `Demand`,
+`Changes`, `Read`, `Submit`, `Acknowledge`, `Accept`) with selections, speculative actions and
+acknowledgments. A delivery frame is close to a journal page filtered to a selection plus
+pending actions, so the two could share one change format and resume model.
+
+**Keep as protocol:** delivery selection and the client handshake (results and actions travel
+over them, so modelling them as actions would be circular), local data deletion (it destroys
+the store that would record its receipt), owner release (a worker handing storage ownership
+to its replacement), attachment byte transfer.
+
+## Definition changes and migrations
+
+**Today.** Replicas take `onDefinitionChange: "reset" | "error"`. A reset compares the
+definition _contract_, which ignores presentation (display names, descriptions, icons, colors,
+titles, deprecation). With `"reset"`, opening under a different contract clears, inside the
+startup transaction:
+
+- for a backend-fed replica, only the object types whose own contract changed or that were
+  removed. Other types keep their rows and coverage; changes to actions, links and query
+  functions clear nothing. Changes to named value types, context or policy (which decides
+  which rows a reader may see) clear everything;
+- for a replica fed by a protocol source, everything, since its delivery position spans every
+  type.
+
+The outbox, receipts and every download's desired query are kept; downloads that lost rows
+reinstall. Queued actions are replayed against the new definition; a prediction that no
+longer applies is dropped and the action is still sent, with failures handled by the outbox's
+`failureStrategy`. A cleared type's indexes are dropped (`Transaction.dropIndex`) and ensured
+again when the replica opens, so a changed primary key opens too. Server-managed rebuilds still
+reset everything, and replace the replica behind a route that stays open.
+
+**Index cleanup.** Storage can list and drop indexes. Still to do: drop indexes nothing ensures
+any more (TanStack DB's SQLite persistence records usage but never sweeps, and documents the
+orphans), and record each index's compiled definition so drift is caught without a reset.
+
+**Without reconnecting.** A server rebuild today retires the replica: clients lose their
+binding and reconnect, which risks a thundering herd when every client reconnects at once. The
+route should instead keep its replica handle and treat a definition change as a lifecycle
+event: hold new calls, close and reset (or migrate) the replica behind the handle, reopen it,
+resubscribe streams, and tell clients the definition changed so they re-describe and rerun
+their live queries. Switching the running engine in place is not required; reopening behind a
+stable handle is enough.
+
+**Later: one engine for definition and data.** A replica that follows a definition from the
+meta ontology runs two replicas, one for metadata and one for data, kept consistent by the
+definition hash on every delivery frame and request: data under a contract the replica has not
+opened is rejected with `SchemaMismatch`, which revalidates the metadata and reopens. They
+converge, but data delivery stalls while the metadata catches up, and a backend without
+consistent metadata reads (one that serves each type's metadata separately) can cause an extra
+reopen. The end state is one engine: each replica stores its own definition as system meta rows
+next to its data, a parent delivers meta rows on the same stream as data, and a definition
+change and the data written under it arrive in order and install in one transaction. That
+removes the hash race and the second replica. The application API should not change: a
+definition stays `{ kind: "static", ir }` or `{ kind: "dynamic", ... }`, and only where the
+meta rows come from moves inside the replica. This also gives the change log in "Changes as
+steps" below a natural home.
+
+**Next: `"migrate"`.** Compare definitions per object type instead of resetting everything:
+
+| Change                                 | Cached data                                                                |
+| -------------------------------------- | -------------------------------------------------------------------------- |
+| Object type added                      | New empty tables                                                           |
+| Object type removed                    | Drop its tables                                                            |
+| Property added                         | Keep rows; rewrite queries; mark the type's coverage stale so pins refetch |
+| Property removed, cosmetic change      | Keep rows; ignore the old field                                            |
+| Link, action or query function changed | Nothing cached                                                             |
+| Property type or primary key changed   | Clear only that type                                                       |
+
+Queued actions keep replaying as they do under `"reset"`. Store a schema
+version per object type from the start, even while the only operations are "same" and
+"reset".
+
+**Changes as steps, delivered as data.** A definition change should travel as migration
+steps (add type, add property, change type, rename, convert values), not as a whole new IR,
+and should not need a special protocol message. The meta ontology can hold them as a change
+log that replicas read with ordinary queries; the current definition is the base definition
+plus its steps. Inferred steps (from comparing definitions) are the default; explicit steps
+can be supplied with a definition and win for their type. Renames are the main case
+inference cannot detect.
+
+**Steps are lenses.** The steps should be [lenses](../2026-08-13-ontology-lenses/README.md),
+so one mechanism provides both interface polymorphism and schema migration. A replica would
+know which physical version each type's stored rows are at and serve reads and writes at the
+logical version a client asked for, rewriting rows in the background. Overlapping migrations
+compose as a chain, and a query against an interface backed by an object type with a pending
+physical migration passes through several rewrites before reaching storage.
+
+**Outbox migration.** Queued actions migrate too. For declarative logic the properties an
+action writes are known statically, so a write to a deleted property can be removed
+automatically; a richer action language can recover the same information by static analysis.
+Opaque function-backed actions are paused for the user. Versioned action parameters, as
+some public APIs version their requests, become another migration step on outbox entries.
+
+**Scoping.** An app can replicate a subset of a large definition (for example the types its
+workspaces use) and grow or shrink it. With `"migrate"`, adding a type is a cheap step rather
+than a reset.

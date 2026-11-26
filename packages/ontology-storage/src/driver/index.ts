@@ -88,6 +88,10 @@ export interface DriverTransaction {
     /** Publish only after backfill. Native drivers validate uniqueness before DDL so
      * expected conflicts can be caught without aborting the native transaction. */
     readonly putIndex: (index: StoredIndex) => Effect.Effect<void, OntologyStorageError>;
+    /** Remove one published index within the current transaction: its definition, its
+     * entries and its case-insensitive companion's (`caseInsensitiveIndex(name)`), and
+     * any native structure created for either. A missing index is a no-op. */
+    readonly deleteIndex: (table: string, name: string) => Effect.Effect<void, OntologyStorageError>;
     /** Return exact rows or a candidate superset requiring the shared residual evaluator. */
     readonly query: <A>(
         table: ReadTable<A>,

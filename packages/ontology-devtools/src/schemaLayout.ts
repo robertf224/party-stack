@@ -6,6 +6,7 @@ import {
     type NodeLabel,
     type Point,
 } from "@dagrejs/dagre";
+import { linkTypeId } from "@party-stack/ontology";
 import type { ObjectTypeDef, OntologyIR } from "@party-stack/ontology";
 
 interface SchemaNode {
@@ -48,7 +49,7 @@ export function schemaLinkLabel(
 export function schemaRelationship(link: OntologyIR["linkTypes"][number]) {
     const label = link.cardinality === "many" ? "one-to-many" : "one-to-one";
     return {
-        id: link.id,
+        id: linkTypeId(link),
         source: link.target.objectType,
         target: link.source.objectType,
         cardinality: link.cardinality,
@@ -89,7 +90,7 @@ export function layoutSchema(ir: OntologyIR): {
                 label: edgeLabel.label,
                 width: edgeLabel.width,
             },
-            link.id
+            linkTypeId(link)
         );
     }
 

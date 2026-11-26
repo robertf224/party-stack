@@ -208,7 +208,7 @@ test("worker composition serves during delayed acquisition and releases its open
                 const source = yield* Fiber.join(connecting);
                 // Describe and finite helpers must resolve the same late-bound facade.
                 expect(source.description.queries).toBe(true);
-                expect(source.description.ir).toEqual(ir);
+                expect(source.ir).toEqual(ir);
                 expect((yield* source.backend.loadSubset(objectSubset("Counter"))).rows).toMatchObject([
                     { key: "one", value: { id: "one", count: 1 } },
                 ]);

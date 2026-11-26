@@ -283,7 +283,71 @@ test("a plural pin update validates all intents atomically before acquisition", 
     );
 });
 
-test("query pins retain a complete graph across replacement, offline edits, restart and clear", async () => {
+test("opening a replica releases a download left by the removed single-pin API", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const namespace = "legacy-head";
+                const table = (...parts: string[]) =>
+                    Table.make<Record<string, unknown>>({
+                        name: JSON.stringify(["replica", namespace, ...parts]),
+                    });
+                // The removed API stored its one download as the "head" query pin.
+                const legacyScope = yield* Scope.make();
+                yield* Scope.provide(
+                    Effect.gen(function* () {
+                        const engine = yield* makeReplicaKernel({
+                            ...f,
+                            namespace,
+                            ir,
+                            execute: () => Effect.void,
+                            startSync: false,
+                        });
+                        const legacy = yield* makeQueryPin({
+                            ...f,
+                            engine,
+                            namespace,
+                            ir,
+                            live: false,
+                            id: "head",
+                        });
+                        yield* legacy.setPin(document("a"));
+                        expect(yield* legacy.pinStatus).toMatchObject({ ready: true });
+                    }),
+                    legacyScope
+                );
+                yield* Scope.close(legacyScope, Exit.void);
+                expect(yield* f.tables.get(table("query-pin"), "head")).toBeDefined();
+                expect((yield* f.tables.query(table("pin-members", "head"))).length).toBeGreaterThan(0);
+                expect((yield* f.tables.query(table("pins"))).length).toBeGreaterThan(0);
+
+                const replica = yield* makeReplica({ ...f, namespace, ir, live: false });
+                expect(yield* f.tables.get(table("query-pin"), "head")).toBeUndefined();
+                expect(yield* f.tables.query(table("pin-members", "head"))).toEqual([]);
+                expect(yield* f.tables.query(table("pins"))).toEqual([]);
+                // Nothing lists or retains the legacy download any more.
+                expect(yield* replica.demand.pins.list).toEqual([]);
+                yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                expect(yield* replica.get("Issue", "one")).toBeUndefined();
+                expect(yield* replica.get("Project", "a")).toBeUndefined();
+
+                // Named downloads still work on the same storage.
+                yield* replica.demand.pins.set({ name: "folders", query: document("b") });
+                expect(yield* replica.demand.pins.list).toMatchObject([{ name: "folders", ready: true }]);
+                yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                expect(yield* replica.get("Issue", "two")).toBeDefined();
+                expect(yield* replica.get("Issue", "one")).toBeUndefined();
+                expect(yield* f.tables.get(table("query-pin"), "head")).toBeUndefined();
+            })
+        )
+    );
+});
+
+// Replacing a single pin's query in place (the previous graph kept until the new one is
+// ready, cancelled acquisitions, newer intent during cleanup) is covered on `makeQueryPin`
+// in pinReplacement.test.ts. Named downloads replace by adding the new one first.
+test("a named download keeps its graph across offline replacement intent, restart and clear", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -291,53 +355,59 @@ test("query pins retain a complete graph across replacement, offline edits, rest
                 const options = { ...f, namespace: "pins", ir, live: false };
                 const firstScope = yield* Scope.make();
                 let replica = yield* Scope.provide(makeReplica(options), firstScope);
-                yield* replica.demand.setPin(document("a"));
-                expect(yield* replica.demand.pinStatus).toMatchObject({ ready: true });
-                expect((yield* replica.demand.pinStatus)?.retainedGraph).toBeUndefined();
+                const a = { name: "folders", query: document("a") };
+                const b = { name: "folders", query: document("b") };
+                const c = { name: "folders", query: document("c") };
+                yield* replica.demand.pins.set(a);
+                expect(yield* replica.demand.pins.list).toMatchObject([{ id: pinRecordKey(a), ready: true }]);
                 yield* f.network.set(false);
-                yield* replica.demand.setPin(document("b"));
-                yield* replica.demand.setPin(document("c"));
-                expect(yield* replica.demand.pinStatus).toMatchObject({
-                    query: document("c"),
-                    ready: false,
-                    previousGraphRetained: true,
-                    retainedGraph: { query: document("a"), attachments: "none" },
-                });
+                yield* replica.demand.pins.set(b);
+                yield* replica.demand.pins.set(c);
+                const offline = yield* replica.demand.pins.list;
+                expect(offline).toHaveLength(3);
+                expect(offline.find((row) => row.id === pinRecordKey(a))).toMatchObject({ ready: true });
+                for (const pending of [b, c])
+                    expect(offline.find((row) => row.id === pinRecordKey(pending))).toMatchObject({
+                        query: pending.query,
+                        ready: false,
+                    });
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.get("Issue", "one")).toBeDefined();
                 yield* Scope.close(firstScope, Exit.void);
                 replica = yield* makeReplica(options);
-                expect((yield* replica.demand.pinStatus)?.retainedGraph).toMatchObject({
-                    query: document("a"),
-                });
+                expect(
+                    (yield* replica.demand.pins.list).find((row) => row.id === pinRecordKey(a))
+                ).toMatchObject({ ready: true });
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.get("Issue", "one")).toBeDefined();
                 yield* f.network.set(true);
                 yield* replica.syncOnce;
-                expect(yield* replica.demand.pinStatus).toMatchObject({
-                    ready: true,
-                    previousGraphRetained: false,
-                });
-                expect((yield* replica.demand.pinStatus)?.retainedGraph).toBeUndefined();
+                expect((yield* replica.demand.pins.list).every((row) => row.ready && !row.error)).toBe(true);
+                // Replace: the new downloads are ready, so the old ones can go.
+                yield* replica.demand.pins.update({ remove: [pinRecordKey(a), pinRecordKey(b)] });
+                expect(yield* replica.demand.pins.list).toMatchObject([{ id: pinRecordKey(c), ready: true }]);
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.get("Issue", "one")).toBeUndefined();
+                expect(yield* replica.get("Issue", "two")).toBeUndefined();
                 expect(yield* replica.get("Project", "c")).toBeDefined();
-                yield* replica.demand.clearPin;
+                yield* replica.demand.pins.clear("folders");
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.get("Project", "c")).toBeUndefined();
-                expect(yield* replica.demand.pinStatus).toBeUndefined();
+                expect(yield* replica.demand.pins.list).toEqual([]);
             })
         )
     );
 });
 
-test("refreshing an unchanged pin graph preserves its membership rows", async () => {
+test("refreshing an unchanged named download graph preserves its membership rows", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const f = yield* fixture();
                 const roots = Table.make({ name: JSON.stringify(["replica", "stable-pins", "pins"]) });
+                const state = Table.make({ name: JSON.stringify(["replica", "stable-pins", "query-pin"]) });
                 let writes = 0;
+                let installs = 0;
                 const tables: typeof f.tables = {
                     ...f.tables,
                     transaction: (body) =>
@@ -346,6 +416,7 @@ test("refreshing an unchanged pin graph preserves its membership rows", async ()
                                 ...tx,
                                 put: (table, key, value) => {
                                     if (table.name === roots.name) writes++;
+                                    if (table.name === state.name) installs++;
                                     return tx.put(table, key, value);
                                 },
                                 delete: (table, key) => {
@@ -366,14 +437,29 @@ test("refreshing an unchanged pin graph preserves its membership rows", async ()
                     ir,
                     live: false,
                 });
-                yield* replica.demand.setPin(document("a"));
+                const a = { name: "folders", query: document("a") };
+                yield* replica.demand.pins.set(a);
                 const before = yield* tables.query(roots);
                 expect(before.length).toBeGreaterThan(0);
                 writes = 0;
-                yield* replica.demand.setPin(document("a"));
+                installs = 0;
+                // Setting the same download again is not a new revision.
+                yield* replica.demand.pins.set(a);
+                expect(writes).toBe(0);
+                // A content edit reinstalls the graph without changing its membership.
+                f.data.Issue = f.data.Issue!.map((issue) =>
+                    issue.id === "one" ? { ...issue, file: { id: "file-b" } } : issue
+                );
+                yield* replica.revalidate;
+                expect(installs).toBeGreaterThan(0);
+                expect(yield* replica.get("Issue", "one")).toMatchObject({ file: { id: "file-b" } });
                 expect(writes).toBe(0);
                 expect(yield* tables.query(roots)).toEqual(before);
-                yield* replica.demand.setPin(document("b"));
+                expect(yield* replica.demand.pins.list).toMatchObject([{ ready: true }]);
+                yield* replica.demand.pins.update({
+                    set: [{ name: "folders", query: document("b") }],
+                    remove: [pinRecordKey(a)],
+                });
                 expect(writes).toBeGreaterThan(0);
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.get("Issue", "one")).toBeUndefined();
@@ -410,21 +496,25 @@ test.each(["none", "id", "all"] as const)(
                                 }),
                         },
                     });
-                    yield* replica.demand.setPin(document("a", fields));
+                    const rows = { name: "files", query: document("a", fields) };
+                    yield* replica.demand.pins.set(rows);
                     expect(downloads).toBe(0);
                     expect(yield* replica.get("Issue", "one")).toMatchObject({
                         id: "one",
                         project: "a",
                         file: { id: "file-a" },
                     });
-                    yield* replica.demand.setPin(document("a", fields), { attachments: "all" });
-                    expect(downloads).toBe(1);
-                    expect(yield* replica.demand.pinStatus).toMatchObject({
-                        ready: true,
-                        attachments: "all",
+                    // Opting into bytes is a new download; it replaces the rows-only one.
+                    yield* replica.demand.pins.update({
+                        set: [{ ...rows, attachments: "all" }],
+                        remove: [pinRecordKey(rows)],
                     });
+                    expect(downloads).toBe(1);
+                    expect(yield* replica.demand.pins.list).toMatchObject([
+                        { name: "files", ready: true, attachments: "all" },
+                    ]);
                     expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBe(0);
-                    yield* replica.demand.clearPin;
+                    yield* replica.demand.pins.clear("files");
                     yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                     expect(yield* blobs.collectGarbage({ olderThanMs: 0, orphanGraceMs: 0 })).toBeGreaterThan(
                         0
@@ -435,7 +525,7 @@ test.each(["none", "id", "all"] as const)(
     }
 );
 
-test("replacing a pin cancels its pending acquisition and cannot install the obsolete graph", async () => {
+test("removing a pending named download cancels its acquisition and cannot install the obsolete graph", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -462,13 +552,17 @@ test("replacing a pin cancels its pending acquisition and cannot install the obs
                             ),
                     },
                 });
-                yield* replica.demand.setPin(document("b"));
+                const b = { name: "folders", query: document("b") };
+                const c = { name: "folders", query: document("c") };
+                yield* replica.demand.pins.set(b);
                 yield* Deferred.await(entered);
-                yield* replica.demand.setPin(document("c"));
+                yield* replica.demand.pins.update({ set: [c], remove: [pinRecordKey(b)] });
                 yield* Deferred.await(interrupted);
                 yield* replica.syncOnce;
-                expect(yield* replica.demand.pinStatus).toMatchObject({ query: document("c"), ready: true });
-                yield* replica.demand.clearPin;
+                expect(yield* replica.demand.pins.list).toMatchObject([
+                    { id: pinRecordKey(c), query: document("c"), ready: true },
+                ]);
+                yield* replica.demand.pins.clear("folders");
             })
         )
     );
@@ -525,68 +619,6 @@ it.effect("incomplete pin coverage stays pending beyond five seconds and resumes
     )
 );
 
-it.effect("pin commands accept newer intent while obsolete acquisition cleanup is held", () =>
-    Effect.scoped(
-        Effect.gen(function* () {
-            const f = yield* fixture();
-            const engine = yield* makeReplicaKernel({
-                ...f,
-                namespace: "pin-command",
-                ir,
-                execute: () => Effect.void,
-                startSync: false,
-                objectCacheGc: false,
-            });
-            const waiting = yield* Deferred.make<void>();
-            const cleanup = yield* Deferred.make<void>();
-            const release = yield* Deferred.make<void>();
-            const pin = yield* makeQueryPin({
-                ...f,
-                namespace: "pin-command",
-                ir,
-                live: true,
-                engine: {
-                    ...engine,
-                    demand: (subset) =>
-                        JSON.stringify(subset.query).includes('"b"')
-                            ? Effect.addFinalizer(() =>
-                                  Deferred.succeed(cleanup, undefined).pipe(
-                                      Effect.andThen(Deferred.await(release))
-                                  )
-                              )
-                            : Effect.void,
-                    syncSubset: () => Effect.void,
-                    hasCoverage: () => Effect.succeed(true),
-                    snapshotSubset: (subset) =>
-                        Deferred.succeed(waiting, undefined).pipe(
-                            Effect.as({ complete: !JSON.stringify(subset.query).includes('"b"'), rows: [] })
-                        ),
-                    subscribeChanges: Effect.succeed(Stream.never),
-                    visibleChanges: Effect.succeed(Stream.never),
-                },
-            });
-            try {
-                yield* pin.setPin(document("b"));
-                yield* Deferred.await(waiting);
-                yield* pin.setPin(document("c"));
-                yield* Deferred.await(cleanup);
-                // Neither clearing nor another set waits for the held finalizer.
-                yield* pin.clearPin();
-                expect(yield* pin.pinStatus).toBeUndefined();
-                yield* pin.setPin(document("a"));
-                expect(yield* pin.pinStatus).toMatchObject({ query: document("a"), ready: false });
-            } finally {
-                yield* Deferred.succeed(release, undefined);
-            }
-            yield* Effect.all([pin.setPin(document("b")), pin.clearPin(), pin.setPin(document("a"))], {
-                concurrency: "unbounded",
-            });
-            yield* pin.refresh;
-            expect(yield* pin.pinStatus).toMatchObject({ query: document("a"), ready: true });
-        })
-    )
-);
-
 it.live.prop(
     "pinned membership agrees with finite entity recomputation across varied correlations",
     [Schema.Array(Schema.Literals(["a", "b", "c"])).check(Schema.isMaxLength(12))],
@@ -623,8 +655,8 @@ it.live.prop(
                         mode: "entity",
                         strategy: "reference",
                     });
-                    yield* replica.demand.setPin(query);
-                    expect(yield* replica.demand.pinStatus).toMatchObject({ ready: true });
+                    yield* replica.demand.pins.set({ name: "oracle", query });
+                    expect(yield* replica.demand.pins.list).toMatchObject([{ ready: true }]);
                     // Reopen without restoring volatile leases, then compare durable membership.
                     yield* Scope.close(owner, Exit.void);
                     replica = yield* makeReplica({ ...f, namespace: "pin-oracle", ir, live: false });
@@ -638,7 +670,7 @@ it.live.prop(
                             );
                     for (const entity of oracle.entities)
                         expect(yield* replica.get(entity.objectType, entity.key)).toEqual(entity.value);
-                    yield* replica.demand.clearPin;
+                    yield* replica.demand.pins.clear("oracle");
                     yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                     for (const entity of oracle.entities)
                         expect(yield* replica.get(entity.objectType, entity.key)).toBeUndefined();
@@ -746,7 +778,7 @@ test.each(["committed", "speculative", "snapshot"] as const)(
                                 yield* Effect.sleep(5);
                             }
                         }).pipe(Effect.timeout(3_000));
-                    yield* replica.demand.setPin(document("a"));
+                    yield* replica.demand.pins.set({ name: "project", query: document("a") });
                     yield* waitMembers(["one"]);
                     yield* authority.storage.transaction((tx) =>
                         Effect.gen(function* () {
@@ -755,8 +787,14 @@ test.each(["committed", "speculative", "snapshot"] as const)(
                         })
                     );
                     yield* waitMembers(["two"]);
-                    expect(yield* replica.demand.pinStatus).toMatchObject({ ready: true });
-                    yield* replica.demand.clearPin;
+                    // Readiness is reported to the download list after the install commits.
+                    yield* replica.demand.pins.changes.pipe(
+                        Stream.filter((rows) => rows.length === 1 && rows.every((row) => row.ready)),
+                        Stream.runHead,
+                        Effect.timeout(3_000)
+                    );
+                    expect(yield* replica.demand.pins.list).toMatchObject([{ name: "project", ready: true }]);
+                    yield* replica.demand.pins.clear("project");
                 })
             )
         );
@@ -807,7 +845,7 @@ test("caller refresh settings override adapter recommendations while healthy wat
     );
 });
 
-test("invalid entity projections/options do not replace a pin", async () => {
+test("invalid entity projections/options do not replace a named download", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -821,8 +859,9 @@ test("invalid entity projections/options do not replace a pin", async () => {
                         }),
                     ],
                 };
-                yield* replica.demand.setPin(query);
-                expect(yield* replica.demand.pinStatus).toMatchObject({ ready: true });
+                const valid = { name: "issues", query };
+                yield* replica.demand.pins.set(valid);
+                expect(yield* replica.demand.pins.list).toMatchObject([{ ready: true }]);
                 const invalid: QueryDocument = {
                     select: [
                         q.sub("issues", {
@@ -831,14 +870,32 @@ test("invalid entity projections/options do not replace a pin", async () => {
                         }),
                     ],
                 };
-                expect(yield* Effect.result(replica.demand.setPin(invalid))).toMatchObject({
-                    _tag: "Failure",
-                    failure: { kind: "InvalidRequest" },
-                });
+                // Replacing adds the new download and removes the old one in one update;
+                // an invalid replacement must leave the old one in place.
                 expect(
-                    yield* Effect.result(replica.demand.setPin(query, { attachments: "other" } as never))
+                    yield* Effect.result(
+                        replica.demand.pins.update({
+                            set: [{ name: "issues", query: invalid }],
+                            remove: [pinRecordKey(valid)],
+                        })
+                    )
                 ).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidRequest" } });
-                expect(yield* replica.demand.pinStatus).toMatchObject({ query, ready: true });
+                expect(
+                    yield* Effect.result(
+                        replica.demand.pins.update({
+                            set: [{ ...valid, attachments: "other" } as never],
+                            remove: [pinRecordKey(valid)],
+                        })
+                    )
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidRequest" } });
+                expect(yield* replica.demand.pins.list).toMatchObject([
+                    { id: pinRecordKey(valid), query, ready: true },
+                ]);
+                // The download's graph is still retained, not only its record.
+                yield* replica.syncOnce;
+                yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
+                expect(yield* replica.get("Issue", "one")).toBeDefined();
+                expect(yield* replica.demand.pins.list).toMatchObject([{ ready: true }]);
             })
         )
     );
@@ -867,17 +924,20 @@ test("offset demand loads a prefix once and pins retain it for local evaluation 
                 yield* Effect.scoped(replica.demand.acquire(subset));
                 expect((yield* replica.readSubset(subset)).map((row) => row.key)).toEqual(["b"]);
                 expect(f.loads[0]?.query).toMatchObject({ offset: 0, limit: 2 });
-                yield* replica.demand.setPin({
-                    select: [
-                        q.sub("issues", { ...subset, select: [q.selectField("id", q.field("i", "id"))] }),
-                    ],
+                yield* replica.demand.pins.set({
+                    name: "page",
+                    query: {
+                        select: [
+                            q.sub("issues", { ...subset, select: [q.selectField("id", q.field("i", "id"))] }),
+                        ],
+                    },
                 });
-                expect(yield* replica.demand.pinStatus).toMatchObject({ ready: true });
+                expect(yield* replica.demand.pins.list).toMatchObject([{ ready: true }]);
                 yield* Scope.close(owner, Exit.void);
                 replica = yield* makeReplica({ ...f, namespace: "pin-offset", ir, live: false });
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect((yield* replica.readSubset(subset)).map((row) => row.key)).toEqual(["b"]);
-                yield* replica.demand.clearPin;
+                yield* replica.demand.pins.clear("page");
                 yield* replica.collectGarbage({ minUnusedAgeMs: 0 });
                 expect(yield* replica.readSubset(subset)).toEqual([]);
             })
@@ -900,12 +960,13 @@ test("object cache budgets override age but never evict the pinned graph", async
                 yield* Effect.scoped(
                     replica.demand.acquire({ from: { source: { objectType: "Project" }, binding: "p" } })
                 );
-                yield* replica.demand.setPin(document("a"));
+                yield* replica.demand.pins.set({ name: "project", query: document("a") });
+                expect(yield* replica.demand.pins.list).toMatchObject([{ ready: true }]);
                 yield* replica.collectGarbage();
                 expect(yield* replica.get("Project", "a")).toBeDefined();
                 expect(yield* replica.get("Project", "b")).toBeUndefined();
                 expect((yield* replica.status.get).cache?.objects.bytes).toBeGreaterThan(1);
-                yield* replica.demand.clearPin;
+                yield* replica.demand.pins.clear("project");
                 yield* replica.collectGarbage();
                 expect((yield* replica.status.get).cache?.objects.bytes).toBe(0);
             })
@@ -933,6 +994,238 @@ test("cache pressure releases idle demand before reclaiming its rows", async () 
                 yield* replica.collectGarbage();
                 expect((yield* replica.status.get).demands).toEqual([]);
                 expect((yield* replica.status.get).cache?.objects.bytes).toBe(0);
+            })
+        )
+    );
+});
+
+test("a definition reset clears only the changed type, and downloads drop and reinstall just its rows", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const options = { ...f, namespace: "reset-named-pins", ir, live: false };
+                const table = (...parts: string[]) =>
+                    Table.make<{ objectType?: string; owners?: string[] }>({
+                        name: JSON.stringify(["replica", "reset-named-pins", ...parts]),
+                    });
+                const cached = (type: string) => f.tables.query(table(`base:${type}`));
+                // Each named pin keeps its members in its own table, keyed like its state row.
+                const members = Effect.gen(function* () {
+                    const byType: Record<string, number> = {};
+                    for (const { key } of yield* f.tables.query(table("query-pin")))
+                        for (const member of yield* f.tables.query(table("pin-members", String(key))))
+                            byType[member.value.objectType!] = (byType[member.value.objectType!] ?? 0) + 1;
+                    return byType;
+                });
+                const owned = Effect.map(f.tables.query(table("pins")), (rows) =>
+                    rows.map((row) => row.value.objectType)
+                );
+                const scope = yield* Scope.make();
+                const original = yield* Scope.provide(makeReplica(options), scope);
+                yield* original.demand.pins.set({ name: "folders", query: document("a") });
+                yield* original.syncOnce;
+                expect(yield* original.demand.pins.list).toMatchObject([{ name: "folders", ready: true }]);
+                const issues = yield* cached("Issue");
+                expect(issues.length).toBeGreaterThan(0);
+                expect((yield* cached("Project")).length).toBeGreaterThan(0);
+                const before = yield* members;
+                expect(before.Project).toBeGreaterThan(0);
+                expect(before.Issue).toBeGreaterThan(0);
+                yield* Scope.close(scope, Exit.void);
+
+                // An action-only change caches no rows differently: nothing is cleared.
+                const withAction: OntologyIR = {
+                    ...ir,
+                    actionTypes: [{ name: "archive", displayName: "Archive", parameters: [], logic: [] }],
+                };
+                yield* f.network.set(false);
+                yield* Effect.scoped(
+                    Effect.gen(function* () {
+                        const reopened = yield* makeReplica({
+                            ...options,
+                            ir: withAction,
+                            onDefinitionChange: "reset",
+                        });
+                        expect(yield* reopened.demand.pins.list).toMatchObject([
+                            { name: "folders", ready: true },
+                        ]);
+                        expect(yield* cached("Project")).not.toEqual([]);
+                        expect(yield* members).toEqual(before);
+                    })
+                );
+
+                // A property added to Project clears Project only.
+                const changed: OntologyIR = {
+                    ...withAction,
+                    objectTypes: ir.objectTypes.map((type) =>
+                        type.name === "Project"
+                            ? {
+                                  ...type,
+                                  properties: [
+                                      ...type.properties,
+                                      {
+                                          name: "title",
+                                          displayName: "Title",
+                                          type: o.optional({ type: o.string({}) }),
+                                      },
+                                  ],
+                              }
+                            : type
+                    ),
+                };
+                expect(yield* Effect.result(makeReplica({ ...options, ir: changed }))).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "SchemaMismatch" },
+                });
+                const reset = yield* makeReplica({ ...options, ir: changed, onDefinitionChange: "reset" });
+                // Still wanted, but no longer fully installed: its Project rows are gone.
+                expect(yield* reset.demand.pins.list).toMatchObject([{ name: "folders", ready: false }]);
+                expect(yield* cached("Project")).toEqual([]);
+                expect(yield* cached("Issue")).toEqual(issues);
+                // Membership and the shared ownership rows lose exactly the cleared type, so no
+                // member outlives the rows and owners it referred to.
+                expect(yield* members).toEqual({ Issue: before.Issue });
+                expect(new Set(yield* owned)).toEqual(new Set(["Issue"]));
+                yield* f.network.set(true);
+                yield* reset.syncOnce;
+                expect(yield* reset.demand.pins.list).toMatchObject([{ name: "folders", ready: true }]);
+                // Installed again locally, not just readable through the backend.
+                expect((yield* cached("Project")).length).toBeGreaterThan(0);
+                expect(yield* members).toEqual(before);
+                expect(yield* reset.get("Issue", "one")).toBeDefined();
+            })
+        )
+    );
+});
+
+test("a change to a shared named type resets every object type", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const options = { ...f, namespace: "reset-shared", ir, live: false };
+                const cached = (type: string) =>
+                    f.tables.query(
+                        Table.make({ name: JSON.stringify(["replica", "reset-shared", `base:${type}`]) })
+                    );
+                const scope = yield* Scope.make();
+                const original = yield* Scope.provide(makeReplica(options), scope);
+                yield* original.demand.pins.set({ name: "folders", query: document("a") });
+                yield* original.syncOnce;
+                expect((yield* cached("Issue")).length).toBeGreaterThan(0);
+                yield* Scope.close(scope, Exit.void);
+                const changed: OntologyIR = {
+                    ...ir,
+                    types: [{ name: "Unused", type: o.string({}) }],
+                };
+                yield* f.network.set(false);
+                const reset = yield* makeReplica({ ...options, ir: changed, onDefinitionChange: "reset" });
+                expect(yield* cached("Issue")).toEqual([]);
+                expect(yield* cached("Project")).toEqual([]);
+                expect(yield* reset.demand.pins.list).toMatchObject([{ name: "folders", ready: false }]);
+            })
+        )
+    );
+});
+
+test("after a definition reset, a download whose query no longer fits reports an error instead of installing", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const options = { ...f, namespace: "reset-invalid-pin", ir, live: false };
+                const scope = yield* Scope.make();
+                const original = yield* Scope.provide(makeReplica(options), scope);
+                yield* original.demand.pins.set({ name: "files", query: document("a", "all") });
+                yield* original.syncOnce;
+                expect(yield* original.demand.pins.list).toMatchObject([{ name: "files", ready: true }]);
+                yield* Scope.close(scope, Exit.void);
+
+                // The new definition drops the property the download selects.
+                const changed: OntologyIR = {
+                    ...ir,
+                    objectTypes: ir.objectTypes.map((type) =>
+                        type.name === "Issue"
+                            ? {
+                                  ...type,
+                                  properties: type.properties.filter((property) => property.name !== "file"),
+                              }
+                            : type
+                    ),
+                };
+                const reset = yield* makeReplica({ ...options, ir: changed, onDefinitionChange: "reset" });
+                yield* reset.syncOnce.pipe(Effect.ignore);
+                const [pin] = yield* reset.demand.pins.list;
+                expect(pin).toMatchObject({ name: "files", ready: false });
+                expect(pin?.error).toMatchObject({ kind: "InvalidRequest" });
+            })
+        )
+    );
+});
+
+test("downloads that share rows of a reset type regain shared ownership, across a second restart", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const f = yield* fixture();
+                const options = { ...f, namespace: "reset-shared-owners", ir, live: false };
+                const owners = Effect.map(
+                    f.tables.get(
+                        Table.make<{ owners?: string[] }>({
+                            name: JSON.stringify(["replica", "reset-shared-owners", "pins"]),
+                        }),
+                        JSON.stringify(["Issue", "one"])
+                    ),
+                    (row) => new Set(row?.owners ?? [])
+                );
+                const first = { name: "folders", query: document("a") };
+                const second = { name: "favorites", query: document("a") };
+                const both = new Set([pinRecordKey(first), pinRecordKey(second)]);
+                yield* Effect.scoped(
+                    Effect.gen(function* () {
+                        const replica = yield* makeReplica(options);
+                        yield* replica.demand.pins.update({ set: [first, second] });
+                        yield* replica.syncOnce;
+                        expect((yield* replica.demand.pins.list).every((pin) => pin.ready)).toBe(true);
+                    })
+                );
+                expect(yield* owners).toEqual(both);
+                const changed: OntologyIR = {
+                    ...ir,
+                    objectTypes: ir.objectTypes.map((type) =>
+                        type.name === "Issue"
+                            ? {
+                                  ...type,
+                                  properties: [
+                                      ...type.properties,
+                                      {
+                                          name: "note",
+                                          displayName: "Note",
+                                          type: o.optional({ type: o.string({}) }),
+                                      },
+                                  ],
+                              }
+                            : type
+                    ),
+                };
+                for (let launch = 0; launch < 2; launch++)
+                    yield* Effect.scoped(
+                        Effect.gen(function* () {
+                            const replica = yield* makeReplica({
+                                ...options,
+                                ir: changed,
+                                onDefinitionChange: "reset",
+                            });
+                            yield* replica.syncOnce;
+                            expect((yield* replica.demand.pins.list).every((pin) => pin.ready)).toBe(true);
+                            expect(yield* owners).toEqual(both);
+                            if (launch === 1) {
+                                yield* replica.demand.pins.remove(pinRecordKey(first));
+                                expect(yield* owners).toEqual(new Set([pinRecordKey(second)]));
+                            }
+                        })
+                    );
             })
         )
     );
