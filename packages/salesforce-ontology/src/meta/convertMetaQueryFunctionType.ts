@@ -1,5 +1,6 @@
+import { salesforceStandardActionTypeId } from "../utils/ids.js";
 import { convertSalesforceInvocableParameterType } from "./convertMetaTypeDef.js";
-import type { QueryFunctionTypeDef } from "@party-stack/ontology-spec";
+import type { QueryFunctionType as MetaQueryFunctionType } from "@party-stack/ontology-spec/meta";
 import type {
     SalesforceInvocableActionDescribe,
     SalesforceInvocableActionParameter,
@@ -17,8 +18,9 @@ function sObjectDescribeFor(
 export function convertSalesforceMetaStandardQueryFunctionType(
     describe: SalesforceInvocableActionDescribe,
     sObjectDescribes: ReadonlyMap<string, SalesforceSObjectDescribe> = new Map()
-): QueryFunctionTypeDef {
+): MetaQueryFunctionType {
     return {
+        id: salesforceStandardActionTypeId(describe.name),
         name: describe.name,
         displayName: describe.label ?? describe.name,
         description: describe.description,
