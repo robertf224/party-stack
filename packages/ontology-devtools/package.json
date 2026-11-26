@@ -1,6 +1,6 @@
 {
     "name": "@party-stack/ontology-devtools",
-    "version": "0.8.7",
+    "version": "0.8.8",
     "files": [
         "lib"
     ],
