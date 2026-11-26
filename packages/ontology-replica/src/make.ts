@@ -1,13 +1,20 @@
 import { classifyBackendFailure } from "@party-stack/ontology-backend";
+import metaOntology from "@party-stack/ontology-spec/meta";
 import { makeBlobStorage, exclusiveOwnerLiveness } from "@party-stack/ontology-storage/blobs";
 import { Runtime } from "@party-stack/runtime";
-import { Effect } from "effect";
+import { Effect, Stream } from "effect";
 import { makeReplicaDeliveries } from "./engine.js";
 import { followReplicaDefinition, revalidateOnMismatch } from "./follow.js";
+import { definitionHints } from "./internal.js";
+import { followMetaReplica } from "./metaDefinition.js";
 import { planDefinitionReset } from "./reset.js";
 import { makeReplica as makeReplicaFromStorage } from "./service.js";
 import type { ReplicaDeliveries } from "./engine.js";
-import type { ReplicaDefinition, ReplicaOptions as StorageReplicaOptions } from "./service.js";
+import type {
+    FollowedReplicaDefinition,
+    ReplicaDefinition,
+    ReplicaOptions as StorageReplicaOptions,
+} from "./service.js";
 import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -44,11 +51,15 @@ export type ReplicaBackendFactory = (
 export type ReplicaOptions = Common & {
     /**
      * The definition. `{ kind: "static", ir }` opens under a fixed `OntologyIR`.
-     * `{ kind: "dynamic", changes, revalidate? }` follows a source: the replica opens under the
-     * first definition and reopens behind the same handle under each later one that differs,
-     * clearing what `onDefinitionChange` requires. Live queries, demand and the outbox carry over.
+     * `{ kind: "dynamic", meta, select? }` reads it from a metadata backend: the replica keeps a
+     * replica of the metadata it reads in the same storage, opens under the definition it
+     * describes, and reopens behind the same handle when it changes, clearing what
+     * `onDefinitionChange` requires. Live queries, demand and the outbox carry over.
      */
-    readonly definition: ReplicaDefinition;
+    readonly definition: ReplicaDefinition | FollowedReplicaDefinition;
+    /** @internal The definition this replica last had open, for a dynamic replica to open under
+     * before its metadata is read (offline, or before the metadata replica has any rows). */
+    readonly retained?: OntologyIR;
     /** A backend, or one built for each definition. */
     readonly backend: OntologyBackendService | ReplicaBackendFactory;
 };
@@ -89,18 +100,45 @@ export const makeReplica = Effect.fn("Replica.open")(function* (options: Replica
     const { backend, definition } = options;
     if (definition.kind === "static")
         return yield* open(definition.ir, yield* connect(backend, definition.ir));
+    const namespace = options.id ?? runtime.namespace;
+    const followed =
+        definition.kind === "followed"
+            ? definition
+            : yield* followMetaReplica(
+                  // Metadata the definition is read from, kept beside the data it describes.
+                  yield* makeReplicaFromStorage({
+                      ir: metaOntology,
+                      backend: definition.meta,
+                      namespace: JSON.stringify([namespace, "meta"]),
+                      live: options.live,
+                      authentication: options.authentication,
+                      onDefinitionChange: "reset",
+                      tables: runtime.tables,
+                      network: runtime.connectivity,
+                      capacity: runtime.capacity,
+                  }),
+                  definition.select,
+                  (definition as { readonly [definitionHints]?: Stream.Stream<unknown> })[definitionHints]
+              );
+    let primed = !options.retained;
+    const source: FollowedReplicaDefinition = {
+        ...followed,
+        // Once only: the follower subscribes again after a source failure.
+        changes: Stream.suspend(() => {
+            if (primed) return followed.changes;
+            primed = true;
+            return Stream.concat(Stream.make(options.retained!), followed.changes);
+        }),
+    };
     // Children's delivery state outlives each engine, so a child resumes after a reopen and
     // receives only the object types whose rows changed shape.
-    const deliveries = yield* makeReplicaDeliveries({
-        tables: runtime.tables,
-        namespace: options.id ?? runtime.namespace,
-    });
-    const watched = ({ backend, source }: ReplicaConnection): ReplicaConnection => ({
-        backend: definition.revalidate ? revalidateOnMismatch(backend, definition.revalidate) : backend,
-        source,
+    const deliveries = yield* makeReplicaDeliveries({ tables: runtime.tables, namespace });
+    const watched = ({ backend, source: protocol }: ReplicaConnection): ReplicaConnection => ({
+        backend: source.revalidate ? revalidateOnMismatch(backend, source.revalidate) : backend,
+        source: protocol,
     });
     return yield* followReplicaDefinition({
-        definition,
+        definition: source,
         open: (ir) =>
             Effect.flatMap(connect(backend, ir), (connection) => open(ir, watched(connection), deliveries)),
         changed: (previous, next) => {

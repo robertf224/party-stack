@@ -19,3 +19,7 @@ export const replicaBackend = (replica: PublicReplica) =>
             readonly [upstream]?: import("@party-stack/ontology-backend").OntologyBackendService;
         }
     )[upstream];
+
+/** Signals, from outside the metadata, that a dynamic definition may have changed (for example a
+ * newer description from the server the replica is fed by). The replica revalidates its metadata. */
+export const definitionHints = Symbol("Replica.definitionHints");

@@ -100,6 +100,7 @@ import { connectReplicaParent, connectReplicaDelivery } from "./parent.js";
 import { primaryKeyQueries, primaryKeyTableQuery } from "./primaryKeyOrder.js";
 import { deliveryRecovery } from "./recovery.js";
 import {
+    changedIdTypes,
     planDefinitionReset,
     resetObjectTypes,
     resetReplicaHead,
@@ -819,7 +820,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
         if (stored === signature) return true;
         try {
             const definition = Table.make<OntologyIR>({ name: "replica-definition" }).decode(stored);
-            return ontologyDefinitionContractSignature(definition) === contractSignature;
+            return (
+                ontologyDefinitionContractSignature(definition) === contractSignature &&
+                changedIdTypes(definition, options.ir).size === 0
+            );
         } catch {
             return false;
         }

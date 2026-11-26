@@ -2,6 +2,7 @@ import { validatePolicy } from "../query/policy.js";
 import { analyzeQueryDocument } from "../query/validate.js";
 import { nestedEncryptedIssues } from "./encrypted.js";
 import { ImageMediaTypeOptions } from "./generated/constants.js";
+import { linkTypeId } from "./ids.js";
 import type { ValidationIssue } from "../utils/validation.js";
 import type { Result } from "../utils/values.js";
 import type {
@@ -752,13 +753,14 @@ export function validate(ontology: OntologyIR): ValidationResult {
         const lt = ontology.linkTypes[i]!;
         const ltPath = ["linkTypes", i] as (string | number)[];
 
-        if (linkIds.has(lt.id)) {
+        const id = linkTypeId(lt);
+        if (linkIds.has(id)) {
             errors.push({
-                message: `Duplicate link type id: "${lt.id}".`,
+                message: `Duplicate link type id: "${id}".`,
                 path: [...ltPath, "id"],
             });
         }
-        linkIds.add(lt.id);
+        linkIds.add(id);
 
         // Relationship names from a source object are keyed by target.name.
         const linkName = `${lt.source.objectType}:${lt.target.name}`;
@@ -790,7 +792,7 @@ export function validate(ontology: OntologyIR): ValidationResult {
             sourceType?.properties.some((property) => property.name === foreignKeyRoot) ?? false;
         if (sourceType && !sourceHasFk) {
             errors.push({
-                message: `Foreign key "${lt.foreignKey}" does not exist on source object type "${lt.source.objectType}" for link "${lt.id}".`,
+                message: `Foreign key "${lt.foreignKey}" does not exist on source object type "${lt.source.objectType}" for link "${linkTypeId(lt)}".`,
                 path: [...ltPath, "foreignKey"],
             });
         }

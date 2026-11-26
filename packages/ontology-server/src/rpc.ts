@@ -6,6 +6,7 @@ import {
 } from "@party-stack/ontology-backend/clients";
 import { DeliveryFrameCodec, DeliveryPositionSchema } from "@party-stack/ontology-backend/delivery";
 import { OntologyDescriptionCodec } from "@party-stack/ontology-backend/description";
+import { makeMetadataBackend, pull } from "@party-stack/ontology-backend/meta";
 import {
     CompiledSubsetCodec,
     ClientStateCodec,
@@ -15,6 +16,7 @@ import {
 } from "@party-stack/ontology-backend/protocol";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
 import { pinOntology } from "@party-stack/ontology-replica";
+import metaOntology from "@party-stack/ontology-spec/meta";
 import {
     ontologyDefinitionSignature,
     ontologyDefinitionContractSignature,
@@ -30,6 +32,7 @@ import {
     Exit,
     Layer,
     PubSub,
+    Schedule,
     Schema,
     Scope,
     Stream,
@@ -158,6 +161,15 @@ export type { OntologyDescription } from "@party-stack/ontology-backend/descript
 export interface OntologyClientOptions {
     /** Previously accepted, public source binding; never inferred from cached rows. */
     readonly description?: OntologyDescription;
+    /** The definition `description` was accepted with. Required with `description`; otherwise
+     * the client reads the definition from the server's `meta` resource. */
+    readonly ir?: import("@party-stack/ontology-spec").OntologyIR;
+    /** Open one of the endpoint's system resources (the definition as meta ontology rows, or
+     * downloads) instead of the ontology itself. */
+    readonly resource?: OntologyResource;
+    /** @internal The server's own definition, for a client in the same runtime: used instead of
+     * reading a copy while it is the one described. */
+    readonly localDefinition?: Effect.Effect<import("@party-stack/ontology-spec").OntologyIR | undefined>;
     /** Validate/adopt definition compatibility after source/context/protocol checks. */
     readonly validate?: (fresh: OntologyDescription) => Effect.Effect<void, BackendError>;
     /** Notification only. Coordinate replacement outside this client scope. */
@@ -194,6 +206,13 @@ export interface OntologyClient {
     readonly operations: OntologyOperationsClient;
     /** Ordinary ontology operations over the selected replica's download inventory. */
     readonly pinBackend?: Effect.Effect<
+        import("@party-stack/ontology-backend").OntologyBackendService,
+        BackendError,
+        Scope.Scope
+    >;
+    /** The endpoint's current definition as meta ontology rows (`@party-stack/ontology-spec/meta`).
+     * It follows the endpoint: after a definition change it serves the new one. */
+    readonly metaBackend?: Effect.Effect<
         import("@party-stack/ontology-backend").OntologyBackendService,
         BackendError,
         Scope.Scope
@@ -403,6 +422,12 @@ const baseOntologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => {
                                       Effect.mapError((cause) => classifyBackendFailure("describe", cause))
                                   )
                                 : undefined;
+                        const contractHash =
+                            options.ir && signature !== undefined
+                                ? yield* ontologyDefinitionContractHash(options.ir).pipe(
+                                      Effect.mapError((cause) => classifyBackendFailure("describe", cause))
+                                  )
+                                : undefined;
                         return {
                             version: 1 as const,
                             replication:
@@ -410,8 +435,8 @@ const baseOntologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => {
                                     ? ("speculative" as const)
                                     : ("committed" as const),
                             definitionHash,
+                            contractHash,
                             sourceId: options.source?.sourceId ?? options.backend?.sourceId ?? "stateless",
-                            ir: options.ir,
                             context: options.context,
                             supportsIdempotency:
                                 options.source?.supportsIdempotency ??
@@ -437,6 +462,7 @@ const baseOntologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => {
                             ),
                             queries: Boolean(options.backend),
                             pins: Boolean(options.replica),
+                            meta: Boolean(options.ir),
                             attachments: options.backend
                                 ? options.backend.attachments && {
                                       stage: Boolean(options.backend.attachments.stage),
@@ -649,6 +675,42 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) =>
                     );
                 })
             );
+            // The definition this endpoint serves, as meta ontology rows. Reading it needs the
+            // same access as Describe.
+            const describeAccess = (headers: Headers) =>
+                options.authorize({ operation: "Describe" }, headers);
+            const meta = yield* Effect.cached(
+                Effect.gen(function* () {
+                    if (!options.ir)
+                        return yield* new BackendError({
+                            operation: "meta",
+                            kind: "NotImplemented",
+                            retryable: false,
+                            message: "This endpoint has no definition to describe.",
+                        });
+                    // A replica that reopens under another definition replaces this endpoint's;
+                    // watches on it report that, so clients read the definition again.
+                    const replica = options.replica;
+                    const boundTo = replica?.ir;
+                    return yield* Layer.buildWithScope(
+                        baseOntologyRpcHandlers({
+                            backend: makeMetadataBackend(options.ir, {
+                                ...(replica && {
+                                    replaced: replica.definition.changes.pipe(
+                                        Stream.filter((ir) => ir !== boundTo),
+                                        Stream.take(1)
+                                    ),
+                                }),
+                            }),
+                            ir: metaOntology,
+                            enableRealtime: options.enableRealtime,
+                            errors: options.errors,
+                            authorize: (_, headers) => describeAccess(headers),
+                        }),
+                        scope
+                    );
+                })
+            );
             type Rpcs = RpcGroup.Rpcs<typeof OntologyRpcs>;
             type Handler = RpcGroup.HandlersFrom<Rpcs>[Rpcs["_tag"]];
             const handlers = Object.fromEntries(
@@ -656,7 +718,7 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) =>
                     const invoke = (payload: never, request: Parameters<Handler>[1]) =>
                         Effect.gen(function* () {
                             const resource = request.headers[resourceHeader];
-                            if (resource !== undefined && resource !== "pins")
+                            if (resource !== undefined && resource !== "pins" && resource !== "meta")
                                 return yield* new BackendError({
                                     operation: "ontology.resource",
                                     kind: "NotFound",
@@ -665,7 +727,12 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) =>
                                 });
                             if (resource === "pins")
                                 yield* options.authorize({ operation: "Pins" }, request.headers);
-                            const context = resource === "pins" ? yield* pins : ordinary;
+                            const context =
+                                resource === "pins"
+                                    ? yield* pins
+                                    : resource === "meta"
+                                      ? yield* meta
+                                      : ordinary;
                             const handler = yield* OntologyRpcs.accessHandler(tag as Rpcs["_tag"]).pipe(
                                 Effect.provideContext(context)
                             );
@@ -702,14 +769,16 @@ export const ontologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) =>
         })
     );
 
-const selectPinResource = (client: OntologyRpcClient): OntologyRpcClient =>
+export type OntologyResource = "pins" | "meta";
+const resourceDefinitions = { pins: pinOntology, meta: metaOntology } as const;
+const selectResource = (client: OntologyRpcClient, resource: OntologyResource): OntologyRpcClient =>
     Object.fromEntries(
         [...OntologyRpcs.requests.keys()].map((tag) => [
             tag,
             (payload: unknown, settings?: { readonly headers?: Record<string, string> }) =>
                 Reflect.apply(Reflect.get(client, tag), client, [
                     payload,
-                    { ...settings, headers: { ...settings?.headers, [resourceHeader]: "pins" } },
+                    { ...settings, headers: { ...settings?.headers, [resourceHeader]: resource } },
                 ]),
         ])
     ) as OntologyRpcClient;
@@ -746,6 +815,7 @@ const protocolIdentity = (description: OntologyDescription) => ({
     actionParameterResolution: Boolean(description.actionParameterResolution),
     queries: Boolean(description.queries),
     pins: Boolean(description.pins),
+    meta: Boolean(description.meta),
     attachments: Boolean(description.attachments),
     stageAttachments: Boolean(description.attachments?.stage),
     encrypted: Boolean(description.encrypted),
@@ -798,6 +868,7 @@ type AcceptDescription = (
 const makeDefinitionClient = Effect.fnUntraced(function* (
     raw: OntologyRpcClient,
     description: OntologyDescription,
+    ir: import("@party-stack/ontology-spec").OntologyIR | undefined,
     options: OntologyClientOptions | undefined
 ) {
     const scope = yield* Effect.scope;
@@ -830,14 +901,16 @@ const makeDefinitionClient = Effect.fnUntraced(function* (
                 Effect.asVoid
             );
     });
+    // The contract this client accepted: of its definition, or as described.
+    const schemaHash = ir
+        ? yield* ontologyDefinitionContractHash(ir).pipe(
+              Effect.mapError((cause) => classifyBackendFailure("remote.definition", cause))
+          )
+        : description.contractHash;
     const validate =
         options?.validate ??
         ((fresh: OntologyDescription) =>
-            (!fresh.ir && !description.ir) ||
-            (fresh.ir &&
-                description.ir &&
-                ontologyDefinitionContractSignature(fresh.ir) ===
-                    ontologyDefinitionContractSignature(description.ir))
+            fresh.contractHash === schemaHash
                 ? Effect.void
                 : Effect.fail(
                       new BackendError({
@@ -891,17 +964,11 @@ const makeDefinitionClient = Effect.fnUntraced(function* (
     // Delivery metadata already carries the contract hash. Check it at the
     // client boundary too, so a receiver's schema failure reaches definition
     // lifecycle handling even when the transport successfully delivered a frame.
-    const schemaHash = yield* Effect.cached(
-        Effect.suspend(() =>
-            description.ir ? ontologyDefinitionContractHash(description.ir) : Effect.succeed(undefined)
-        ).pipe(Effect.mapError(unavailable))
-    );
     // Requests carry it too, so a server whose definition changed rejects them with
     // SchemaMismatch instead of serving them under a contract the client does not know.
-    const contract = yield* Effect.orElseSucceed(schemaHash, () => undefined);
     const headers = {
         ...expectedBindingHeaders(description),
-        ...(contract !== undefined ? { [expectedDefinitionHeader]: contract } : {}),
+        ...(schemaHash !== undefined ? { [expectedDefinitionHeader]: schemaHash } : {}),
     };
     const checkFrame = Effect.fnUntraced(function* (frame: DeliveryFrame) {
         if (frame.metadata) {
@@ -912,8 +979,7 @@ const makeDefinitionClient = Effect.fnUntraced(function* (
                     retryable: false,
                     message: "The delivered ontology source changed.",
                 });
-            const expected = yield* schemaHash;
-            if (expected !== undefined && frame.metadata.schemaHash !== expected)
+            if (schemaHash !== undefined && frame.metadata.schemaHash !== schemaHash)
                 return yield* new BackendError({
                     operation: "remote.definition",
                     kind: "SchemaMismatch",
@@ -959,6 +1025,72 @@ const makeDefinitionClient = Effect.fnUntraced(function* (
     };
 });
 
+/**
+ * Read the definition an endpoint describes from its `meta` resource. The rows are read in one
+ * request, but the endpoint may change definition between `Describe` and the read: the result
+ * must hash to the described definition, or the endpoint is described again.
+ */
+const readDefinition = Effect.fnUntraced(function* (
+    client: OntologyRpcClient,
+    described: OntologyDescription,
+    open: (
+        client: OntologyRpcClient,
+        options?: OntologyClientOptions
+    ) => Effect.Effect<OntologyClient, BackendError, Scope.Scope>
+) {
+    let description = described;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const ir = yield* Effect.scoped(
+            Effect.flatMap(open(client, { resource: "meta" }), (meta) => pull(meta.backend))
+        );
+        const hash = yield* ontologyDefinitionHash(ir).pipe(
+            Effect.mapError((cause) => classifyBackendFailure("remote.definition", cause))
+        );
+        if (hash === description.definitionHash) return { description, ir };
+        description = yield* client.Describe().pipe(Effect.mapError(unavailable));
+    }
+    return yield* new BackendError({
+        operation: "remote.definition",
+        kind: "Unavailable",
+        retryable: true,
+        message: "The ontology definition changed while it was being read.",
+    });
+});
+
+/**
+ * While someone follows the definition status, notice a new definition without waiting for a
+ * request to fail: watch the endpoint's metadata. Without realtime the endpoint offers no watch,
+ * and the next request after a change reports it instead.
+ */
+const watchDefinition = (
+    definition: InternalDefinition,
+    metaBackend: NonNullable<OntologyClient["metaBackend"]>
+): InternalDefinition => {
+    const check = Effect.ignore(definition.refresh);
+    const signals = Stream.unwrap(
+        Effect.gen(function* () {
+            const backend = yield* metaBackend;
+            const events = backend.watchSubset?.(objectSubset("Ontology"));
+            // The watch reports changes after it is acquired; check once for any before.
+            return events ? Stream.concat(Stream.make(undefined), yield* events) : Stream.empty;
+        })
+    ).pipe(
+        // A dropped connection is watched again; a mismatch is already in the status.
+        Stream.retry(($) =>
+            $(Schedule.spaced("5 seconds")).pipe(
+                Schedule.jittered,
+                Schedule.while(({ input }) => input.retryable)
+            )
+        )
+    );
+    const watch = signals.pipe(
+        Stream.mapEffect(() => check),
+        Stream.catchCause(() => Stream.empty),
+        Stream.drain
+    );
+    return { ...definition, changes: Stream.merge(definition.changes, watch, { haltStrategy: "left" }) };
+};
+
 const makeProtocolClient = (accept: AcceptDescription) => {
     const open: (
         client: OntologyRpcClient,
@@ -983,35 +1115,58 @@ const openProtocolClient = Effect.fnUntraced(function* (
     client: OntologyRpcClient,
     options: OntologyClientOptions | undefined,
     accept: AcceptDescription,
-    open: (client: OntologyRpcClient) => Effect.Effect<OntologyClient, BackendError, Scope.Scope>
+    open: (
+        client: OntologyRpcClient,
+        options?: OntologyClientOptions
+    ) => Effect.Effect<OntologyClient, BackendError, Scope.Scope>
 ): Effect.fn.Return<OntologyClient, BackendError, Scope.Scope> {
+    const base = client;
+    if (options?.resource) client = selectResource(client, options.resource);
     // Serialized RPC clients already decoded Describe with its success schema, and
     // a same-runtime client receives the server's validated value: neither needs a
     // second encode/decode copy. Only a caller-retained description is copied.
-    const description = yield* options?.description
+    let description = yield* options?.description
         ? accept(options.description)
         : client.Describe().pipe(Effect.mapError(unavailable));
-    if (options?.description && !description.ir)
+    let ir = options?.ir ?? (options?.resource ? resourceDefinitions[options.resource] : undefined);
+    // A client in the server's own runtime uses the server's definition object while it is still
+    // the one described, instead of reading a copy.
+    if (!ir && options?.localDefinition && description.definitionHash !== undefined) {
+        const local = yield* options.localDefinition;
+        const hash = local && (yield* Effect.orElseSucceed(ontologyDefinitionHash(local), () => undefined));
+        if (hash === description.definitionHash) ir = local;
+    }
+    if (options?.description && !ir)
         return yield* new BackendError({
             operation: "remote.bootstrap",
             kind: "InvalidConfiguration",
             retryable: false,
-            message: "A retained ontology description must include its definition.",
+            message: "A retained ontology description needs the definition it was accepted with.",
         });
-    const described = yield* makeDefinitionClient(client, description, options);
-    const pinBackend = description.pins
-        ? open(selectPinResource(client)).pipe(Effect.map((resource) => resource.backend))
-        : undefined;
+    if (!ir && description.meta) ({ description, ir } = yield* readDefinition(client, description, open));
+    const described = yield* makeDefinitionClient(client, description, ir, options);
+    const pinBackend =
+        description.pins && !options?.resource
+            ? open(base, { resource: "pins" }).pipe(Effect.map((resource) => resource.backend))
+            : undefined;
+    const metaBackend =
+        description.meta && !options?.resource
+            ? open(base, { resource: "meta" }).pipe(Effect.map((resource) => resource.backend))
+            : undefined;
     client = described.client;
     const operations = yield* makeOntologyOperationsClient(client);
     const common = {
         description,
-        definition: described.definition,
+        definition:
+            metaBackend && !options?.resource
+                ? watchDefinition(described.definition, metaBackend)
+                : described.definition,
         operations,
         pinBackend,
+        metaBackend,
         sourceId: description.sourceId,
         definitionHash: description.definitionHash,
-        ir: description.ir,
+        ir,
         context: description.context,
         backend: makeRpcBackend(client, description, operations),
     };

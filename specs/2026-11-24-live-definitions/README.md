@@ -3,13 +3,15 @@
 ## Status
 
 Built for replicas the server manages. A replica follows its definition, whether it comes
-from a backend's metadata or from a parent server (`upstream` routes); servers serve whatever
+from a metadata backend (read through its own meta replica) or from a parent server (`upstream`
+routes); servers serve whatever
 definition their replica is open under; schema errors trigger a recheck; a managed replica
 starts offline under the definition it last had open; and children resume after a reopen
 with only the changed types sent again. Reopening is the only way a replica changes
 definition: the route-level swap and the catalog's `rebuild` are gone. An in-app
 `LiveOntology` keeps one definition and reports when it is stale; `OntologyProvider` reopens
-it. A browser worker's replica still opens under one definition.
+it, and an idle view learns of a change by watching the route's `meta` resource. A browser
+worker's replica still opens under one definition.
 
 ## BLUF
 
@@ -24,9 +26,13 @@ definition the replica has now.
 // Static.
 yield* makeReplica({ definition: { kind: "static", ir }, backend, context });
 
-// Dynamic: metaDefinition returns { kind: "dynamic", changes, revalidate }.
+// Dynamic: read from a metadata backend.
 const replica = yield* makeReplica({
-    definition: yield* metaDefinition(metadata, { objectTypeNames: ["Task", "Project"] }),
+    definition: {
+        kind: "dynamic",
+        meta: metadata,
+        select: { objectTypeNames: ["Task", "Project"], transform },
+    },
     // A fixed backend, or one built for each definition (adapters that compile the IR).
     backend: (ir) => makeProviderBackend({ ...connection, ir, context }),
     context,
@@ -38,7 +44,6 @@ replica.definition.current; // Effect<OntologyIR>
 replica.definition.changes; // Stream<OntologyIR>, current first
 ```
 
-```ts
 `definition` is static or dynamic:
 
 ```ts
@@ -47,22 +52,28 @@ type ReplicaDefinition =
     | DynamicReplicaDefinition;
 interface DynamicReplicaDefinition {
     readonly kind: "dynamic";
-    /** The current definition first, then each new one. */
-    readonly changes: Stream.Stream<OntologyIR, BackendError>;
-    /** Look again after an operation failed in a way that suggests the definition is stale. A
-     * change still arrives through `changes`. */
-    readonly revalidate?: (hint: {
-        readonly objectTypes: readonly string[];
-    }) => Effect.Effect<void, BackendError>;
+    /** Serves the meta ontology. */
+    readonly meta: OntologyBackendService;
+    /** pull's objectTypeNames, actionTypeNames, queryFunctionTypeNames and transform. */
+    readonly select?: DefinitionSelection;
 }
 ```
 
-`metaDefinition(meta, options)` (in `@party-stack/ontology-backend/meta`) reads the definition
-with ordinary metadata queries, compiled by the same code as `pull`, and emits each one that
-differs. `meta` is anything that answers queries: a metadata backend, or a cached proxy over a
-meta replica so the definition is available offline. `options.changes` says when to read again
-(a live query over the meta replica, a timer); `options.revalidate` refreshes the metadata itself
-before a requested read.
+A dynamic replica opens a replica of `meta` on the same runtime (its own namespace) and reads
+the definition from its local rows, compiled by the same code as `pull`. The read demands
+exactly the rows it used, so they stay cached for an offline start and in sync (watch or
+polling) while the replica runs. A change to any of those rows, or a revalidation, reads the
+definition again once every row it was read from is current, so a provider that delivers one
+edit a type at a time reopens the replica once. A managed replica reopens its account's
+partition without reading the definition; only a first open for an account pulls it directly,
+because the storage partition depends on the definition's context.
+
+Definitions hash independently of the order of their named collections and of optional fields
+set to `undefined`, so a definition read back from meta rows hashes the same as the original.
+Definitions may carry a provider `id`, which defaults to the name (a link type's to its source
+object type and `target.name`) and is required on meta rows. Ids are left out of the contract, so
+generated definitions stay compatible with the provider's; a replica still clears a type whose
+id changed.
 
 `backend` may be a function of the definition. It returns a backend, or `{ backend, source }`
 for a replica fed by another server.
@@ -83,8 +94,8 @@ The handle stays the same. Reads and waits that were running run again on the ne
 queries switch to it and emit again, and demand held across the reopen is acquired again.
 Outbox entries, receipts and downloads are kept as for a reset at open. If the new definition
 cannot be opened, the startup transaction rolls back and the replica reopens under the previous
-one. `replica.status.definition` reports the open definition's hash and the failed one's hash and
-error until the source supplies a definition that opens. Before an engine closes for a reopen
+one. `replica.status.definition` reports the open definition's hash and an error when a newer
+definition could not be read or opened, until one opens. Before an engine closes for a reopen
 it is retired: calls and streams still on it fail with a retryable `Unavailable`, so children
 resume against the new engine instead of stopping.
 
@@ -95,8 +106,9 @@ property, link, action or parameter it does not know, or for using a property in
 longer allows. The Foundry adapter maps those errors (`PropertiesNotFound`,
 `ObjectTypeNotFound`, `LinkTypeNotFound`, `ActionTypeNotFound`, `ParametersNotFound`,
 `ActionEditedPropertiesNotFound`, `InvalidPropertyType`, `PropertiesNotSearchable`,
-`PropertiesNotSortable`); `OntologySyncing` becomes a retryable `Unavailable`. A followed replica
-calls `revalidate` with the object type involved. If the definition changed, the reopen follows
+`PropertiesNotSortable`); `OntologySyncing` becomes a retryable `Unavailable`. A dynamic replica
+then revalidates its meta replica (every row the definition was read from) and reads the
+definition again. If the definition changed, the reopen follows
 and demand loads again on the new engine; if not, the original error stands. "Not found" for a
 type can also mean "no access", which the recheck settles.
 
@@ -113,7 +125,7 @@ makeOntologyServer({
                     return {
                         kind: "replica",
                         context: connection.context,
-                        definition: yield* metaDefinition(connection.metadata),
+                        definition: { kind: "dynamic", meta: connection.metadata },
                         backend: (ir) => makeProviderBackend({ ...connection, ir }),
                         onDefinitionChange: "reset",
                     };
@@ -127,14 +139,26 @@ makeOntologyServer({
   its own endpoint, so requests and connections stay open while requests to the old one finish.
   This applies to managed routes and to a replica passed in directly (as `serveOntologyWorker`
   does).
-- Clients notice a new definition through the definition hash on frames, as today.
-- A managed replica opens under the definition it last had open (recorded on each reopen),
-  then follows its source, so it starts offline. `route.definition` is deprecated.
-- An `upstream` route is a followed replica too. Its source is the parent's description: it
-  starts from the retained one without a `Describe`, opens a protocol client per definition,
-  and when the parent reports a mismatch the client describes it again; with
-  `onDefinitionChange: "reset"` a different definition reopens the replica. With a bundled
-  `ir`, a different contract stays an error.
+- Every route with a definition serves it as meta rows on its `meta` resource (the same
+  resource mechanism as `pins`), with Describe's access.
+- `Describe` is a manifest: source, context, capabilities, `definitionHash` and `contractHash`.
+  A client reads the definition from the `meta` resource in one request (`pull` fetches every
+  value type with the rest and keeps the ones used) and checks it against `definitionHash`,
+  describing again if the route changed in between. A local client uses its server's
+  definition object while it is the one described. A retained client is opened with
+  its accepted description and the definition it was accepted with.
+- Clients notice a new definition through the contract hash on frames and requests, and,
+  while something follows `client.definition.changes`, through a watch on the `meta` resource
+  that checks the description again. Without realtime there is no watch; the next request
+  reports the change. A later direction: endpoint settings as a singleton object on the meta
+  ontology, which clients sync like any other row.
+- The partition catalog stores each partition's context and, for `upstream` routes, the
+  parent's description, not definitions. `route.definition` is removed.
+- An `upstream` route's definition is dynamic: read from the parent's `meta` resource through
+  a meta replica, so it starts offline. A refreshed description with a different contract also
+  revalidates that metadata (covering parents without realtime and one-shot replicas); with
+  `onDefinitionChange: "reset"` the replica reopens under it. With a bundled `ir`, the
+  definition is static and a different contract stays an error.
 
 ## Delivery to children
 
@@ -153,15 +177,22 @@ makeOntologyServer({
 
 - **Live ontologies follow too.** An in-app `LiveOntology` builds typed collections from one
   definition; it reports `stale` and `OntologyProvider` reopens it, which remounts the tree. A
-  browser worker's replica still opens under one definition. Both could take a definition
-  source later.
+  browser worker's replica still opens under one definition. Both could take a dynamic
+  definition later.
+- **One engine for definition and data.** See the system ontology spec: a replica stores its
+  definition as meta rows beside its data and receives both on one stream, removing the
+  separate meta replica.
 - **Persist delivery state.** Children's delivered hashes are in memory per stream; a parent
   restart, or eviction, means a full resend. Storing them in the parent's tables (one row per
   delivered ref per stream, as Zero's CVR does) bounds memory and survives restarts.
-- **Describe as a manifest.** Serve the definition as meta rows plus a `definition` query
-  function returning the whole definition in one read, for when a client needs it
-  transactionally. A provider can implement it with its whole-ontology metadata endpoint.
-  `Describe` shrinks to version, source id, definition hash and capabilities.
+- **A `definition` query function.** Return the whole definition in one read, for when a reader
+  needs it transactionally. A provider can implement it with its whole-ontology metadata
+  endpoint, which also gives per-type providers a consistent snapshot.
+- **Value type references as links.** Object, action and query function types refer to value
+  types by name inside their type definitions, which queries cannot follow, so `pull` reads
+  every value type. Lifting those references into the meta ontology (a link from a definition
+  to the value types it uses) would let a selected read follow them, once hierarchical queries
+  can traverse list-valued properties.
 - **Versioned rows.** Stamp each stored row with a version from a per-replica counter and keep
   tombstones. A child holds a cursor plus per-type reset epochs; delivery sends rows changed since
   the cursor, found by an index on the version instead of recapturing and hashing a selection,

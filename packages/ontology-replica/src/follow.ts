@@ -14,7 +14,7 @@ import {
 } from "effect";
 import { kernel, upstream } from "./internal.js";
 import type { ReplicaService as KernelService } from "./engine.js";
-import type { DynamicReplicaDefinition, ReplicaService } from "./service.js";
+import type { FollowedReplicaDefinition, ReplicaService } from "./service.js";
 import type { ReplicaStatus } from "./status.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -34,7 +34,7 @@ const subsetType = (subset: unknown) => {
  */
 export const revalidateOnMismatch = (
     backend: OntologyBackendService,
-    revalidate: NonNullable<DynamicReplicaDefinition["revalidate"]>
+    revalidate: NonNullable<FollowedReplicaDefinition["revalidate"]>
 ): OntologyBackendService => {
     const check =
         (objectTypes: readonly string[]) =>
@@ -103,7 +103,7 @@ const signature = (ir: OntologyIR) => {
  * and demand held across the change is acquired again.
  */
 export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
-    readonly definition: DynamicReplicaDefinition;
+    readonly definition: FollowedReplicaDefinition;
     readonly open: (ir: OntologyIR) => Effect.Effect<ReplicaService, BackendError, Scope.Scope>;
     /** Runs between closing the engine for `previous` and opening the one for `next`. */
     readonly changed?: (previous: OntologyIR, next: OntologyIR) => Effect.Effect<void>;
@@ -245,7 +245,11 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
         Effect.tapError((error) =>
             Effect.andThen(
                 Deferred.fail(first, error),
-                Effect.logWarning("Replica definition source failed", error)
+                // The replica keeps its definition; status reports why it cannot read a new one.
+                Effect.andThen(
+                    SubscriptionRef.set(failed, { kind: error.kind, message: error.message }),
+                    Effect.logWarning("Replica definition source failed", error)
+                )
             )
         ),
         Effect.retry(Schedule.spaced("5 seconds")),

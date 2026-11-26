@@ -30,6 +30,7 @@ import type {
 } from "@party-stack/ontology-backend";
 import type { ActionMutatorRegistry } from "@party-stack/ontology-backend/actions";
 import type { ClientPolicy } from "@party-stack/ontology-backend/clients";
+import type { DefinitionSelection } from "@party-stack/ontology-backend/meta";
 import type { OntologySource, PendingAction, ClientSubmission } from "@party-stack/ontology-backend/protocol";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { ObjectSubset } from "@party-stack/ontology-spec/query";
@@ -46,21 +47,33 @@ export interface StaticReplicaDefinition {
     readonly kind: "static";
     readonly ir: OntologyIR;
 }
-/** A definition the replica follows. It opens under the first and reopens behind the same handle
- * under each later one that differs. */
+/** A definition read from the meta ontology. The replica opens under the definition the metadata
+ * describes and reopens behind the same handle when it changes. */
 export interface DynamicReplicaDefinition {
     readonly kind: "dynamic";
+    /** A metadata backend: anything that serves the meta ontology (`@party-stack/ontology-spec/meta`).
+     * The replica keeps its own replica of the metadata it reads, in the same storage, so it opens
+     * offline under the definition it last read and follows changes as the metadata syncs. A
+     * request that fails with `SchemaMismatch` revalidates the metadata. */
+    readonly meta: OntologyBackendService;
+    /** The definitions to take, and app-specific edits to apply, as in `pull`. Defaults to all. */
+    readonly select?: DefinitionSelection;
+}
+/** The definition a replica opens under: fixed, or read from metadata. See `makeReplica`'s `definition`. */
+export type ReplicaDefinition = StaticReplicaDefinition | DynamicReplicaDefinition;
+/**
+ * @internal A definition that arrives as a stream, for replicas whose definition comes with their
+ * source (a replica of another party-stack server). Applications use `DynamicReplicaDefinition`.
+ */
+export interface FollowedReplicaDefinition {
+    readonly kind: "followed";
     /** The current definition first, then each new one. */
     readonly changes: Stream.Stream<OntologyIR, BackendError>;
-    /** Ask the source to look again now. The replica calls it when its backend fails with
-     * `SchemaMismatch`, which suggests the definition is stale. A change still arrives through
-     * `changes`. */
+    /** Ask the source to look again, after a request failed with `SchemaMismatch`. */
     readonly revalidate?: (hint: {
         readonly objectTypes: readonly string[];
     }) => Effect.Effect<void, BackendError>;
 }
-/** The definition a replica opens under: fixed, or followed. See `makeReplica`'s `definition`. */
-export type ReplicaDefinition = StaticReplicaDefinition | DynamicReplicaDefinition;
 /** The definition a replica is open under. */
 export interface ReplicaDefinitionState {
     readonly current: Effect.Effect<OntologyIR, BackendError>;

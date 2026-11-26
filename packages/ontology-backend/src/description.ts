@@ -1,14 +1,16 @@
-import { OntologyIRSchema } from "@party-stack/ontology-spec/effect";
 import { Schema } from "effect";
 import { protocolValueCodec } from "./protocol.js";
 
-/** Definition, authenticated binding and capabilities needed to reopen a protocol client. */
+/** The authenticated binding and capabilities needed to reopen a protocol client. The definition
+ * itself is served as meta ontology rows on the `meta` resource; the hashes identify it. */
 export const OntologyDescriptionCodec = Schema.Struct({
     version: Schema.Literal(1),
     replication: Schema.Literals(["committed", "speculative"]),
+    /** Hash of the whole definition the endpoint serves. */
     definitionHash: Schema.optional(Schema.String),
+    /** Hash of its contract (without presentation); requests and delivery frames carry it. */
+    contractHash: Schema.optional(Schema.String),
     sourceId: Schema.NonEmptyString,
-    ir: Schema.optional(protocolValueCodec(OntologyIRSchema)),
     context: Schema.optional(protocolValueCodec(Schema.Record(Schema.String, Schema.Unknown))),
     supportsIdempotency: Schema.Boolean,
     delivery: Schema.optional(Schema.Boolean),
@@ -19,6 +21,8 @@ export const OntologyDescriptionCodec = Schema.Struct({
     actionParameterResolution: Schema.optional(Schema.Boolean),
     queries: Schema.optional(Schema.Boolean),
     pins: Schema.optional(Schema.Boolean),
+    /** The definition is also served as meta ontology rows on the `meta` resource. */
+    meta: Schema.optional(Schema.Boolean),
     attachments: Schema.optional(Schema.Struct({ stage: Schema.Boolean })),
     encrypted: Schema.optional(Schema.Boolean),
 });

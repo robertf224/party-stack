@@ -310,7 +310,6 @@ function renderLinkTypeSide(side: LinkTypeSideDef): string {
 
 function renderLinkType(linkType: LinkTypeDef): string {
     return renderObject([
-        { name: "id", value: renderPlainValue(linkType.id) },
         { name: "source", value: renderLinkTypeSide(linkType.source) },
         { name: "target", value: renderLinkTypeSide(linkType.target) },
         { name: "foreignKey", value: renderPlainValue(linkType.foreignKey) },
@@ -455,7 +454,22 @@ function renderQueryFunctionType(queryFunctionType: QueryFunctionTypeDef): strin
     ]);
 }
 
+/** Provider ids identify a provider's definitions (for example a platform's resource ids); they
+ * stay with the provider's metadata rather than in an app's source. */
+const withoutProviderIds = (ir: OntologyIR): OntologyIR => ({
+    ...ir,
+    types: ir.types.map(({ id: _, ...type }) => type),
+    objectTypes: ir.objectTypes.map(({ id: _, ...objectType }) => ({
+        ...objectType,
+        properties: objectType.properties.map(({ id: _, ...property }) => property),
+    })),
+    linkTypes: ir.linkTypes.map(({ id: _, ...linkType }) => linkType),
+    actionTypes: ir.actionTypes.map(({ id: _, ...actionType }) => actionType),
+    queryFunctionTypes: ir.queryFunctionTypes.map(({ id: _, ...queryFunctionType }) => queryFunctionType),
+});
+
 export function generateOntology(ir: OntologyIR, opts: GenerateOntologyOpts = {}): string {
+    ir = withoutProviderIds(ir);
     const ontologyImportPath = opts.ontologyImportPath ?? "@party-stack/ontology-spec";
     const project = new Project({ useInMemoryFileSystem: true });
     const sourceFile = project.createSourceFile("ontology.ts", "");

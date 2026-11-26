@@ -1,16 +1,18 @@
 import { makeOntologyBackend } from "@party-stack/ontology-backend";
+import { makeMetadataBackend } from "@party-stack/ontology-backend/meta";
 import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { makeOntologyServer } from "@party-stack/ontology-server";
 import { o } from "@party-stack/ontology-spec";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import { MemoryRuntime, Runtimes } from "@party-stack/runtime";
 import { queryOnce } from "@tanstack/db";
-import { Effect, Exit, Layer, Scope, SubscriptionRef } from "effect";
+import { Effect, Exit, Layer, PubSub, Scope, Stream } from "effect";
 import { expect, test } from "vite-plus/test";
 import { createOntologyClient } from "./client.js";
 import { createLiveOntology } from "./live/LiveOntology.js";
 import { localClient } from "./local.js";
 import type { LiveOntology } from "./live/LiveOntology.js";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 
 const item = (extra: OntologyIR["objectTypes"][number]["properties"] = []) => ({
@@ -32,6 +34,32 @@ const v2: OntologyIR = {
     objectTypes: [item([{ name: "label", displayName: "Label", type: o.string({}) }])],
 };
 
+const labelled = (ir: OntologyIR) =>
+    ir.objectTypes[0]!.properties.some((property) => property.name === "label");
+
+/** Metadata whose definition can be edited. Watches report each edit. */
+const editableMetadata = (initial: OntologyIR) =>
+    Effect.gen(function* () {
+        let current = initial;
+        const edits = yield* PubSub.unbounded<void>();
+        const backend: OntologyBackendService = {
+            ...makeMetadataBackend(initial),
+            loadSubset: (subset) => Effect.suspend(() => makeMetadataBackend(current).loadSubset(subset)),
+            query: (document, settings) =>
+                Effect.suspend(() => makeMetadataBackend(current).query(document, settings)),
+            watchSubset: () =>
+                Effect.map(PubSub.subscribe(edits), (subscription) =>
+                    Stream.fromSubscription(subscription).pipe(Stream.as("reset" as const))
+                ),
+        };
+        const edit = (next: OntologyIR) =>
+            Effect.suspend(() => {
+                current = next;
+                return PubSub.publish(edits, undefined);
+            });
+        return { backend, edit };
+    });
+
 const stale = (live: LiveOntology) =>
     new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("The view never became stale.")), 10_000);
@@ -45,13 +73,13 @@ const stale = (live: LiveOntology) =>
         check();
     });
 
-test("a view over a replica that follows its definition becomes stale, and a reopened view uses the new one", async () => {
+test("an idle view over a replica that follows its definition becomes stale, and a reopened view uses the new one", async () => {
     const owner = Effect.runSync(Scope.make());
     try {
-        const { server, source } = await Effect.runPromise(
+        const { server, metadata } = await Effect.runPromise(
             Scope.provide(
                 Effect.gen(function* () {
-                    const source = yield* SubscriptionRef.make(v1);
+                    const metadata = yield* editableMetadata(v1);
                     const platform = yield* Layer.build(Runtimes.layer(MemoryRuntime.layer));
                     const server = yield* makeOntologyServer({
                         enableRealtime: true,
@@ -59,7 +87,7 @@ test("a view over a replica that follows its definition becomes stale, and a reo
                         routes: {
                             items: {
                                 kind: "replica",
-                                definition: { kind: "dynamic", changes: SubscriptionRef.changes(source) },
+                                definition: { kind: "dynamic", meta: metadata.backend },
                                 onDefinitionChange: "reset",
                                 backend: (ir) =>
                                     Effect.succeed(
@@ -76,10 +104,9 @@ test("a view over a replica that follows its definition becomes stale, and a reo
                                                         [
                                                             {
                                                                 key: "a",
-                                                                value:
-                                                                    ir === v2
-                                                                        ? { id: "a", label: "x" }
-                                                                        : { id: "a" },
+                                                                value: labelled(ir)
+                                                                    ? { id: "a", label: "x" }
+                                                                    : { id: "a" },
                                                             },
                                                         ],
                                                         subset.query ?? {}
@@ -96,7 +123,7 @@ test("a view over a replica that follows its definition becomes stale, and a reo
                             },
                         },
                     }).pipe(Effect.provideContext(platform));
-                    return { server, source };
+                    return { server, metadata };
                 }),
                 owner
             )
@@ -110,15 +137,10 @@ test("a view over a replica that follows its definition becomes stale, and a reo
                 ]);
                 expect(live.definition.get()).toEqual({ status: "current" });
 
-                // A mounted live query keeps the view's delivery stream open; the parent resends
-                // the changed type under its new definition, which the view detects.
-                const watching = live.objects.Item!.subscribeChanges(() => {}, { includeInitialState: true });
-                try {
-                    await Effect.runPromise(SubscriptionRef.set(source, v2));
-                    await stale(live);
-                } finally {
-                    watching.unsubscribe();
-                }
+                // No live query is mounted and no request fails: the view learns of the change by
+                // watching the route's metadata.
+                await Effect.runPromise(metadata.edit(v2));
+                await stale(live);
                 expect(live.definition.get()).toMatchObject({
                     status: "stale",
                     error: { kind: "SchemaMismatch" },

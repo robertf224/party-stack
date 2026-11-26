@@ -1,9 +1,12 @@
 import { o, type OntologyIR } from "@party-stack/ontology-spec";
+import blog from "@party-stack/ontology-spec/examples/blog";
 import metaOntology from "@party-stack/ontology-spec/meta";
+import { ontologyDefinitionHash } from "@party-stack/ontology-storage";
 import { Effect, Queue, Stream } from "effect";
 import { expect, test } from "vitest";
-import { loadDefinition, makeMetadataBackend, metaDefinition, pull } from "./meta.js";
+import { loadDefinition, makeMetadataBackend, pull } from "./meta.js";
 import { makeOntologyBackend } from "./query.js";
+import { objectSubset } from "./subset.js";
 
 const ir: OntologyIR = {
     displayName: "Native metadata",
@@ -85,7 +88,7 @@ test.each([
                 },
                 {
                     ...options,
-                    transformPulledOntology: (ontology) => {
+                    transform: (ontology) => {
                         transformed = true;
                         return ontology;
                     },
@@ -185,7 +188,7 @@ test("pull validates after an app transform and rejects invalid transformed defi
     const result = await Effect.runPromise(
         pull(backend, {
             ...options,
-            transformPulledOntology: async (pulled) => ({ ...pulled, context: ir.context, types: ir.types }),
+            transform: async (pulled) => ({ ...pulled, context: ir.context, types: ir.types }),
         })
     );
     expect(result.context).toEqual(ir.context);
@@ -193,7 +196,7 @@ test("pull validates after an app transform and rejects invalid transformed defi
     const invalid = await Effect.runPromise(
         pull(backend, {
             ...options,
-            transformPulledOntology: (pulled) => ({ ...pulled, context: ir.context }),
+            transform: (pulled) => ({ ...pulled, context: ir.context }),
         }).pipe(Effect.result)
     );
     expect(invalid).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidConfiguration" } });
@@ -289,51 +292,36 @@ test("pull omits definitions the IR cannot represent and reports them, instead o
     ]);
 });
 
-test("a meta definition emits the current definition, then each one that differs", async () => {
+test("a metadata backend reports a replaced definition to its watches", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                let current = named;
-                const refreshed: string[][] = [];
-                const definition = yield* metaDefinition(
-                    { query: (document, settings) => makeMetadataBackend(current).query(document, settings) },
-                    {
-                        revalidate: (hint) =>
-                            Effect.sync(() => {
-                                refreshed.push([...hint.objectTypes]);
-                            }),
-                    }
-                );
-                const seen = yield* Queue.unbounded<OntologyIR>();
-                yield* definition.changes.pipe(
-                    Stream.runForEach((value) => Queue.offer(seen, value)),
+                const replaced = yield* Queue.unbounded<void>();
+                const backend = makeMetadataBackend(named, { replaced: Stream.fromQueue(replaced) });
+                const watch = yield* backend.watchSubset!(objectSubset("ObjectType"))!;
+                const events = yield* Queue.unbounded<unknown>();
+                yield* watch.pipe(
+                    Stream.runForEach((event) => Queue.offer(events, event)),
                     Effect.forkScoped
                 );
-                expect((yield* Queue.take(seen)).objectTypes.map((type) => type.name)).toEqual(["Item"]);
-
-                // Revalidating unchanged metadata emits nothing.
-                yield* definition.revalidate({ objectTypes: ["Item"] });
-                current = {
-                    ...named,
-                    objectTypes: [
-                        ...named.objectTypes,
-                        {
-                            name: "Note",
-                            displayName: "Note",
-                            pluralDisplayName: "Notes",
-                            primaryKey: "id",
-                            properties: [{ name: "id", displayName: "Id", type: o.string({}) }],
-                        },
-                    ],
-                };
-                yield* definition.revalidate({ objectTypes: ["Note"] });
-                expect((yield* Queue.take(seen)).objectTypes.map((type) => type.name)).toEqual([
-                    "Item",
-                    "Note",
-                ]);
-                expect(yield* Queue.size(seen)).toBe(0);
-                expect(refreshed).toEqual([["Item"], ["Note"]]);
+                yield* Queue.offer(replaced, undefined);
+                expect(yield* Queue.take(events)).toBe("reset");
+                expect(makeMetadataBackend(named).watchSubset).toBeUndefined();
             })
         )
     );
+});
+
+test("a definition read back from its metadata has the same hash", async () => {
+    const definitions = [
+        ir,
+        blog,
+        { ...named, objectTypes: named.objectTypes.map((type) => ({ ...type, id: "provider-item" })) },
+    ];
+    for (const definition of definitions) {
+        const pulled = await Effect.runPromise(pull(makeMetadataBackend(definition)));
+        expect(await Effect.runPromise(ontologyDefinitionHash(pulled))).toBe(
+            await Effect.runPromise(ontologyDefinitionHash(definition))
+        );
+    }
 });

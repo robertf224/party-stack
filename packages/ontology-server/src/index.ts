@@ -9,7 +9,6 @@ export type {
     OpenedOntologyRoute,
     OntologyRouteFactory,
     OntologyRouteParams,
-    OntologyRouteContext,
     ManagedReplicaRoute,
 } from "./routing.js";
 export type { OntologyResolver } from "./routing.js";

@@ -21,8 +21,7 @@ function isOntologyPullConfig(value: unknown): value is OntologyPullConfig {
     return (
         Predicate.isObject(value) &&
         Effect.isEffect(value.backend) &&
-        (value.transformPulledOntology === undefined ||
-            typeof value.transformPulledOntology === "function") &&
+        (value.transform === undefined || typeof value.transform === "function") &&
         Array.isArray(value.objectTypeNames) &&
         value.objectTypeNames.every((entry) => typeof entry === "string") &&
         Array.isArray(value.actionTypeNames) &&
@@ -67,7 +66,7 @@ export async function writePulledOntology(
                     objectTypeNames: config.objectTypeNames,
                     actionTypeNames: config.actionTypeNames,
                     queryFunctionTypeNames: config.queryFunctionTypeNames ?? [],
-                    transformPulledOntology: config.transformPulledOntology,
+                    transform: config.transform,
                 });
             })
         ).pipe(Effect.provide(context.runtime))

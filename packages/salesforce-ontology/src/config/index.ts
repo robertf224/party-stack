@@ -185,7 +185,7 @@ export type SalesforceOntologyPullConfig = OntologyPullConfig<Runtimes>;
 export interface CreateSalesforceOntologyPullConfigOptions extends SalesforcePullBackendOptions {
     flowActionTypeNames: string[];
     queryFunctionTypeNames?: string[];
-    transformPulledOntology?: (ontology: OntologyIR) => OntologyIR | Promise<OntologyIR>;
+    transform?: (ontology: OntologyIR) => OntologyIR | Promise<OntologyIR>;
 }
 
 export function createSalesforceOntologyPullConfig(
@@ -204,9 +204,9 @@ export function createSalesforceOntologyPullConfig(
     );
     return {
         backend: makeSalesforcePullBackend(options),
-        async transformPulledOntology(ontology) {
+        async transform(ontology) {
             const scoped = scopePulledOntology(ontology);
-            return options.transformPulledOntology ? options.transformPulledOntology(scoped) : scoped;
+            return options.transform ? options.transform(scoped) : scoped;
         },
         objectTypeNames: options.objectTypeNames,
         actionTypeNames: [

@@ -149,6 +149,32 @@ describe("Ontology Validation", () => {
             expect(getErrors(result)).toContain('Duplicate link type target name: "fromA" on "A".');
         });
 
+        it("should detect a duplicate default link id", () => {
+            const ontology: OntologyIR = {
+                ...emptyOntology,
+                objectTypes: [minimalObjectType({ name: "A" }), minimalObjectType({ name: "B" })],
+                linkTypes: [
+                    {
+                        id: "A.b",
+                        source: { objectType: "A", name: "toB", displayName: "To B" },
+                        target: { objectType: "B", name: "first", displayName: "First" },
+                        foreignKey: "employeeId",
+                        cardinality: "many" as const,
+                    },
+                    {
+                        source: { objectType: "A", name: "alsoToB", displayName: "Also to B" },
+                        target: { objectType: "B", name: "b", displayName: "B" },
+                        foreignKey: "name",
+                        cardinality: "many" as const,
+                    },
+                ],
+            };
+
+            const result = validate(ontology);
+            expectErr(result, 1);
+            expect(getErrors(result)).toContain('Duplicate link type id: "A.b".');
+        });
+
         it("should detect duplicate property names within an object type", () => {
             const ontology: OntologyIR = {
                 ...emptyOntology,

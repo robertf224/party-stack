@@ -158,7 +158,7 @@ test("default registry preserves existing data namespaces and leaves legacy cata
                 const current = yield* registry.acquire("notes");
                 expect(current.runtime).toBe(cached);
                 expect(yield* current.runtime.tables.get(marker, "saved")).toBe("preserved");
-                expect(yield* registry.partitions).toEqual([{ ...stored, definition: { ir, context: {} } }]);
+                expect(yield* registry.partitions).toEqual([{ ...stored, context: {} }]);
                 expect(yield* legacyCatalog.tables.get(inventory, "notes")).toEqual(stored);
                 const defaultCatalog = yield* runtimes.acquire({
                     owner: "replica-registry",
@@ -276,7 +276,6 @@ test("catalog retains a portable accepted bootstrap before the next replica open
                     replication: "committed",
                     sourceId: backend.sourceId,
                     definitionHash: "accepted-definition",
-                    ir,
                     context,
                     supportsIdempotency: true,
                     delivery: true,
@@ -302,11 +301,13 @@ test("catalog retains a portable accepted bootstrap before the next replica open
                 // A new catalog reads durable metadata without opening a data
                 // replica or contacting a provider to rediscover the definition.
                 const reopened = yield* makeReplicaPartitionCatalog();
+                // It keeps the partition and the account it belongs to, not the definition: a
+                // replica's definition is in its own storage.
                 expect(yield* reopened.lookup("issues")).toEqual({
                     ontology: "issues",
                     partition: { owner: "alice", namespace: "issues" },
+                    context,
                     bootstrap,
-                    definition: { ir, context },
                 });
                 expect(
                     yield* reopened.lookup("issues", { owner: "bob", namespace: "issues" })
@@ -325,7 +326,7 @@ test("catalog retains a portable accepted bootstrap before the next replica open
     );
 });
 
-test("catalog bootstrap updates preserve the accepted record on source, partition or definition rejection", async () => {
+test("catalog bootstrap updates preserve the accepted record on source or context rejection", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -341,7 +342,6 @@ test("catalog bootstrap updates preserve the accepted record on source, partitio
                     version: 1,
                     replication: "committed",
                     sourceId: backend.sourceId,
-                    ir: boundIR,
                     context,
                     supportsIdempotency: true,
                 };
@@ -369,51 +369,13 @@ test("catalog bootstrap updates preserve the accepted record on source, partitio
                     });
                     expect((yield* catalog.lookup("issues"))?.bootstrap).toEqual(bootstrap);
                 }
-                expect(
-                    yield* Effect.result(catalog.saveBootstrap("issues", { ...bootstrap, ir: undefined }))
-                ).toMatchObject({ _tag: "Failure", failure: { kind: "InvalidConfiguration" } });
                 expect(yield* Effect.result(catalog.saveBootstrap("missing", bootstrap))).toMatchObject({
                     _tag: "Failure",
                     failure: { kind: "NotFound" },
                 });
-                const changedIR = { ...boundIR, types: [{ name: "Value", type: o.integer({}) }] };
-                expect(
-                    yield* Effect.scoped(
-                        Effect.result(
-                            catalog.open("issues", {
-                                definition: { kind: "static", ir: boundIR },
-                                backend,
-                                context,
-                                bootstrap: { ...bootstrap, ir: changedIR },
-                                live: false,
-                            })
-                        )
-                    )
-                ).toMatchObject({ _tag: "Failure", failure: { kind: "SchemaMismatch" } });
-                expect((yield* catalog.lookup("issues"))?.bootstrap).toEqual(bootstrap);
-                expect(
-                    yield* Effect.scoped(
-                        Effect.result(
-                            catalog.open("issues", {
-                                definition: { kind: "static", ir: changedIR },
-                                backend,
-                                context,
-                                bootstrap: { ...bootstrap, ir: changedIR },
-                                live: false,
-                            })
-                        )
-                    )
-                ).toMatchObject({ _tag: "Failure", failure: { kind: "SchemaMismatch" } });
-                expect((yield* catalog.lookup("issues"))?.bootstrap).toEqual(bootstrap);
-                const refreshed = {
-                    ...bootstrap,
-                    ir: { ...boundIR, displayName: "Refreshed" },
-                    definitionHash: "accepted-current-hash",
-                    queries: true,
-                };
+                const refreshed = { ...bootstrap, definitionHash: "accepted-current-hash", queries: true };
                 yield* catalog.saveBootstrap("issues", refreshed);
                 expect((yield* catalog.lookup("issues"))?.bootstrap).toEqual(refreshed);
-                expect((yield* catalog.lookup("issues"))?.definition).toEqual({ ir: refreshed.ir, context });
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );

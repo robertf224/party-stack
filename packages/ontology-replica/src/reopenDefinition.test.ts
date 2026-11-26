@@ -1,3 +1,5 @@
+import { BackendError } from "@party-stack/ontology-backend";
+import { makeMetadataBackend } from "@party-stack/ontology-backend/meta";
 import { makeOwnedBackend } from "@party-stack/ontology-backend/owned";
 import { o } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
@@ -6,6 +8,7 @@ import { MemoryRuntime, Runtimes } from "@party-stack/runtime";
 import { Effect, Exit, Scope, Stream, SubscriptionRef } from "effect";
 import { expect, test } from "vite-plus/test";
 import { makeReplicaPartitionCatalog } from "./registry.js";
+import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyDescription } from "@party-stack/ontology-backend/description";
 import type { PendingAction } from "@party-stack/ontology-backend/protocol";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -64,7 +67,6 @@ const setup = Effect.gen(function* () {
         version: 1,
         replication: "committed",
         sourceId: backend.sourceId,
-        ir,
         context: {},
         supportsIdempotency: true,
     };
@@ -74,7 +76,7 @@ const setup = Effect.gen(function* () {
         catalog.open("issues", { definition: { kind: "static", ir }, backend, bootstrap, live: false }),
         scope
     );
-    const replacement = { ...bootstrap, ir: next };
+    const replacement = { ...bootstrap, definitionHash: "next" };
     // The app restarts under the new definition; the replica resets what changed as it opens.
     const reopen = Effect.andThen(
         Scope.close(scope, Exit.void),
@@ -125,7 +127,6 @@ test("reopening under a new definition drops changed types' rows and keeps outco
                 });
                 for (const part of outcomes)
                     expect(yield* runtime.tables.get(table(part), "retained")).toEqual(outcome);
-                expect((yield* catalog.lookup("issues"))?.definition?.ir).toEqual(next);
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );
@@ -149,7 +150,7 @@ test("reopening under a new definition keeps own pending intent and accepted par
         );
 });
 
-test("a followed replica records each definition it reopens under and starts under it without its source", async () => {
+test("a dynamic replica reopens its partition offline, without reading its metadata first", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
@@ -159,39 +160,55 @@ test("a followed replica records each definition it reopens under and starts und
                     tables: yield* Memory.make(),
                     mutators: {},
                 });
+                let offline = false;
+                let reads = 0;
+                const metadata = makeMetadataBackend(ir);
+                const meta: OntologyBackendService = {
+                    ...metadata,
+                    loadSubset: (subset) =>
+                        Effect.suspend(() => {
+                            reads++;
+                            return offline
+                                ? Effect.fail(
+                                      new BackendError({
+                                          operation: "loadSubset",
+                                          kind: "Unavailable",
+                                          retryable: true,
+                                          message: "Offline.",
+                                      })
+                                  )
+                                : metadata.loadSubset(subset);
+                        }),
+                    query: (document, settings) =>
+                        offline
+                            ? Effect.fail(
+                                  new BackendError({
+                                      operation: "query",
+                                      kind: "Unavailable",
+                                      retryable: true,
+                                      message: "Offline.",
+                                  })
+                              )
+                            : metadata.query(document, settings),
+                };
                 const catalog = yield* makeReplicaPartitionCatalog();
-                const source = yield* SubscriptionRef.make(ir);
-                const scope = yield* Scope.make();
-                const opened = yield* Scope.provide(
-                    catalog.open("issues", {
-                        definition: { kind: "dynamic", changes: SubscriptionRef.changes(source) },
-                        backend,
-                        live: false,
-                        onDefinitionChange: "reset",
-                    }),
-                    scope
-                );
-                yield* SubscriptionRef.set(source, next);
-                yield* opened.replica.definition.changes.pipe(
-                    Stream.filter((value) => value === next),
-                    Stream.runHead
-                );
-                // Recorded after the reopen.
-                yield* Effect.yieldNow;
-                for (let attempt = 0; attempt < 20; attempt++) {
-                    if ((yield* catalog.lookup("issues"))?.definition?.ir === next) break;
-                    yield* Effect.sleep("5 millis");
-                }
-                expect((yield* catalog.lookup("issues"))?.definition?.ir).toEqual(next);
-                yield* Scope.close(scope, Exit.void);
-                // Offline: the source never answers, and the replica opens under the retained one.
-                const restarted = yield* catalog.open("issues", {
-                    definition: { kind: "dynamic", changes: Stream.never },
+                // The partition's storage outlives each owner, as on a device.
+                yield* (yield* Runtimes).acquire({ owner: "anonymous", namespace: "issues" });
+                const open = catalog.open("issues", {
+                    definition: { kind: "dynamic", meta },
                     backend,
-                    live: false,
                     onDefinitionChange: "reset",
                 });
-                expect(restarted.replica.ir).toEqual(next);
+                const first = yield* Effect.scoped(Effect.map(open, (opened) => opened.replica.ir));
+                expect(first.objectTypes.map((type) => type.name)).toEqual(
+                    ir.objectTypes.map((type) => type.name)
+                );
+                expect((yield* catalog.lookup("issues"))?.definition).toBeUndefined();
+                offline = true;
+                const before = reads;
+                const restarted = yield* Effect.scoped(Effect.map(open, (opened) => opened.replica.ir));
+                expect(restarted).toEqual(first);
+                expect(reads).toBe(before);
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );

@@ -202,18 +202,6 @@ export type OntologyRouteParams<Path extends string> = string extends Path
     ? Readonly<Record<string, string>>
     : Readonly<{ [Name in RouteParameter<Path>]: string }>;
 
-export interface OntologyRouteContext {
-    /**
-     * Use this account's retained IR before acquiring a schema-dependent native backend.
-     * @deprecated Return `definition` (a source the replica follows) with a `backend` built per
-     * definition instead; a followed replica starts under its retained definition by itself.
-     */
-    readonly definition: <R>(options: {
-        readonly context: Record<string, unknown>;
-        readonly load: Effect.Effect<OntologyIR, BackendError, R>;
-    }) => Effect.Effect<OntologyIR, BackendError, R | Runtimes>;
-}
-
 /**
  * A route whose backend is acquired on demand. For each request the server authenticates the
  * caller, opens the route (once per address, kept for `idleRetentionMs`), then binds.
@@ -239,10 +227,7 @@ export interface OntologyRouteDeclaration<
     /** Acquire the route's backend and binding. */
     readonly open:
         | Effect.Effect<Opened, BackendError, R | Scope.Scope>
-        | ((
-              params: OntologyRouteParams<Path>,
-              route: OntologyRouteContext
-          ) => Effect.Effect<Opened, BackendError, R | Scope.Scope>);
+        | ((params: OntologyRouteParams<Path>) => Effect.Effect<Opened, BackendError, R | Scope.Scope>);
 }
 export type OntologyRouteFactory<
     R = never,
@@ -464,27 +449,11 @@ const constructServer = Effect.fn("OntologyServer.make")(function* <R = never>(
                 message: "Unknown ontology.",
             });
         const factory = route.factory;
-        const definition: OntologyRouteContext = {
-            definition: (options) =>
-                Effect.gen(function* () {
-                    const catalog = yield* getCatalog;
-                    const saved = yield* catalog.lookup(route.key);
-                    const retained = saved?.rebuild?.description.ir
-                        ? {
-                              ir: saved.rebuild.description.ir,
-                              context: saved.rebuild.description.context ?? {},
-                          }
-                        : saved?.definition;
-                    if (retained && contextPartition(retained.ir, options.context) === saved!.partition.owner)
-                        return retained.ir;
-                    return yield* options.load;
-                }),
-        };
         const declaration = (
             !isRouteDeclaration(factory)
                 ? factory
                 : typeof factory.open === "function"
-                  ? yield* factory.open(route.params, definition)
+                  ? yield* factory.open(route.params)
                   : yield* factory.open
         ) as OntologyRoute<R>;
         const access = factory.dangerouslyAllowInternalAccess;

@@ -1,7 +1,11 @@
 import { BackendError, makeOntologyBackend } from "@party-stack/ontology-backend";
 import { compileObjectSubset, objectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
-import { evaluateQuery, ontologyDefinitionContractSignature } from "@party-stack/ontology-storage";
+import {
+    evaluateQuery,
+    ontologyDefinitionContractHash,
+    ontologyDefinitionContractSignature,
+} from "@party-stack/ontology-storage";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { MemoryRuntime, Runtimes } from "@party-stack/runtime";
 import { Effect, Fiber } from "effect";
@@ -103,7 +107,7 @@ const setup = Effect.fnUntraced(function* (bundled = false) {
                     Effect.sync(() => {
                         // The replica's own client; the first open also describes the upstream once.
                         if (options?.validate) acquired ??= client;
-                        else describes++;
+                        else if (!options?.resource) describes++;
                     })
                 )
             ),
@@ -174,7 +178,8 @@ test("an upstream definition change reopens the route's replica in place, withou
                     })
                 );
                 yield* f.change;
-                // The client describes the upstream again after a mismatch; following, it adopts it.
+                // The client describes the upstream again; following, the replica reads the new
+                // definition from the upstream's metadata.
                 yield* f.refresh;
                 const rebound = yield* until(f.server.bind("notes"), (bound) =>
                     same(bound.options.ir, replacement)
@@ -188,10 +193,13 @@ test("an upstream definition change reopens the route's replica in place, withou
                 expect(f.describes()).toBe(1);
                 // The demand held across the reopen loads the changed type in its new shape.
                 yield* until(f.replica.confirmed.get("Item", "row"), (row) => row?.count === "new");
-                const [saved] = yield* until(f.server.partitions, (entries) =>
-                    same(entries[0]?.bootstrap?.ir, replacement)
+                // The catalog keeps the refreshed binding, not the definition.
+                const contract = yield* ontologyDefinitionContractHash(replacement);
+                const [saved] = yield* until(
+                    f.server.partitions,
+                    (entries) => entries[0]?.bootstrap?.contractHash === contract
                 );
-                expect(same(saved?.definition?.ir, replacement)).toBe(true);
+                expect(saved?.definition).toBeUndefined();
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );
@@ -244,7 +252,9 @@ test("a bundled application contract is never replaced by a different upstream c
                 expect(bound.options.replica).toBe(f.replica);
                 expect(same(bound.options.ir, original)).toBe(true);
                 expect(yield* f.replica.confirmed.get("Item", "row")).toEqual({ id: "row", count: 1 });
-                expect(same((yield* f.server.partitions)[0]?.definition?.ir, original)).toBe(true);
+                expect((yield* f.server.partitions)[0]?.bootstrap?.contractHash).toBe(
+                    yield* ontologyDefinitionContractHash(original)
+                );
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );

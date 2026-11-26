@@ -339,7 +339,9 @@ test("local clients share the server's validated definition instead of copying i
                 const second = yield* local.ontology("items");
                 expect(first.ir).toBe(ir);
                 expect(second.ir).toBe(first.ir);
-                expect(yield* first.definition.refresh).toMatchObject({ ir });
+                expect(yield* first.definition.refresh).toMatchObject({
+                    definitionHash: first.definitionHash,
+                });
             })
         )
     );

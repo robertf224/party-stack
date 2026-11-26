@@ -299,3 +299,63 @@ test("a reset rolls back with a failed open, a changed source is refused, an unr
         )
     );
 });
+
+test("a changed provider id resets that type's cached rows; gaining an id does not", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const withId = (id?: string): OntologyIR => {
+                    const ir = definition("Item");
+                    return {
+                        ...ir,
+                        objectTypes: ir.objectTypes.map((type) => ({ ...type, ...(id ? { id } : {}) })),
+                    };
+                };
+                const tables = yield* Memory.make();
+                const backend = yield* makeOwnedBackend({
+                    ir: withId(),
+                    namespace: "id-source",
+                    tables: yield* Memory.make(),
+                    mutators: {
+                        write: (tx, action) =>
+                            tx.put("Item", { id: action.parameters.id, count: action.parameters.count }),
+                    },
+                });
+                yield* backend.applyAction({
+                    id: "seed",
+                    name: "write",
+                    parameters: { id: "item", count: 1 },
+                });
+                const open = (ir: OntologyIR, onDefinitionChange?: "reset") =>
+                    makeReplica({
+                        ir,
+                        tables,
+                        namespace: "id-cache",
+                        backend,
+                        startSync: false,
+                        onDefinitionChange,
+                        execute: () => Effect.void,
+                    });
+                const rows = (ir: OntologyIR, onDefinitionChange?: "reset") =>
+                    Effect.scoped(
+                        Effect.flatMap(open(ir, onDefinitionChange), (replica) => replica.loadSubset("Item"))
+                    );
+                yield* Effect.scoped(
+                    Effect.gen(function* () {
+                        const replica = yield* open(withId());
+                        yield* replica.demand({ objectType: "Item" });
+                        yield* replica.syncSubset({ objectType: "Item" });
+                    })
+                );
+                // A definition that gains its provider's ids is the same definition.
+                expect(yield* rows(withId("provider-one"))).toHaveLength(1);
+                // A different id is a different type: an error, or a reset of that type.
+                expect(yield* Effect.result(rows(withId("provider-two")))).toMatchObject({
+                    _tag: "Failure",
+                    failure: { kind: "SchemaMismatch" },
+                });
+                expect(yield* rows(withId("provider-two"), "reset")).toEqual([]);
+            })
+        )
+    );
+});

@@ -1,3 +1,4 @@
+import { linkTypeId, withoutDefaultIds } from "@party-stack/ontology-spec";
 import { OntologyIRSchema } from "@party-stack/ontology-spec/effect";
 import { Effect, Schema, Stream } from "effect";
 import { digestBytes } from "./blobs/bytes.js";
@@ -5,7 +6,42 @@ import { encodeValue } from "./storage/values.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
 import type { FieldDef, QueryDocument, TypeDef } from "@party-stack/ontology-spec";
 
-const decodeDefinition = Schema.decodeUnknownSync(OntologyIRSchema, { onExcessProperty: "error" });
+const decodeStrict = Schema.decodeUnknownSync(OntologyIRSchema, { onExcessProperty: "error" });
+const byKey =
+    <A>(key: (value: A) => string) =>
+    (left: A, right: A) => {
+        const a = key(left);
+        const b = key(right);
+        return a < b ? -1 : a > b ? 1 : 0;
+    };
+/** An optional field of a definition node set to `undefined` is the same as one left out. Only
+ * definition nodes: inside expressions and literal values, `undefined` keeps its meaning. */
+const defined = <A extends object>(node: A): A =>
+    Object.fromEntries(Object.entries(node).filter(([, value]) => value !== undefined)) as A;
+const fields = <A extends { readonly parameters: readonly object[] }>(node: A): A => ({
+    ...defined(node),
+    parameters: node.parameters.map(defined),
+});
+/** The order of a definition's named collections carries no meaning, and a definition read back
+ * from meta ontology rows need not keep it (nor fields set to `undefined`): compare and hash them
+ * in name order. */
+const decodeDefinition = (ir: OntologyIR): OntologyIR => {
+    // A definition read back from meta rows carries every id; one equal to its default is the
+    // same as none.
+    const definition = withoutDefaultIds(decodeStrict(ir));
+    return {
+        ...defined(definition),
+        types: [...definition.types].map(defined).sort(byKey((type) => type.name)),
+        objectTypes: [...definition.objectTypes]
+            .map((type) => ({ ...defined(type), properties: type.properties.map(defined) }))
+            .sort(byKey((type) => type.name)),
+        linkTypes: [...definition.linkTypes]
+            .map((link) => ({ ...defined(link), source: defined(link.source), target: defined(link.target) }))
+            .sort(byKey(linkTypeId)),
+        actionTypes: [...definition.actionTypes].map(fields).sort(byKey((type) => type.name)),
+        queryFunctionTypes: [...definition.queryFunctionTypes].map(fields).sort(byKey((type) => type.name)),
+    };
+};
 
 // Definitions are immutable once supplied to storage, replicas or servers. Opening
 // one route computes the same full-definition signatures several times (server
@@ -22,7 +58,8 @@ const memoize = (cache: WeakMap<object, string>, ir: OntologyIR, compute: () => 
     return signature;
 };
 
-/** Stable across property ordering introduced by schema/wire decoding.
+/** Stable across property ordering introduced by schema/wire decoding, and across the order of
+ * the definition's named collections (types, object, link, action and query function types).
  * The portable codec also preserves literal undefined, Temporal and collection values.
  * Results are cached per definition object; do not mutate a definition after use.
  */
@@ -30,7 +67,10 @@ export function ontologyDefinitionSignature(ir: OntologyIR): string {
     return memoize(signatures, ir, () => encodeValue(decodeDefinition(ir)));
 }
 
+// Provider ids are not part of the contract: a definition generated without them is compatible
+// with the provider's. A changed id still resets cached rows (see the replica's reset plan).
 const presentation = new Set([
+    "id",
     "displayName",
     "pluralDisplayName",
     "description",
@@ -114,7 +154,7 @@ const contractQuery = (query: QueryDocument) => ({
     inputs: query.inputs?.map(contractField),
 });
 
-/** Execution/wire identity, excluding presentation on explicit definition nodes.
+/** Execution/wire identity, excluding presentation and provider ids on explicit definition nodes.
  * Retains action logic/defaults, policy expressions, literal values, provider
  * metadata and all type constraints. This is not a schema migration policy.
  */
@@ -131,7 +171,7 @@ function contractSignature(ir: OntologyIR): string {
             properties: object.properties.map(contractField),
         })),
         linkTypes: definition.linkTypes.map((link) => ({
-            ...link,
+            ...contractNode(link),
             source: contractNode(link.source),
             target: contractNode(link.target),
         })),

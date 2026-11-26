@@ -3,38 +3,30 @@ import { o } from "../ir/generated/builders.js";
 import OntologyIRSchema from "../ir/schema.js";
 import type { FieldDef, NamedTypeDef, OntologyIR } from "../ir/generated/types.js";
 
-const idField = (description: string): FieldDef => ({
-    name: "id",
-    displayName: "ID",
-    type: o.string({}),
-    description,
-});
-
-function addRuntimeId(type: NamedTypeDef, description: string): NamedTypeDef {
+// The definition's own types, so a definition round-trips through meta rows. Ids are optional in a
+// definition and required as rows: a definition without them is given its defaults
+// (`withDefinitionIds`).
+const identified = new Set([
+    "ObjectTypeDef",
+    "PropertyDef",
+    "LinkTypeDef",
+    "ActionTypeDef",
+    "QueryFunctionTypeDef",
+    "NamedTypeDef",
+]);
+const requireId = (type: NamedTypeDef): NamedTypeDef => {
+    if (!identified.has(type.name)) return type;
     invariant(type.type.kind === "struct", `${type.name} must be a struct.`);
     return {
         ...type,
         type: o.struct({
-            fields: [idField(description), ...type.type.value.fields],
+            fields: type.type.value.fields.map((field) =>
+                field.name === "id" ? { ...field, type: o.string({}) } : field
+            ),
         }),
     };
-}
-
-function addRuntimeMetaFields(type: NamedTypeDef): NamedTypeDef {
-    if (type.name === "ObjectTypeDef") {
-        return addRuntimeId(type, "The provider-assigned stable identifier for this object type.");
-    } else if (type.name === "PropertyDef") {
-        return addRuntimeId(type, "The provider-assigned stable identifier for this property.");
-    } else if (type.name === "ActionTypeDef") {
-        return addRuntimeId(type, "The provider-assigned stable identifier for this action type.");
-    } else {
-        return type;
-    }
-}
-
-const metaTypes = OntologyIRSchema.types
-    .filter((type) => type.name !== "OntologyIR")
-    .map(addRuntimeMetaFields);
+};
+const metaTypes = OntologyIRSchema.types.filter((type) => type.name !== "OntologyIR").map(requireId);
 
 function lift(
     schema: Pick<OntologyIR, "types">,

@@ -28,6 +28,14 @@ same model.
 - **Ontology metadata.** The meta ontology (`@party-stack/ontology-spec/meta`) describes
   object, link, action and value types as rows. `pull` builds IR from any backend that
   answers its queries, including a replica of a metadata backend.
+- **Definitions from the meta ontology.** Every route with a definition serves it on a `meta`
+  resource, and `Describe` is a manifest (binding, capabilities, definition and contract
+  hashes): clients read the definition from `meta` and check it against the hash. A replica can
+  take `definition: { kind: "dynamic", meta, select? }` and follows it through its own meta
+  replica; `upstream` routes do this with the parent's `meta` resource. Clients following their
+  definition status watch the `meta` resource (or poll `Describe` without realtime), so idle
+  views notice a change without a failed request. The partition catalog no longer stores
+  definitions.
 
 ## Candidates, in rough order
 
@@ -35,16 +43,19 @@ same model.
    actions would replace `ControlOutbox` and `OntologySource.outbox`. Pending and completed
    actions already travel as delivery records. These control actions must not go through the
    outbox themselves, and need a privileged policy.
-2. **Definitions from the meta ontology.** Serve a route's IR and context as meta rows on a
-   `meta` resource and shrink `Describe` to a manifest (version, source id, definition hash,
-   capabilities). Open questions: a definition read spans several queries, so it needs a hash
-   or revision check to avoid mixing revisions; per-principal definition projection must apply
-   to meta rows.
-3. **Definition status.** Retained, current or incompatible becomes a subscription to the meta
+2. **A `definition` query function** on the meta ontology, returning the whole definition in
+   one consistent read (see the live definitions spec), and value type references lifted into
+   links so selected reads can follow them.
+3. **Singletons and endpoint settings.** Some system state is one object, not a collection:
+   an endpoint's settings (for example how often clients should check for a new definition when
+   it offers no watch), or a replica's own status. A notion of singleton object types (one row,
+   no key) would let the meta ontology carry a settings object that clients sync like any other
+   row, instead of options on each client.
+4. **Definition status.** Retained, current or incompatible becomes a subscription to the meta
    `Ontology` row's hash. The typed `SchemaMismatch` error on operations stays.
-4. **Replica status.** Read-only `Replica`, `Demand` and `Load` objects for devtools. Load
+5. **Replica status.** Read-only `Replica`, `Demand` and `Load` objects for devtools. Load
    changes constantly, so watch the delivery traffic.
-5. **Traces as an OpenTelemetry ontology.** Replace the `Traces` RPC (a stream of the replica's
+6. **Traces as an OpenTelemetry ontology.** Replace the `Traces` RPC (a stream of the replica's
    in-memory trace store, read by devtools) with a standard OpenTelemetry ontology: span, trace
    and service types aligned with OTLP, later logs and metrics. The replica's tracer exports
    spans into it, and devtools reads them with ordinary live queries. An OTLP-aligned trace
@@ -54,7 +65,7 @@ same model.
    to be counted.
 
 Generalizing the `pins` resource header to named system resources (`pins`, `meta`, `system`,
-`telemetry`) is the shared mechanism for 2, 4 and 5. Once those move, the internal-access RPC allowlist
+`telemetry`) is the shared mechanism for these. Once those move, the internal-access RPC allowlist
 becomes a policy on that resource.
 
 **Consolidate later:** an owned backend's change journal is exposed remotely as `PullChanges`
@@ -102,6 +113,20 @@ event: hold new calls, close and reset (or migrate) the replica behind the handl
 resubscribe streams, and tell clients the definition changed so they re-describe and rerun
 their live queries. Switching the running engine in place is not required; reopening behind a
 stable handle is enough.
+
+**Later: one engine for definition and data.** A replica that follows a definition from the
+meta ontology runs two replicas, one for metadata and one for data, kept consistent by the
+definition hash on every delivery frame and request: data under a contract the replica has not
+opened is rejected with `SchemaMismatch`, which revalidates the metadata and reopens. They
+converge, but data delivery stalls while the metadata catches up, and a backend without
+consistent metadata reads (one that serves each type's metadata separately) can cause an extra
+reopen. The end state is one engine: each replica stores its own definition as system meta rows
+next to its data, a parent delivers meta rows on the same stream as data, and a definition
+change and the data written under it arrive in order and install in one transaction. That
+removes the hash race and the second replica. The application API should not change: a
+definition stays `{ kind: "static", ir }` or `{ kind: "dynamic", ... }`, and only where the
+meta rows come from moves inside the replica. This also gives the change log in "Changes as
+steps" below a natural home.
 
 **Next: `"migrate"`.** Compare definitions per object type instead of resetting everything:
 

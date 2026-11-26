@@ -186,7 +186,7 @@ const description = (shape: Shape): OntologyDescription => ({
     version: 1,
     replication: "committed",
     sourceId: "definition-oracle",
-    ir: definition(shape),
+    definitionHash: JSON.stringify(shape),
     context: {},
     supportsIdempotency: true,
 });

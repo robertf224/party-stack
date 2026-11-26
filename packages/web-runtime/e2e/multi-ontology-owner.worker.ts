@@ -140,7 +140,7 @@ const server = Effect.gen(function* () {
                     });
                     return {
                         kind: "replica" as const,
-                        ir,
+                        definition: { kind: "static" as const, ir },
                         namespace: selection.ontologyId,
                         context: { user: session.userId },
                         authentication: session.authentication,

@@ -1,5 +1,5 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { Clock, Effect, Queue, Ref, Stream } from "effect";
+import { Clock, Effect, Queue, Random, Ref, Stream } from "effect";
 import { deliveryRecovery } from "./recovery.js";
 import { superviseWatch } from "./watch.js";
 import type { ReplicaService } from "./engine.js";
@@ -87,6 +87,8 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
     child: ReplicaService,
     source?: OntologySource,
     options?: {
+        /** Upper bound on the wait before reconnecting; each wait is jittered between half of it
+         * and all of it. Default one second. */
         readonly retryIntervalMs?: number;
         readonly authentication?: ParentAuthentication;
     }
@@ -229,7 +231,9 @@ export const connectReplicaDelivery = Effect.fn("Replica.connectDelivery")(funct
                             .pipe(Effect.catch((failure) => Ref.set(error, failure)));
                     else if (recovery === "stop") return;
                 }
-                yield* Effect.sleep(retry);
+                // Jittered within the interval: children of one parent that lost their streams
+                // together (a restart, or a reopen under a new definition) spread their reconnects.
+                yield* Effect.sleep(Math.max(1, Math.round(retry * (yield* Random.nextBetween(0.5, 1)))));
             }
         }).pipe(
             Effect.withSpan("Replica.delivery", { root: true, attributes: { activity: "subscription" } })

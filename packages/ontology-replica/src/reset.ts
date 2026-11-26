@@ -1,4 +1,5 @@
 import { BackendError, classifyBackendFailure } from "@party-stack/ontology-backend";
+import { withoutDefaultIds } from "@party-stack/ontology-spec";
 import {
     ontologyDefinitionContractSignature,
     ontologyDefinitionSignature,
@@ -120,6 +121,31 @@ const isDefinition = (value: unknown): value is OntologyIR =>
     Array.isArray((value as { types?: unknown }).types ?? []);
 
 /**
+ * Object types whose provider id, or one of whose properties' provider ids, changed: a different
+ * id is a different definition, so its cached rows do not carry over even when the contract (which
+ * leaves ids out) is the same. Only ids both definitions set are compared.
+ */
+export function changedIdTypes(previous: OntologyIR, next: OntologyIR): ReadonlySet<string> {
+    const before = withoutDefaultIds(previous);
+    const after = new Map(withoutDefaultIds(next).objectTypes.map((type) => [type.name, type]));
+    const differ = (left?: string, right?: string) =>
+        left !== undefined && right !== undefined && left !== right;
+    return new Set(
+        before.objectTypes
+            .filter((type) => {
+                const current = after.get(type.name);
+                if (!current) return false;
+                if (differ(type.id, current.id)) return true;
+                const properties = new Map(
+                    current.properties.map((property) => [property.name, property.id])
+                );
+                return type.properties.some((property) => differ(property.id, properties.get(property.name)));
+            })
+            .map((type) => type.name)
+    );
+}
+
+/**
  * Compare a stored definition with a new one object type by object type. Only rows are cached
  * per type, so a type's rows survive unless its own contract (properties, primary key,
  * constraints) changed or it was removed. Actions, links and query functions hold no cached
@@ -149,11 +175,12 @@ export function planDefinitionReset(previous: unknown, next: OntologyIR): Defini
                 })
             );
         };
-        const types = new Set(
-            previous.objectTypes
+        const types = new Set([
+            ...previous.objectTypes
                 .map((type) => type.name)
-                .filter((name) => typeSignature(previous, name) !== typeSignature(next, name))
-        );
+                .filter((name) => typeSignature(previous, name) !== typeSignature(next, name)),
+            ...changedIdTypes(previous, next),
+        ]);
         return types.size ? { kind: "types", types } : { kind: "none" };
     } catch {
         return { kind: "all" };

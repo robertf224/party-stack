@@ -100,7 +100,6 @@ import {
 } from "@party-stack/foundry-ontology";
 import { localClient } from "@party-stack/ontology/local";
 import { classifyBackendFailure } from "@party-stack/ontology-backend";
-import { metaDefinition } from "@party-stack/ontology-backend/meta";
 import { makeOntologyServer } from "@party-stack/ontology-server";
 import { Runtime, Runtimes } from "@party-stack/runtime";
 import { Context, Effect, Layer, ManagedRuntime } from "effect";
@@ -181,8 +180,9 @@ const openDevice = Effect.gen(function* () {
                             const metadata = yield* makeFoundryMetadataBackend(options);
                             return {
                                 kind: "replica" as const,
-                                // Follow the ontology's definition as its metadata changes.
-                                definition: yield* metaDefinition(metadata),
+                                // Follow the ontology's definition as its metadata changes. The
+                                // metadata is cached with the data, so the route opens offline.
+                                definition: { kind: "dynamic" as const, meta: metadata },
                                 backend: (ir: OntologyIR) => makeFoundryBackend({ ...options, ir, context }),
                                 onDefinitionChange: "reset" as const,
                                 context,
