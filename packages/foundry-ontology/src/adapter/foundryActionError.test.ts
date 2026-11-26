@@ -70,8 +70,16 @@ describe("Foundry action reference errors", () => {
             issues: [{ path: ["reviewers", 1] }],
         });
     });
+    it("reports an unknown action type as a definition mismatch, without guessing a field", () => {
+        const error = normalize({
+            statusCode: 404,
+            errorName: "ActionTypeNotFound",
+            parameters: { parameterId: "project" },
+        });
+        expect(error.kind).toBe("SchemaMismatch");
+        expect(error.issues).toBeUndefined();
+    });
     it.each([
-        { errorName: "ActionTypeNotFound", parameters: { parameterId: "project" } },
         { errorName: "ActionParameterObjectNotFound", parameters: { parameterId: "hidden" } },
         { errorName: "ObjectNotFound", parameters: { objectType: "Secret", primaryKey: "gone" } },
         {},
