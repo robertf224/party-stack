@@ -574,6 +574,30 @@ describe("Ontology Validation", () => {
             expect(errors).toContain("Range min must be less than or equal to max.");
             expect(errors).toContain("Range min must be a finite, non-negative number.");
         });
+
+        it("should validate list size bounds", () => {
+            const withSize = (size: { min?: number; max?: number }): OntologyIR => ({
+                ...emptyOntology,
+                types: [{ name: "Tags", type: o.list({ elementType: o.string({}), size }) }],
+            });
+            expectOk(validate(withSize({})));
+            expectOk(validate(withSize({ min: 0 })));
+            expectOk(validate(withSize({ min: 2, max: 2 })));
+            expectOk(validate(withSize({ max: 5 })));
+
+            expect(getErrors(validate(withSize({ min: 3, max: 1 })))).toEqual([
+                "List size min must be less than or equal to max.",
+            ]);
+            const invalid = validate(withSize({ min: -1, max: 1.5 }));
+            expect(getErrors(invalid)).toEqual([
+                "List size min must be a non-negative integer.",
+                "List size max must be a non-negative integer.",
+            ]);
+            expect(invalid.kind === "ok" ? [] : invalid.value.map((issue) => issue.path)).toEqual([
+                ["types", 0, "type", "size", "min"],
+                ["types", 0, "type", "size", "max"],
+            ]);
+        });
     });
 
     describe("Action Validation", () => {

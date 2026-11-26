@@ -290,3 +290,39 @@ test("signatures are computed once per definition object", () => {
     expect(ontologyDefinitionSignature(structuredClone(original))).toBe(signature);
     expect(ontologyDefinitionContractSignature(structuredClone(original))).toBe(contract);
 });
+
+test("list size constraints are definition- and contract-significant; absent sizes are unchanged", () => {
+    const withList = (size?: { min?: number; max?: number }): OntologyIR => ({
+        ...definition,
+        actionTypes: [
+            {
+                name: "tag",
+                displayName: "Tag",
+                parameters: [
+                    {
+                        name: "tags",
+                        displayName: "Tags",
+                        type: o.list({ elementType: o.string({}), ...(size && { size }) }),
+                    },
+                ],
+                logic: [],
+            },
+        ],
+    });
+    // Persisted definitions without a size decode without gaining a size key.
+    const decoded = Schema.decodeUnknownSync(OntologyIRSchema)(withList());
+    const list = decoded.actionTypes[0]!.parameters[0]!.type;
+    expect(list.kind === "list" && "size" in list.value).toBe(false);
+    expect(ontologyDefinitionSignature(withList())).toMatchInlineSnapshot(
+        `"{"version":2,"value":{"tag":"object","value":[["actionTypes",{"tag":"array","value":[{"tag":"object","value":[["displayName","Tag"],["logic",{"tag":"array","value":[]}],["name","tag"],["parameters",{"tag":"array","value":[{"tag":"object","value":[["displayName","Tags"],["name","tags"],["type",{"tag":"object","value":[["kind","list"],["value",{"tag":"object","value":[["elementType",{"tag":"object","value":[["kind","string"],["value",{"tag":"object","value":[]}]]}]]}]]}]]}]}]]}]}],["linkTypes",{"tag":"array","value":[]}],["objectTypes",{"tag":"array","value":[]}],["queryFunctionTypes",{"tag":"array","value":[]}],["types",{"tag":"array","value":[]}]]}}"`
+    );
+
+    for (const signature of [ontologyDefinitionSignature, ontologyDefinitionContractSignature]) {
+        const unsized = signature(withList());
+        expect(signature(structuredClone(withList()))).toBe(unsized);
+        expect(signature(withList({ min: 1, max: 3 }))).toBe(signature(withList({ max: 3, min: 1 })));
+        expect(signature(withList({ min: 1 }))).not.toBe(unsized);
+        expect(signature(withList({ min: 1 }))).not.toBe(signature(withList({ max: 1 })));
+        expect(signature(withList({ min: 1, max: 3 }))).not.toBe(signature(withList({ min: 1, max: 4 })));
+    }
+});

@@ -181,3 +181,52 @@ it("shares compiled codecs per definition object", () => {
     // Equal definitions in other objects compile independently.
     expect(compileEffectSchemas(definition())).not.toBe(first);
 });
+
+it("enforces inclusive list sizes", () => {
+    const tags = (size?: { min?: number; max?: number }) =>
+        o.list({ elementType: o.string({}), ...(size && { size }) });
+    const compiled = compileEffectSchemas({
+        ...empty,
+        types: [{ name: "Pair", type: tags({ min: 2, max: 2 }) }],
+        actionTypes: [
+            {
+                name: "tag",
+                displayName: "Tag",
+                logic: [],
+                parameters: [
+                    field("bounded", tags({ min: 1, max: 3 })),
+                    field("unconstrained", tags()),
+                    field("optional", o.optional({ type: tags({ max: 1 }) })),
+                ],
+            },
+        ],
+    });
+    const messages = (schema: Schema.Codec<unknown, unknown>, value: unknown) =>
+        Schema.decodeUnknownResult(schema)(value).pipe((result) =>
+            EffectResult.isFailure(result) ? String(result.failure) : undefined
+        );
+    const pair = compiled.namedSchemas.Pair!;
+    expect(Schema.decodeUnknownSync(pair)(["a", "b"])).toEqual(["a", "b"]);
+    expect(messages(pair, ["a"])).toContain("Enter exactly 2 items.");
+    expect(messages(pair, [])).toContain("Enter exactly 2 items.");
+
+    const parameters = compiled.actionParameterSchemas.tag!;
+    const base = { bounded: ["a"], unconstrained: ["a"] };
+    expect(Schema.decodeUnknownSync(parameters)(base)).toEqual(base);
+    expect(Schema.decodeUnknownSync(parameters)({ ...base, bounded: ["a", "b", "c"] })).toMatchObject({
+        bounded: ["a", "b", "c"],
+    });
+    expect(messages(parameters, { ...base, bounded: ["a", "b", "c", "d"] })).toContain(
+        "Enter between 1 and 3 items."
+    );
+    expect(messages(parameters, { ...base, bounded: [] })).toContain("Enter between 1 and 3 items.");
+    // A required list without a size may be empty; optional lists may also be absent or null.
+    expect(Schema.decodeUnknownSync(parameters)({ ...base, unconstrained: [] })).toMatchObject({
+        unconstrained: [],
+    });
+    expect(Schema.decodeUnknownSync(parameters)({ ...base, optional: [] })).toMatchObject({ optional: [] });
+    expect(Schema.decodeUnknownSync(parameters)({ ...base, optional: null })).toMatchObject({
+        optional: null,
+    });
+    expect(messages(parameters, { ...base, optional: ["a", "b"] })).toContain("Enter at most 1 item.");
+});

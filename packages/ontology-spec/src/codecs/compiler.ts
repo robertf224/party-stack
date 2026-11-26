@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { nestedEncryptedIssues } from "../ir/encrypted.js";
 import { ImageMediaTypeOptions } from "../ir/generated/constants.js";
-import { Encrypted, Result, TemporalDate, TemporalTimestamp } from "./codecs.js";
+import { Encrypted, isListSize, Result, TemporalDate, TemporalTimestamp } from "./codecs.js";
 import type { FieldDef, OntologyIR, TypeDef } from "../ir/generated/types.js";
 
 type ValueCodec = Schema.Codec<unknown, unknown>;
@@ -116,8 +116,10 @@ function compile(source: OntologyIR): CompiledEffectSchemas {
                 return Schema.Struct({ lat: Schema.Finite, lon: Schema.Finite });
             case "unknown":
                 return Schema.Unknown;
-            case "list":
-                return Schema.mutable(Schema.Array(render(type.value.elementType)));
+            case "list": {
+                const list = Schema.mutable(Schema.Array(render(type.value.elementType)));
+                return type.value.size ? list.check(isListSize(type.value.size)) : list;
+            }
             case "map": {
                 if (type.value.keyType.kind !== "string")
                     throw new TypeError("Effect schema compilation currently requires string map keys.");

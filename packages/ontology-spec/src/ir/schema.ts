@@ -184,6 +184,28 @@ export default {
                         type: o.ref({ name: "TypeDef" }),
                         description: "The type of elements in the list.",
                     },
+                    {
+                        name: "size",
+                        displayName: "Size",
+                        type: o.optional({
+                            type: o.struct({
+                                fields: [
+                                    {
+                                        name: "min",
+                                        displayName: "Minimum",
+                                        type: o.optional({ type: o.integer({}) }),
+                                    },
+                                    {
+                                        name: "max",
+                                        displayName: "Maximum",
+                                        type: o.optional({ type: o.integer({}) }),
+                                    },
+                                ],
+                            }),
+                        }),
+                        description:
+                            "Inclusive bounds on the number of elements. Absent bounds are unconstrained.",
+                    },
                 ],
             }),
         },

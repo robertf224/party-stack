@@ -345,6 +345,11 @@ export type UnknownTypeDef = Record<never, never>;
 export type ListTypeDef = {
     /** The type of elements in the list. */
     elementType: TypeDef;
+    /** Inclusive bounds on the number of elements. Absent bounds are unconstrained. */
+    size?: {
+        min?: v.integer;
+        max?: v.integer;
+    };
 };
 
 /** A map/record type. */

@@ -62,8 +62,13 @@ export function generateEffectSchemas(ir: OntologyIR, opts: GenerateEffectSchema
                 ]);
             case "unknown":
                 return "__Schema.Unknown";
-            case "list":
-                return `__Schema.mutable(__Schema.Array(${render(type.value.elementType, references)}))`;
+            case "list": {
+                const list = `__Schema.mutable(__Schema.Array(${render(type.value.elementType, references)}))`;
+                const size = type.value.size;
+                return size
+                    ? `${list}.check(__Values.isListSize(${literal({ min: size.min, max: size.max })}))`
+                    : list;
+            }
             case "map":
                 if (type.value.keyType.kind !== "string") {
                     throw new Error("Effect schema generation currently requires string map keys.");

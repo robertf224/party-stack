@@ -438,7 +438,8 @@ export type UnauthenticatedError = BackendError<"Unauthenticated">;
 export function schemaValidationIssues(error: Schema.SchemaError): readonly ValidationIssue[] {
     return SchemaIssue.makeFormatterStandardSchemaV1({
         leafHook: (issue) => (issue._tag === "MissingKey" ? "A value is required." : "Enter a valid value."),
-        checkHook: () => "Enter a valid value.",
+        // Checks with an explicit message (such as list sizes) report it; others stay generic.
+        checkHook: (issue) => SchemaIssue.defaultCheckHook(issue) ?? "Enter a valid value.",
     })(error.issue).issues.map((issue) => ({
         message: issue.message,
         path: issue.path?.flatMap((part) =>

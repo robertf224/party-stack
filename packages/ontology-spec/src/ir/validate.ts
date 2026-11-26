@@ -46,6 +46,27 @@ function validateNonNegativeRange(
     return errors;
 }
 
+function validateListSize(
+    size: { min?: number; max?: number } | undefined,
+    path: (string | number)[]
+): ValidationIssue[] {
+    if (!size) return [];
+    const errors: ValidationIssue[] = [];
+    for (const bound of ["min", "max"] as const) {
+        const value = size[bound];
+        if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+            errors.push({
+                message: `List size ${bound} must be a non-negative integer.`,
+                path: [...path, bound],
+            });
+        }
+    }
+    if (size.min !== undefined && size.max !== undefined && size.min > size.max) {
+        errors.push({ message: "List size min must be less than or equal to max.", path });
+    }
+    return errors;
+}
+
 function validateAttachmentConstraints(type: Extract<TypeDef, { kind: "attachment" }>): ValidationIssue[] {
     const constraint = type.value.constraint;
     if (!constraint) return [];
@@ -116,12 +137,15 @@ function validateTypeDef(
                   ];
 
         case "list":
-            return validateTypeDef(
-                type.value.elementType,
-                [...path, "elementType"],
-                valueTypeNames,
-                objectTypeNames
-            );
+            return [
+                ...validateListSize(type.value.size, [...path, "size"]),
+                ...validateTypeDef(
+                    type.value.elementType,
+                    [...path, "elementType"],
+                    valueTypeNames,
+                    objectTypeNames
+                ),
+            ];
 
         case "map": {
             const errors: ValidationIssue[] = [];
