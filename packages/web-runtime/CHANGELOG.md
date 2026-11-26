@@ -1,5 +1,14 @@
 # @party-stack/web-runtime
 
+## 0.5.5
+
+### Patch Changes
+
+- Updated dependencies [babd85a]
+    - @party-stack/ontology-storage@0.4.0
+    - @party-stack/indexeddb-ontology-storage@0.2.5
+    - @party-stack/runtime@0.6.3
+
 ## 0.5.4
 
 ### Patch Changes
