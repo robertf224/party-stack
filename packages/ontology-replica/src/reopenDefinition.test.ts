@@ -5,7 +5,7 @@ import { o } from "@party-stack/ontology-spec";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { MemoryRuntime, Runtimes } from "@party-stack/runtime";
-import { Effect, Exit, Scope, Stream, SubscriptionRef } from "effect";
+import { Effect, Exit, Scope } from "effect";
 import { expect, test } from "vite-plus/test";
 import { makeReplicaPartitionCatalog } from "./registry.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
@@ -95,7 +95,7 @@ test("reopening under a new definition drops changed types' rows and keeps outco
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const { catalog, runtime, reopen } = yield* setup;
+                const { runtime, reopen } = yield* setup;
                 yield* runtime.tables.put(table("base:Item"), "old", { id: "old", count: 1 });
                 yield* runtime.tables.put(table("coverage"), "old", { complete: true });
                 const desired = {

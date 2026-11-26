@@ -4,32 +4,14 @@ import { pull } from "@party-stack/ontology-backend/meta";
 import { protocolValueCodec } from "@party-stack/ontology-backend/protocol";
 import { OntologyIRSchema } from "@party-stack/ontology-spec/effect";
 import { contextPartition } from "@party-stack/ontology-spec/utils";
-import { ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import { Table } from "@party-stack/ontology-storage/tables";
 import { Runtime, Runtimes } from "@party-stack/runtime";
 import { makeTraceCapture } from "@party-stack/runtime/tracing";
-import {
-    Context,
-    Effect,
-    Exit,
-    Layer,
-    LayerMap,
-    Option,
-    Scope,
-    Schema,
-    Semaphore,
-    Stream,
-    Tracer,
-} from "effect";
+import { Context, Effect, Exit, Layer, LayerMap, Scope, Schema, Semaphore, Tracer } from "effect";
 import { replicaBackend } from "./internal.js";
 import { makeReplica } from "./make.js";
 import type { ReplicaBackendFactory } from "./make.js";
-import type {
-    FollowedReplicaDefinition,
-    ReplicaConfiguration,
-    ReplicaDefinition,
-    ReplicaService,
-} from "./service.js";
+import type { ReplicaConfiguration, ReplicaDefinition, ReplicaService } from "./service.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyDescription } from "@party-stack/ontology-backend/description";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
@@ -49,7 +31,7 @@ export type ReplicaRegistration = ReplicaRegistrationCommon & {
      * Static or dynamic (see `makeReplica`). A dynamic replica reopens under the definition it
      * last had open, then follows its metadata, so it starts offline.
      */
-    readonly definition: ReplicaDefinition | FollowedReplicaDefinition;
+    readonly definition: ReplicaDefinition;
     readonly backend: OntologyBackendService | ReplicaBackendFactory;
 };
 export interface RegisteredReplica {
@@ -212,17 +194,13 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
                     definition.kind === "static"
                         ? definition.ir
                         : (known?.definition?.ir ??
-                          (known
-                              ? undefined
-                              : definition.kind === "dynamic"
-                                ? yield* pull(definition.meta, definition.select ?? {})
-                                : Option.getOrUndefined(yield* Stream.runHead(definition.changes))));
+                          (known ? undefined : yield* pull(definition.meta, definition.select ?? {})));
                 if (!ir && !known)
                     return yield* new BackendError({
                         operation: "replica.definition",
                         kind: "Unavailable",
                         retryable: true,
-                        message: "The definition source ended before supplying a definition.",
+                        message: "The replica's definition could not be read.",
                     });
                 const partition =
                     known && definition.kind !== "static"

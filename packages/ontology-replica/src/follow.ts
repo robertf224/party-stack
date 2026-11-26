@@ -14,10 +14,19 @@ import {
 } from "effect";
 import { kernel, upstream } from "./internal.js";
 import type { ReplicaService as KernelService } from "./engine.js";
-import type { FollowedReplicaDefinition, ReplicaService } from "./service.js";
+import type { ReplicaService } from "./service.js";
 import type { ReplicaStatus } from "./status.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyIR } from "@party-stack/ontology-spec";
+
+/** The definitions a replica follows: the current one first, then each new one. */
+export interface DefinitionSource {
+    readonly changes: Stream.Stream<OntologyIR, BackendError>;
+    /** Look again, after a request failed with `SchemaMismatch`. */
+    readonly revalidate?: (hint: {
+        readonly objectTypes: readonly string[];
+    }) => Effect.Effect<void, BackendError>;
+}
 
 const subsetType = (subset: unknown) => {
     const value = subset as
@@ -34,7 +43,7 @@ const subsetType = (subset: unknown) => {
  */
 export const revalidateOnMismatch = (
     backend: OntologyBackendService,
-    revalidate: NonNullable<FollowedReplicaDefinition["revalidate"]>
+    revalidate: NonNullable<DefinitionSource["revalidate"]>
 ): OntologyBackendService => {
     const check =
         (objectTypes: readonly string[]) =>
@@ -54,7 +63,24 @@ export const revalidateOnMismatch = (
         ...backend,
         loadSubset: (subset) => check(subsetType(subset))(backend.loadSubset(subset)),
         query: (document, settings) => check([])(backend.query(document, settings)),
-        applyAction: (request) => check([])(backend.applyAction(request)),
+        // An action the source rejected before committing it, because it was sent under a
+        // definition the source no longer serves, stays queued: it is sent again once the
+        // replica reopens under the definition the source has now.
+        applyAction: (request) =>
+            check([])(backend.applyAction(request)).pipe(
+                Effect.mapError((error) =>
+                    error.kind === "SchemaMismatch" && error.actionOutcome === "not-committed"
+                        ? new BackendError({
+                              operation: error.operation,
+                              kind: "Unavailable",
+                              retryable: true,
+                              actionOutcome: "not-committed",
+                              message: "The definition changed; the action is sent again under the new one.",
+                              cause: error,
+                          })
+                        : error
+                )
+            ),
         queryFunction: (name, parameters) => check([])(backend.queryFunction(name, parameters)),
         ...(backend.validateAction && {
             validateAction: (name, parameters, settings) =>
@@ -103,7 +129,7 @@ const signature = (ir: OntologyIR) => {
  * and demand held across the change is acquired again.
  */
 export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
-    readonly definition: FollowedReplicaDefinition;
+    readonly definition: DefinitionSource;
     readonly open: (ir: OntologyIR) => Effect.Effect<ReplicaService, BackendError, Scope.Scope>;
     /** Runs between closing the engine for `previous` and opening the one for `next`. */
     readonly changed?: (previous: OntologyIR, next: OntologyIR) => Effect.Effect<void>;

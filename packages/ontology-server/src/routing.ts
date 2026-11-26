@@ -2,7 +2,6 @@ import { BackendError, projectBackendError } from "@party-stack/ontology-backend
 import { CurrentExecutionContext } from "@party-stack/ontology-backend/policy";
 import { replicaBackend } from "@party-stack/ontology-replica/infrastructure";
 import { makeReplicaPartitionCatalog } from "@party-stack/ontology-replica/registry";
-import { contextPartition } from "@party-stack/ontology-spec/utils";
 import { Runtimes } from "@party-stack/runtime";
 import { Context, Effect, Equal, Exit, Hash, Layer, Option, RcMap, Schema, Scope, Stream } from "effect";
 import { Rpc, RpcGroup, RpcSchema } from "effect/rpc";
@@ -16,7 +15,6 @@ import type { UpstreamReplicaRegistration } from "./replicaBootstrap.js";
 import type { OntologyRpcClient, OntologyRpcServerOptions } from "./rpc.js";
 import type { PinRecord } from "@party-stack/ontology-replica";
 import type { ReplicaRegistration, StoredReplicaPartition } from "@party-stack/ontology-replica/registry";
-import type { OntologyIR } from "@party-stack/ontology-spec";
 
 /** Routing belongs to the transport envelope, not to individual ontology operations. */
 export const ontologyHeader = "x-party-stack-ontology";

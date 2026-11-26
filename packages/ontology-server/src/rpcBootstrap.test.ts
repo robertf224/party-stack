@@ -576,3 +576,22 @@ test.each(["SchemaMismatch", "InvalidRequest", "Unavailable"] as const)(
         );
     }
 );
+
+test("a client requires the current protocol from a fresh description, and still opens a retained older one", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const fixture = yield* setup();
+                const older = { ...fixture.description, version: 1 as const };
+                expect(
+                    yield* Effect.result(
+                        makeOntologyProtocolClient(withDescribe(fixture.raw, () => Effect.succeed(older)))
+                    )
+                ).toMatchObject({ _tag: "Failure", failure: { kind: "NotImplemented" } });
+                // A device keeps the description it accepted before upgrading, with its definition.
+                const retained = yield* makeOntologyProtocolClient(fixture.raw, { description: older, ir });
+                expect((yield* retained.backend.loadSubset(objectSubset("Item"))).rows).toHaveLength(1);
+            })
+        )
+    );
+});

@@ -343,9 +343,10 @@ Later opens restore both locally. They can answer from retained data without a s
 cannot silently use another account's data.
 
 With `onDefinitionChange: "reset"`, the replica follows the parent's definition. When the
-parent's metadata changes, or a refreshed description shows a different definition, the
-replica reads the new one from the parent's `meta` resource and reopens behind the same handle
-(see below). Omit `onDefinitionChange` (or set
+parent's metadata changes (a live replica watches it), or a request under the old definition is
+rejected with `SchemaMismatch`, the replica reads the new one from the parent's `meta` resource
+and reopens behind the same handle (see below). An action the parent rejected that way before
+committing it stays queued and is sent again after the reopen. Omit `onDefinitionChange` (or set
 `"error"`) to preserve retained data and report incompatible definitions. For an app
 generated from a fixed schema, supply `ir: appIR`; the parent's definition must then match
 it and is never adopted.
@@ -404,8 +405,9 @@ const route = {
 `queryFunctionTypeNames` and `transform` (app-specific edits applied before invalid
 definitions are omitted). Omitted names select everything of that kind.
 
-The replica keeps its own replica of the metadata it reads, in the same storage, and demands
-exactly the rows the definition was built from. That metadata syncs like any other data, so
+The replica keeps its own replica of the metadata it reads, in the same storage and under the
+same `live` setting and demand policy, and demands exactly the rows the definition was built
+from, so the definition is as fresh as the data it describes. That metadata syncs like any other data, so
 the replica opens offline under the definition it last read and notices changes as its watch
 or polling reports them (a metadata backend can recommend a poll interval through `refresh`).
 After a change it waits until every row the definition was read from is current again before
@@ -428,8 +430,8 @@ description; it no longer stores definitions.
 ### Definition metadata
 
 Every route with a definition serves it as meta ontology rows on the `meta` resource of the
-same route, with the same access as `Describe`. `Describe` itself carries the binding and
-capabilities, plus `definitionHash` and `contractHash`; a client reads the definition from the
+same route, with the same access as `Describe`. `Describe` (protocol version 2) carries the
+binding and capabilities, plus `definitionHash` and `contractHash`; a client reads the definition from the
 `meta` resource in one request and checks it against `definitionHash`. A local client
 (`makeOntologyLocalClient`) uses its server's definition object instead while it is the one
 described. A protocol
@@ -455,8 +457,9 @@ At the native client layer, `client.definition.get` and `.changes` expose
 `retained`, `current`, or `incompatible` status. `.refresh` explicitly checks the
 parent description. Typed schema/source failures from normal operations also
 update that status. While something follows `.changes`, the client watches the route's
-`meta` resource and checks the description again when it changes, so an idle client learns of
-a new definition without a failed request. A server without realtime offers no watch; the
+`meta` resource and checks the description again when it changes (after a random delay of up
+to two seconds, so a route's clients don't all check at once), so an idle client learns of a
+new definition without a failed request. A server without realtime offers no watch; the
 next request after a change reports it instead.
 Requests carry the contract hash of the definition the client accepted, and a server now
 serving a different definition rejects them with `SchemaMismatch`.

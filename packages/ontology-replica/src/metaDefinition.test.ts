@@ -277,3 +277,34 @@ test("an edit whose metadata arrives in parts reopens the replica once, under al
         )
     );
 });
+
+test("a one-shot replica reads its definition under the same freshness rules as its data", async () => {
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const metadata = yield* editableMetadata(v1);
+            const runtime = yield* (yield* Runtimes).acquire({ owner: "anonymous", namespace: "one-shot" });
+            const open = (maxCoverageAgeMs: number) =>
+                Effect.scoped(
+                    Effect.map(
+                        makeReplica({
+                            definition: {
+                                kind: "dynamic",
+                                meta: metadata.backend,
+                                select: { objectTypeNames: ["Item"] },
+                            },
+                            backend: (ir) => Effect.sync(() => dataBackend(ir)),
+                            live: false,
+                            demand: { refresh: { maxCoverageAgeMs } },
+                            onDefinitionChange: "reset",
+                        }).pipe(Effect.provideService(Runtime, runtime)),
+                        (replica) => itemProperties(replica.ir)
+                    )
+                );
+            expect(yield* open(60_000)).toEqual(["id"]);
+            yield* metadata.edit({ ...v1, objectTypes: [type("Item", [label]), type("Other")] });
+            // Recent metadata is current enough; metadata older than the coverage age is read again.
+            expect(yield* open(60_000)).toEqual(["id"]);
+            expect(yield* open(0)).toEqual(["id", "label"]);
+        }).pipe(Effect.scoped, Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
+    );
+});

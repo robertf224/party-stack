@@ -4,7 +4,9 @@ import { protocolValueCodec } from "./protocol.js";
 /** The authenticated binding and capabilities needed to reopen a protocol client. The definition
  * itself is served as meta ontology rows on the `meta` resource; the hashes identify it. */
 export const OntologyDescriptionCodec = Schema.Struct({
-    version: Schema.Literal(1),
+    /** The protocol version. 2 serves the definition on the `meta` resource instead of here;
+     * a retained version 1 description is still read, with the definition it was accepted with. */
+    version: Schema.Literals([1, 2]),
     replication: Schema.Literals(["committed", "speculative"]),
     /** Hash of the whole definition the endpoint serves. */
     definitionHash: Schema.optional(Schema.String),
@@ -27,3 +29,5 @@ export const OntologyDescriptionCodec = Schema.Struct({
     encrypted: Schema.optional(Schema.Boolean),
 });
 export type OntologyDescription = typeof OntologyDescriptionCodec.Type;
+/** The protocol version servers describe and clients require from a fresh description. */
+export const ontologyProtocolVersion = 2 as const;

@@ -61,19 +61,6 @@ export interface DynamicReplicaDefinition {
 }
 /** The definition a replica opens under: fixed, or read from metadata. See `makeReplica`'s `definition`. */
 export type ReplicaDefinition = StaticReplicaDefinition | DynamicReplicaDefinition;
-/**
- * @internal A definition that arrives as a stream, for replicas whose definition comes with their
- * source (a replica of another party-stack server). Applications use `DynamicReplicaDefinition`.
- */
-export interface FollowedReplicaDefinition {
-    readonly kind: "followed";
-    /** The current definition first, then each new one. */
-    readonly changes: Stream.Stream<OntologyIR, BackendError>;
-    /** Ask the source to look again, after a request failed with `SchemaMismatch`. */
-    readonly revalidate?: (hint: {
-        readonly objectTypes: readonly string[];
-    }) => Effect.Effect<void, BackendError>;
-}
 /** The definition a replica is open under. */
 export interface ReplicaDefinitionState {
     readonly current: Effect.Effect<OntologyIR, BackendError>;

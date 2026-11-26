@@ -4,7 +4,8 @@ import { objectSubset } from "@party-stack/ontology-backend/subset";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import { Effect, Exit, Queue, Scope, Stream, SubscriptionRef } from "effect";
 import { replicaController } from "./internal.js";
-import type { FollowedReplicaDefinition, ReplicaService } from "./service.js";
+import type { DefinitionSource } from "./follow.js";
+import type { ReplicaService } from "./service.js";
 import type { BackendError } from "@party-stack/ontology-backend";
 import type { DefinitionSelection } from "@party-stack/ontology-backend/meta";
 import type { QueryReader } from "@party-stack/ontology-backend/query";
@@ -21,9 +22,8 @@ import type { ObjectSubset } from "@party-stack/ontology-spec/query";
  */
 export const followMetaReplica = (
     meta: ReplicaService,
-    select: DefinitionSelection = {},
-    hints: Stream.Stream<unknown> = Stream.empty
-): Effect.Effect<FollowedReplicaDefinition> =>
+    select: DefinitionSelection = {}
+): Effect.Effect<DefinitionSource> =>
     Effect.map(SubscriptionRef.make(0), (requests) => {
         const read = Effect.fnUntraced(function* (scope: Scope.Scope) {
             // Any row change after this revision may not be reflected in what is read below.
@@ -34,10 +34,10 @@ export const followMetaReplica = (
                 loadSubset: (objectType, query) => {
                     const subset = objectSubset(objectType, query);
                     subsets.push(subset);
-                    // Cached rows serve as they are, also for a one-shot replica: offline, the
-                    // definition last read is better than none.
+                    // The replica's own freshness rules apply: a live one serves cached rows while
+                    // it refreshes them; a one-shot one reloads rows older than its coverage age.
                     return meta.demand
-                        .acquire(subset, { resultType: "cached" })
+                        .acquire(subset)
                         .pipe(Scope.provide(scope), Effect.andThen(meta.readSubset(subset)));
                 },
             };
@@ -82,14 +82,6 @@ export const followMetaReplica = (
         );
         const changes = Stream.callback<OntologyIR, BackendError>((queue) =>
             Effect.gen(function* () {
-                yield* hints.pipe(
-                    Stream.runForEach(() =>
-                        revalidate.pipe(
-                            Effect.catch((error) => Effect.logWarning("Definition recheck failed", error))
-                        )
-                    ),
-                    Effect.forkScoped
-                );
                 // Demand for the rows the last emitted definition was read from.
                 let held: Scope.Closeable | undefined;
                 yield* Effect.addFinalizer(() => (held ? Scope.close(held, Exit.void) : Effect.void));
@@ -121,8 +113,7 @@ export const followMetaReplica = (
             })
         );
         return {
-            kind: "followed",
             changes,
             revalidate: () => revalidate,
-        } satisfies FollowedReplicaDefinition;
+        } satisfies DefinitionSource;
     });

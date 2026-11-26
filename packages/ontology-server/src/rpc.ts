@@ -5,7 +5,7 @@ import {
     ClientTokenSchema,
 } from "@party-stack/ontology-backend/clients";
 import { DeliveryFrameCodec, DeliveryPositionSchema } from "@party-stack/ontology-backend/delivery";
-import { OntologyDescriptionCodec } from "@party-stack/ontology-backend/description";
+import { OntologyDescriptionCodec, ontologyProtocolVersion } from "@party-stack/ontology-backend/description";
 import { makeMetadataBackend, pull } from "@party-stack/ontology-backend/meta";
 import {
     CompiledSubsetCodec,
@@ -19,7 +19,6 @@ import { pinOntology } from "@party-stack/ontology-replica";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import {
     ontologyDefinitionSignature,
-    ontologyDefinitionContractSignature,
     ontologyDefinitionContractHash,
     ontologyDefinitionHash,
 } from "@party-stack/ontology-storage";
@@ -32,6 +31,7 @@ import {
     Exit,
     Layer,
     PubSub,
+    Random,
     Schedule,
     Schema,
     Scope,
@@ -429,7 +429,7 @@ const baseOntologyRpcHandlers = <R>(options: OntologyRpcServerOptions<R>) => {
                                   )
                                 : undefined;
                         return {
-                            version: 1 as const,
+                            version: ontologyProtocolVersion,
                             replication:
                                 clientSync && options.source
                                     ? ("speculative" as const)
@@ -787,6 +787,19 @@ export type OntologyRpcClient = Effect.Success<
     ReturnType<typeof RpcClient.make<RpcGroup.Rpcs<typeof OntologyRpcs>>>
 >;
 const unavailable = (cause: unknown) => classifyBackendFailure("remote.protocol", cause);
+/** A fresh description must speak this client's protocol: an older server describes its
+ * definition differently and has no `meta` resource. */
+const requireProtocol = (description: OntologyDescription) =>
+    description.version === ontologyProtocolVersion
+        ? Effect.succeed(description)
+        : Effect.fail(
+              new BackendError({
+                  operation: "remote.describe",
+                  kind: "NotImplemented",
+                  retryable: false,
+                  message: `The server speaks ontology protocol version ${description.version}; this client needs version ${ontologyProtocolVersion}.`,
+              })
+          );
 const copyDescription = (description: OntologyDescription) =>
     Effect.try({
         try: () => Schema.decodeUnknownSync(Description)(Schema.encodeSync(Description)(description)),
@@ -926,7 +939,9 @@ const makeDefinitionClient = Effect.fnUntraced(function* (
             const pending = Deferred.makeUnsafe<OntologyDescription, BackendError>();
             attempt = pending;
             const check = SubscriptionRef.update(state, (current) => ({ ...current, refreshing: true })).pipe(
-                Effect.andThen(raw.Describe().pipe(Effect.mapError(unavailable))),
+                Effect.andThen(
+                    raw.Describe().pipe(Effect.mapError(unavailable), Effect.flatMap(requireProtocol))
+                ),
                 Effect.tap((fresh) => checkBootstrapBinding(description, fresh)),
                 Effect.tap(validate),
                 Effect.tap(() => SubscriptionRef.set(state, { status: "current", refreshing: false })),
@@ -1047,7 +1062,9 @@ const readDefinition = Effect.fnUntraced(function* (
             Effect.mapError((cause) => classifyBackendFailure("remote.definition", cause))
         );
         if (hash === description.definitionHash) return { description, ir };
-        description = yield* client.Describe().pipe(Effect.mapError(unavailable));
+        description = yield* client
+            .Describe()
+            .pipe(Effect.mapError(unavailable), Effect.flatMap(requireProtocol));
     }
     return yield* new BackendError({
         operation: "remote.definition",
@@ -1066,7 +1083,12 @@ const watchDefinition = (
     definition: InternalDefinition,
     metaBackend: NonNullable<OntologyClient["metaBackend"]>
 ): InternalDefinition => {
-    const check = Effect.ignore(definition.refresh);
+    // Every client watching a route sees its change at once; spread their checks (a Describe and
+    // a definition read each) over a couple of seconds.
+    const check = Effect.andThen(
+        Effect.flatMap(Random.nextIntBetween(0, 2_000), (delay) => Effect.sleep(delay)),
+        Effect.ignore(definition.refresh)
+    );
     const signals = Stream.unwrap(
         Effect.gen(function* () {
             const backend = yield* metaBackend;
@@ -1127,7 +1149,7 @@ const openProtocolClient = Effect.fnUntraced(function* (
     // second encode/decode copy. Only a caller-retained description is copied.
     let description = yield* options?.description
         ? accept(options.description)
-        : client.Describe().pipe(Effect.mapError(unavailable));
+        : client.Describe().pipe(Effect.mapError(unavailable), Effect.flatMap(requireProtocol));
     let ir = options?.ir ?? (options?.resource ? resourceDefinitions[options.resource] : undefined);
     // A client in the server's own runtime uses the server's definition object while it is still
     // the one described, instead of reading a copy.

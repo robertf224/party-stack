@@ -1,7 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
-import { withDefinitionHints } from "@party-stack/ontology-replica/infrastructure";
 import { ontologyDefinitionContractHash } from "@party-stack/ontology-storage";
-import { Effect, Option, PubSub, Ref, Scope, Stream, SynchronizedRef } from "effect";
+import { Effect, Option, Ref, Scope, Stream, SynchronizedRef } from "effect";
 import type { OntologyClient, OntologyServerClient } from "./rpc.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologyDescription } from "@party-stack/ontology-backend/description";
@@ -114,25 +113,24 @@ export const upstreamReplicaRegistration = Effect.fn("OntologyServer.upstreamRep
     // The latest accepted binding. Capabilities may change while the definition does not.
     const binding = yield* Ref.make(initial);
     const follows = declaration.onDefinitionChange === "reset" && !contract;
-    const changed = yield* PubSub.unbounded<void>();
     const connect = (ir: OntologyIR) =>
         Effect.gen(function* () {
             const accepted = yield* Ref.get(binding);
             const client = yield* upstream.client.ontology(upstream.ontology, {
                 description: accepted,
                 ir,
-                // Keep the refreshed binding. A different definition is followed: the replica
-                // reads it from the upstream's metadata and reopens. Otherwise it is a mismatch.
+                // Keep the refreshed binding. A different definition is followed: requests under
+                // the old one fail with SchemaMismatch, which revalidates the replica's metadata
+                // (as the upstream's metadata watch does for a live replica), and it reopens.
+                // Without following, it is a mismatch.
                 validate: (fresh) =>
                     Effect.gen(function* () {
                         const expected = yield* Effect.orElseSucceed(
                             ontologyDefinitionContractHash(ir),
                             () => undefined
                         );
-                        if (fresh.contractHash !== expected) {
-                            if (!follows) return yield* mismatch("The upstream ontology definition changed.");
-                            yield* PubSub.publish(changed, undefined);
-                        }
+                        if (fresh.contractHash !== expected && !follows)
+                            return yield* mismatch("The upstream ontology definition changed.");
                         yield* Ref.set(binding, fresh);
                         yield* catalog
                             .saveBootstrap(ontology, fresh)
@@ -155,12 +153,7 @@ export const upstreamReplicaRegistration = Effect.fn("OntologyServer.upstreamRep
         context: initial.context ?? {},
         definition: contract
             ? { kind: "static", ir: contract }
-            : // A newer description seen by the replica's client revalidates its metadata, also
-              // for upstreams without realtime and for one-shot replicas.
-              withDefinitionHints(
-                  { kind: "dynamic", meta: yield* lazyMetaBackend(upstream, initial.sourceId) },
-                  Stream.fromPubSub(changed)
-              ),
+            : { kind: "dynamic", meta: yield* lazyMetaBackend(upstream, initial.sourceId) },
         backend: connect,
         bootstrap: initial,
     } satisfies ReplicaRegistration;

@@ -4,11 +4,11 @@ import { o } from "@party-stack/ontology-spec";
 import { evaluateQuery } from "@party-stack/ontology-storage";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
 import { MemoryRuntime, Runtime, Runtimes } from "@party-stack/runtime";
-import { Effect, Exit, Scope, Stream, SubscriptionRef } from "effect";
+import { Effect, Exit, Scope, Stream } from "effect";
 import { expect, test } from "vite-plus/test";
 import { replicaStateSource } from "./infrastructure.js";
 import { makeReplica as makeFollowingReplica } from "./make.js";
-import { makeReplica as makeChild } from "./testing.js";
+import { editableMetadata, makeReplica as makeChild } from "./testing.js";
 import type { DeliveryFrame } from "@party-stack/ontology-backend/delivery";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -28,6 +28,8 @@ const definition = (itemExtra: OntologyIR["objectTypes"][number]["properties"] =
     objectTypes: [type("Item", itemExtra), type("Other")],
 });
 const v1 = definition();
+const labelled = (ir: OntologyIR) =>
+    ir.objectTypes.some((type) => type.properties.some(({ name }) => name === "label"));
 // Item gains a property; Other is unchanged.
 const v2 = definition([{ name: "label", displayName: "Label", type: o.string({}) }]);
 
@@ -38,12 +40,12 @@ test("after its parent reopens under a new definition, a child receives only the
                 const rows = (ir: OntologyIR, objectType: string) =>
                     ["a", "b"].map((id) => ({
                         key: id,
-                        value: { id, ...(objectType === "Item" && ir === v2 ? { label: id } : {}) },
+                        value: { id, ...(objectType === "Item" && labelled(ir) ? { label: id } : {}) },
                     }));
-                const parentDefinition = yield* SubscriptionRef.make(v1);
+                const metadata = yield* editableMetadata(v1);
                 const runtime = yield* (yield* Runtimes).acquire({ owner: "anonymous", namespace: "parent" });
                 const parent = yield* makeFollowingReplica({
-                    definition: { kind: "followed", changes: SubscriptionRef.changes(parentDefinition) },
+                    definition: { kind: "dynamic", meta: metadata.backend },
                     backend: (ir) =>
                         Effect.succeed(
                             makeOntologyBackend({
@@ -128,11 +130,8 @@ test("after its parent reopens under a new definition, a child receives only the
                 expect(delivered.filter((entry) => entry.objectType === "Other").length).toBe(2);
                 yield* first.close;
 
-                yield* SubscriptionRef.set(parentDefinition, v2);
-                yield* parent.definition.changes.pipe(
-                    Stream.filter((ir) => ir === v2),
-                    Stream.runHead
-                );
+                yield* metadata.edit(v2);
+                yield* parent.definition.changes.pipe(Stream.filter(labelled), Stream.runHead);
                 delivered.length = 0;
 
                 const second = yield* openChild(v2);

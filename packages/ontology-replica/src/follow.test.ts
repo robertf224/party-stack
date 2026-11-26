@@ -3,9 +3,10 @@ import { compileObjectSubset } from "@party-stack/ontology-backend/subset";
 import { o } from "@party-stack/ontology-spec";
 import { evaluateQuery, ontologyDefinitionContractHash } from "@party-stack/ontology-storage";
 import { MemoryRuntime, Runtime, Runtimes } from "@party-stack/runtime";
-import { Effect, Queue, Stream, SubscriptionRef } from "effect";
+import { Effect, Queue, Stream } from "effect";
 import { expect, test } from "vite-plus/test";
 import { makeReplica } from "./make.js";
+import { editableMetadata } from "./testing.js";
 import type { ReplicaStatus } from "./status.js";
 import type { ReplicaRowsBatch } from "./visible.js";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -35,6 +36,8 @@ const v1: OntologyIR = {
     actionTypes: [{ name: "write", displayName: "Write", parameters: [], logic: [] }],
     objectTypes: [item(), other],
 };
+const labelled = (ir: OntologyIR) =>
+    ir.objectTypes.some((type) => type.properties.some(({ name }) => name === "label"));
 // Item gains a property; Other is unchanged.
 const v2: OntologyIR = {
     ...v1,
@@ -57,12 +60,12 @@ test("a replica that follows its definition reopens behind the same handle", asy
                         loadSubset: (request) =>
                             Effect.gen(function* () {
                                 const subset = yield* compileObjectSubset(ir, request);
-                                const labelled = ir === v2;
+                                const isLabelled = labelled(ir);
                                 const rows =
                                     subset.objectType === "Item"
                                         ? [...items].map(([id, count]) => ({
                                               key: id,
-                                              value: { id, count, ...(labelled ? { label: "x" } : {}) },
+                                              value: { id, count, ...(isLabelled ? { label: "x" } : {}) },
                                           }))
                                         : [];
                                 return { complete: true, rows: evaluateQuery(rows, subset.query ?? {}) };
@@ -78,16 +81,16 @@ test("a replica that follows its definition reopens behind the same handle", asy
                                 };
                             }),
                     });
-                const definition = yield* SubscriptionRef.make(v1);
+                const metadata = yield* editableMetadata(v1);
                 const built: OntologyIR[] = [];
                 const runtime = yield* (yield* Runtimes).acquire({ owner: "anonymous", namespace: "follow" });
                 const replica = yield* makeReplica({
-                    definition: { kind: "followed", changes: SubscriptionRef.changes(definition) },
+                    definition: { kind: "dynamic", meta: metadata.backend },
                     backend: (ir) => Effect.sync(() => (built.push(ir), source(ir))),
                     onDefinitionChange: "reset",
                     outbox: { failureStrategy: "pause" },
                 }).pipe(Effect.provideService(Runtime, runtime));
-                expect(replica.ir).toBe(v1);
+                expect(labelled(replica.ir)).toBe(false);
 
                 yield* replica.demand.acquire(
                     { from: { source: { objectType: "Item" }, binding: "item" } },
@@ -109,14 +112,11 @@ test("a replica that follows its definition reopens behind the same handle", asy
                 });
                 expect(yield* untilRows).toEqual([{ id: "a", count: 1 }]);
 
-                yield* SubscriptionRef.set(definition, v2);
-                yield* replica.definition.changes.pipe(
-                    Stream.filter((ir) => ir === v2),
-                    Stream.runHead
-                );
-                expect(replica.ir).toBe(v2);
-                expect(yield* replica.definition.current).toBe(v2);
-                expect(built).toEqual([v1, v2]);
+                yield* metadata.edit(v2);
+                yield* replica.definition.changes.pipe(Stream.filter(labelled), Stream.runHead);
+                expect(labelled(replica.ir)).toBe(true);
+                expect(labelled(yield* replica.definition.current)).toBe(true);
+                expect(built.map(labelled)).toEqual([false, true]);
 
                 // Item's contract changed, so its rows were cleared; the demand held across the
                 // reopen loads them again, now with the new property, and the same live query
@@ -132,76 +132,11 @@ test("a replica that follows its definition reopens behind the same handle", asy
                 expect(yield* replica.outbox.wait("after")).toBeDefined();
                 expect(yield* replica.get("Item", "b")).toMatchObject({ id: "b", count: 1 });
 
-                // Setting the same definition again does not reopen.
-                yield* SubscriptionRef.set(definition, { ...v2 });
+                // Metadata that changes to the same definition does not reopen.
+                yield* metadata.edit({ ...v2 });
+                yield* Effect.sleep("200 millis");
                 expect(yield* replica.get("Item", "a")).toMatchObject({ id: "a" });
-                expect(built).toEqual([v1, v2]);
-            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
-        )
-    );
-});
-
-test("a schema mismatch from the backend makes the definition source look again", async () => {
-    await Effect.runPromise(
-        Effect.scoped(
-            Effect.gen(function* () {
-                const definition = yield* SubscriptionRef.make(v1);
-                const hints: (readonly string[])[] = [];
-                const backendFor = (ir: OntologyIR) =>
-                    makeOntologyBackend({
-                        ir,
-                        name: "mismatch",
-                        sourceId: "mismatch",
-                        supportsIdempotency: true,
-                        queryFunction: () => Effect.void,
-                        // The provider has moved on: it rejects the old definition's reads.
-                        loadSubset: () =>
-                            ir === v2
-                                ? Effect.succeed({
-                                      complete: true,
-                                      rows: [{ key: "a", value: { id: "a", count: 1, label: "x" } }],
-                                  })
-                                : Effect.fail(
-                                      new BackendError({
-                                          operation: "load",
-                                          kind: "SchemaMismatch",
-                                          retryable: false,
-                                          message: "Unknown property.",
-                                      })
-                                  ),
-                        applyAction: (request) =>
-                            Effect.succeed({ operationId: request.id, outcome: "committed" as const }),
-                    });
-                const runtime = yield* (yield* Runtimes).acquire({
-                    owner: "anonymous",
-                    namespace: "mismatch",
-                });
-                const replica = yield* makeReplica({
-                    definition: {
-                        kind: "followed",
-                        changes: SubscriptionRef.changes(definition),
-                        revalidate: (hint) =>
-                            Effect.andThen(
-                                Effect.sync(() => hints.push(hint.objectTypes)),
-                                SubscriptionRef.set(definition, v2)
-                            ),
-                    },
-                    backend: (ir) => Effect.sync(() => backendFor(ir)),
-                    onDefinitionChange: "reset",
-                }).pipe(Effect.provideService(Runtime, runtime));
-                const item = { from: { source: { objectType: "Item" }, binding: "item" } };
-                expect(
-                    yield* Effect.result(
-                        Effect.scoped(replica.demand.acquire(item, { resultType: "complete" }))
-                    )
-                ).toMatchObject({ _tag: "Failure", failure: { kind: "SchemaMismatch" } });
-                yield* replica.definition.changes.pipe(
-                    Stream.filter((ir) => ir === v2),
-                    Stream.runHead
-                );
-                expect(hints[0]).toEqual(["Item"]);
-                yield* replica.demand.acquire(item, { resultType: "complete" });
-                expect(yield* replica.get("Item", "a")).toEqual({ id: "a", count: 1, label: "x" });
+                expect(built.map(labelled)).toEqual([false, true]);
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );
@@ -215,9 +150,11 @@ test("a definition that cannot open is reported in status until one opens", asyn
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
-                const definition = yield* SubscriptionRef.make(v1);
+                const metadata = yield* editableMetadata(v1);
+                const has = (ir: OntologyIR, property: string) =>
+                    ir.objectTypes.some((type) => type.properties.some(({ name }) => name === property));
                 const factory = (ir: OntologyIR) =>
-                    ir === v2
+                    has(ir, "label")
                         ? Effect.fail(
                               new BackendError({
                                   operation: "connect",
@@ -246,7 +183,7 @@ test("a definition that cannot open is reported in status until one opens", asyn
                     namespace: "failing",
                 });
                 const replica = yield* makeReplica({
-                    definition: { kind: "followed", changes: SubscriptionRef.changes(definition) },
+                    definition: { kind: "dynamic", meta: metadata.backend },
                     backend: factory,
                     onDefinitionChange: "reset",
                 }).pipe(Effect.provideService(Runtime, runtime));
@@ -256,19 +193,19 @@ test("a definition that cannot open is reported in status until one opens", asyn
                 expect((yield* replica.status.get).definition).toEqual({ hash: h1 });
 
                 // v2 cannot open: the replica keeps serving v1 and reports v2's failure.
-                yield* SubscriptionRef.set(definition, v2);
+                yield* metadata.edit(v2);
                 yield* statusWhere((status) => status.definition?.error !== undefined);
                 expect((yield* replica.status.get).definition).toEqual({
                     hash: h1,
                     error: { hash: h2, kind: "InvalidConfiguration", message: "Cannot compile." },
                 });
-                expect(replica.ir).toBe(v1);
+                expect(has(replica.ir, "label")).toBe(false);
                 expect(yield* replica.get("Item", "missing")).toBeUndefined();
 
                 // The next definition that opens clears it.
-                yield* SubscriptionRef.set(definition, v3);
+                yield* metadata.edit(v3);
                 yield* statusWhere((status) => status.definition?.hash === h3 && !status.definition?.error);
-                expect(replica.ir).toBe(v3);
+                expect(has(replica.ir, "size")).toBe(true);
             }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
         )
     );

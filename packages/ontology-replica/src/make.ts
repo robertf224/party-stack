@@ -5,16 +5,12 @@ import { Runtime } from "@party-stack/runtime";
 import { Effect, Stream } from "effect";
 import { makeReplicaDeliveries } from "./engine.js";
 import { followReplicaDefinition, revalidateOnMismatch } from "./follow.js";
-import { definitionHints } from "./internal.js";
 import { followMetaReplica } from "./metaDefinition.js";
 import { planDefinitionReset } from "./reset.js";
 import { makeReplica as makeReplicaFromStorage } from "./service.js";
 import type { ReplicaDeliveries } from "./engine.js";
-import type {
-    FollowedReplicaDefinition,
-    ReplicaDefinition,
-    ReplicaOptions as StorageReplicaOptions,
-} from "./service.js";
+import type { DefinitionSource } from "./follow.js";
+import type { ReplicaDefinition, ReplicaOptions as StorageReplicaOptions } from "./service.js";
 import type { BackendError, OntologyBackendService } from "@party-stack/ontology-backend";
 import type { OntologySource } from "@party-stack/ontology-backend/protocol";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -56,7 +52,7 @@ export type ReplicaOptions = Common & {
      * describes, and reopens behind the same handle when it changes, clearing what
      * `onDefinitionChange` requires. Live queries, demand and the outbox carry over.
      */
-    readonly definition: ReplicaDefinition | FollowedReplicaDefinition;
+    readonly definition: ReplicaDefinition;
     /** @internal The definition this replica last had open, for a dynamic replica to open under
      * before its metadata is read (offline, or before the metadata replica has any rows). */
     readonly retained?: OntologyIR;
@@ -101,27 +97,25 @@ export const makeReplica = Effect.fn("Replica.open")(function* (options: Replica
     if (definition.kind === "static")
         return yield* open(definition.ir, yield* connect(backend, definition.ir));
     const namespace = options.id ?? runtime.namespace;
-    const followed =
-        definition.kind === "followed"
-            ? definition
-            : yield* followMetaReplica(
-                  // Metadata the definition is read from, kept beside the data it describes.
-                  yield* makeReplicaFromStorage({
-                      ir: metaOntology,
-                      backend: definition.meta,
-                      namespace: JSON.stringify([namespace, "meta"]),
-                      live: options.live,
-                      authentication: options.authentication,
-                      onDefinitionChange: "reset",
-                      tables: runtime.tables,
-                      network: runtime.connectivity,
-                      capacity: runtime.capacity,
-                  }),
-                  definition.select,
-                  (definition as { readonly [definitionHints]?: Stream.Stream<unknown> })[definitionHints]
-              );
+    const followed = yield* followMetaReplica(
+        // Metadata the definition is read from, kept beside the data it describes.
+        yield* makeReplicaFromStorage({
+            ir: metaOntology,
+            backend: definition.meta,
+            namespace: JSON.stringify([namespace, "meta"]),
+            live: options.live,
+            // The same freshness rules as the data it describes.
+            demand: options.demand,
+            authentication: options.authentication,
+            onDefinitionChange: "reset",
+            tables: runtime.tables,
+            network: runtime.connectivity,
+            capacity: runtime.capacity,
+        }),
+        definition.select
+    );
     let primed = !options.retained;
-    const source: FollowedReplicaDefinition = {
+    const source: DefinitionSource = {
         ...followed,
         // Once only: the follower subscribes again after a source failure.
         changes: Stream.suspend(() => {

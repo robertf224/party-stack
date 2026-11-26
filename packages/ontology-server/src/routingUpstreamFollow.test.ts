@@ -178,9 +178,11 @@ test("an upstream definition change reopens the route's replica in place, withou
                     })
                 );
                 yield* f.change;
-                // The client describes the upstream again; following, the replica reads the new
-                // definition from the upstream's metadata.
+                // The client describes the upstream again and keeps its binding; the next reload
+                // fails with SchemaMismatch, so the replica reads the new definition from the
+                // upstream's metadata and reopens.
                 yield* f.refresh;
+                yield* Effect.ignore(f.replica.revalidate);
                 const rebound = yield* until(f.server.bind("notes"), (bound) =>
                     same(bound.options.ir, replacement)
                 );
@@ -225,6 +227,8 @@ test("queued actions are kept and replayed when the replica follows a new upstre
                 yield* f.runtime.tables.put(outbox, "offline", pending);
                 yield* f.change;
                 yield* f.refresh;
+                // Sending it under the old definition is rejected before it commits; it stays queued.
+                yield* Effect.ignore(f.replica.revalidate);
                 yield* until(f.server.bind("notes"), (bound) => same(bound.options.ir, replacement));
                 // Opening under the new definition replayed the queued action and recorded its
                 // prediction status.

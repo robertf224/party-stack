@@ -59,7 +59,8 @@ interface DynamicReplicaDefinition {
 }
 ```
 
-A dynamic replica opens a replica of `meta` on the same runtime (its own namespace) and reads
+A dynamic replica opens a replica of `meta` on the same runtime (its own namespace, with the same
+`live` setting and demand policy, so the same freshness rules apply) and reads
 the definition from its local rows, compiled by the same code as `pull`. The read demands
 exactly the rows it used, so they stay cached for an offline start and in sync (watch or
 polling) while the replica runs. A change to any of those rows, or a revalidation, reads the
@@ -141,7 +142,9 @@ makeOntologyServer({
   does).
 - Every route with a definition serves it as meta rows on its `meta` resource (the same
   resource mechanism as `pins`), with Describe's access.
-- `Describe` is a manifest: source, context, capabilities, `definitionHash` and `contractHash`.
+- `Describe` is a manifest (protocol version 2): source, context, capabilities, `definitionHash`
+  and `contractHash`. Clients require version 2 from a fresh description; a retained version 1
+  description still opens with the definition it was accepted with.
   A client reads the definition from the `meta` resource in one request (`pull` fetches every
   value type with the rest and keeps the ones used) and checks it against `definitionHash`,
   describing again if the route changed in between. A local client uses its server's
@@ -149,15 +152,18 @@ makeOntologyServer({
   its accepted description and the definition it was accepted with.
 - Clients notice a new definition through the contract hash on frames and requests, and,
   while something follows `client.definition.changes`, through a watch on the `meta` resource
-  that checks the description again. Without realtime there is no watch; the next request
+  that checks the description again, after a random delay of up to two seconds so clients spread
+  out. Without realtime there is no watch; the next request
   reports the change. A later direction: endpoint settings as a singleton object on the meta
   ontology, which clients sync like any other row.
 - The partition catalog stores each partition's context and, for `upstream` routes, the
   parent's description, not definitions. `route.definition` is removed.
 - An `upstream` route's definition is dynamic: read from the parent's `meta` resource through
-  a meta replica, so it starts offline. A refreshed description with a different contract also
-  revalidates that metadata (covering parents without realtime and one-shot replicas); with
-  `onDefinitionChange: "reset"` the replica reopens under it. With a bundled `ir`, the
+  a meta replica, so it starts offline. It learns of a change through the parent's metadata
+  watch (live replicas of a realtime parent) or because a request under the old contract fails
+  with `SchemaMismatch`, which revalidates that metadata; with `onDefinitionChange: "reset"` the
+  replica reopens under it. An action the parent rejected that way before committing it stays
+  queued and is sent again after the reopen. With a bundled `ir`, the
   definition is static and a different contract stays an error.
 
 ## Delivery to children

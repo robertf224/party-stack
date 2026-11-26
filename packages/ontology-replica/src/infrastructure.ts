@@ -1,11 +1,10 @@
 /** Server composition adapters; authorization belongs to the enclosing server. */
-import { definitionHints, kernel, replicaController } from "./internal.js";
+import { kernel, replicaController } from "./internal.js";
 export { replicaBackend } from "./internal.js";
 import { replicaStateSource as stateSource } from "./parent.js";
 import { makeCachedProxy as cachedProxy } from "./proxy.js";
 import type { ReplicaHandle } from "./internal.js";
-import type { DynamicReplicaDefinition, ReplicaService } from "./service.js";
-import type { Stream } from "effect";
+import type { ReplicaService } from "./service.js";
 /** A local observation may be reused only after it represents at least this
  * replica-owned visible revision. This does not establish upstream coverage.
  * Custom ReplicaService implementations have no native fence and retain
@@ -27,9 +26,3 @@ export const makeCachedProxy = (
         context: options.replica.context,
         replica: replicaController(options.replica),
     });
-export type { FollowedReplicaDefinition } from "./service.js";
-/** A dynamic definition whose metadata is revalidated whenever `hints` emits. */
-export const withDefinitionHints = (
-    definition: DynamicReplicaDefinition,
-    hints: Stream.Stream<unknown>
-): DynamicReplicaDefinition => Object.assign({ ...definition }, { [definitionHints]: hints });
