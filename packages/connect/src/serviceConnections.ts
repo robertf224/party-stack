@@ -245,7 +245,12 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                 credential = nextCredential;
                 if (renewed) credentialGeneration++;
                 if (changed || state.status === "error")
-                    publish({ status: value?.status ?? "inactive" }, renewed);
+                    publish(
+                        value?.status === "needs-auth" && value.statusReason
+                            ? { status: "needs-auth", error: value.statusReason }
+                            : { status: value?.status ?? "inactive" },
+                        renewed
+                    );
             };
             const watch =
                 backend.changes?.watch ??
@@ -351,16 +356,22 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
             // Compare and persist in one transaction: a late rejection must neither
             // pause a newer login nor resurrect a disconnected row. The ordinary
             // journal/watch path also updates account queries.
-            const markNeedsAuthentication = (observed: string | undefined) =>
+            const markNeedsAuthentication = (observed: string | undefined, reason: string) =>
                 options.store
                     .transaction(
                         Effect.gen(function* () {
                             const current = yield* options.store.get(ref.objectType, ref.id);
-                            if (current?.status === "active" && credentialVersion(current) === observed)
-                                yield* options.store.put(ref.objectType, {
-                                    ...current,
-                                    status: "needs-auth",
-                                });
+                            if (current?.status !== "active" || credentialVersion(current) !== observed)
+                                return;
+                            yield* options.store.put(ref.objectType, {
+                                ...current,
+                                status: "needs-auth",
+                                statusReason: reason,
+                            });
+                            yield* Effect.logWarning("Connection needs a sign-in", {
+                                connection: ref.id,
+                                reason,
+                            });
                         })
                     )
                     .pipe(
@@ -372,7 +383,11 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                         Effect.uninterruptible
                     );
             const failed = Effect.fnUntraced(function* (error: BackendError, observed: string | undefined) {
-                if (isUnauthenticatedError(error)) yield* markNeedsAuthentication(observed);
+                if (isUnauthenticatedError(error))
+                    yield* markNeedsAuthentication(
+                        observed,
+                        "The service rejected the saved credentials. " + error.message
+                    );
                 return yield* error;
             });
             // Check an expired external session with its service. Runs only inside `renew`.
@@ -458,7 +473,10 @@ export const makeServiceConnections = Effect.fn("Connect.connections")(function*
                                 return;
                             }
                             if (ref.objectType !== "OAuthConnection") {
-                                yield* markNeedsAuthentication(credentialVersion(current));
+                                yield* markNeedsAuthentication(
+                                    credentialVersion(current),
+                                    "The service rejected the saved credentials, and they cannot be renewed."
+                                );
                                 return;
                             }
                             const result = yield* Effect.result(

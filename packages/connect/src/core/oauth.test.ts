@@ -37,7 +37,10 @@ describe("makeOAuthService refresh", () => {
         const error = await refreshFailure(
             service(() => Promise.resolve(json({ error: "invalid_grant" }, 400)))
         );
-        expect(error).toMatchObject({ kind: "NeedsAuthentication" });
+        expect(error).toMatchObject({
+            kind: "NeedsAuthentication",
+            message: "The provider rejected the saved credentials (invalid_grant).",
+        });
     });
 
     it("keeps the session when refreshed credentials cannot be verified", async () => {

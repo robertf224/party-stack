@@ -691,7 +691,14 @@ test("an HTTP authentication failure after renewal still updates the renewed sav
                 });
                 expect(yield* f.store.get("ExternalSessionConnection", "saved")).toMatchObject({
                     status: "needs-auth",
+                    statusReason: "The service rejected the saved credentials. Session rejected",
                     expiresAt,
+                });
+                // The monitor apps show says why, once the row watch delivers the change.
+                yield* Effect.sleep(20);
+                expect(f.access.authentication.state).toEqual({
+                    status: "needs-auth",
+                    error: "The service rejected the saved credentials. Session rejected",
                 });
             })
         )

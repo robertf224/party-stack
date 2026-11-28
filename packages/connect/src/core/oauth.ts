@@ -66,7 +66,10 @@ export function makeOAuthService(options: OAuthServiceOptions): ConnectOAuthServ
                 catch: (error) =>
                     error instanceof oauth.ResponseBodyError &&
                     ["invalid_grant", "invalid_token", "invalid_client"].includes(error.error)
-                        ? connectError("NeedsAuthentication", "Provider credentials require authentication.")
+                        ? connectError(
+                              "NeedsAuthentication",
+                              `The provider rejected the saved credentials (${error.error}).`
+                          )
                         : connectError(
                               "Provider",
                               error instanceof oauth.ResponseBodyError

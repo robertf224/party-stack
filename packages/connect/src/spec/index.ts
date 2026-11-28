@@ -103,6 +103,13 @@ export const connectOntology = defineOntology({
                     }),
                 },
                 {
+                    name: "statusReason",
+                    displayName: "Status reason",
+                    // Never credentials or provider response bodies.
+                    description: "Why the connection needs a sign-in, when known.",
+                    type: o.optional({ type: o.string({}) }),
+                },
+                {
                     name: "accessToken",
                     displayName: "Access token",
                     type: o.optional({ type: o.encrypted({ type: o.string({}) }) }),
@@ -167,6 +174,13 @@ export const connectOntology = defineOntology({
                     }),
                 },
                 {
+                    name: "statusReason",
+                    displayName: "Status reason",
+                    // Never credentials or provider response bodies.
+                    description: "Why the connection needs a sign-in, when known.",
+                    type: o.optional({ type: o.string({}) }),
+                },
+                {
                     name: "apiKey",
                     displayName: "API key",
                     type: o.optional({ type: o.encrypted({ type: o.string({}) }) }),
@@ -200,6 +214,13 @@ export const connectOntology = defineOntology({
                             ],
                         }),
                     }),
+                },
+                {
+                    name: "statusReason",
+                    displayName: "Status reason",
+                    // Never credentials or provider response bodies.
+                    description: "Why the connection needs a sign-in, when known.",
+                    type: o.optional({ type: o.string({}) }),
                 },
                 // A selector, not a transferable credential. The service must verify its own session.
                 { name: "sessionId", displayName: "Session id", type: o.string({}) },

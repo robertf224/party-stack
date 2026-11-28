@@ -295,6 +295,7 @@ describe("Connect authority", () => {
         expect((await run(Effect.flip(f.connect.refresh(connection.id)))).kind).toBe("NeedsAuthentication");
         expect(await run(f.store.get("OAuthConnection", connection.id))).toMatchObject({
             status: "needs-auth",
+            statusReason: "Provider credentials require authentication.",
             refreshToken: undefined,
             operationId: undefined,
         });
@@ -309,6 +310,7 @@ describe("Connect authority", () => {
         const repaired = await f.complete(next.id);
         expect(repaired.id).toBe(connection.id);
         expect(repaired.operationId).toBeUndefined();
+        expect(repaired.statusReason).toBeUndefined();
     });
     it("cleans up expired refresh secrets and attempts in bounded indexed batches", async () => {
         const f = await fixture();

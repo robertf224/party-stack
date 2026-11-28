@@ -209,6 +209,7 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
             const next: OAuthConnectionRecord = {
                 ...record,
                 status: "active",
+                statusReason: undefined,
                 userId: tokens.userId,
                 accessToken: yield* encrypt(tokens.accessToken),
                 accessTokenExpiresAt: tokens.accessTokenExpiresAt,
@@ -314,6 +315,7 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                                         refreshToken: undefined,
                                         refreshTokenExpiresAt: undefined,
                                         status: "needs-auth",
+                                        statusReason: error.message,
                                         operationId: undefined,
                                         operationExpiresAt: undefined,
                                     });
@@ -325,7 +327,20 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                                     });
                             })
                         )
-                        .pipe(Effect.andThen(Effect.fail(error)))
+                        .pipe(
+                            Effect.andThen(
+                                error.kind === "NeedsAuthentication"
+                                    ? Effect.logWarning("Connection needs a sign-in", {
+                                          connection: record.id,
+                                          reason: error.message,
+                                      })
+                                    : Effect.logWarning("Connection refresh failed; keeping the session", {
+                                          connection: record.id,
+                                          reason: error.message,
+                                      })
+                            ),
+                            Effect.andThen(Effect.fail(error))
+                        )
                 )
             );
         });
@@ -573,6 +588,7 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                             title: existing?.title ?? application.title,
                             application: application.id,
                             status: "active",
+                            statusReason: undefined,
                             operationId: undefined,
                             operationExpiresAt: undefined,
                         });
@@ -697,6 +713,11 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                                 refreshToken: undefined,
                                 refreshTokenExpiresAt: undefined,
                                 status: "needs-auth",
+                                statusReason: "The saved refresh token expired.",
+                            });
+                            yield* Effect.logWarning("Connection needs a sign-in", {
+                                connection: record.id,
+                                reason: "The saved refresh token expired.",
                             });
                         }
                         // External sessions can be extended upstream. Revalidate
@@ -710,8 +731,17 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                             orderBy: [{ field: field("expiresAt") }],
                             limit,
                         });
-                        for (const record of expiredConnections)
-                            yield* store.put("ApiKeyConnection", { ...record, status: "needs-auth" });
+                        for (const record of expiredConnections) {
+                            yield* store.put("ApiKeyConnection", {
+                                ...record,
+                                status: "needs-auth",
+                                statusReason: "The API key expired.",
+                            });
+                            yield* Effect.logWarning("Connection needs a sign-in", {
+                                connection: record.id,
+                                reason: "The API key expired.",
+                            });
+                        }
                         return { attempts: attempts.length, refreshTokens: connections.length };
                     })
                 );
