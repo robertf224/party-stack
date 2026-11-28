@@ -1,3 +1,4 @@
+import { cloneDefinition } from "@party-stack/ontology-spec";
 import { compileEffectSchemas } from "@party-stack/ontology-spec/effect";
 import { Effect, Predicate, Schema } from "effect";
 import { configurationError, type OntologyStorageError } from "../errors.js";
@@ -123,7 +124,7 @@ export const makeStorageModel = Effect.fnUntraced(function* <
         try: () => {
             if (!options.namespace) throw new TypeError("Storage requires a nonempty namespace.");
             // Copy descriptive definitions so subsequent application mutation cannot alter the model.
-            const ir = structuredClone(options.ir);
+            const ir = cloneDefinition(options.ir);
             freezeDefinition(ir);
             const schemas = options.schemas ?? compileEffectSchemas(ir).objectSchemas;
             const names = new Set(ir.objectTypes.map((object) => object.name));

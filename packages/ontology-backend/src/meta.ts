@@ -1,4 +1,9 @@
-import { omitInvalid, withDefinitionIds, withoutDefaultIds } from "@party-stack/ontology-spec";
+import {
+    cloneDefinition,
+    omitInvalid,
+    withDefinitionIds,
+    withoutDefaultIds,
+} from "@party-stack/ontology-spec";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import * as q from "@party-stack/ontology-spec/query";
 import { and, inArray, field, evaluateQuery } from "@party-stack/ontology-storage";
@@ -228,8 +233,12 @@ const pullDefinitions = Effect.fn("Metadata.pull")(function* (
     if (repaired.omitted.length)
         yield* Effect.logWarning("Omitted definitions the Ontology IR cannot represent.").pipe(
             Effect.annotateLogs({
+                // With the reason, so an omission can be fixed at its source without a debugger.
                 omitted: repaired.omitted.map(
-                    (entry) => `${entry.name}${entry.parameter ? `.${entry.parameter}` : ""}`
+                    (entry) =>
+                        `${entry.name}${entry.parameter ? `.${entry.parameter}` : ""}: ${entry.issues
+                            .map((issue) => issue.message)
+                            .join(" ")}`
                 ),
             })
         );
@@ -275,7 +284,7 @@ export function makeMetadataBackend(
     options: MetadataBackendOptions = {}
 ): OntologyBackendService {
     // Meta rows always carry ids; a definition without them is given its defaults.
-    ir = withDefinitionIds(structuredClone(ir));
+    ir = withDefinitionIds(cloneDefinition(ir));
 
     return makeOntologyBackend({
         ir: metaOntology,

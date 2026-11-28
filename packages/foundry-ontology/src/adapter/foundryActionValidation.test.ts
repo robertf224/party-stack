@@ -1,3 +1,4 @@
+import { Temporal } from "temporal-polyfill";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
     type FoundrySubmissionCriterion,
@@ -206,6 +207,39 @@ describe("validateFoundryActionDraftCriteria", () => {
                 kind: "err",
                 value: [{ message: "Impossible submission criterion: A value is required." }],
             },
+        });
+    });
+
+    it("leaves a comparison with an unencoded application value unknown", async () => {
+        const staticDate: ConditionValue = {
+            type: "staticValue",
+            staticValue: { type: "date", date: { dateValue: "2026-11-20" } },
+        } as ConditionValue;
+        const draft = (parameters: Record<string, unknown>, condition: Condition) =>
+            validateFoundryActionDraftCriteria({
+                client: {} as OntologyClient,
+                criteria: criteria({ "Wrong date.": condition }),
+                userId: "user-1",
+                parameters,
+            });
+        const day = Temporal.PlainDate.from("2026-11-20");
+        // A Temporal value is not Foundry's "2026-11-20": the criterion is not known to fail.
+        await expect(draft({ submitted: day }, equals(parameter("submitted"), staticDate))).resolves.toEqual({
+            certain: false,
+        });
+        // Two different dates are not known to be equal either.
+        await expect(
+            draft(
+                { submitted: day, due: Temporal.PlainDate.from("2026-12-01") },
+                equals(parameter("submitted"), parameter("due"))
+            )
+        ).resolves.toEqual({ certain: false });
+        // Encoded the way Foundry stores it, a different date is known to fail.
+        await expect(
+            draft({ submitted: "2026-11-21" }, equals(parameter("submitted"), staticDate))
+        ).resolves.toEqual({
+            certain: true,
+            value: { kind: "err", value: [{ message: "Impossible submission criterion: Wrong date." }] },
         });
     });
 

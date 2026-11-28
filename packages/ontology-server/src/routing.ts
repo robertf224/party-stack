@@ -2,6 +2,7 @@ import { BackendError, projectBackendError } from "@party-stack/ontology-backend
 import { CurrentExecutionContext } from "@party-stack/ontology-backend/policy";
 import { replicaBackend } from "@party-stack/ontology-replica/infrastructure";
 import { makeReplicaPartitionCatalog } from "@party-stack/ontology-replica/registry";
+import { Table } from "@party-stack/ontology-storage/tables";
 import { Runtimes } from "@party-stack/runtime";
 import { Context, Effect, Equal, Exit, Hash, Layer, Option, RcMap, Schema, Scope, Stream } from "effect";
 import { Rpc, RpcGroup, RpcSchema } from "effect/rpc";
@@ -79,6 +80,8 @@ const replicaGeneration = <R>(target: OntologyBindingOptions<R>): OntologyBindin
         : ({ ...target, ir, backend } as OntologyBindingOptions<R>);
 };
 
+const contextIdentity = Table.make<unknown>({ name: "endpoint-context" });
+
 class EndpointKey<T extends OntologyBindingOptions<unknown>> implements Equal.Equal {
     readonly identity;
     constructor(
@@ -96,7 +99,9 @@ class EndpointKey<T extends OntologyBindingOptions<unknown>> implements Equal.Eq
                   ? options.cache
                   : undefined,
             options.ir,
-            JSON.stringify(context),
+            // Through the value codec, so contexts that differ only in a date, map, set or
+            // undefined field never share an endpoint.
+            context === undefined ? undefined : contextIdentity.encode(context),
             options.authenticate,
             options.dangerouslyAllowInternalAccess,
             options.enableRealtime,

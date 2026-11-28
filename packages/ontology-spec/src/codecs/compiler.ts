@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { cloneDefinition } from "../ir/clone.js";
 import { nestedEncryptedIssues } from "../ir/encrypted.js";
 import { ImageMediaTypeOptions } from "../ir/generated/constants.js";
 import { Encrypted, Result, TemporalDate, TemporalTimestamp } from "./codecs.js";
@@ -38,7 +39,7 @@ function compile(source: OntologyIR): CompiledEffectSchemas {
     if (nestedEncryptedIssues(source).length)
         throw new TypeError("Encrypted values cannot contain another encrypted wrapper.");
     // Lazy references must not observe later edits to the caller's definitions.
-    const ir = structuredClone(source);
+    const ir = cloneDefinition(source);
     const objects = new Map(ir.objectTypes.map((object) => [object.name, object]));
     const definitions = new Map<string, TypeDef>();
     const schemas = new Map<string, ValueCodec>();

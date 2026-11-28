@@ -127,6 +127,7 @@ export interface OwnedBackendOptions {
 export interface OwnedBackendService extends OntologyBackendService {
     readonly storage: OwnedStorageService;
 }
+const selectionIdentity = Table.make<unknown>({ name: "delivery-selection" });
 const fault = (operation: string, kind: BackendError["kind"], message: string, cause?: unknown) =>
     new BackendError({
         operation,
@@ -702,7 +703,8 @@ export const makeOwnedBackend = Effect.fnUntraced(function* (
                 policy: { ...options.delivery, ...policy },
                 resume,
                 binding: JSON.stringify([source, schemaHash]),
-                identity: JSON.stringify(selection),
+                // Through the value codec: filter values may be dates, bigints or undefined.
+                identity: selectionIdentity.encode(selection),
                 changes: PubSub.subscribe(wakes).pipe(Effect.map(Stream.fromSubscription)),
                 capture: (_tx, emit) =>
                     boundary(

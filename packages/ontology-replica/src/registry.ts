@@ -95,9 +95,11 @@ export const makeReplicaPartitionCatalog = Effect.fn("ReplicaPartitions.make")(f
     // also lets per-definition signature caches recognize the same IR.
     const decodeRecord = Schema.decodeUnknownSync(codec);
     const decoded = new Map<string, StoredReplicaPartition>();
+    // Through the value codec: keys are ordered and dates, bigints, maps and sets are kept.
+    const recordIdentity = Table.make<unknown>({ name: "record-identity" });
     const recordKey = (input: unknown) => {
         try {
-            return JSON.stringify(input);
+            return recordIdentity.encode(input);
         } catch {
             return undefined;
         }

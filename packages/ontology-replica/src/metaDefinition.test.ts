@@ -308,3 +308,55 @@ test("a one-shot replica reads its definition under the same freshness rules as 
         }).pipe(Effect.scoped, Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
     );
 });
+
+test("a dynamic definition that never synced says why it cannot load", async () => {
+    const monitor = (status: "needs-auth" | "active") => ({
+        state: { status } as const,
+        changes: Stream.make({ status } as const),
+    });
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const metadata = yield* editableMetadata(v1);
+            const runtime = yield* (yield* Runtimes).acquire({ owner: "anonymous", namespace: "signed-out" });
+            // A signed-out account cannot sync, and nothing was cached before: report the sign-in,
+            // not malformed metadata.
+            const failure = yield* makeReplica({
+                definition: { kind: "dynamic", meta: metadata.backend },
+                backend: (ir) => Effect.sync(() => dataBackend(ir)),
+                onDefinitionChange: "reset",
+                authentication: monitor("needs-auth"),
+            }).pipe(Effect.provideService(Runtime, runtime), Effect.scoped, Effect.flip);
+            expect(failure).toMatchObject({ kind: "Unauthenticated", operation: "metadata.read" });
+            expect(metadata.reads).toEqual([]);
+        }).pipe(Effect.scoped, Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
+    );
+});
+
+test("a definition source that dies fails the open instead of leaving it waiting", async () => {
+    await Effect.runPromise(
+        Effect.gen(function* () {
+            const metadata = yield* editableMetadata(v1);
+            const runtime = yield* (yield* Runtimes).acquire({ owner: "anonymous", namespace: "defect" });
+            const failure = yield* makeReplica({
+                definition: {
+                    kind: "dynamic",
+                    meta: metadata.backend,
+                    // A malformed selection makes reading the definition throw rather than fail.
+                    select: {
+                        get objectTypeNames(): string[] {
+                            throw new Error("Unexpected.");
+                        },
+                    },
+                },
+                backend: (ir) => Effect.sync(() => dataBackend(ir)),
+                onDefinitionChange: "reset",
+            }).pipe(
+                Effect.provideService(Runtime, runtime),
+                Effect.scoped,
+                Effect.flip,
+                Effect.timeout("3 seconds")
+            );
+            expect(failure).toMatchObject({ _tag: "BackendError" });
+        }).pipe(Effect.scoped, Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
+    );
+});
