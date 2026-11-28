@@ -19,9 +19,11 @@ const byKey =
 const defined = <A extends object>(node: A): A =>
     Object.fromEntries(Object.entries(node).filter(([, value]) => value !== undefined)) as A;
 /**
- * A struct's fields are named, so their order carries no meaning, and a provider may list them in
- * a different order from one request to the next. Compare and hash them in name order. Only type
- * definitions are reordered; literal values and expressions keep their order.
+ * Named fields (struct fields, object type properties, action and query function parameters) are
+ * identified by name, so their order carries no meaning for data or invocations, and a provider
+ * may list them in a different order from one request to the next. Compare and hash them in name
+ * order. The definition keeps the order it was given, for display. Only these named lists are
+ * reordered; literal values, expressions and enum options keep their order.
  */
 function canonicalType(type: TypeDef): TypeDef {
     switch (type.kind) {
@@ -79,10 +81,10 @@ const fields = <A extends { readonly parameters: readonly FieldDef[]; readonly r
     node: A
 ): A => ({
     ...defined(node),
-    parameters: node.parameters.map(canonicalField),
+    parameters: node.parameters.map(canonicalField).sort(byKey((parameter) => parameter.name)),
     ...(node.returnType === undefined ? {} : { returnType: canonicalType(node.returnType) }),
 });
-/** The order of a definition's named collections and of its struct fields carries no meaning, and a
+/** The order of a definition's named collections and of its named fields carries no meaning, and a
  * definition read back from meta ontology rows or pulled again from a provider need not keep it (nor
  * fields set to `undefined`): compare and hash them in name order. */
 const decodeDefinition = (ir: OntologyIR): OntologyIR => {
@@ -98,7 +100,10 @@ const decodeDefinition = (ir: OntologyIR): OntologyIR => {
             .map((type) => ({ ...defined(type), type: canonicalType(type.type) }))
             .sort(byKey((type) => type.name)),
         objectTypes: [...definition.objectTypes]
-            .map((type) => ({ ...defined(type), properties: type.properties.map(canonicalField) }))
+            .map((type) => ({
+                ...defined(type),
+                properties: type.properties.map(canonicalField).sort(byKey((property) => property.name)),
+            }))
             .sort(byKey((type) => type.name)),
         linkTypes: [...definition.linkTypes]
             .map((link) => ({ ...defined(link), source: defined(link.source), target: defined(link.target) }))

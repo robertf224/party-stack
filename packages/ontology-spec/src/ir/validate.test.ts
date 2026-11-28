@@ -718,7 +718,7 @@ describe("Ontology Validation", () => {
             };
 
             expect(getErrors(validate(ontology))).toContain(
-                'Default value for "count" has an incompatible type.'
+                'Default value for "count" is a string, but the parameter is an integer.'
             );
         });
 
@@ -815,7 +815,8 @@ describe("Ontology Validation", () => {
 
             expect(result.kind === "err" && result.value).toEqual([
                 expect.objectContaining({
-                    message: 'Value written to "Facility.coordinates" has an incompatible type.',
+                    message:
+                        'Value written to "Facility.coordinates" is a string, but the property is a geopoint.',
                     code: "IncompatibleAssignment",
                     path: ["actionTypes", 0, "logic", 0, "value", "values", 0, "value"],
                 }),

@@ -1,7 +1,8 @@
 import { o } from "@party-stack/ontology-spec";
 import { makeEncryptedValues } from "@party-stack/ontology-storage/encrypted";
 import * as Memory from "@party-stack/ontology-storage/memory/tables";
-import { Deferred, Effect, Schema, Scope, Exit } from "effect";
+import { Deferred, Effect, Schema, Scope, Exit, Fiber } from "effect";
+import { TestClock } from "effect/testing";
 import { Temporal } from "temporal-polyfill";
 import { describe, expect, it, vi, afterEach } from "vite-plus/test";
 import { makeConnectServer } from "../server/index.js";
@@ -239,7 +240,7 @@ describe("Connect authority", () => {
         expect((await run(Effect.flip(other.refresh(connection.id)))).kind).toBe("Busy");
         expect(f.refresh).not.toHaveBeenCalled();
     });
-    it("requires explicit reconnect after interrupted refresh and allows that repair", async () => {
+    it("retries an interrupted refresh with the saved refresh token", async () => {
         const f = await fixture();
         const connection = await f.complete((await f.begin()).id);
         await run(
@@ -249,14 +250,54 @@ describe("Connect authority", () => {
                 operationExpiresAt: time(-1000),
             })
         );
+        // The reply to the interrupted refresh was lost; a provider that accepts the saved token
+        // again renews the session instead of signing the user out.
+        const refreshed = await run(f.connect.refresh(connection.id));
+        expect(f.refresh).toHaveBeenCalledWith("refresh");
+        expect(refreshed).toMatchObject({ status: "active", operationId: undefined });
+        expect(await run(f.values.decrypt(Schema.String, refreshed.refreshToken!))).toBe("rotated");
+    });
+    it("keeps the session when a refresh times out", async () => {
+        const f = await fixture();
+        const connection = await f.complete((await f.begin()).id);
+        f.refresh.mockImplementationOnce(() => Effect.never);
+        const error = await run(
+            Effect.gen(function* () {
+                const attempt = yield* Effect.flip(f.connect.refresh(connection.id)).pipe(Effect.forkChild);
+                yield* TestClock.adjust(45_000);
+                return yield* Fiber.join(attempt);
+            }).pipe(Effect.provide(TestClock.layer()))
+        );
+        // A slow network is not a rejection: the saved token stays for the next attempt.
+        expect(error).toMatchObject({ kind: "Provider", retryable: true });
+        expect(await run(f.store.get("OAuthConnection", connection.id))).toMatchObject({
+            status: "active",
+            refreshToken: connection.refreshToken,
+            operationId: undefined,
+        });
+    });
+    it("asks for a sign-in when the provider rejects the retried refresh token", async () => {
+        const f = await fixture();
+        const connection = await f.complete((await f.begin()).id);
+        await run(
+            f.store.put("OAuthConnection", {
+                ...connection,
+                operationId: "dead-process",
+                operationExpiresAt: time(-1000),
+            })
+        );
+        f.refresh.mockImplementationOnce(
+            () =>
+                Effect.fail(
+                    connectError("NeedsAuthentication", "Provider credentials require authentication.")
+                ) as never
+        );
         expect((await run(Effect.flip(f.connect.refresh(connection.id)))).kind).toBe("NeedsAuthentication");
-        // The interruption is saved, so requests stop trying a refresh token that may be spent.
         expect(await run(f.store.get("OAuthConnection", connection.id))).toMatchObject({
             status: "needs-auth",
             refreshToken: undefined,
             operationId: undefined,
         });
-        expect(f.refresh).not.toHaveBeenCalled();
         const next = await run(
             f.connect.begin({
                 applicationId: "application",

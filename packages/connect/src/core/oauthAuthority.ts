@@ -246,26 +246,16 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
             const record = yield* store.transaction(
                 Effect.gen(function* () {
                     const current = yield* read(connectionId);
-                    if (current.operationId) {
-                        if (!expired(current.operationExpiresAt, yield* Clock.currentTimeMillis))
-                            return yield* connectError("Busy", "Connection operation is in progress.", true);
-                        // An interrupted refresh may have rotated the refresh token before its
-                        // reply was lost, so never retry it blindly; save that the connection
-                        // needs a sign-in. Client credentials hold no such token: claim and fetch anew.
-                        const application = yield* store.get("OAuthApplication", current.application);
-                        if (application?.flow !== "client-credentials") {
-                            yield* evict(current.refreshToken);
-                            yield* store.put("OAuthConnection", {
-                                ...current,
-                                status: "needs-auth",
-                                refreshToken: undefined,
-                                refreshTokenExpiresAt: undefined,
-                                operationId: undefined,
-                                operationExpiresAt: undefined,
-                            });
-                            return undefined;
-                        }
-                    }
+                    // An interrupted refresh (the app was killed, or a previous process stopped)
+                    // may have rotated the refresh token before its reply was lost. Retry with the
+                    // saved one anyway: that is never worse than giving up. A provider that accepts
+                    // a rotated token again (Foundry does) renews the session; one that rejects it
+                    // answers NeedsAuthentication below, which asks for a sign-in as before.
+                    if (
+                        current.operationId &&
+                        !expired(current.operationExpiresAt, yield* Clock.currentTimeMillis)
+                    )
+                        return yield* connectError("Busy", "Connection operation is in progress.", true);
                     if (current.status !== "active")
                         return yield* connectError("NeedsAuthentication", "Reconnect this connection.");
                     const next = {
@@ -277,11 +267,6 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                     return next;
                 })
             );
-            if (!record)
-                return yield* connectError(
-                    "NeedsAuthentication",
-                    "An interrupted credential operation requires reconnection."
-                );
             const request = Effect.gen(function* () {
                 const { application, oauth } = yield* configured(record.application);
                 let tokens: OAuthTokens;
@@ -311,13 +296,9 @@ export const makeOAuthAuthority = (options: OAuthAuthorityOptions): Effect.Effec
                 );
             }).pipe(
                 Effect.timeout(45_000),
+                // A slow network is not a rejection: keep the saved token and try again later.
                 Effect.catchTag("TimeoutError", () =>
-                    Effect.fail(
-                        connectError(
-                            "NeedsAuthentication",
-                            "Credential exchange timed out; reconnect before retrying."
-                        )
-                    )
+                    Effect.fail(connectError("Provider", "Credential exchange timed out.", true))
                 )
             );
             return yield* request.pipe(

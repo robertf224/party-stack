@@ -37,9 +37,7 @@ test("action defaults share scalar typing, including numeric result constraints 
     expect(validate(definition(expression, o.integer({})))).toEqual({ kind: "ok", value: undefined });
     expect(validate(definition(q.eq(q.input("amount"), q.literal(0)), o.string({})))).toMatchObject({
         kind: "err",
-        value: expect.arrayContaining([
-            expect.objectContaining({ message: expect.stringContaining("incompatible type") }),
-        ]),
+        value: expect.arrayContaining([expect.objectContaining({ code: "IncompatibleDefault" })]),
     });
 });
 

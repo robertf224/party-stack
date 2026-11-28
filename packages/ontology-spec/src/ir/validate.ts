@@ -493,11 +493,32 @@ function validateActionPropertyAssignment(
         ];
     if (analysis.type && !areValueTypesCompatible(resolved, analysis.type, valueTypes, objectTypes))
         errors.push({
-            message: `Value written to "${target.name}.${assignment.property.join(".")}" has an incompatible type.`,
+            message: `Value written to "${target.name}.${assignment.property.join(".")}" is ${describeType(analysis.type)}, but the property is ${describeType(resolved)}.`,
             path: [...path, "value"],
             code: INCOMPATIBLE_ASSIGNMENT,
         });
     return errors;
+}
+
+/** A type in words, for messages a person passes on to whoever can fix the definition. */
+function describeType(type: TypeDef): string {
+    const noun = (type: TypeDef): string => {
+        switch (type.kind) {
+            case "optional":
+            case "encrypted":
+                return noun(type.value.type);
+            case "list":
+                return `list of ${noun(type.value.elementType)} values`;
+            case "ref":
+                return type.value.name;
+            case "objectReference":
+                return `${type.value.objectType} reference`;
+            default:
+                return type.kind;
+        }
+    };
+    const words = noun(type);
+    return `${/^[aeiou]/i.test(words) ? "an" : "a"} ${words}`;
 }
 
 function validateAction(
@@ -551,7 +572,7 @@ function validateAction(
             const sourceType = analysis.type;
             if (sourceType && !areValueTypesCompatible(parameter.type, sourceType, valueTypes, objectTypes)) {
                 errors.push({
-                    message: `Default value for "${parameter.name}" has an incompatible type.`,
+                    message: `Default value for "${parameter.name}" is ${describeType(sourceType)}, but the parameter is ${describeType(parameter.type)}.`,
                     path: [...parameterPath, "defaultValue"],
                     code: INCOMPATIBLE_DEFAULT,
                 });
