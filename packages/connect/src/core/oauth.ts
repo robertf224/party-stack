@@ -59,34 +59,31 @@ export function makeOAuthService(options: OAuthServiceOptions): ConnectOAuthServ
         Effect.gen(function* () {
             const result = yield* Effect.tryPromise({
                 try: run,
+                // Only the provider's rejection asks for a sign-in. A request that never got an
+                // answer (offline, a dropped connection) keeps the saved credentials: retrying a
+                // refresh is never worse than asking for a sign-in, since a provider that refuses
+                // a reused refresh token answers `invalid_grant` and asks for one then.
                 catch: (error) =>
                     error instanceof oauth.ResponseBodyError &&
                     ["invalid_grant", "invalid_token", "invalid_client"].includes(error.error)
                         ? connectError("NeedsAuthentication", "Provider credentials require authentication.")
-                        : refreshing && !(error instanceof oauth.ResponseBodyError)
-                          ? connectError(
-                                "NeedsAuthentication",
-                                "Refresh outcome is unknown; reconnect before retrying."
-                            )
-                          : connectError(
-                                "Provider",
-                                "OAuth oauth request failed.",
-                                error instanceof oauth.ResponseBodyError && error.status >= 500
-                            ),
+                        : connectError(
+                              "Provider",
+                              error instanceof oauth.ResponseBodyError
+                                  ? "OAuth request failed."
+                                  : "Could not reach the provider.",
+                              !(error instanceof oauth.ResponseBodyError) || error.status >= 500
+                          ),
             });
             const now = yield* Clock.currentTimeMillis;
-            const userId = yield* options
-                .resolveSubject(result.access_token)
-                .pipe(
-                    Effect.mapError((error) =>
-                        refreshing
-                            ? connectError(
-                                  "NeedsAuthentication",
-                                  "Could not verify refreshed credentials; reconnect before retrying."
-                              )
-                            : error
-                    )
-                );
+            const userId = yield* options.resolveSubject(result.access_token).pipe(
+                // The refreshed tokens are dropped; the saved refresh token is tried again later.
+                Effect.mapError((error) =>
+                    refreshing && error.kind !== "NeedsAuthentication"
+                        ? connectError("Provider", "Could not verify refreshed credentials.", true)
+                        : error
+                )
+            );
             return {
                 accessToken: result.access_token,
                 accessTokenExpiresAt:
