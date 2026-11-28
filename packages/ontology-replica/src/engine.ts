@@ -482,6 +482,10 @@ const canonicalSubset = (subset: CompiledSubset): CompiledSubset => {
         query,
     };
 };
+// Through the value codec: a selection's filter values may be dates, bigints or undefined, which
+// JSON text would reject, confuse with strings, or drop.
+const selectionIdentityTable = Table.make<unknown>({ name: "delivery-selection" });
+const selectionIdentity = (selection: unknown) => selectionIdentityTable.encode(selection);
 const subsetKey = (subset: CompiledSubset) =>
     Table.make<CompiledSubset>({ name: "subset-identity" }).encode(canonicalSubset(subset));
 
@@ -5101,7 +5105,7 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         // Not the definition: a stream outlives a reopen under a new one, which
                         // invalidates only the changed types' delivered rows.
                         binding: JSON.stringify([ownSourceId]),
-                        identity: JSON.stringify(selection),
+                        identity: selectionIdentity(selection),
                         changes: service.subscribeChanges,
                         capture: (tx, emit) =>
                             boundary(captureSelection(tx, { generation: 1, selection }, emit, false)),
@@ -5186,8 +5190,10 @@ export const makeReplicaKernel = Effect.fn("Replica.make")(function* (options: R
                         policy: { retentionMs: options.clients?.deliveryRetentionMs, ...policy },
                         resume,
                         binding: JSON.stringify([ownSourceId, session.client.clientId]),
-                        identity: JSON.stringify(selected),
-                        rowSelection: JSON.stringify(selected.selection.subsets),
+                        identity: selectionIdentity(selected),
+                        rowSelection: JSON.stringify(
+                            [...new Set(selected.selection.subsets.map(subsetKey))].sort()
+                        ),
                         changes: Effect.map(service.subscribeChanges, (changes) =>
                             Stream.merge(changes, Stream.fromQueue(viewChanged))
                         ),

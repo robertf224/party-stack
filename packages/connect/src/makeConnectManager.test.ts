@@ -210,10 +210,12 @@ test("a restarted manager releases a refresh lease its previous process left beh
                     operationExpiresAt: Temporal.Now.instant().add({ seconds: 60 }),
                 });
                 const second = yield* open;
+                // The new process does not wait out the old lease: it refreshes again. (This
+                // fixture configures no provider, so the attempt itself fails.)
                 const refreshed = yield* Effect.flip(second.connect.refresh("interrupted"));
-                expect(refreshed.kind).toBe("NeedsAuthentication");
+                expect(refreshed.kind).not.toBe("Busy");
                 expect(yield* second.store.get("OAuthConnection", "interrupted")).toMatchObject({
-                    status: "needs-auth",
+                    status: "active",
                     operationId: undefined,
                 });
             })

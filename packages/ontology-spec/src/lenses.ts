@@ -1,4 +1,5 @@
 import { capitalCase } from "change-case";
+import { cloneDefinition } from "./ir/clone.js";
 import { getAtPath, setAtPath, unsetAtPath } from "./utils/paths.js";
 import type { FieldDef, Lens, ObjectTypeDef, PropertyDef, TypeDef } from "./ir/index.js";
 
@@ -59,7 +60,7 @@ export function applyLensToObjectType(
     lens: Lens,
     options: ApplyObjectTypeLensOptions
 ): ObjectTypeDef {
-    const target = structuredClone(source);
+    const target = cloneDefinition(source);
     target.name = options.name;
     target.displayName = options.displayName ?? capitalCase(options.name);
     target.pluralDisplayName = options.pluralDisplayName ?? `${target.displayName}s`;

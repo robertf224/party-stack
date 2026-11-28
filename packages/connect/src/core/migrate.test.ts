@@ -66,14 +66,87 @@ const legacyConnectOntology = {
     ],
 };
 
+// The version 3 schema: before connections recorded their status reason.
+const withoutStatusReason = {
+    ...connectOntology,
+    objectTypes: connectOntology.objectTypes.map((type) => ({
+        ...type,
+        properties: type.properties.filter((property) => property.name !== "statusReason"),
+    })),
+};
+
+test("opening the version 3 schema keeps saved credentials, and a status reason saves after it", async () => {
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const tables = yield* Memory.make();
+                const previous = yield* makeOwnedBackend({
+                    tables,
+                    namespace: JSON.stringify(["saved", "connect", 3]),
+                    ir: withoutStatusReason,
+                    mutators: {},
+                });
+                const credential = { ciphertext: "party-stack:encrypted:existing-credential" };
+                yield* previous.storage.transaction((tx) =>
+                    Effect.gen(function* () {
+                        yield* tx.put("ServiceInstance", {
+                            id: "foundry",
+                            title: "Foundry",
+                            service: "foundry",
+                            instanceUrl: "https://foundry.test",
+                        });
+                        yield* tx.put("OAuthApplication", {
+                            id: "app",
+                            title: "App",
+                            serviceInstance: "foundry",
+                            flow: "authorization-code",
+                            clientId: "client",
+                            scopes: ["read"],
+                        });
+                        yield* tx.put("OAuthConnection", {
+                            id: "alice",
+                            title: "Alice",
+                            application: "app",
+                            userId: "alice",
+                            status: "active",
+                            accessToken: credential,
+                            refreshToken: credential,
+                        });
+                    })
+                );
+                const upgraded = yield* makeConnectPersistence({ tables, namespace: "saved" });
+                const connection = (yield* upgraded.store.get("OAuthConnection", "alice"))!;
+                expect(connection).toMatchObject({
+                    status: "active",
+                    accessToken: credential,
+                    refreshToken: credential,
+                });
+                expect(yield* upgraded.store.get("OAuthApplication", "app")).toMatchObject({
+                    scopes: ["read"],
+                });
+                yield* upgraded.store.put("OAuthConnection", {
+                    ...connection,
+                    status: "needs-auth",
+                    statusReason: "The provider rejected the saved credentials (invalid_grant).",
+                });
+                const reopened = yield* makeConnectPersistence({ tables, namespace: "saved" });
+                expect(yield* reopened.store.get("OAuthConnection", "alice")).toMatchObject({
+                    statusReason: "The provider rejected the saved credentials (invalid_grant).",
+                    refreshToken: credential,
+                });
+            })
+        )
+    );
+});
+
 test("opening the pre-scopes service schema preserves saved credentials and authorization attempts", async () => {
     await Effect.runPromise(
         Effect.scoped(
             Effect.gen(function* () {
                 const tables = yield* Memory.make();
                 const previousIR = {
-                    ...connectOntology,
-                    objectTypes: connectOntology.objectTypes.map((type) =>
+                    ...withoutStatusReason,
+                    objectTypes: withoutStatusReason.objectTypes.map((type) =>
                         type.name === "OAuthApplication"
                             ? {
                                   ...type,

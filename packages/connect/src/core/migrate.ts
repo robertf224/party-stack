@@ -31,6 +31,8 @@ export const migrateConnectCredentials = Effect.fn("Connect.migrate")(function* 
         ["ExternalSessionConnection", "ExternalSessionConnection"],
     ] as const;
     for (const source of [
+        // Version 4 only adds optional properties, so version 3 rows import unchanged.
+        { namespace: JSON.stringify([options.namespace, "connect", 3]), names: serviceNames, legacy: false },
         { namespace: JSON.stringify([options.namespace, "connect", 2]), names: serviceNames, legacy: false },
         { namespace: options.namespace, names: legacyNames, legacy: true },
     ]) {

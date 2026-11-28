@@ -19,6 +19,18 @@ export interface FoundrySubmissionCriterion {
     failureMessage: string;
 }
 
+/**
+ * Criteria compare Foundry's own values: strings, numbers, booleans, null and lists of them (dates,
+ * timestamps and decimals as strings). An application value such as a `Temporal.PlainDate` has no
+ * fields to compare, so its comparison is unknown rather than guessed.
+ */
+function isComparable(value: unknown): boolean {
+    if (value === null || typeof value !== "object") return true;
+    if (Array.isArray(value)) return value.every(isComparable);
+    const prototype: unknown = Object.getPrototypeOf(value);
+    return (prototype === Object.prototype || prototype === null) && Object.values(value).every(isComparable);
+}
+
 function valuesEqual(left: unknown, right: unknown): boolean {
     if (Object.is(left, right)) return true;
     if (Array.isArray(left) && Array.isArray(right)) {
@@ -283,7 +295,7 @@ async function evaluateCondition(
                 evaluateConditionValue(condition.comparison.left, context),
                 evaluateConditionValue(condition.comparison.right, context),
             ]);
-            if (!left.certain || !right.certain) {
+            if (!left.certain || !right.certain || !isComparable(left.value) || !isComparable(right.value)) {
                 return uncertain();
             }
             switch (condition.comparison.operator) {

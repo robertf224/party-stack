@@ -73,9 +73,10 @@ export const makeConnectPersistence = Effect.fn("Connect.persistence")(function*
     });
     const backend = yield* makeOwnedBackend({
         ...options,
-        // Version 3 adds per-application OAuth scopes. Import v2 records below;
-        // credential encryption uses options.namespace, so handles retain their AAD.
-        namespace: JSON.stringify([options.namespace, "connect", 3]),
+        // Version 4 adds each connection's status reason; version 3 added per-application
+        // OAuth scopes. Import earlier records below; credential encryption uses
+        // options.namespace, so handles retain their AAD.
+        namespace: JSON.stringify([options.namespace, "connect", 4]),
         ir,
         mutators: {},
     });

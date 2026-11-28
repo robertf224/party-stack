@@ -135,6 +135,86 @@ test("managed routes reopen retained data without a Describe preflight", async (
     );
 });
 
+test("a context written in any key order reopens its retained bootstrap offline", async () => {
+    // Stored contexts come back with their keys in order; the app may write them in any order.
+    const accountIr = {
+        ...ir,
+        context: {
+            type: o.struct({ fields: [property("userId"), property("tenant")] }),
+            partition: [["userId"]],
+        },
+    };
+    const account = { userId: "alice", tenant: "acme" };
+    await Effect.runPromise(
+        Effect.scoped(
+            Effect.gen(function* () {
+                const runtimes = yield* Runtimes;
+                yield* runtimes.acquire({ owner: "replica-registry", namespace: "default" });
+                yield* runtimes.acquire({ owner: contextPartition(accountIr, account), namespace: "notes" });
+                const backend = yield* makeOwnedBackend({
+                    ir: accountIr,
+                    tables: yield* Memory.make(),
+                    namespace: "bootstrap-upstream",
+                    mutators: {},
+                });
+                yield* backend.storage.transaction((tx) => tx.put("Note", { id: "retained" }));
+                const transport = yield* makeOntologyLocalClient(
+                    yield* makeOntologyServer({
+                        enableRealtime: true,
+                        kind: "owned",
+                        ir: accountIr,
+                        backend,
+                        context: account,
+                        dangerouslyAllowInternalAccess: true,
+                    })
+                );
+                let offline = false;
+                const upstream: OntologyServerClient = {
+                    ontology: (name, options) =>
+                        offline && !options?.description
+                            ? Effect.fail(
+                                  new BackendError({
+                                      operation: "describe",
+                                      kind: "Unavailable",
+                                      retryable: true,
+                                      message: "Offline",
+                                  })
+                              )
+                            : transport.ontology(name, options),
+                };
+                const open = makeOntologyServer({
+                    enableRealtime: true,
+                    replicas: {},
+                    routes: {
+                        notes: {
+                            kind: "replica",
+                            upstream: { client: upstream },
+                            context: account,
+                            live: false,
+                            dangerouslyAllowInternalAccess: true,
+                        },
+                    },
+                });
+                yield* Effect.scoped(
+                    Effect.gen(function* () {
+                        const bound = yield* (yield* open).bind("notes");
+                        yield* bound.options.replica!.demand.acquire(objectSubset("Note"));
+                    })
+                );
+                offline = true;
+                yield* Effect.scoped(
+                    Effect.gen(function* () {
+                        const bound = yield* (yield* open).bind("notes");
+                        expect(yield* bound.options.replica!.readSubset(objectSubset("Note"))).toEqual([
+                            { key: "retained", value: { id: "retained" } },
+                        ]);
+                    })
+                );
+            }).pipe(Effect.provide(Runtimes.layer(MemoryRuntime.layer)))
+        )
+    );
+});
+
 test("a dynamic route reopens its account's partition from cached metadata", async () => {
     await Effect.runPromise(
         Effect.scoped(

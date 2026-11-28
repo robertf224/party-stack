@@ -1,6 +1,7 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { ontologyDefinitionContractHash, ontologyDefinitionSignature } from "@party-stack/ontology-storage";
 import {
+    Cause,
     Deferred,
     Effect,
     Exit,
@@ -268,6 +269,22 @@ export const followReplicaDefinition = Effect.fnUntraced(function* (options: {
                 })
             )
         ),
+        // A defect in the source must still fail the open (and be retried), not leave it waiting.
+        Effect.catchCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
+            const error = Cause.findErrorOption(cause);
+            return Effect.fail(
+                error._tag === "Some"
+                    ? error.value
+                    : new BackendError({
+                          operation: "replica.definition",
+                          kind: "Internal",
+                          retryable: true,
+                          message: "The definition source failed unexpectedly.",
+                          cause: Cause.squash(cause),
+                      })
+            );
+        }),
         Effect.tapError((error) =>
             Effect.andThen(
                 Deferred.fail(first, error),

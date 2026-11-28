@@ -3,3 +3,4 @@ export { o } from "./generated/builders.js";
 export * from "./validate.js";
 export * from "./omitInvalid.js";
 export * from "./ids.js";
+export * from "./clone.js";

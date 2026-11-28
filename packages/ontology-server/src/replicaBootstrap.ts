@@ -1,5 +1,6 @@
 import { BackendError } from "@party-stack/ontology-backend";
 import { ontologyDefinitionContractHash } from "@party-stack/ontology-storage";
+import { Table } from "@party-stack/ontology-storage/tables";
 import { Effect, Option, Ref, Scope, Stream, SynchronizedRef } from "effect";
 import type { OntologyClient, OntologyServerClient } from "./rpc.js";
 import type { OntologyBackendService } from "@party-stack/ontology-backend";
@@ -32,9 +33,12 @@ export type UpstreamReplicaRegistration = Omit<ReplicaRegistrationCommon, "conte
 const mismatch = (message: string) =>
     new BackendError({ operation: "replica.definition", kind: "SchemaMismatch", retryable: false, message });
 
+// Through the value codec: it orders object keys and keeps dates, bigints, maps and sets, so a
+// context matches regardless of the order the app wrote its fields in.
+const contextIdentity = Table.make<unknown>({ name: "context-identity" });
 const sameValue = (left: unknown, right: unknown) => {
     try {
-        return JSON.stringify(left) === JSON.stringify(right);
+        return contextIdentity.encode(left) === contextIdentity.encode(right);
     } catch {
         return false;
     }

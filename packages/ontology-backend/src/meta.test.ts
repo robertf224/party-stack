@@ -3,6 +3,7 @@ import blog from "@party-stack/ontology-spec/examples/blog";
 import metaOntology from "@party-stack/ontology-spec/meta";
 import { ontologyDefinitionHash } from "@party-stack/ontology-storage";
 import { Effect, Queue, Stream } from "effect";
+import { Temporal } from "temporal-polyfill";
 import { expect, test } from "vitest";
 import { loadDefinition, makeMetadataBackend, pull } from "./meta.js";
 import { makeOntologyBackend } from "./query.js";
@@ -317,6 +318,29 @@ test("a definition read back from its metadata has the same hash", async () => {
         ir,
         blog,
         { ...named, objectTypes: named.objectTypes.map((type) => ({ ...type, id: "provider-item" })) },
+        // Literal values keep their type through the metadata rows (a cloned Temporal date
+        // would read back as an empty object).
+        {
+            ...ir,
+            actionTypes: [
+                {
+                    name: "submit",
+                    displayName: "Submit",
+                    parameters: [
+                        {
+                            name: "submitted",
+                            displayName: "Submitted",
+                            type: o.date({}),
+                            defaultValue: {
+                                kind: "literal",
+                                value: { value: Temporal.PlainDate.from("2025-11-20") },
+                            },
+                        },
+                    ],
+                    logic: [],
+                },
+            ],
+        } satisfies OntologyIR,
     ];
     for (const definition of definitions) {
         const pulled = await Effect.runPromise(pull(makeMetadataBackend(definition)));

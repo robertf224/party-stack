@@ -1,3 +1,4 @@
+import { BackendError } from "@party-stack/ontology-backend";
 import { pull } from "@party-stack/ontology-backend/meta";
 import { executeQuery } from "@party-stack/ontology-backend/query";
 import { objectSubset } from "@party-stack/ontology-backend/subset";
@@ -6,7 +7,6 @@ import { Effect, Exit, Queue, Scope, Stream, SubscriptionRef } from "effect";
 import { replicaController } from "./internal.js";
 import type { DefinitionSource } from "./follow.js";
 import type { ReplicaService } from "./service.js";
-import type { BackendError } from "@party-stack/ontology-backend";
 import type { DefinitionSelection } from "@party-stack/ontology-backend/meta";
 import type { QueryReader } from "@party-stack/ontology-backend/query";
 import type { OntologyIR } from "@party-stack/ontology-spec";
@@ -25,6 +25,33 @@ export const followMetaReplica = (
     select: DefinitionSelection = {}
 ): Effect.Effect<DefinitionSource> =>
     Effect.map(SubscriptionRef.make(0), (requests) => {
+        // Rows the replica never synced read as none, which `pull` reports as malformed metadata.
+        // While the replica cannot sync, say why instead.
+        const blocked = Effect.gen(function* (): Effect.fn.Return<
+            { readonly kind: "Unauthenticated" | "Unavailable"; readonly message: string } | undefined
+        > {
+            const status = meta.authentication?.state.status;
+            if (status === "pending")
+                return {
+                    kind: "Unavailable",
+                    message:
+                        "The connection is still being established, so this Ontology's definition cannot load yet.",
+                };
+            if (status !== undefined && status !== "active")
+                return {
+                    kind: "Unauthenticated",
+                    message:
+                        status === "needs-auth"
+                            ? "Sign in again to load this Ontology's definition."
+                            : "The connection is not active, so this Ontology's definition cannot load.",
+                };
+            if (!(yield* meta.network.online))
+                return {
+                    kind: "Unavailable",
+                    message: "This Ontology's definition has not been downloaded, and the device is offline.",
+                };
+            return undefined;
+        });
         const read = Effect.fnUntraced(function* (scope: Scope.Scope) {
             // Any row change after this revision may not be reflected in what is read below.
             const revision = yield* replicaController(meta).readVisibleRevision;
@@ -49,6 +76,22 @@ export const followMetaReplica = (
                         ),
                 },
                 select
+            ).pipe(
+                Effect.catch((error) =>
+                    Effect.flatMap(blocked, (reason) =>
+                        Effect.fail(
+                            reason
+                                ? new BackendError({
+                                      operation: "metadata.read",
+                                      ...reason,
+                                      // Signing in or reconnecting lets the follower read it again.
+                                      retryable: true,
+                                      cause: error,
+                                  })
+                                : error
+                        )
+                    )
+                )
             );
             return { ir, revision, subsets };
         });

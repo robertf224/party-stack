@@ -21,7 +21,7 @@ test("definition identity survives wire decoding and reordered object keys", () 
     expect(ontologyDefinitionSignature(reordered)).toBe(ontologyDefinitionSignature(definition));
 });
 
-test("definition identity ignores the order of named collections, not of properties", () => {
+test("definition identity ignores the order of named collections and of properties", () => {
     const type = (name: string, properties = ["id", "label"]) => ({
         name,
         displayName: name,
@@ -45,7 +45,15 @@ test("definition identity ignores the order of named collections, not of propert
         ...definition,
         objectTypes: [type("A", ["label", "id"]), type("B")],
     };
-    expect(ontologyDefinitionSignature(reorderedProperties)).not.toBe(ontologyDefinitionSignature(ordered));
+    // Properties are named; their order is for display only.
+    expect(ontologyDefinitionSignature(reorderedProperties)).toBe(ontologyDefinitionSignature(ordered));
+    expect(ontologyDefinitionContractSignature(reorderedProperties)).toBe(
+        ontologyDefinitionContractSignature(ordered)
+    );
+    // A renamed property is a different definition.
+    expect(
+        ontologyDefinitionSignature({ ...definition, objectTypes: [type("A", ["id", "title"]), type("B")] })
+    ).not.toBe(ontologyDefinitionSignature(ordered));
 });
 
 test("provider ids identify a definition but are not part of its contract", () => {
@@ -69,6 +77,101 @@ test("provider ids identify a definition but are not part of its contract", () =
     expect(ontologyDefinitionSignature(withId("one"))).not.toBe(ontologyDefinitionSignature(withId("two")));
     // An id equal to its default (the name) is the same as none.
     expect(ontologyDefinitionSignature(withId("A"))).toBe(ontologyDefinitionSignature(withId()));
+});
+
+test("definition identity ignores the order of action and query function parameters", () => {
+    const parameters = (names: string[]) =>
+        names.map((name) => ({ name, displayName: name, type: o.string({}) }));
+    const withParameters = (names: string[]): OntologyIR => ({
+        ...definition,
+        actionTypes: [{ name: "submit", displayName: "Submit", parameters: parameters(names), logic: [] }],
+        queryFunctionTypes: [
+            {
+                name: "lookup",
+                displayName: "Lookup",
+                parameters: parameters(names),
+                returnType: o.string({}),
+            },
+        ],
+    });
+    expect(ontologyDefinitionSignature(withParameters(["b", "a"]))).toBe(
+        ontologyDefinitionSignature(withParameters(["a", "b"]))
+    );
+    expect(ontologyDefinitionContractSignature(withParameters(["b", "a"]))).toBe(
+        ontologyDefinitionContractSignature(withParameters(["a", "b"]))
+    );
+});
+
+test("definition identity ignores the order of struct fields wherever a definition declares types", () => {
+    const struct = (names: string[]) =>
+        o.struct({ fields: names.map((name) => ({ name, displayName: name, type: o.string({}) })) });
+    // Providers may list a struct's fields in a different order on every request.
+    const withStruct = (names: string[]): OntologyIR => ({
+        ...definition,
+        context: { type: struct(names) },
+        types: [{ name: "Pair", type: struct(names) }],
+        objectTypes: [
+            {
+                name: "Item",
+                displayName: "Item",
+                pluralDisplayName: "Items",
+                primaryKey: "id",
+                properties: [
+                    { name: "id", displayName: "Id", type: o.string({}) },
+                    { name: "pair", displayName: "Pair", type: o.optional({ type: struct(names) }) },
+                ],
+            },
+        ],
+        actionTypes: [
+            {
+                name: "consume",
+                displayName: "Consume",
+                parameters: [
+                    { name: "entries", displayName: "Entries", type: o.list({ elementType: struct(names) }) },
+                ],
+                logic: [],
+                returnType: struct(names),
+            },
+        ],
+        queryFunctionTypes: [
+            {
+                name: "lookup",
+                displayName: "Lookup",
+                parameters: [{ name: "pair", displayName: "Pair", type: struct(names) }],
+                returnType: o.list({ elementType: struct(names) }),
+            },
+        ],
+    });
+    const ordered = withStruct(["count", "item"]);
+    const reversed = withStruct(["item", "count"]);
+    expect(ontologyDefinitionSignature(reversed)).toBe(ontologyDefinitionSignature(ordered));
+    expect(ontologyDefinitionContractSignature(reversed)).toBe(ontologyDefinitionContractSignature(ordered));
+    // Only the order is ignored: a renamed field is a different definition.
+    expect(ontologyDefinitionSignature(withStruct(["count", "product"]))).not.toBe(
+        ontologyDefinitionSignature(ordered)
+    );
+    // Literal values keep their order.
+    const literal = (value: unknown): OntologyIR => ({
+        ...definition,
+        actionTypes: [
+            {
+                name: "consume",
+                displayName: "Consume",
+                parameters: [
+                    {
+                        name: "entries",
+                        displayName: "Entries",
+                        type: o.list({ elementType: struct(["count", "item"]) }),
+                        defaultValue: o.Expression.literal({ value }),
+                    },
+                ],
+                logic: [],
+            },
+        ],
+    });
+    expect(ontologyDefinitionSignature(literal([{ item: "a" }, { item: "b" }]))).not.toBe(
+        ontologyDefinitionSignature(literal([{ item: "b" }, { item: "a" }]))
+    );
 });
 
 test("definition identity preserves typed literal values and meaningful array order", () => {

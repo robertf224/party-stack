@@ -644,6 +644,19 @@ export const makeFoundryOntologyBackend = Effect.fn("Foundry.makeBackend")(funct
         const value = live.context?.[FOUNDRY_CURRENT_USER_CONTEXT_FIELD];
         const userId = typeof value === "string" ? value : undefined;
         if (!userId) return uncertain();
+        // Criteria compare Foundry's values (a date is "2026-11-20"), so compare the draft in that
+        // form too. A value that cannot be encoded yet stays unknown.
+        const encoded: Record<string, unknown> = {};
+        const encodedKnown = new Set(knownParameters);
+        for (const parameter of action.parameters) {
+            const raw = parameters[parameter.name];
+            if (raw === undefined) continue;
+            try {
+                encoded[parameter.name] = codec.encodeValue(parameter.type, raw);
+            } catch {
+                encodedKnown.delete(parameter.name);
+            }
+        }
         return yield* Effect.tryPromise({
             try: async (signal) =>
                 validateFoundryActionDraftCriteria({
@@ -654,8 +667,8 @@ export const makeFoundryOntologyBackend = Effect.fn("Foundry.makeBackend")(funct
                         userId,
                     }),
                     userId,
-                    parameters,
-                    knownParameters,
+                    parameters: encoded,
+                    knownParameters: encodedKnown,
                 }),
             catch: (cause) =>
                 foundryActionError("foundry.validateActionDraft", cause, opts.ir, name, parameters),
